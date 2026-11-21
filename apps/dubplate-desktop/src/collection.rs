@@ -162,6 +162,8 @@ pub struct Collection {
     tracks: Vec<Arc<CollectionTrack>>,
     crates: Vec<Crate>,
     share_directory: Option<PathBuf>,
+    by_identity: HashMap<String, TrackIndex>,
+    by_path: HashMap<PathBuf, TrackIndex>,
 }
 
 impl Collection {
@@ -232,10 +234,24 @@ impl Collection {
         }
         crates[0].tracks = (0..tracks.len()).map(TrackIndex).collect();
         crates.extend(playlist_crates);
+        let by_identity = tracks
+            .iter()
+            .enumerate()
+            .map(|(position, track)| (track.identity(), TrackIndex(position)))
+            .collect();
+        let by_path = tracks
+            .iter()
+            .enumerate()
+            .filter_map(|(position, track)| {
+                Some((track.track.file_path.clone()?, TrackIndex(position)))
+            })
+            .collect();
         Self {
             tracks,
             crates,
             share_directory: rekordbox.map(|rekordbox| rekordbox.share_directory.clone()),
+            by_identity,
+            by_path,
         }
     }
 
@@ -247,10 +263,20 @@ impl Collection {
     /// The track that is the file or rekordbox entry `identity` names, if the collection holds
     /// it.
     pub fn find(&self, identity: &str) -> Option<TrackIndex> {
+        self.by_identity.get(identity).copied()
+    }
+
+    /// The track whose audio file is `path`, if the collection holds it.
+    pub fn find_path(&self, path: &Path) -> Option<TrackIndex> {
+        self.by_path.get(path).copied()
+    }
+
+    /// Every track with its position, in the collection's order.
+    pub fn indexed_tracks(&self) -> impl Iterator<Item = (TrackIndex, &Arc<CollectionTrack>)> {
         self.tracks
             .iter()
-            .position(|track| track.identity() == identity)
-            .map(TrackIndex)
+            .enumerate()
+            .map(|(position, track)| (TrackIndex(position), track))
     }
 
     /// The track at `index`.

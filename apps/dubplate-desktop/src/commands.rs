@@ -38,6 +38,36 @@ pub enum Press {
     Tap,
 }
 
+/// The two screens: preparing a set, and playing it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    /// The library beside the set being prepared.
+    Prepare,
+    /// The decks and the mixer.
+    Perform,
+}
+
+/// A change to the set being prepared.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SetEdit {
+    /// Add the track selected in the library at the end of the set.
+    Add,
+    /// Put the track selected in the library right after the selected set track.
+    InsertAfterSelection,
+    /// Move the selected set track up or down.
+    Move(Direction),
+    /// Take the selected set track out of the set.
+    Remove,
+    /// Switch the seam after the selected set track between planned and free.
+    TogglePlanned,
+    /// Accept the mix cues Dubplate proposes for the selected set track.
+    AcceptProposedCues,
+    /// Keep the track selected in the library as a backup, or stop keeping it.
+    ToggleBackup,
+    /// Undo the last change to the set.
+    Undo,
+}
+
 /// What turning a jog wheel does to the track.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum JogMotion {
@@ -107,6 +137,14 @@ pub enum Command {
     /// Choose which effect unit the controller's BEAT FX section drives, a number of units
     /// along; negative goes back.
     FocusEffectUnit(i32),
+    /// Show the Prepare or the Perform screen.
+    SwitchMode(Mode),
+    /// Change the set.
+    EditSet(SetEdit),
+    /// Move the keyboard between the library and the set in Prepare.
+    SwitchPrepareFocus,
+    /// Load the set's first track on deck A and its second on deck B, each at its mix-in.
+    LoadSet,
     /// Show or hide the list of shortcuts.
     ToggleHelp,
     /// Show or hide the library's settings: the music folders and rekordbox.

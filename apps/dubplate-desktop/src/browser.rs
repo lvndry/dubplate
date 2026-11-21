@@ -1,6 +1,7 @@
 //! The browser: the crates on the left and the tracks of the chosen crate on the right, filtered
 //! by the search field. It asks the window to load tracks through [`BrowserEvent`].
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use dubplate_engine::DeckId;
@@ -102,6 +103,7 @@ pub struct Browser {
     rows: Vec<TrackIndex>,
     selected: Option<TrackIndex>,
     pane: BrowserPane,
+    in_set: Arc<HashSet<TrackIndex>>,
     search_input: Entity<InputState>,
     table_focus: FocusHandle,
     scroll: UniformListScrollHandle,
@@ -134,6 +136,7 @@ impl Browser {
             rows: Vec::new(),
             selected: None,
             pane: BrowserPane::default(),
+            in_set: Arc::default(),
             search_input,
             table_focus: cx.focus_handle(),
             scroll: UniformListScrollHandle::new(),
@@ -167,6 +170,12 @@ impl Browser {
     /// The search field, which sits in the window's header.
     pub fn search_input(&self) -> &Entity<InputState> {
         &self.search_input
+    }
+
+    /// Marks the tracks that are in the set being prepared.
+    pub fn set_marked(&mut self, in_set: Arc<HashSet<TrackIndex>>, cx: &mut Context<'_, Self>) {
+        self.in_set = in_set;
+        cx.notify();
     }
 
     /// The selected track.
@@ -441,11 +450,26 @@ impl Browser {
             )
             .on_drag(dragged, |dragged, _, _, cx| cx.new(|_| dragged.clone()))
             .child(
-                text_cell(row.title.clone())
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.0))
                     .flex_1()
                     .min_w_0()
-                    .px(theme::GUTTER)
-                    .font_weight(gpui::FontWeight::MEDIUM),
+                    .pl(px(8.0))
+                    .pr(theme::GUTTER)
+                    .child(
+                        div()
+                            .size(px(6.0))
+                            .flex_none()
+                            .rounded_full()
+                            .when(self.in_set.contains(&track), |dot| dot.bg(theme::OK)),
+                    )
+                    .child(
+                        text_cell(row.title.clone())
+                            .min_w_0()
+                            .font_weight(gpui::FontWeight::MEDIUM),
+                    ),
             )
             .child(
                 text_cell(row.artist.clone())
@@ -511,7 +535,7 @@ fn header_row() -> impl IntoElement {
         .text_size(theme::SMALL_TEXT_SIZE)
         .text_color(theme::MUTED)
         .font_weight(gpui::FontWeight::MEDIUM)
-        .child(header("Title").flex_1().px(theme::GUTTER))
+        .child(header("Title").flex_1().pl(px(22.0)).pr(theme::GUTTER))
         .child(header("Artist").w(relative(0.3)).flex_none().px(px(8.0)))
         .child(
             header("BPM")

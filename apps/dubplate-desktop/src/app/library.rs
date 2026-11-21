@@ -12,6 +12,7 @@ use super::{DubplateApp, NoticePlace, error_chain};
 use crate::browser::LibraryStatus;
 use crate::collection::{Collection, RekordboxLibrary, folder_name};
 use crate::library::{RekordboxSource, ScanRequest};
+use crate::prep;
 use crate::settings::Settings;
 
 /// How often the scan progress is redrawn while a scan runs.
@@ -227,13 +228,20 @@ impl DubplateApp {
         };
         let scans = self.sources.chosen_scans();
         cx.spawn(async move |this, cx| {
-            let collection = cx
+            let (collection, catalogue) = cx
                 .background_executor()
-                .spawn(async move { Collection::build(rekordbox.as_deref(), &scans) })
+                .spawn(async move {
+                    let collection = Collection::build(rekordbox.as_deref(), &scans);
+                    let catalogue = prep::Catalogue::build(&collection);
+                    (collection, catalogue)
+                })
                 .await;
             this.update(cx, |this, cx| {
                 if this.library_generation == generation {
+                    this.catalogue = Arc::new(catalogue);
                     this.show_library(LibraryStatus::Ready(Arc::new(collection)), cx);
+                    this.forget_track_checks();
+                    this.set_changed(cx);
                 }
             })
             .ok();

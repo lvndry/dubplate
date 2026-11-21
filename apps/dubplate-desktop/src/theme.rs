@@ -56,6 +56,8 @@ pub const BAND_HIGH: Rgba = hex(0xECEAE4);
 pub const ON_DECK: Rgba = hex(0x0B0C0E);
 /// Things that are fine, such as a library that loaded.
 pub const OK: Rgba = hex(0x7FD1A4);
+/// Things that need the DJ's attention before the set is ready, such as a missing cue.
+pub const ATTENTION: Rgba = hex(0xF2C46D);
 /// Problems the DJ has to act on.
 pub const ALERT: Rgba = hex(0xF07167);
 /// The track of sliders and the empty part of the effect amount.

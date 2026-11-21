@@ -12,10 +12,12 @@ mod lanes;
 mod library;
 mod library_panel;
 mod mixer;
+mod prepare;
+mod set_panel;
 mod slider;
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -36,7 +38,7 @@ use gpui::{
 
 use crate::browser::{Browser, BrowserEvent, LibraryStatus};
 use crate::collection::{Collection, CollectionTrack};
-use crate::commands::{Command, EffectEdit, JogMotion, Press};
+use crate::commands::{Command, EffectEdit, JogMotion, Mode, Press};
 use crate::controls::{
     CROSSFADER_STEP, Control, MixerPositions, Orientation, Slider, fraction_at, master_gain_at,
     nudged_tempo, tempo_at, tempo_fraction, trim_gain_at,
@@ -53,11 +55,14 @@ use crate::hardware::{
 use crate::library::LibrarySources;
 use crate::loading::{LoadRefusal, LoadSource, check_deck_free, check_file};
 use crate::meter::PeakMeter;
+use crate::prep::{Catalogue, TrackCheck};
+use crate::set::SetEditor;
 use crate::settings::Settings;
 use crate::shortcuts::{Perform, WINDOW_CONTEXT};
 use crate::theme;
 use crate::transport::{self, CueDown, is_at_cue, other_deck};
 use crate::waveform::Zoom;
+use prepare::PrepareFocus;
 
 /// Frames per device buffer: about 5 ms at 48 kHz.
 const BUFFER_FRAMES: u32 = 256;
@@ -149,6 +154,14 @@ pub struct DubplateApp {
     edited_hot_cues: HashMap<String, HotCues>,
     lights_settling: bool,
     effect_focus: EffectUnitId,
+    mode: Mode,
+    set_editor: Option<SetEditor>,
+    set_selection: Option<usize>,
+    prepare_focus: PrepareFocus,
+    track_checks: HashMap<PathBuf, TrackCheck>,
+    checks_pending: HashSet<PathBuf>,
+    check_generation: u64,
+    catalogue: Arc<Catalogue>,
     effect_menu: Option<EffectUnitId>,
     refocus_window: bool,
     effect_search: Entity<InputState>,
@@ -228,6 +241,11 @@ impl DubplateApp {
             }
         };
         keep_lights_moving(cx);
+        let set_editor = Settings::sets_path()
+            .map_err(|error| error.to_string())
+            .and_then(|path| SetEditor::open(&path).map_err(|error| error.to_string()))
+            .map_err(|problem| problems.push(format!("Sets cannot be kept: {problem}")))
+            .ok();
         let sources =
             LibrarySources::new(settings.music_folders.clone(), settings.import_rekordbox);
         let mut app = Self {
@@ -250,6 +268,14 @@ impl DubplateApp {
             edited_hot_cues: HashMap::new(),
             lights_settling: false,
             effect_focus: EffectUnitId::ALL[0],
+            mode: Mode::Perform,
+            set_editor,
+            set_selection: None,
+            prepare_focus: PrepareFocus::Library,
+            track_checks: HashMap::new(),
+            checks_pending: HashSet::new(),
+            check_generation: 0,
+            catalogue: Arc::default(),
             effect_menu: None,
             refocus_window: false,
             effect_search,
@@ -348,6 +374,18 @@ impl DubplateApp {
     /// The one way a track reaches a deck, whatever asked for it: drag and drop, double-click,
     /// the Load buttons or the keys.
     fn load(&mut self, deck: DeckId, source: LoadSource, cx: &mut Context<'_, Self>) {
+        self.load_cued(deck, source, None, cx);
+    }
+
+    /// Loads a track as [`Self::load`] does, then puts the deck at `cue` seconds, stopped, with
+    /// its cue point there.
+    pub(super) fn load_cued(
+        &mut self,
+        deck: DeckId,
+        source: LoadSource,
+        cue: Option<f64>,
+        cx: &mut Context<'_, Self>,
+    ) {
         let (track, generation) = match self.begin_load(deck, source) {
             Ok(started) => started,
             Err(refusal) => {
@@ -367,7 +405,13 @@ impl DubplateApp {
                 )
                 .await;
             this.update(cx, |this, cx| {
-                this.finish_load(deck, generation, prepared, cx)
+                this.finish_load(deck, generation, prepared, cx);
+                if let Some(seconds) = cue
+                    && this.deck(deck).is_current_load(generation)
+                    && this.deck(deck).visuals().is_some()
+                {
+                    this.jump(deck, seconds, cx);
+                }
             })
             .ok();
         })
@@ -487,9 +531,23 @@ impl DubplateApp {
                 let position = self.mixer.crossfader + CROSSFADER_STEP * direction.sign() as f32;
                 self.set_control(Control::Crossfader, position.clamp(0.0, 1.0), cx);
             }
-            Command::MoveSelection(direction) => self
-                .browser
-                .update(cx, |browser, cx| browser.move_selection(direction, cx)),
+            Command::MoveSelection(direction) => {
+                if self.mode == Mode::Prepare && self.prepare_focus == PrepareFocus::Set {
+                    self.move_set_selection(direction);
+                } else {
+                    self.browser
+                        .update(cx, |browser, cx| browser.move_selection(direction, cx));
+                }
+            }
+            Command::SwitchMode(mode) => self.mode = mode,
+            Command::EditSet(edit) => self.edit_set(edit, cx),
+            Command::SwitchPrepareFocus => {
+                self.prepare_focus = match self.prepare_focus {
+                    PrepareFocus::Library => PrepareFocus::Set,
+                    PrepareFocus::Set => PrepareFocus::Library,
+                };
+            }
+            Command::LoadSet => self.load_set(cx),
             Command::Browse(steps) => self
                 .browser
                 .update(cx, |browser, cx| browser.browse(steps, cx)),
@@ -1271,23 +1329,38 @@ impl Render for DubplateApp {
             .font_family(UI_FAMILY)
             .text_size(theme::TEXT_SIZE)
             .child(header::render(self, cx))
-            .child(lanes::render(self, &frames, cx))
-            .child(
-                div()
-                    .flex()
-                    .flex_none()
-                    .border_b_1()
-                    .border_color(theme::LINE)
-                    .child(deck_panel::render(self, DeckId::A, &frames[0], cx))
-                    .child(mixer::render(self, cx))
-                    .child(deck_panel::render(self, DeckId::B, &frames[1], cx)),
-            )
-            .child(effects_strip::render(self, cx))
-            .child(
-                self.browser
-                    .clone()
-                    .cached(StyleRefinement::default().flex_1().min_h_0().w_full()),
-            )
+            .map(|root| match self.mode {
+                Mode::Perform => root
+                    .child(lanes::render(self, &frames, cx))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_none()
+                            .border_b_1()
+                            .border_color(theme::LINE)
+                            .child(deck_panel::render(self, DeckId::A, &frames[0], cx))
+                            .child(mixer::render(self, cx))
+                            .child(deck_panel::render(self, DeckId::B, &frames[1], cx)),
+                    )
+                    .child(effects_strip::render(self, cx))
+                    .child(
+                        self.browser
+                            .clone()
+                            .cached(StyleRefinement::default().flex_1().min_h_0().w_full()),
+                    ),
+                Mode::Prepare => root.child(
+                    div()
+                        .flex()
+                        .flex_1()
+                        .min_h_0()
+                        .child(
+                            self.browser
+                                .clone()
+                                .cached(StyleRefinement::default().flex_1().min_h_0().h_full()),
+                        )
+                        .child(set_panel::render(self, cx)),
+                ),
+            })
             .children(
                 self.notice
                     .as_ref()
