@@ -240,6 +240,7 @@ impl DubplateApp {
                 if this.library_generation == generation {
                     this.catalogue = Arc::new(catalogue);
                     this.show_library(LibraryStatus::Ready(Arc::new(collection)), cx);
+                    this.forget_track_checks();
                     this.set_changed(cx);
                 }
             })

@@ -585,10 +585,18 @@ fn shift_entry_positions(
         usize::MAX => i64::MAX,
         bounded => i64::try_from(bounded).unwrap_or(i64::MAX),
     };
+    // SQLite checks a unique index row by row during an UPDATE, so shifting in place collides
+    // with the neighbour not yet moved. The rows go to negative positions first, where no
+    // entry sits, then back.
     transaction.execute(
-        "UPDATE set_entry SET position = position + ?5
+        "UPDATE set_entry SET position = -(position + ?5) - 1
          WHERE set_id = ?1 AND is_backup = ?2 AND position >= ?3 AND position < ?4",
         (set.as_i64(), list.is_backup(), start as i64, end, delta),
+    )?;
+    transaction.execute(
+        "UPDATE set_entry SET position = -position - 1
+         WHERE set_id = ?1 AND is_backup = ?2 AND position < 0",
+        (set.as_i64(), list.is_backup()),
     )?;
     Ok(())
 }

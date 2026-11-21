@@ -315,7 +315,11 @@ mod tests {
         let mut editor = editor(&directory);
         assert_eq!(editor.add(track("a")).unwrap(), 0);
         assert_eq!(editor.add(track("c")).unwrap(), 1);
-        assert_eq!(editor.add(track("a")).unwrap(), 0, "a track is in a set once");
+        assert_eq!(
+            editor.add(track("a")).unwrap(),
+            0,
+            "a track is in a set once"
+        );
         assert_eq!(editor.insert_after(Some(0), track("b")).unwrap(), 1);
         assert_eq!(names(&editor), ["a", "b", "c"]);
         assert_eq!(editor.insert_after(Some(2), track("a")).unwrap(), 2);

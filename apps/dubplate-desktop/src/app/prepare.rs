@@ -210,6 +210,14 @@ impl DubplateApp {
         }
     }
 
+    /// Drops what was found about the set tracks, to look again in a new collection. Checks
+    /// still running for the old one are ignored when they come back.
+    pub(super) fn forget_track_checks(&mut self) {
+        self.track_checks.clear();
+        self.checks_pending.clear();
+        self.check_generation += 1;
+    }
+
     /// After every change: mark the set's tracks in the library and check the new ones.
     pub(super) fn set_changed(&mut self, cx: &mut Context<'_, Self>) {
         let in_set: HashSet<TrackIndex> = match (self.collection(), &self.set_editor) {
@@ -221,8 +229,9 @@ impl DubplateApp {
             _ => HashSet::new(),
         };
         let in_set = Arc::new(in_set);
-        self.browser
-            .update(cx, |browser, cx| browser.set_marked(Arc::clone(&in_set), cx));
+        self.browser.update(cx, |browser, cx| {
+            browser.set_marked(Arc::clone(&in_set), cx)
+        });
         self.check_set_tracks(cx);
         cx.notify();
     }
@@ -247,6 +256,7 @@ impl DubplateApp {
             return;
         }
         self.checks_pending.extend(unchecked.iter().cloned());
+        let generation = self.check_generation;
         cx.spawn(async move |this, cx| {
             let checks = cx
                 .background_executor()
@@ -267,6 +277,9 @@ impl DubplateApp {
                 })
                 .await;
             this.update(cx, |this, cx| {
+                if this.check_generation != generation {
+                    return;
+                }
                 for (path, check) in checks {
                     this.checks_pending.remove(&path);
                     this.track_checks.insert(path, check);
