@@ -221,10 +221,7 @@ fn cue_from_row(row: &Row<'_>) -> rusqlite::Result<Cue> {
     Ok(Cue {
         id: row.get(0)?,
         track_id: row.get(1)?,
-        kind: match u32::try_from(kind) {
-            Ok(number) if number > 0 => CueKind::Hot { number },
-            _ => CueKind::Memory,
-        },
+        kind: CueKind::from_rekordbox_kind(kind),
         start_ms: start
             .and_then(|value| u32::try_from(value).ok())
             .unwrap_or(0),
