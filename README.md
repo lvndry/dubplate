@@ -44,11 +44,24 @@ cargo run --release -p dubplate-engine --example play -- <file-a> [file-b] [--bu
 
 It prints the buffer size, the output latency and the dropout counters every second. In a terminal, space plays or pauses the selected deck, tab selects the other deck, c is the cue button, up and down change the tempo, left and right move the crossfader, x throws the crossfader to the other side and q quits.
 
+## Check your controller
+
+Dubplate maps the Pioneer DDJ-FLX4. Plug it in, then:
+
+```
+cargo run -p dubplate -- midi devices
+cargo run -p dubplate -- midi monitor
+cargo run -p dubplate -- midi monitor --device "DDJ-FLX4" --lights
+```
+
+`monitor` prints every message with the time, the bytes and what Dubplate reads from it, such as `B0 22 41  deck A jog turn +1 (scratch)`, until Ctrl-C. `--lights` lights each button while it is held.
+
 ## Layout
 
 - `crates/dubplate-rekordbox`: reads the rekordbox library and, in `src/analysis`, the per-track analysis files. `schema/rekordbox-7.2.19.sql` holds the tables of rekordbox 7.2.19, with no data, and the tests build an encrypted library from it.
 - `crates/dubplate-engine`: the audio engine. Decks, mixer and crossfader run on a real-time audio thread that never allocates, locks or waits; tracks decode on their own threads; the control side talks to it through lock-free queues. Effects plug into insert slots through the `AudioProcessor` trait.
 - `crates/dubplate-fx`: the DJ effects (echo, ping-pong, reverb, filters, the one-knob sweep filter, flanger, phaser, trance gate, bit crusher, brake and backspin). They run on the audio thread without allocating, follow the tempo and beat grid, never click when a knob moves, and let echo and reverb trails ring out.
+- `crates/dubplate-midi`: MIDI controllers. DJ actions that do not depend on the controller, controller mappings as TOML in `mappings/` (the DDJ-FLX4 first), decoding on the MIDI thread without allocating, and the messages that light the controller.
 - `apps/dubplate-cli`: the `dubplate` command.
 
 ## Hear the effects
