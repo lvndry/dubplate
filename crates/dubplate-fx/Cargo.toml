@@ -7,7 +7,13 @@ license.workspace = true
 repository.workspace = true
 
 [dev-dependencies]
+dubplate-engine = { path = "../dubplate-engine" }
 hound = "3.5.1"
+tempfile = "3.27.0"
+
+[[example]]
+name = "render"
+test = true
 
 [lints]
 workspace = true

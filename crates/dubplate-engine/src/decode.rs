@@ -67,7 +67,12 @@ impl DecodeSession {
                 FormatOptions::default(),
                 MetadataOptions::default(),
             )
-            .map_err(|error| decode_error(error.to_string()))?;
+            .map_err(|error| match error {
+                SymphoniaError::Unsupported(_) => {
+                    decode_error("the file is not in an audio format Dubplate reads".to_owned())
+                }
+                other => decode_error(other.to_string()),
+            })?;
         let audio_track = format
             .default_track(TrackType::Audio)
             .ok_or_else(|| decode_error("the file has no audio track".to_owned()))?;

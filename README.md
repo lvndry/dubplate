@@ -53,15 +53,14 @@ It prints the buffer size, the output latency and the dropout counters every sec
 
 ## Hear the effects
 
-Render any WAV file through one effect:
+Render one of your tracks through one effect. It reads every format Dubplate plays (MP3, M4A with AAC or ALAC, FLAC, WAV, AIFF and Ogg) and writes a WAV file at the track's own sample rate:
 
 ```
-cargo run --release -p dubplate-fx --example render -- input.wav echo output.wav --bpm 124
-cargo run --release -p dubplate-fx --example render -- input.wav sweep output.wav --depth 0 --depth-to 1
-cargo run --release -p dubplate-fx --example render -- input.wav reverb output.wav --on 8 --off 16
+cargo run --release -p dubplate-fx --example render -- "$HOME/Music/Afro House/Artist - Title (Extended Mix).m4a" echo echo.wav --bpm 124 --beat 1/2 --on 32 --off 40
+cargo run --release -p dubplate-fx --example render -- "$HOME/Music/Afro House/Artist - Title (Extended Mix).m4a" sweep sweep.wav --depth 0 --depth-to 1
 ```
 
-`--on` and `--off` switch the effect at those seconds, `--depth` turns the performance knob and `--beat` sets a beat length such as `1/2` or `4`. Run it with no arguments to list the effects.
+`--on` and `--off` are seconds into the track: the effect switches on and off there, and echo, ping-pong and reverb ring out after `--off`. `--bpm` is the track's tempo, `--depth` turns the performance knob and `--beat` sets a beat length such as `1/2` or `4`. Put quotes around a path with spaces. Run it with `--help` to list the effects and every option.
 
 ## Development
 
