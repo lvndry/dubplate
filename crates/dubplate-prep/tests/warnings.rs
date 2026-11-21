@@ -1,7 +1,7 @@
 //! Set warnings: what the set does not like, on its seams and its tracks.
 
 use dubplate_prep::{
-    Key, PrepTrack, SetEntry, SetWarning, WarningKind, WarningPosition, set_warnings,
+    Key, PrepTrack, SetTrack, SetWarning, WarningKind, WarningPosition, set_warnings,
 };
 
 fn track(rekordbox_id: &str, title: &str, artist: &str, key: Option<&str>) -> PrepTrack {
@@ -26,8 +26,8 @@ fn track_with_facts(
     }
 }
 
-fn entry(track: &PrepTrack) -> SetEntry<'_> {
-    SetEntry {
+fn entry(track: &PrepTrack) -> SetTrack<'_> {
+    SetTrack {
         track,
         vocals_at_start: false,
         vocals_at_end: false,
@@ -35,8 +35,8 @@ fn entry(track: &PrepTrack) -> SetEntry<'_> {
     }
 }
 
-fn entry_with_flags(track: &PrepTrack, vocals_at_start: bool, vocals_at_end: bool) -> SetEntry<'_> {
-    SetEntry {
+fn entry_with_flags(track: &PrepTrack, vocals_at_start: bool, vocals_at_end: bool) -> SetTrack<'_> {
+    SetTrack {
         track,
         vocals_at_start,
         vocals_at_end,
@@ -44,8 +44,8 @@ fn entry_with_flags(track: &PrepTrack, vocals_at_start: bool, vocals_at_end: boo
     }
 }
 
-fn free_entry(track: &PrepTrack) -> SetEntry<'_> {
-    SetEntry {
+fn free_entry(track: &PrepTrack) -> SetTrack<'_> {
+    SetTrack {
         track,
         vocals_at_start: false,
         vocals_at_end: false,

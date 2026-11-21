@@ -16,4 +16,4 @@ pub use euphoria_core::key::Key;
 pub use ready::{ReadyProblem, ReadyReport, Severity, TrackReadiness, ready_report};
 pub use suggestion::{Suggestion, suggest_next};
 pub use track::PrepTrack;
-pub use warnings::{SetEntry, SetWarning, WarningKind, WarningPosition, set_warnings};
+pub use warnings::{SetTrack, SetWarning, WarningKind, WarningPosition, set_warnings};

@@ -4,7 +4,7 @@ use crate::track::PrepTrack;
 
 /// One track in a DJ's ordered set, with the facts the seam warnings read.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct SetEntry<'set> {
+pub struct SetTrack<'set> {
     /// The track.
     pub track: &'set PrepTrack,
     /// The DJ tagged vocals coming in at the start of the track.
@@ -107,7 +107,7 @@ pub struct SetWarning {
 /// duplicates and similar versions. A seam the DJ marked Free never warns, and a
 /// track that is a duplicate is not also reported as a similar version. Fewer
 /// than two entries gives no seam warnings.
-pub fn set_warnings(entries: &[SetEntry<'_>]) -> Vec<SetWarning> {
+pub fn set_warnings(entries: &[SetTrack<'_>]) -> Vec<SetWarning> {
     let mut warnings = Vec::new();
     for outgoing_index in 0..entries.len().saturating_sub(1) {
         let outgoing = &entries[outgoing_index];
@@ -176,14 +176,14 @@ pub fn set_warnings(entries: &[SetEntry<'_>]) -> Vec<SetWarning> {
 }
 
 /// The earliest earlier entry with the same rekordbox id, if any.
-fn duplicate_position(entries: &[SetEntry<'_>], later_index: usize) -> Option<usize> {
+fn duplicate_position(entries: &[SetTrack<'_>], later_index: usize) -> Option<usize> {
     (0..later_index).find(|earlier_index| {
         entries[*earlier_index].track.rekordbox_id == entries[later_index].track.rekordbox_id
     })
 }
 
 /// The earliest earlier entry that is another version of this track, if any.
-fn similar_version_position(entries: &[SetEntry<'_>], later_index: usize) -> Option<usize> {
+fn similar_version_position(entries: &[SetTrack<'_>], later_index: usize) -> Option<usize> {
     (0..later_index).find(|earlier_index| {
         is_similar_version(entries[*earlier_index].track, entries[later_index].track)
     })
