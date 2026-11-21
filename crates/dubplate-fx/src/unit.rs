@@ -123,6 +123,10 @@ impl<K: Kernel> Unit<K> {
         !self.idle
     }
 
+    pub(crate) fn needs_input_when_off(&self) -> bool {
+        K::LISTENS_WHEN_OFF
+    }
+
     pub(crate) fn reset(&mut self) {
         self.kernel.reset();
         self.headroom.reset();
@@ -255,6 +259,10 @@ macro_rules! implement_effect {
 
             fn is_active(&self) -> bool {
                 self.unit.is_active()
+            }
+
+            fn needs_input_when_off(&self) -> bool {
+                self.unit.needs_input_when_off()
             }
 
             fn set_mix(&mut self, mix: f32) {
