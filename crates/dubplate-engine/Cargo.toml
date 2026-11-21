@@ -8,6 +8,7 @@ repository.workspace = true
 
 [dependencies]
 cpal = "0.18.2"
+dubplate-fx = { version = "0.1.0", path = "../dubplate-fx" }
 rtrb = "0.4.1"
 symphonia = { version = "0.6.1", features = ["aac", "alac", "flac", "mp3", "pcm", "isomp4", "aiff", "wav", "id3v2"] }
 thiserror = "2.0.21"

@@ -1,12 +1,18 @@
 //! Plays one or two tracks on the default sound card and prints latency and dropouts.
 //!
 //! ```text
-//! cargo run --release -p dubplate-engine --example play -- <file-a> [file-b] [--buffer FRAMES] [--seconds N] [--volume DB]
+//! cargo run --release -p dubplate-engine --example play -- <file-a> [file-b] [--bpm BPM]... [--buffer FRAMES] [--seconds N] [--volume DB]
 //! ```
+//!
+//! `--bpm` gives a track's tempo so effects follow its beat: the first one is deck A's, the
+//! second deck B's.
 //!
 //! In a terminal: space plays or pauses the selected deck, tab selects the other deck, c is
 //! the cue button, up and down change the tempo by 1%, left and right move the crossfader,
-//! x throws the crossfader to the other side, and q quits.
+//! x throws the crossfader to the other side, and q quits. For the effects: 1, 2 and 3 switch
+//! effect units 1 to 3 on and off, e selects the next effect on unit 1, t moves unit 1 to the
+//! next target (deck A, deck B, master), [ and ] shorten and lengthen its beat, and - and =
+//! turn its depth down and up.
 
 use std::io::{IsTerminal, Write};
 use std::path::PathBuf;
@@ -14,12 +20,18 @@ use std::time::{Duration, Instant};
 
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use dubplate_engine::{
-    AudioOutput, Controller, DeckId, DecodeStatus, EngineStats, OutputConfig, Track,
-    decibels_to_gain, gain_to_decibels,
+    AudioOutput, BeatGrid, Controller, DeckId, DecodeStatus, EffectKind, EffectTarget,
+    EffectUnitId, EngineError, EngineStats, OutputConfig, Track, decibels_to_gain,
+    gain_to_decibels,
 };
+
+const USAGE: &str =
+    "usage: play <file-a> [file-b] [--bpm BPM]... [--buffer FRAMES] [--seconds N] [--volume DB]";
+const DEPTH_STEP: f32 = 0.1;
 
 struct Options {
     files: Vec<PathBuf>,
+    bpms: Vec<f64>,
     buffer_frames: Option<u32>,
     seconds: Option<f64>,
     volume_db: f32,
@@ -28,6 +40,7 @@ struct Options {
 fn parse_options() -> Result<Options, String> {
     let mut options = Options {
         files: Vec::new(),
+        bpms: Vec::new(),
         buffer_frames: None,
         seconds: None,
         volume_db: 0.0,
@@ -47,17 +60,19 @@ fn parse_options() -> Result<Options, String> {
             "--seconds" => {
                 options.seconds = Some(value("--seconds")?.parse().map_err(|_| "bad --seconds")?);
             }
+            "--bpm" => {
+                options
+                    .bpms
+                    .push(value("--bpm")?.parse().map_err(|_| "bad --bpm")?);
+            }
             "--volume" => {
                 options.volume_db = value("--volume")?.parse().map_err(|_| "bad --volume")?;
             }
             _ => options.files.push(PathBuf::from(argument)),
         }
     }
-    if options.files.is_empty() || options.files.len() > 2 {
-        return Err(
-            "usage: play <file-a> [file-b] [--buffer FRAMES] [--seconds N] [--volume DB]"
-                .to_owned(),
-        );
+    if options.files.is_empty() || options.files.len() > 2 || options.bpms.len() > 2 {
+        return Err(USAGE.to_owned());
     }
     Ok(options)
 }
@@ -85,6 +100,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
         tracks.push(track);
     }
+    for (deck, bpm) in DeckId::ALL.into_iter().zip(&options.bpms) {
+        controller.set_beat_grid(deck, Some(BeatGrid::new(*bpm, 0.0)?))?;
+    }
     for track in &tracks {
         wait_for_first_seconds(track);
     }
@@ -97,7 +115,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let interactive = options.seconds.is_none() && std::io::stdin().is_terminal();
     if interactive {
         println!(
-            "space play/pause, tab switch deck, c cue, up/down tempo, left/right crossfader, x throw crossfader, q quit"
+            "space play/pause, tab switch deck, c cue, up/down tempo, left/right crossfader, x throw crossfader, q quit\r\n\
+             1/2/3 effect units on/off, e next effect, t next target, [/] beat, -/= depth (unit 1)"
         );
         crossterm::terminal::enable_raw_mode()?;
         let result = run_interactive(&mut controller, tracks.len());
@@ -173,6 +192,7 @@ fn run_interactive(controller: &mut Controller, deck_count: usize) -> std::io::R
                     };
                     controller.set_crossfader(crossfader)
                 }
+                KeyCode::Char(key) => control_effects(controller, key),
                 _ => Ok(()),
             };
             if let Err(error) = result {
@@ -185,6 +205,33 @@ fn run_interactive(controller: &mut Controller, deck_count: usize) -> std::io::R
             next_print += Duration::from_secs(1);
         }
     }
+}
+
+/// Plays the effect keys: 1 to 3 switch units on and off, the others turn unit 1.
+fn control_effects(controller: &mut Controller, key: char) -> Result<(), EngineError> {
+    if let Some(digit) = key.to_digit(10)
+        && let Some(index) = (digit as usize).checked_sub(1)
+        && let Ok(unit) = EffectUnitId::new(index)
+    {
+        return controller.toggle_effect(unit);
+    }
+    let unit = EffectUnitId::ALL[0];
+    let state = controller.effect_unit(unit);
+    match key {
+        'e' => controller.set_effect_kind(unit, next(&EffectKind::ALL, state.kind)),
+        't' => controller.set_effect_target(unit, next(&EffectTarget::ALL, state.target)),
+        '[' => controller.set_effect_beat(unit, state.beat.shorter()),
+        ']' => controller.set_effect_beat(unit, state.beat.longer()),
+        '-' => controller.set_effect_depth(unit, (state.depth - DEPTH_STEP).max(0.0)),
+        '=' => controller.set_effect_depth(unit, (state.depth + DEPTH_STEP).min(1.0)),
+        _ => Ok(()),
+    }
+}
+
+/// The item after `current` in `items`, wrapping around to the first.
+fn next<T: Copy + PartialEq>(items: &[T], current: T) -> T {
+    let index = items.iter().position(|item| *item == current).unwrap_or(0);
+    items[(index + 1) % items.len()]
 }
 
 fn status_line(controller: &Controller, selected: Option<DeckId>) -> String {
@@ -204,10 +251,28 @@ fn status_line(controller: &Controller, selected: Option<DeckId>) -> String {
             )
         })
         .collect();
+    let effects: Vec<String> = EffectUnitId::ALL
+        .into_iter()
+        .map(|unit| {
+            let state = controller.effect_unit(unit);
+            let target = match state.target {
+                EffectTarget::Deck(deck) => format!("{deck:?}"),
+                EffectTarget::Master => "master".to_owned(),
+            };
+            format!(
+                "{unit} {} {} {target} {:.0}% {}",
+                state.kind,
+                state.beat,
+                state.depth * 100.0,
+                if state.enabled { "on" } else { "off" }
+            )
+        })
+        .collect();
     let stats = controller.stats();
     format!(
-        "{} | master {:.1} dB | {}",
+        "{} | {} | master {:.1} dB | {}",
         decks.join(" | "),
+        effects.join(", "),
         gain_to_decibels(meters.master_peak),
         summary(&stats)
     )
