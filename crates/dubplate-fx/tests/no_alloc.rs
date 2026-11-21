@@ -1,9 +1,11 @@
 //! Proves that processing audio and turning every control never touches the heap.
 //!
-//! This binary holds a single test so no other test thread can allocate while it counts.
+//! Counting is armed per thread, so allocations by the test harness or other threads are not
+//! counted.
 
 use std::alloc::{GlobalAlloc, Layout, System};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::cell::Cell;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use dubplate_fx::{
     BeatLength, Echo, Effect, EffectConfig, EffectKind, Filter, FilterMode, FilterSlope,
@@ -12,14 +14,17 @@ use dubplate_fx::{
 
 struct CountingAllocator;
 
-static COUNTING: AtomicBool = AtomicBool::new(false);
+thread_local! {
+    static COUNTING: Cell<bool> = const { Cell::new(false) };
+}
+
 static ALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
 
 // SAFETY: every call is forwarded unchanged to the system allocator; the counter only reads
-// and bumps atomics, which never allocate.
+// a thread local and bumps an atomic, which never allocate.
 unsafe impl GlobalAlloc for CountingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        if COUNTING.load(Ordering::Relaxed) {
+        if COUNTING.try_with(Cell::get).unwrap_or(false) {
             ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
         }
         // SAFETY: the caller upholds the contract of `GlobalAlloc::alloc`.
@@ -27,7 +32,7 @@ unsafe impl GlobalAlloc for CountingAllocator {
     }
 
     unsafe fn dealloc(&self, pointer: *mut u8, layout: Layout) {
-        if COUNTING.load(Ordering::Relaxed) {
+        if COUNTING.try_with(Cell::get).unwrap_or(false) {
             ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
         }
         // SAFETY: the caller upholds the contract of `GlobalAlloc::dealloc`.
@@ -35,7 +40,7 @@ unsafe impl GlobalAlloc for CountingAllocator {
     }
 
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-        if COUNTING.load(Ordering::Relaxed) {
+        if COUNTING.try_with(Cell::get).unwrap_or(false) {
             ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
         }
         // SAFETY: the caller upholds the contract of `GlobalAlloc::alloc_zeroed`.
@@ -43,7 +48,7 @@ unsafe impl GlobalAlloc for CountingAllocator {
     }
 
     unsafe fn realloc(&self, pointer: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        if COUNTING.load(Ordering::Relaxed) {
+        if COUNTING.try_with(Cell::get).unwrap_or(false) {
             ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
         }
         // SAFETY: the caller upholds the contract of `GlobalAlloc::realloc`.
@@ -72,7 +77,7 @@ fn processing_and_turning_every_control_never_allocates() {
     let mut right = vec![0.0_f32; BLOCK_FRAMES];
     let blocks = 400;
 
-    COUNTING.store(true, Ordering::SeqCst);
+    COUNTING.with(|flag| flag.set(true));
     let mut beat_position = 0.0;
     for block_index in 0..blocks {
         let tempo = if block_index < blocks / 2 {
@@ -130,7 +135,7 @@ fn processing_and_turning_every_control_never_allocates() {
             }
         }
     }
-    COUNTING.store(false, Ordering::SeqCst);
+    COUNTING.with(|flag| flag.set(false));
 
     assert_eq!(
         ALLOCATIONS.load(Ordering::SeqCst),

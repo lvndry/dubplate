@@ -1,5 +1,6 @@
-//! Proves the audio callback never allocates or frees memory, with a global allocator that
-//! counts every allocation made on the rendering thread while it is armed.
+//! Proves the audio callback never allocates or frees memory, with a counting allocator that
+//! is armed on the thread running the measured code, so allocations by the test harness or
+//! other threads are not counted.
 
 mod common;
 
@@ -21,18 +22,18 @@ static ALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
 static DEALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
 
 thread_local! {
-    static ARMED: Cell<bool> = const { Cell::new(false) };
+    static COUNTING: Cell<bool> = const { Cell::new(false) };
 }
 
-fn armed() -> bool {
-    ARMED.try_with(Cell::get).unwrap_or(false)
+fn counting() -> bool {
+    COUNTING.try_with(Cell::get).unwrap_or(false)
 }
 
 // SAFETY: every method forwards to the system allocator unchanged; counting has no effect on
 // the memory returned.
 unsafe impl GlobalAlloc for CountingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        if armed() {
+        if counting() {
             ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
         }
         // SAFETY: the caller upholds `GlobalAlloc::alloc`'s contract, which `System` shares.
@@ -40,7 +41,7 @@ unsafe impl GlobalAlloc for CountingAllocator {
     }
 
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-        if armed() {
+        if counting() {
             ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
         }
         // SAFETY: the caller upholds `GlobalAlloc::alloc_zeroed`'s contract.
@@ -48,7 +49,7 @@ unsafe impl GlobalAlloc for CountingAllocator {
     }
 
     unsafe fn realloc(&self, pointer: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        if armed() {
+        if counting() {
             ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
         }
         // SAFETY: the caller upholds `GlobalAlloc::realloc`'s contract.
@@ -56,7 +57,7 @@ unsafe impl GlobalAlloc for CountingAllocator {
     }
 
     unsafe fn dealloc(&self, pointer: *mut u8, layout: Layout) {
-        if armed() {
+        if counting() {
             DEALLOCATIONS.fetch_add(1, Ordering::Relaxed);
         }
         // SAFETY: the caller upholds `GlobalAlloc::dealloc`'s contract.
@@ -71,9 +72,9 @@ static GLOBAL: CountingAllocator = CountingAllocator;
 fn count_allocations(body: impl FnOnce()) -> (usize, usize) {
     let allocations_before = ALLOCATIONS.load(Ordering::Relaxed);
     let deallocations_before = DEALLOCATIONS.load(Ordering::Relaxed);
-    ARMED.with(|flag| flag.set(true));
+    COUNTING.with(|flag| flag.set(true));
     body();
-    ARMED.with(|flag| flag.set(false));
+    COUNTING.with(|flag| flag.set(false));
     (
         ALLOCATIONS.load(Ordering::Relaxed) - allocations_before,
         DEALLOCATIONS.load(Ordering::Relaxed) - deallocations_before,
