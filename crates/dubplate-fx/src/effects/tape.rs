@@ -127,7 +127,8 @@ impl TrailLevel {
     ) -> TrailGains {
         TrailGains {
             feedback: feedback * self.governor.next(input_magnitude, trail_magnitude),
-            // It uses the knob's feedback, not the governed one, because the buildup to compensate depends on the intended loop gain.
+            // The knob's feedback, not the governed one: the buildup to compensate depends on the
+            // intended loop gain.
             output: TRAIL_LEVEL * loop_loudness_gain(feedback * LOUDNESS_KEPT_PER_PASS),
         }
     }
