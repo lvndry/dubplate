@@ -3,19 +3,8 @@
 use dubplate_engine::DECK_COUNT;
 use dubplate_midi::{Button, Deck, Feedback, Layer, Mapping, PadIndex, PadMode, U7};
 
-/// Pads on one deck of the controller.
-pub const PAD_COUNT: usize = 8;
+use crate::pads::{PAD_COUNT, PAD_MODES};
 
-const PAD_MODES: [PadMode; 8] = [
-    PadMode::HotCue,
-    PadMode::PadFx1,
-    PadMode::BeatJump,
-    PadMode::Sampler,
-    PadMode::Keyboard,
-    PadMode::PadFx2,
-    PadMode::BeatLoop,
-    PadMode::KeyShift,
-];
 const LAYERS: [Layer; 2] = [Layer::Normal, Layer::Shift];
 const DECKS: [Deck; DECK_COUNT] = [Deck::A, Deck::B];
 
@@ -32,6 +21,12 @@ pub struct DeckLights {
     pub pads: [bool; PAD_COUNT],
     /// The channel level meter.
     pub level: U7,
+    /// LOOP IN.
+    pub loop_in: bool,
+    /// LOOP OUT.
+    pub loop_out: bool,
+    /// 4 BEAT/EXIT.
+    pub four_beat: bool,
 }
 
 impl Default for DeckLights {
@@ -42,6 +37,9 @@ impl Default for DeckLights {
             pad_mode: PadMode::HotCue,
             pads: [false; PAD_COUNT],
             level: U7::MIN,
+            loop_in: false,
+            loop_out: false,
+            four_beat: false,
         }
     }
 }
@@ -68,13 +66,10 @@ impl Lights {
             };
             light(Button::Play(deck), lights.play);
             light(Button::Cue(deck), lights.cue);
-            for unlit in [
-                Button::Sync(deck),
-                Button::LoopIn(deck),
-                Button::LoopOut(deck),
-                Button::FourBeatExit(deck),
-                Button::HeadphoneCue(deck),
-            ] {
+            light(Button::LoopIn(deck), lights.loop_in);
+            light(Button::LoopOut(deck), lights.loop_out);
+            light(Button::FourBeatExit(deck), lights.four_beat);
+            for unlit in [Button::Sync(deck), Button::HeadphoneCue(deck)] {
                 light(unlit, false);
             }
             for mode in PAD_MODES {
