@@ -30,11 +30,11 @@ pub struct ProposedCues {
     pub mix_out: Option<ProposedCue>,
 }
 
-/// The number of beats between bars.
+/// Beats in one bar.
 const BEATS_PER_BAR: u32 = 4;
 
-/// The handover in beats: 32 bars before the end when the structure has no
-/// Outro, and the whole fallback for a track with no structure.
+/// How far before the end the handover starts, 32 bars, when there is no Outro
+/// phrase to hand over on.
 const HANDOVER_BEATS_BEFORE_END: u32 = BEATS_PER_BAR * 32;
 
 /// Proposes where to mix a track in and out from its beat grid and, when
