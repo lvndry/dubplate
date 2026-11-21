@@ -5,6 +5,7 @@ members = [
   "crates/dubplate-engine",
   "crates/dubplate-fx",
   "apps/dubplate-cli",
+  "apps/dubplate-desktop",
 ]
 
 [workspace.package]
