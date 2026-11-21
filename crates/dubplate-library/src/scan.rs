@@ -114,12 +114,19 @@ pub fn scan_folder(
     while let Some(directory) = pending.pop() {
         let canonical = match directory.canonicalize() {
             Ok(canonical) => canonical,
+            Err(source) if first => {
+                return Err(ScanError::Unreadable {
+                    path: directory,
+                    source,
+                });
+            }
             Err(error) => {
                 problems.push(problem(&directory, &error));
+                keep_known_tracks_under(&directory, &known, &mut seen_files, &mut tracks);
                 continue;
             }
         };
-        if !seen_folders.insert(canonical) {
+        if !seen_folders.insert(canonical.clone()) {
             continue;
         }
         let entries = match std::fs::read_dir(&directory) {
@@ -132,6 +139,7 @@ pub fn scan_folder(
             }
             Err(error) => {
                 problems.push(problem(&directory, &error));
+                keep_known_tracks_under(&canonical, &known, &mut seen_files, &mut tracks);
                 continue;
             }
         };
@@ -175,6 +183,21 @@ pub fn scan_folder(
     })
 }
 
+/// Keeps what the last scan found under a folder that cannot be read this time, so a busy disk
+/// or a folder without permission never drops its tracks from the library.
+fn keep_known_tracks_under(
+    folder: &Path,
+    known: &HashMap<&Path, &LibraryTrack>,
+    seen_files: &mut HashSet<PathBuf>,
+    tracks: &mut Vec<LibraryTrack>,
+) {
+    for (path, track) in known {
+        if path.starts_with(folder) && seen_files.insert(path.to_path_buf()) {
+            tracks.push((*track).clone());
+        }
+    }
+}
+
 /// The artists of a track as one line: every artist value, and every artist inside a value
 /// some taggers separate with `;`, joined with commas as rekordbox shows them.
 fn artists<'tag>(values: impl Iterator<Item = &'tag str>) -> Option<String> {
@@ -209,6 +232,9 @@ fn milliseconds_since_epoch(time: SystemTime) -> u64 {
 fn read_track(path: &Path, known: &HashMap<&Path, &LibraryTrack>) -> Result<LibraryTrack, String> {
     let path = path.canonicalize().map_err(|error| error.to_string())?;
     let metadata = std::fs::metadata(&path).map_err(|error| error.to_string())?;
+    if !metadata.is_file() {
+        return Err("not a regular file".to_owned());
+    }
     let size = metadata.len();
     let modified_ms = metadata
         .modified()
@@ -333,6 +359,47 @@ mod tests {
         assert!((duration - 0.1).abs() < 0.01, "{duration}");
         assert_eq!(found.tracks[1].title, None);
         assert!(found.problems.is_empty(), "{:?}", found.problems);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_unreadable_subfolder_keeps_the_tracks_the_last_scan_found_there() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        write_wav(&root.path().join("Top.wav"));
+        let locked = root.path().join("Locked");
+        write_wav(&locked.join("Inside.wav"));
+        let first = scan(root.path(), None);
+        assert_eq!(names(&first), ["Inside.wav", "Top.wav"]);
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let second = scan(root.path(), Some(&first));
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(names(&second), ["Inside.wav", "Top.wav"]);
+        assert_eq!(second.problems.len(), 1, "{:?}", second.problems);
+    }
+
+    #[test]
+    fn a_folder_that_disappears_is_an_error_not_an_empty_scan() {
+        let root = tempfile::tempdir().unwrap();
+        let gone = root.path().join("Unplugged");
+        let result = scan_folder(&gone, None, &AtomicUsize::new(0));
+        assert!(result.is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_pipe_named_like_audio_is_skipped_without_blocking() {
+        let root = tempfile::tempdir().unwrap();
+        let pipe = root.path().join("loop.mp3");
+        let status = std::process::Command::new("mkfifo")
+            .arg(&pipe)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        write_wav(&root.path().join("Real.wav"));
+        let found = scan(root.path(), None);
+        assert_eq!(names(&found), ["Real.wav"]);
+        assert_eq!(found.problems.len(), 1, "{:?}", found.problems);
     }
 
     #[test]
