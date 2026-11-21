@@ -34,6 +34,34 @@ cargo run -p dubplate -- rekordbox analysis <track id> --json > analysis.json
 
 `analysis` takes a track's rekordbox ID or its exact title.
 
+## Run the desktop app
+
+The desktop app opens on your rekordbox collection with two decks, a mixer and the browser. It reads the same key as the command line tool (see "Try it" above) and a copy of rekordbox's `master.db`, so rekordbox can stay open.
+
+```
+cargo run --release -p dubplate-desktop
+```
+
+On macOS, `cargo run` starts it from a `Dubplate.app` next to the binary (see `.cargo/config.toml`), so the menu bar and the Dock show Dubplate and the One groove icon. To build a release `Dubplate.app` to keep:
+
+```
+./scripts/bundle-macos.sh && open target/release/Dubplate.app
+```
+
+Pick a crate on the left, type in the search field to find a track by title or artist, then drag it onto a deck, double-click it, click A or B at the end of its row, or press ⇧← or ⇧→ to load it on deck A or B. Audio files dragged from Finder (MP3, M4A, AAC, FLAC, WAV, AIFF, Ogg) load too, without beat grid or cues. The decks show rekordbox's 3-band waveforms, beat grid and hot cues. The first build takes a few minutes.
+
+| Keys | Deck A | Deck B |
+| --- | --- | --- |
+| Play or pause | Space | ⇧ Space |
+| Cue | C | ⇧ C |
+| Hot cues A to H | 1 to 8 | ⇧ 1 to ⇧ 8 |
+| Tempo down / up 0.1% | - / = | ⇧ - / ⇧ = |
+| Load the selected track | ⇧ ← | ⇧ → |
+
+← and → move the crossfader, ↑ and ↓ select tracks, / or ⌘F searches, Enter goes from the search field back to the tracks, Esc closes the help and ? shows every key. Drag a fader or the crossfader with the mouse, double-click a slider to put it back to its rest position, and click a deck's overview waveform to jump there. With Lock playing deck on (the button in the header, on by default), a deck that is playing keeps its track until it is paused, as on CDJs.
+
+Set `DUBPLATE_FRAME_STATS=1` to print the frame rate and how long each frame took to draw, once a second.
+
 ## Play tracks
 
 The audio engine plays tracks on two decks with a crossfader. To hear it:
@@ -79,6 +107,7 @@ cargo run --release -p dubplate-engine --example play -- <file-a> <file-b> --bpm
 - `crates/dubplate-fx`: the DJ effects (echo, ping-pong, reverb, filters, the one-knob sweep filter, flanger, phaser, trance gate, bit crusher, brake and backspin). They run on the audio thread without allocating, follow the tempo and beat grid, never click when a knob moves, let echo and reverb trails ring out, and keep those trails under full scale on a full-level track.
 - `crates/dubplate-midi`: MIDI controllers. DJ actions that do not depend on the controller, controller mappings as TOML in `mappings/` (the DDJ-FLX4 first), decoding on the MIDI thread without allocating, and the messages that light the controller.
 - `apps/dubplate-cli`: the `dubplate` command.
+- `apps/dubplate-desktop`: the desktop app, built with GPUI. Its fonts are Inter and Geist Mono, both under the SIL Open Font License (`apps/dubplate-desktop/assets/fonts`).
 
 ## Hear the effects
 
