@@ -291,12 +291,15 @@ impl Renderer {
     }
 
     fn choose_tempo_master(&mut self) -> Option<DeckId> {
+        let (a_gain, b_gain) = crossfader_gains(self.crossfader);
         let levels = DeckId::ALL.map(|deck_id| {
             let deck = &self.decks[deck_id.index()];
+            let crossfader_gain = if deck_id == DeckId::A { a_gain } else { b_gain };
             DeckLevel {
                 deck: deck_id,
                 has_beat_grid: deck.has_beat_grid(),
-                level: deck.level(),
+                level: deck.level(crossfader_gain),
+                playing: deck.is_playing(),
             }
         });
         self.tempo_master.update(&levels)

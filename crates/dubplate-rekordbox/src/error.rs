@@ -5,6 +5,30 @@ use crate::analysis::AnalysisError;
 /// Why a rekordbox library could not be read.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    /// This system has no home or configuration directory to look in.
+    #[error("this system has no home or configuration directory")]
+    NoConfigurationDirectory,
+    /// Neither the environment variable nor the key file holds a key.
+    #[error(
+        "no rekordbox key found. Put it in {key_file} or in the {variable} environment variable",
+        variable = crate::location::KEY_ENVIRONMENT_VARIABLE
+    )]
+    NoKey {
+        /// The file the key belongs in.
+        key_file: PathBuf,
+    },
+    /// The key file exists but holds nothing.
+    #[error("the rekordbox key file {0} is empty")]
+    EmptyKey(PathBuf),
+    /// The key file could not be read.
+    #[error("could not read the rekordbox key file {path}")]
+    KeyRead {
+        /// The key file.
+        path: PathBuf,
+        /// The underlying error.
+        #[source]
+        source: std::io::Error,
+    },
     /// The library file does not exist.
     #[error("no rekordbox library at {0}")]
     NotFound(PathBuf),

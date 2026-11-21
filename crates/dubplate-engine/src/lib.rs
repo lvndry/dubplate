@@ -51,7 +51,7 @@ pub use jog::DEFAULT_JOG_TICKS_PER_REVOLUTION;
 pub use mixer::Renderer;
 pub use output::{AudioOutput, OutputConfig};
 pub use processor::{AudioProcessor, ProcessContext, StereoBlock};
-pub use state::{DeckState, EngineStats, Meters};
+pub use state::{DeckState, EngineStats, Meters, PlatterState};
 pub use tempo::{BeatClock, BeatGrid, MasterTempo};
 pub use track::{DecodeStatus, MAX_SAMPLE_RATE, MAX_TRACK_SECONDS, MIN_SAMPLE_RATE, Track};
 

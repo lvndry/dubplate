@@ -63,7 +63,9 @@ pub enum MasterTempo {
     /// louder, so a blend at equal levels keeps one tempo master.
     #[default]
     LouderDeck,
-    /// Always this deck, like the tempo master button on a CDJ.
+    /// Always this deck, like the tempo master button on a CDJ. When the deck is stopped or has
+    /// no beat grid, the master hands over to the louder playing deck, or keeps the last tempo
+    /// when nothing plays.
     Deck(DeckId),
 }
 
@@ -81,6 +83,8 @@ pub(crate) struct DeckLevel {
     pub(crate) has_beat_grid: bool,
     /// The deck's gain to the master while it plays, 0 when it is stopped.
     pub(crate) level: f32,
+    /// Whether the deck is playing at all, even if the faders cut it to silence.
+    pub(crate) playing: bool,
 }
 
 impl TempoMaster {
@@ -93,32 +97,48 @@ impl TempoMaster {
     }
 
     /// Picks the tempo master for the next block. With no deck playing, the last master stays,
-    /// so echo trails keep their timing after the music stops.
+    /// so echo trails keep their timing after the music stops. A chosen deck that is stopped or
+    /// has no beat grid cannot carry the tempo, so it hands over the same way.
     pub(crate) fn update(&mut self, decks: &[DeckLevel]) -> Option<DeckId> {
-        match self.source {
-            MasterTempo::Deck(deck) => self.current = Some(deck),
-            MasterTempo::LouderDeck => {
-                let candidates = decks
-                    .iter()
-                    .filter(|candidate| candidate.has_beat_grid && candidate.level > 0.0);
-                let loudest = candidates
-                    .clone()
-                    .max_by(|first, second| first.level.total_cmp(&second.level));
-                let current = candidates
-                    .clone()
-                    .find(|candidate| Some(candidate.deck) == self.current);
-                self.current = match (current, loudest) {
-                    (Some(current), Some(loudest))
-                        if loudest.level <= current.level * TAKEOVER_RATIO =>
-                    {
-                        Some(current.deck)
-                    }
-                    (_, Some(loudest)) => Some(loudest.deck),
-                    (_, None) => self.current,
-                };
-            }
+        let chosen = match self.source {
+            MasterTempo::Deck(deck) => Some(deck),
+            MasterTempo::LouderDeck => None,
+        };
+        if let Some(deck) = chosen {
+            let qualifies = decks
+                .iter()
+                .find(|deck_level| deck_level.deck == deck)
+                .is_some_and(|level| level.has_beat_grid && level.playing);
+            self.current = if qualifies {
+                Some(deck)
+            } else {
+                self.louder_deck(decks)
+            };
+        } else {
+            self.current = self.louder_deck(decks);
         }
         self.current
+    }
+
+    /// The louder-deck rule: the grid deck that reaches the master loudest, keeping the current
+    /// one until a challenger is clearly louder. With no qualifying deck, the last master stays.
+    fn louder_deck(&self, decks: &[DeckLevel]) -> Option<DeckId> {
+        let candidates = decks
+            .iter()
+            .filter(|candidate| candidate.has_beat_grid && candidate.level > 0.0);
+        let loudest = candidates
+            .clone()
+            .max_by(|first, second| first.level.total_cmp(&second.level));
+        let current = candidates
+            .clone()
+            .find(|candidate| Some(candidate.deck) == self.current);
+        match (current, loudest) {
+            (Some(current), Some(loudest)) if loudest.level <= current.level * TAKEOVER_RATIO => {
+                Some(current.deck)
+            }
+            (_, Some(loudest)) => Some(loudest.deck),
+            (_, None) => self.current,
+        }
     }
 }
 
@@ -127,10 +147,15 @@ mod tests {
     use super::*;
 
     fn level(deck: DeckId, level: f32) -> DeckLevel {
+        level_with_grid(deck, level, true)
+    }
+
+    fn level_with_grid(deck: DeckId, level: f32, has_beat_grid: bool) -> DeckLevel {
         DeckLevel {
             deck,
-            has_beat_grid: true,
+            has_beat_grid,
             level,
+            playing: level > 0.0,
         }
     }
 
@@ -162,6 +187,7 @@ mod tests {
             deck: DeckId::A,
             has_beat_grid: false,
             level: 1.0,
+            playing: true,
         };
         assert_eq!(
             master.update(&[without_grid, level(DeckId::B, 0.1)]),
@@ -170,12 +196,59 @@ mod tests {
     }
 
     #[test]
-    fn a_chosen_deck_stays_master_whatever_the_levels() {
+    fn a_chosen_deck_stays_master_while_it_plays_with_a_grid() {
         let mut master = TempoMaster::default();
         master.set_source(MasterTempo::Deck(DeckId::B));
         assert_eq!(
-            master.update(&[level(DeckId::A, 1.0), level(DeckId::B, 0.0)]),
+            master.update(&[level(DeckId::A, 1.0), level(DeckId::B, 0.4)]),
             Some(DeckId::B)
+        );
+        assert_eq!(
+            master.update(&[level(DeckId::A, 1.0), level(DeckId::B, 0.4)]),
+            Some(DeckId::B)
+        );
+    }
+
+    #[test]
+    fn a_stopped_chosen_deck_hands_the_master_to_the_playing_deck() {
+        let mut master = TempoMaster::default();
+        master.set_source(MasterTempo::Deck(DeckId::A));
+        assert_eq!(
+            master.update(&[level(DeckId::A, 1.0), level(DeckId::B, 1.0)]),
+            Some(DeckId::A)
+        );
+        assert_eq!(
+            master.update(&[level(DeckId::A, 0.0), level(DeckId::B, 1.0)]),
+            Some(DeckId::B)
+        );
+        let mut without_grid = TempoMaster::default();
+        without_grid.set_source(MasterTempo::Deck(DeckId::A));
+        assert_eq!(
+            without_grid.update(&[
+                level_with_grid(DeckId::A, 1.0, false),
+                level(DeckId::B, 1.0),
+            ]),
+            Some(DeckId::B)
+        );
+    }
+
+    #[test]
+    fn the_master_keeps_the_last_clock_when_everything_stops() {
+        let mut master = TempoMaster::default();
+        master.set_source(MasterTempo::Deck(DeckId::A));
+        assert_eq!(master.update(&[level(DeckId::A, 1.0)]), Some(DeckId::A));
+        let mut louder = TempoMaster::default();
+        assert_eq!(
+            louder.update(&[level(DeckId::A, 1.0), level(DeckId::B, 0.5)]),
+            Some(DeckId::A)
+        );
+        assert_eq!(
+            louder.update(&[level(DeckId::A, 0.0), level(DeckId::B, 0.0)]),
+            Some(DeckId::A)
+        );
+        assert_eq!(
+            louder.update(&[level(DeckId::A, 0.0), level(DeckId::B, 0.0)]),
+            Some(DeckId::A)
         );
     }
 

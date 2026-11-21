@@ -49,11 +49,12 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - name: Install the ALSA headers the audio engine builds against
+      - name: Install the system libraries the audio engine and the desktop app build against
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends libasound2-dev pkg-config
+          sudo apt-get install --yes --no-install-recommends pkg-config libasound2-dev \
+            libfontconfig-dev libfreetype-dev libwayland-dev libx11-xcb-dev libxkbcommon-x11-dev
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy

@@ -34,22 +34,22 @@ fn touching_the_platter_stops_the_music_and_letting_go_resumes_at_the_tempo() {
     render_frames(&mut renderer, BLOCK * 4, BLOCK);
     controller.set_jog_touch(DeckId::A, true).unwrap();
     render_frames(&mut renderer, SAMPLE_RATE as usize / 10, BLOCK);
-    let held = controller.deck_state(DeckId::A);
-    assert!(held.platter_touched);
-    assert!(held.playing);
+    let held = controller.platter_state(DeckId::A);
+    assert!(held.touched);
+    assert!(controller.deck_state(DeckId::A).playing);
     assert!(
         held.speed.abs() < 1e-3,
         "speed under the hand {}",
         held.speed
     );
-    let held_at = held.position_seconds;
+    let held_at = position(&controller);
     render_frames(&mut renderer, SAMPLE_RATE as usize / 10, BLOCK);
     assert_close(position(&controller), held_at, 1e-4);
 
     controller.set_jog_touch(DeckId::A, false).unwrap();
     render_frames(&mut renderer, SAMPLE_RATE as usize / 5, BLOCK);
-    let released = controller.deck_state(DeckId::A);
-    assert!(!released.platter_touched);
+    let released = controller.platter_state(DeckId::A);
+    assert!(!released.touched);
     assert_close(released.speed, 1.05, 1e-3);
 }
 
@@ -110,7 +110,7 @@ fn scratching_backwards_plays_the_music_backwards() {
         controller.jog_scratch(DeckId::A, -4).unwrap();
         output.extend(left_channel(&render_frames(&mut renderer, BLOCK, BLOCK)));
     }
-    let speed = controller.deck_state(DeckId::A).speed;
+    let speed = controller.platter_state(DeckId::A).speed;
     let expected_speed =
         -4.0 / TICKS_PER_REVOLUTION * SCRATCH_SECONDS_PER_REVOLUTION * f64::from(SAMPLE_RATE)
             / BLOCK as f64;
@@ -130,13 +130,13 @@ fn a_nudge_bends_the_tempo_for_a_moment_and_moves_the_music_ahead() {
         controller.jog_nudge(DeckId::A, 9).unwrap();
         render_frames(&mut renderer, BLOCK, BLOCK);
     }
-    let bent = controller.deck_state(DeckId::A).speed;
+    let bent = controller.platter_state(DeckId::A).speed;
     assert!(bent > 1.05 && bent < 1.9, "bent speed {bent}");
     render_frames(&mut renderer, SAMPLE_RATE as usize, BLOCK);
     let played = (10 * BLOCK + SAMPLE_RATE as usize) as f64 / f64::from(SAMPLE_RATE);
     let ahead = position(&controller) - start - played;
     assert_close(ahead, 90.0 / TICKS_PER_REVOLUTION * 0.3, 1e-3);
-    assert_close(controller.deck_state(DeckId::A).speed, 1.0, 1e-6);
+    assert_close(controller.platter_state(DeckId::A).speed, 1.0, 1e-6);
 }
 
 #[test]
@@ -156,9 +156,8 @@ fn turning_a_stopped_deck_moves_the_playhead_by_hand() {
     assert!(heard, "the music sounds under the hand");
     let expected = 2.0 + 60.0 / TICKS_PER_REVOLUTION * SCRATCH_SECONDS_PER_REVOLUTION;
     assert_close(position(&controller), expected, 1e-4);
-    let state = controller.deck_state(DeckId::A);
-    assert!(!state.playing);
-    assert_eq!(state.speed, 0.0);
+    assert!(!controller.deck_state(DeckId::A).playing);
+    assert_eq!(controller.platter_state(DeckId::A).speed, 0.0);
     let silence = render_frames(&mut renderer, BLOCK, BLOCK);
     assert!(silence.iter().all(|sample| *sample == 0.0));
 }
@@ -186,9 +185,9 @@ fn out_of_vinyl_mode_the_platter_top_nudges() {
     controller.set_jog_touch(DeckId::A, true).unwrap();
     controller.jog_scratch(DeckId::A, 20).unwrap();
     render_frames(&mut renderer, BLOCK, BLOCK);
-    let state = controller.deck_state(DeckId::A);
+    let state = controller.platter_state(DeckId::A);
     assert!(!state.vinyl_mode);
-    assert!(!state.platter_touched);
+    assert!(!state.touched);
     assert!(state.speed > 1.0);
 }
 

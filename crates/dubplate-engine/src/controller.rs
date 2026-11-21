@@ -12,7 +12,7 @@ use crate::error::{EngineError, check_range};
 use crate::jog::JogInput;
 use crate::mixer::{Command, Renderer, RetireQueue, Retired};
 use crate::processor::AudioProcessor;
-use crate::state::{DeckState, EngineStats, Meters, SharedState, take_peak};
+use crate::state::{DeckState, EngineStats, Meters, PlatterState, SharedState, take_peak};
 use crate::tempo::{BeatGrid, MasterTempo};
 use crate::track::{MAX_TRACK_SECONDS, Track};
 use crate::{BeatLength, DECK_COUNT, EFFECT_UNIT_COUNT, EffectKind, EqBand, INSERT_SLOTS};
@@ -384,8 +384,15 @@ impl Controller {
             position_seconds: shared.position_seconds.load(),
             cue_point_seconds: shared.cue_point_seconds.load(),
             tempo: shared.tempo.load(),
+        }
+    }
+
+    /// What a deck's jog wheel is doing, as the audio thread last published it.
+    pub fn platter_state(&self, deck: DeckId) -> PlatterState {
+        let shared = &self.shared.decks[deck.index()];
+        PlatterState {
             speed: shared.speed.load(),
-            platter_touched: shared.touched.load(Ordering::Relaxed),
+            touched: shared.touched.load(Ordering::Relaxed),
             vinyl_mode: shared.vinyl_mode.load(Ordering::Relaxed),
         }
     }

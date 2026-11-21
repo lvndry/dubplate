@@ -508,9 +508,9 @@ fn reads_every_waveform() {
     assert_eq!(
         waveforms.three_band_preview.unwrap()[1],
         ThreeBandColumn {
-            mid: 21,
-            high: 6,
-            low: 10
+            low: 21,
+            mid: 6,
+            high: 10
         }
     );
     assert_eq!(waveforms.three_band_detail.unwrap().len(), 1);

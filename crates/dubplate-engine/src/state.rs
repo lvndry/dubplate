@@ -255,13 +255,19 @@ pub struct DeckState {
     pub position_seconds: f64,
     /// Cue point in seconds from the start of the track.
     pub cue_point_seconds: f64,
-    /// The tempo the deck plays at, where 1.0 is the track's own tempo.
+    /// Playback speed, where 1.0 is the track's own tempo.
     pub tempo: f64,
+}
+
+/// What a deck's jog wheel is doing, as the audio thread last published it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PlatterState {
     /// The speed the record actually turns at, where 1.0 is the track's own tempo: the tempo,
-    /// bent while the jog nudges, or the hand's speed while scratching. Negative backwards.
+    /// bent while the jog nudges, or the hand's speed while scratching. Negative backwards, 0
+    /// when stopped. A platter display turns at this speed.
     pub speed: f64,
     /// A hand is on the platter top, holding the record.
-    pub platter_touched: bool,
+    pub touched: bool,
     /// Touching the platter top holds the record, as in a CDJ's vinyl mode.
     pub vinyl_mode: bool,
 }
