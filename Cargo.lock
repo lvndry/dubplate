@@ -1698,6 +1698,11 @@ version = "0.1.0"
 dependencies = [
  "dubplate-rekordbox",
  "euphoria-core",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
