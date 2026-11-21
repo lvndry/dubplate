@@ -143,9 +143,16 @@ pub struct ParseEffectKindError {
 
 impl fmt::Display for ParseEffectKindError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "`{}` is not an effect; choose one of", self.text)?;
-        for kind in EffectKind::ALL {
-            write!(formatter, " {kind}")?;
+        write!(
+            formatter,
+            "`{}` is not an effect; choose one of: ",
+            self.text
+        )?;
+        for (index, kind) in EffectKind::ALL.iter().enumerate() {
+            if index > 0 {
+                formatter.write_str(", ")?;
+            }
+            write!(formatter, "{kind}")?;
         }
         Ok(())
     }
