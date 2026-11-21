@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/logo/mark-white.svg">
+  <img src="assets/logo/mark-dark.svg" alt="" width="72" height="72">
+</picture>
+
 # Dubplate
 
 Pro DJ software that works with rekordbox libraries and Pioneer CDJs.
