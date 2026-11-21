@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use dubplate_rekordbox::{CueKind, DatabaseKey, Error, Library, PlaylistKind};
+use dubplate_rekordbox::{CueKind, DatabaseKey, Error, HotCuePad, Library, PlaylistKind};
 use rusqlite::Connection;
 
 const TEST_KEY: &str = "dubplate-test-key";
@@ -42,7 +42,10 @@ fn build_library(directory: &Path) -> PathBuf {
              ('c1', 't1', 0, 1000, -1, NULL, NULL, 0, '{STAMP}', '{STAMP}'),
              ('c2', 't1', 1, 45000, -1, 255, 'Drop', 0, '{STAMP}', '{STAMP}'),
              ('c3', 't2', 2, 30000, 60000, NULL, NULL, 0, '{STAMP}', '{STAMP}'),
-             ('c4', 't1', 3, 90000, -1, NULL, NULL, 1, '{STAMP}', '{STAMP}');
+             ('c4', 't1', 3, 90000, -1, NULL, NULL, 1, '{STAMP}', '{STAMP}'),
+             ('c5', 't2', 5, 40000, -1, -1, NULL, 0, '{STAMP}', '{STAMP}'),
+             ('c6', 't2', 9, 50000, -1, -1, NULL, 0, '{STAMP}', '{STAMP}'),
+             ('c7', 't2', 4, 70000, -1, -1, NULL, 0, '{STAMP}', '{STAMP}');
          INSERT INTO djmdPlaylist (ID, ParentID, Name, Attribute, Seq, created_at, updated_at)
              VALUES
              ('f1', 'root', 'Sets', 1, 1, '{STAMP}', '{STAMP}'),
@@ -97,14 +100,46 @@ fn reads_memory_cues_hot_cues_and_loops_but_not_deleted_cues() {
     let cues = library.cues().unwrap();
 
     let ids: Vec<_> = cues.iter().map(|cue| cue.id.as_str()).collect();
-    assert_eq!(ids, ["c1", "c2", "c3"]);
+    assert_eq!(ids, ["c1", "c2", "c3", "c5", "c6", "c7"]);
     assert_eq!(cues[0].kind, CueKind::Memory);
     assert_eq!(cues[0].loop_end_ms, None);
-    assert_eq!(cues[1].kind, CueKind::Hot { number: 1 });
+    assert_eq!(cues[1].kind, CueKind::Hot { pad: HotCuePad::A });
     assert_eq!(cues[1].start_ms, 45_000);
     assert_eq!(cues[1].comment.as_deref(), Some("Drop"));
-    assert_eq!(cues[2].kind, CueKind::Hot { number: 2 });
+    assert_eq!(cues[2].kind, CueKind::Hot { pad: HotCuePad::B });
     assert_eq!(cues[2].loop_end_ms, Some(60_000));
+}
+
+#[test]
+fn maps_rekordbox_kinds_to_pads_skipping_four() {
+    let (_directory, library) = open_fixture();
+    let cues = library.cues().unwrap();
+    let kind_of = |id: &str| cues.iter().find(|cue| cue.id == id).unwrap().kind;
+
+    assert_eq!(kind_of("c5"), CueKind::Hot { pad: HotCuePad::D });
+    assert_eq!(kind_of("c6"), CueKind::Hot { pad: HotCuePad::H });
+    assert_eq!(kind_of("c7"), CueKind::Unknown { kind: 4 });
+}
+
+#[test]
+fn every_pad_round_trips_through_its_rekordbox_kind() {
+    let kinds: Vec<i64> = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']
+        .iter()
+        .map(|letter| {
+            let pad = (1..=9)
+                .filter_map(HotCuePad::from_rekordbox_kind)
+                .find(|pad| pad.letter() == *letter)
+                .unwrap();
+            assert_eq!(
+                HotCuePad::from_rekordbox_kind(pad.rekordbox_kind()),
+                Some(pad)
+            );
+            pad.rekordbox_kind()
+        })
+        .collect();
+
+    assert_eq!(kinds, [1, 2, 3, 5, 6, 7, 8, 9]);
+    assert_eq!(HotCuePad::from_rekordbox_kind(4), None);
 }
 
 #[test]
@@ -142,7 +177,7 @@ fn summarises_the_library() {
     assert_eq!(summary.database_version.as_deref(), Some("6000"));
     assert_eq!(summary.tracks, 2);
     assert_eq!(summary.playlists, 3);
-    assert_eq!(summary.cues, 3);
+    assert_eq!(summary.cues, 6);
 }
 
 #[test]
