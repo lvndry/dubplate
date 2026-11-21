@@ -140,7 +140,7 @@ fn print_cues(analysis: &TrackAnalysis, master_db_cues: &[Cue]) {
         let pad = cue
             .kind
             .pad()
-            .map_or_else(|| "memory".to_owned(), String::from);
+            .map_or_else(|| "memory".to_owned(), |pad| pad.letter().to_string());
         let colour = cue
             .color
             .filter(|color| *color >= 0)

@@ -35,33 +35,113 @@ pub struct Track {
     pub date_added: Option<String>,
 }
 
-/// Whether a cue is a memory cue or a hot cue.
+/// Whether a cue is a memory cue or a hot cue, and on which pad.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum CueKind {
     /// A memory cue, which has no pad.
     Memory,
-    /// A hot cue. `number` is rekordbox's raw `Kind` value, which is 1 or more.
+    /// A hot cue on one of the eight pads.
     Hot {
+        /// The pad, A to H.
+        pad: HotCuePad,
+    },
+    /// A `Kind` value this version of Dubplate does not know.
+    Unknown {
         /// rekordbox's raw `Kind` value.
-        number: u32,
+        kind: i64,
     },
 }
 
 impl CueKind {
-    /// The pad letter of a hot cue, from `A` to `H`. In `master.db` pads A to C are numbers
-    /// 1 to 3 and pads D to H are 5 to 9.
-    pub fn pad(self) -> Option<char> {
-        let index = match self {
-            Self::Hot {
-                number: number @ 1..=3,
-            } => number - 1,
-            Self::Hot {
-                number: number @ 5..=9,
-            } => number - 2,
-            _ => return None,
-        };
-        Some(char::from(b'A' + u8::try_from(index).ok()?))
+    pub(crate) fn from_rekordbox_kind(kind: i64) -> Self {
+        if kind == 0 {
+            return Self::Memory;
+        }
+        match HotCuePad::from_rekordbox_kind(kind) {
+            Some(pad) => Self::Hot { pad },
+            None => Self::Unknown { kind },
+        }
+    }
+
+    /// The pad of a hot cue, or `None` for a memory cue or an unknown kind.
+    pub fn pad(self) -> Option<HotCuePad> {
+        match self {
+            Self::Hot { pad } => Some(pad),
+            Self::Memory | Self::Unknown { .. } => None,
+        }
+    }
+}
+
+/// A hot cue pad.
+///
+/// rekordbox 7.2.19 stores pads A to H as `Kind` 1, 2, 3, 5, 6, 7, 8 and 9: it never uses 4.
+/// Checked by setting every pad on one track in rekordbox and reading the library back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+pub enum HotCuePad {
+    /// Pad A.
+    A,
+    /// Pad B.
+    B,
+    /// Pad C.
+    C,
+    /// Pad D.
+    D,
+    /// Pad E.
+    E,
+    /// Pad F.
+    F,
+    /// Pad G.
+    G,
+    /// Pad H.
+    H,
+}
+
+impl HotCuePad {
+    const ALL: [Self; 8] = [
+        Self::A,
+        Self::B,
+        Self::C,
+        Self::D,
+        Self::E,
+        Self::F,
+        Self::G,
+        Self::H,
+    ];
+
+    /// The pad rekordbox means by a `Kind` value, if it is a hot cue.
+    pub fn from_rekordbox_kind(kind: i64) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|pad| pad.rekordbox_kind() == kind)
+    }
+
+    /// The `Kind` value rekordbox stores for this pad.
+    pub fn rekordbox_kind(self) -> i64 {
+        match self {
+            Self::A => 1,
+            Self::B => 2,
+            Self::C => 3,
+            Self::D => 5,
+            Self::E => 6,
+            Self::F => 7,
+            Self::G => 8,
+            Self::H => 9,
+        }
+    }
+
+    /// The pad's letter.
+    pub fn letter(self) -> char {
+        match self {
+            Self::A => 'A',
+            Self::B => 'B',
+            Self::C => 'C',
+            Self::D => 'D',
+            Self::E => 'E',
+            Self::F => 'F',
+            Self::G => 'G',
+            Self::H => 'H',
+        }
     }
 }
 

@@ -15,4 +15,4 @@ mod model;
 pub use analysis::TrackAnalysis;
 pub use error::Error;
 pub use library::{DatabaseKey, Library, LibrarySummary};
-pub use model::{Cue, CueKind, Playlist, PlaylistKind, Track};
+pub use model::{Cue, CueKind, HotCuePad, Playlist, PlaylistKind, Track};

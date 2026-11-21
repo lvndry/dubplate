@@ -5,7 +5,7 @@ mod common;
 use std::path::Path;
 
 use common::{TEST_KEY, build_library, open_fixture};
-use dubplate_rekordbox::{CueKind, DatabaseKey, Error, Library, PlaylistKind};
+use dubplate_rekordbox::{CueKind, DatabaseKey, Error, HotCuePad, Library, PlaylistKind};
 
 #[test]
 fn reads_tracks_with_their_names_key_and_tempo() {
@@ -37,39 +37,48 @@ fn reads_memory_cues_hot_cues_and_loops_but_not_deleted_cues() {
     let cues = library.cues().unwrap();
 
     let ids: Vec<_> = cues.iter().map(|cue| cue.id.as_str()).collect();
-    assert_eq!(ids, ["c1", "c2", "c3"]);
+    assert_eq!(ids, ["c1", "c2", "c3", "c5", "c6", "c7"]);
     assert_eq!(cues[0].kind, CueKind::Memory);
     assert_eq!(cues[0].loop_end_ms, None);
-    assert_eq!(cues[1].kind, CueKind::Hot { number: 1 });
+    assert_eq!(cues[1].kind, CueKind::Hot { pad: HotCuePad::A });
     assert_eq!(cues[1].start_ms, 45_000);
     assert_eq!(cues[1].comment.as_deref(), Some("Drop"));
-    assert_eq!(cues[2].kind, CueKind::Hot { number: 2 });
+    assert_eq!(cues[2].kind, CueKind::Hot { pad: HotCuePad::B });
     assert_eq!(cues[2].loop_end_ms, Some(60_000));
 }
 
 #[test]
-fn names_hot_cue_pads_from_master_db_kinds() {
-    let pads: Vec<_> = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
-        .into_iter()
-        .map(|number| CueKind::Hot { number }.pad())
+fn maps_rekordbox_kinds_to_pads_skipping_four() {
+    let (_directory, library) = open_fixture();
+    let cues = library.cues().unwrap();
+    let kind_of = |id: &str| cues.iter().find(|cue| cue.id == id).unwrap().kind;
+
+    assert_eq!(kind_of("c5"), CueKind::Hot { pad: HotCuePad::D });
+    assert_eq!(kind_of("c6"), CueKind::Hot { pad: HotCuePad::H });
+    assert_eq!(kind_of("c7"), CueKind::Unknown { kind: 4 });
+    assert_eq!(kind_of("c5").pad(), Some(HotCuePad::D));
+    assert_eq!(CueKind::Memory.pad(), None);
+}
+
+#[test]
+fn every_pad_round_trips_through_its_rekordbox_kind() {
+    let kinds: Vec<i64> = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']
+        .iter()
+        .map(|letter| {
+            let pad = (1..=9)
+                .filter_map(HotCuePad::from_rekordbox_kind)
+                .find(|pad| pad.letter() == *letter)
+                .unwrap();
+            assert_eq!(
+                HotCuePad::from_rekordbox_kind(pad.rekordbox_kind()),
+                Some(pad)
+            );
+            pad.rekordbox_kind()
+        })
         .collect();
 
-    assert_eq!(
-        pads,
-        [
-            Some('A'),
-            Some('B'),
-            Some('C'),
-            None,
-            Some('D'),
-            Some('E'),
-            Some('F'),
-            Some('G'),
-            Some('H'),
-            None
-        ]
-    );
-    assert_eq!(CueKind::Memory.pad(), None);
+    assert_eq!(kinds, [1, 2, 3, 5, 6, 7, 8, 9]);
+    assert_eq!(HotCuePad::from_rekordbox_kind(4), None);
 }
 
 #[test]
@@ -107,7 +116,7 @@ fn summarises_the_library() {
     assert_eq!(summary.database_version.as_deref(), Some("6000"));
     assert_eq!(summary.tracks, 2);
     assert_eq!(summary.playlists, 3);
-    assert_eq!(summary.cues, 3);
+    assert_eq!(summary.cues, 6);
 }
 
 #[test]
