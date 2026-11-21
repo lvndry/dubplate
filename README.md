@@ -13,6 +13,8 @@ Dubplate reads and writes the rekordbox library directly, so tracks, cues, beat 
 
 The first piece is a reader for the rekordbox 6 and 7 library. It copies `master.db` to a temporary directory, unlocks the copy and reads tracks, cues, saved loops and the playlist tree. rekordbox's own file is never opened or changed.
 
+It also reads each track's analysis files (`ANLZ0000.DAT`, `.EXT` and `.2EX` under rekordbox's `share` directory): the beat grid, hot cues and memory cues with their colours and names, the phrases, and every waveform, including the 3-band ones. These files are opened read-only, in place.
+
 ## Try it
 
 Dubplate needs the key of the rekordbox library. It is not stored in this repository. Put it in one of these:
@@ -26,7 +28,11 @@ Then:
 cargo run -p dubplate -- rekordbox inspect
 cargo run -p dubplate -- rekordbox inspect --json > library.json
 cargo run -p dubplate -- rekordbox inspect --library /path/to/master.db
+cargo run -p dubplate -- rekordbox analysis "Track Title"
+cargo run -p dubplate -- rekordbox analysis <track id> --json > analysis.json
 ```
+
+`analysis` takes a track's rekordbox ID or its exact title.
 
 ## Play tracks
 
@@ -40,7 +46,7 @@ It prints the buffer size, the output latency and the dropout counters every sec
 
 ## Layout
 
-- `crates/dubplate-rekordbox`: reads the rekordbox library. `schema/rekordbox-7.2.19.sql` holds the tables of rekordbox 7.2.19, with no data, and the tests build an encrypted library from it.
+- `crates/dubplate-rekordbox`: reads the rekordbox library and, in `src/analysis`, the per-track analysis files. `schema/rekordbox-7.2.19.sql` holds the tables of rekordbox 7.2.19, with no data, and the tests build an encrypted library from it.
 - `crates/dubplate-engine`: the audio engine. Decks, mixer and crossfader run on a real-time audio thread that never allocates, locks or waits; tracks decode on their own threads; the control side talks to it through lock-free queues. Effects plug into insert slots through the `AudioProcessor` trait.
 - `crates/dubplate-fx`: the DJ effects (echo, ping-pong, reverb, filters, the one-knob sweep filter, flanger, phaser, trance gate, bit crusher, brake and backspin). They run on the audio thread without allocating, follow the tempo and beat grid, never click when a knob moves, and let echo and reverb trails ring out.
 - `apps/dubplate-cli`: the `dubplate` command.
