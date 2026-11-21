@@ -1,0 +1,184 @@
+//! The `dubplate` command line tool.
+
+use std::path::{Path, PathBuf};
+
+use anyhow::{Context, Result, bail};
+use clap::{Parser, Subcommand};
+use dubplate_rekordbox::{DatabaseKey, Library, Playlist, PlaylistKind, Track};
+
+const KEY_ENVIRONMENT_VARIABLE: &str = "DUBPLATE_REKORDBOX_KEY";
+
+#[derive(Parser)]
+#[command(
+    name = "dubplate",
+    version,
+    about = "Pro DJ software that works with rekordbox"
+)]
+struct Cli {
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Work with a rekordbox library.
+    #[command(subcommand)]
+    Rekordbox(RekordboxCommand),
+}
+
+#[derive(Subcommand)]
+enum RekordboxCommand {
+    /// Read a copy of the rekordbox library and describe it. rekordbox's own file is never changed.
+    Inspect {
+        /// The library's master.db. Defaults to rekordbox's usual location for this user.
+        #[arg(long)]
+        library: Option<PathBuf>,
+        /// Print the whole library as JSON instead of a summary.
+        #[arg(long)]
+        json: bool,
+        /// How many tracks the summary lists.
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+    },
+}
+
+fn main() -> Result<()> {
+    match Cli::parse().command {
+        Command::Rekordbox(RekordboxCommand::Inspect {
+            library,
+            json,
+            limit,
+        }) => {
+            let master_db = match library {
+                Some(path) => path,
+                None => default_master_db()?,
+            };
+            inspect(&master_db, json, limit)
+        }
+    }
+}
+
+fn inspect(master_db: &Path, json: bool, limit: usize) -> Result<()> {
+    let key = load_key()?;
+    let library = Library::open_copy(master_db, &key)
+        .with_context(|| format!("reading {}", master_db.display()))?;
+    let summary = library.summary()?;
+    let tracks = library.tracks()?;
+    let playlists = library.playlists()?;
+
+    if json {
+        let cues = library.cues()?;
+        let document = serde_json::json!({
+            "summary": summary,
+            "tracks": tracks,
+            "cues": cues,
+            "playlists": playlists,
+        });
+        println!("{}", serde_json::to_string_pretty(&document)?);
+        return Ok(());
+    }
+
+    println!("Library     {}", master_db.display());
+    println!(
+        "Schema      {}",
+        summary.database_version.as_deref().unwrap_or("unknown")
+    );
+    println!("Tracks      {}", summary.tracks);
+    println!("Playlists   {}", summary.playlists);
+    println!("Cues        {}", summary.cues);
+    println!();
+    print_playlist_tree(&playlists, None, 0);
+    println!();
+    println!(
+        "{:<40} {:<28} {:>7} {:>4} {:>6}",
+        "Title", "Artist", "BPM", "Key", "Time"
+    );
+    for track in tracks.iter().take(limit) {
+        print_track(track);
+    }
+    if tracks.len() > limit {
+        println!(
+            "… and {} more. Use --limit or --json to see them.",
+            tracks.len() - limit
+        );
+    }
+    Ok(())
+}
+
+fn print_playlist_tree(playlists: &[Playlist], parent_id: Option<&str>, depth: usize) {
+    let mut children: Vec<&Playlist> = playlists
+        .iter()
+        .filter(|playlist| playlist.parent_id.as_deref() == parent_id)
+        .collect();
+    children.sort_by_key(|playlist| playlist.position);
+    for playlist in children {
+        let detail = match playlist.kind {
+            PlaylistKind::Folder => "folder".to_owned(),
+            PlaylistKind::Smart => "smart playlist".to_owned(),
+            PlaylistKind::Playlist => format!("{} tracks", playlist.track_ids.len()),
+            PlaylistKind::Unknown(attribute) => format!("unknown kind {attribute}"),
+        };
+        println!("{}{}  ({detail})", "  ".repeat(depth), playlist.name);
+        print_playlist_tree(playlists, Some(&playlist.id), depth + 1);
+    }
+}
+
+fn print_track(track: &Track) {
+    let bpm = track.bpm.map(|bpm| format!("{bpm:.2}")).unwrap_or_default();
+    let time = track
+        .length_seconds
+        .map(|seconds| format!("{}:{:02}", seconds / 60, seconds % 60))
+        .unwrap_or_default();
+    println!(
+        "{:<40} {:<28} {:>7} {:>4} {:>6}",
+        truncate(track.title.as_deref().unwrap_or(""), 40),
+        truncate(track.artist.as_deref().unwrap_or(""), 28),
+        bpm,
+        track.key.as_deref().unwrap_or(""),
+        time,
+    );
+}
+
+fn truncate(text: &str, width: usize) -> String {
+    if text.chars().count() <= width {
+        return text.to_owned();
+    }
+    let mut shortened: String = text.chars().take(width.saturating_sub(1)).collect();
+    shortened.push('…');
+    shortened
+}
+
+fn key_file() -> Result<PathBuf> {
+    let config = dirs::config_dir().context("this system has no configuration directory")?;
+    Ok(config.join("dubplate").join("rekordbox.key"))
+}
+
+fn load_key() -> Result<DatabaseKey> {
+    if let Ok(key) = std::env::var(KEY_ENVIRONMENT_VARIABLE)
+        && !key.trim().is_empty()
+    {
+        return Ok(DatabaseKey::new(key));
+    }
+    let path = key_file()?;
+    match std::fs::read_to_string(&path) {
+        Ok(key) if !key.trim().is_empty() => Ok(DatabaseKey::new(key)),
+        Ok(_) => bail!("{} is empty", path.display()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => bail!(
+            "no rekordbox key found. Put it in {} or in the {KEY_ENVIRONMENT_VARIABLE} \
+             environment variable",
+            path.display()
+        ),
+        Err(error) => Err(error).with_context(|| format!("reading {}", path.display())),
+    }
+}
+
+fn default_master_db() -> Result<PathBuf> {
+    let base = if cfg!(target_os = "macos") {
+        dirs::home_dir()
+            .context("no home directory")?
+            .join("Library")
+    } else {
+        dirs::config_dir().context("no configuration directory")?
+    };
+    Ok(base.join("Pioneer").join("rekordbox").join("master.db"))
+}
