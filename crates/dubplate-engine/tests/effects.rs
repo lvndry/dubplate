@@ -84,6 +84,74 @@ fn an_effect_on_deck_a_changes_only_deck_a_and_only_while_on() {
 }
 
 #[test]
+fn an_off_filter_unit_leaves_the_audio_bit_identical() {
+    let (_reference_controller, mut reference) = two_decks_on_their_own_sides().unwrap();
+    let (mut controller, mut renderer) = two_decks_on_their_own_sides().unwrap();
+    controller
+        .set_effect_kind(FIRST_UNIT, EffectKind::LowPass)
+        .unwrap();
+    controller
+        .set_effect_target(FIRST_UNIT, EffectTarget::Deck(DeckId::A))
+        .unwrap();
+    controller.set_effect_depth(FIRST_UNIT, 1.0).unwrap();
+
+    let (expected, actual) = (
+        render_frames(&mut reference, BLOCK * 20, BLOCK),
+        render_frames(&mut renderer, BLOCK * 20, BLOCK),
+    );
+    assert_eq!(expected, actual, "the off filter changed the audio");
+    let unit = controller.effect_unit(FIRST_UNIT);
+    assert!(!unit.enabled);
+    assert!(!unit.sounding);
+
+    controller.set_effect_enabled(FIRST_UNIT, true).unwrap();
+    let during = render_frames(&mut renderer, BLOCK * 20, BLOCK);
+    let changed = left_channel(&during)
+        .iter()
+        .filter(|sample| **sample != 0.0)
+        .count();
+    assert!(changed > 0, "deck A is silent");
+    assert!(controller.effect_unit(FIRST_UNIT).sounding);
+}
+
+#[test]
+fn an_off_echo_still_rings_out_its_trail() {
+    let (mut controller, mut renderer) = two_decks_on_their_own_sides().unwrap();
+    controller
+        .set_effect_kind(FIRST_UNIT, EffectKind::Echo)
+        .unwrap();
+    controller
+        .set_effect_target(FIRST_UNIT, EffectTarget::Deck(DeckId::A))
+        .unwrap();
+    controller.set_effect_depth(FIRST_UNIT, 1.0).unwrap();
+    controller.set_effect_enabled(FIRST_UNIT, true).unwrap();
+    render_frames(&mut renderer, BLOCK * 20, BLOCK);
+    controller.set_effect_enabled(FIRST_UNIT, false).unwrap();
+
+    // The trail is still alive just after the switch-off, and rings down from there.
+    let first_peak = left_channel(&render_frames(&mut renderer, BLOCK * 2, BLOCK))
+        .iter()
+        .fold(0.0f32, |peak, sample| peak.max(sample.abs()));
+    assert!(
+        first_peak > 0.0,
+        "the echo stopped ringing the moment it was switched off"
+    );
+    let mut previous_peak = first_peak;
+    for _ in 0..8 {
+        let frames = render_frames(&mut renderer, BLOCK * 8, BLOCK);
+        let peak = left_channel(&frames)
+            .iter()
+            .chain(right_channel(&frames).iter())
+            .fold(0.0f32, |peak, sample| peak.max(sample.abs()));
+        assert!(
+            peak <= previous_peak + 1e-6,
+            "the echo trail is growing: {previous_peak} -> {peak}"
+        );
+        previous_peak = peak;
+    }
+    assert!(previous_peak > 0.0);
+}
+#[test]
 fn moving_a_unit_or_changing_its_effect_never_clicks() {
     let amplitude = 0.5;
     let frequency = 60.0;
