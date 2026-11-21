@@ -4,18 +4,22 @@ mod app;
 mod assets;
 mod browser;
 mod collection;
+mod commands;
 mod controls;
 mod deck;
 mod fonts;
 mod frame_stats;
+mod hardware;
 mod loading;
 #[cfg(target_os = "macos")]
 mod macos_identity;
 mod meter;
 mod playhead;
 mod search;
+mod settings;
 mod shortcuts;
 mod theme;
+mod transport;
 mod waveform;
 
 use gpui::prelude::*;
@@ -45,7 +49,10 @@ fn main() {
         .run(|cx: &mut App| {
             gpui::init(cx);
             #[cfg(target_os = "macos")]
-            macos_identity::show_dock_icon();
+            {
+                macos_identity::show_dock_icon();
+                macos_identity::stay_responsive();
+            }
             if let Err(error) = fonts::register(cx) {
                 eprintln!("error: the built-in fonts could not be loaded: {error:#}");
             }
