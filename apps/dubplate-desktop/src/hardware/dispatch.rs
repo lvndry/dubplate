@@ -3,19 +3,19 @@
 
 use std::time::{Duration, Instant};
 
-use dubplate_engine::{DECK_COUNT, DeckId};
+use dubplate_engine::{DECK_COUNT, DeckId, EffectTarget, EffectUnitId};
 use dubplate_midi::{
-    Action, Button, ButtonState, Continuous, ControlEvent, Deck, Encoder, Layer, PadIndex, PadMode,
-    Position,
+    Action, Button, ButtonState, Continuous, ControlEvent, Deck, Direction as Arrow, Encoder,
+    JogMode, Layer, PadIndex, PadMode, Position, Switch,
 };
 use dubplate_rekordbox::HotCuePad;
 
-use crate::commands::{Command, Press};
+use crate::commands::{Command, Direction, EffectEdit, JogMotion, Press};
 use crate::controls::{Control, MixerPositions};
 
 /// Two presses of LOAD this close together load the other deck's track, as rekordbox does.
 const DOUBLE_PRESS: Duration = Duration::from_millis(400);
-/// A tempo slider this close to the tempo on screen picks it up.
+/// A slider or knob this close to the value on screen picks it up.
 const PICKUP_DISTANCE: f32 = 0.01;
 
 /// What the dispatcher reads of the app to decide what a control does.
@@ -25,6 +25,10 @@ pub struct Surface {
     pub positions: MixerPositions,
     /// Whether each deck is playing.
     pub playing: [bool; DECK_COUNT],
+    /// The effect unit the BEAT FX section drives.
+    pub focused_effect: Option<EffectUnitId>,
+    /// That unit's level and depth, from 0.0 to 1.0.
+    pub effect_depth: f32,
 }
 
 /// The engine's deck for a controller deck.
@@ -32,6 +36,15 @@ pub fn deck_id(deck: Deck) -> DeckId {
     match deck {
         Deck::A => DeckId::A,
         Deck::B => DeckId::B,
+    }
+}
+
+/// The engine's EQ band for a controller's EQ knob.
+fn eq_band(band: dubplate_midi::EqBand) -> dubplate_engine::EqBand {
+    match band {
+        dubplate_midi::EqBand::High => dubplate_engine::EqBand::High,
+        dubplate_midi::EqBand::Mid => dubplate_engine::EqBand::Mid,
+        dubplate_midi::EqBand::Low => dubplate_engine::EqBand::Low,
     }
 }
 
@@ -61,6 +74,8 @@ impl Pickup {
     /// Whether the control at `hardware` should set a value now on screen at `shown`. A control
     /// that is `free` to jump, such as the tempo of a stopped deck, always takes over.
     fn takes_over(&mut self, hardware: f32, shown: f32, free: bool) -> bool {
+        // A knob that has not reported yet, or whose value was changed elsewhere, holds back
+        // until it reaches the value on screen.
         let previous = self.last_hardware.replace(hardware);
         let close = (hardware - shown).abs() <= PICKUP_DISTANCE;
         let was_holding =
@@ -71,12 +86,16 @@ impl Pickup {
 }
 
 /// The controller's side of the conversation: which pad mode each deck is in, LOAD presses for
-/// instant doubles, and the tempo sliders' pick-up.
+/// instant doubles, where the BEAT FX channel lever sits, and the pick-up of the tempo sliders
+/// and the effect level knob.
 #[derive(Debug)]
 pub struct Dispatcher {
     pad_modes: [PadMode; DECK_COUNT],
     last_load: [Option<Instant>; DECK_COUNT],
     tempo_pickups: [Pickup; DECK_COUNT],
+    fx_lever: [bool; DECK_COUNT],
+    depth_pickup: Pickup,
+    depth_unit: Option<EffectUnitId>,
 }
 
 impl Default for Dispatcher {
@@ -85,6 +104,9 @@ impl Default for Dispatcher {
             pad_modes: [PadMode::HotCue; DECK_COUNT],
             last_load: [None; DECK_COUNT],
             tempo_pickups: [Pickup::default(); DECK_COUNT],
+            fx_lever: [false; DECK_COUNT],
+            depth_pickup: Pickup::default(),
+            depth_unit: None,
         }
     }
 }
@@ -106,17 +128,42 @@ impl Dispatcher {
             Action::Button {
                 button,
                 state: edge,
-            } => self.button(button, edge, event.layer, now),
+            } => self.button(button, edge, event.layer, now, surface),
             Action::Continuous { control, position } => self.continuous(control, position, surface),
             Action::Encoder {
                 encoder: Encoder::Browse,
                 ticks,
             } => (event.layer == Layer::Normal).then(|| Command::Browse(i32::from(ticks.get()))),
             Action::Encoder {
-                encoder: Encoder::Jog { .. },
-                ..
+                encoder: Encoder::Jog { deck, mode },
+                ticks,
+            } => {
+                let motion = match mode {
+                    JogMode::Scratch => JogMotion::Scratch,
+                    JogMode::Nudge => JogMotion::Nudge,
+                    JogMode::Search => JogMotion::Search,
+                };
+                Some(Command::Jog(deck_id(deck), motion, i32::from(ticks.get())))
             }
-            | Action::Switch { .. } => None,
+            Action::Switch {
+                switch: Switch::BeatFxChannel(deck),
+                on,
+            } => {
+                self.fx_lever[deck_id(deck).index()] = on;
+                let target = match self.fx_lever {
+                    [true, false] => EffectTarget::Deck(DeckId::A),
+                    [false, true] => EffectTarget::Deck(DeckId::B),
+                    [false, false] | [true, true] => EffectTarget::Master,
+                };
+                Some(Command::Effect(
+                    surface.focused_effect?,
+                    EffectEdit::Target(target),
+                ))
+            }
+            Action::Switch {
+                switch: Switch::MonoOutput,
+                ..
+            } => None,
         }
     }
 
@@ -126,6 +173,7 @@ impl Dispatcher {
         edge: ButtonState,
         layer: Layer,
         now: Instant,
+        surface: &Surface,
     ) -> Option<Command> {
         let pressed = edge == ButtonState::Pressed;
         let press = if pressed { Press::Down } else { Press::Up };
@@ -139,6 +187,33 @@ impl Dispatcher {
             }
             (Button::Load(deck), Layer::Normal) if pressed => Some(self.load(deck_id(deck), now)),
             (Button::BrowsePush, _) if pressed => Some(Command::SwitchBrowserPane),
+            (Button::JogTouch(deck), _) => Some(Command::JogTouch(deck_id(deck), pressed)),
+            (Button::BeatFxSelect, layer) if pressed => {
+                let steps = if layer == Layer::Shift { -1 } else { 1 };
+                Some(Command::Effect(
+                    surface.focused_effect?,
+                    EffectEdit::StepKind(steps),
+                ))
+            }
+            (Button::BeatFxBeat(arrow), Layer::Normal) if pressed => {
+                let direction = match arrow {
+                    Arrow::Left => Direction::Down,
+                    Arrow::Right => Direction::Up,
+                };
+                Some(Command::Effect(
+                    surface.focused_effect?,
+                    EffectEdit::Beat(direction),
+                ))
+            }
+            (Button::BeatFxBeat(arrow), Layer::Shift) if pressed => {
+                Some(Command::FocusEffectUnit(match arrow {
+                    Arrow::Left => -1,
+                    Arrow::Right => 1,
+                }))
+            }
+            (Button::BeatFxOn, Layer::Normal) if pressed => {
+                Some(Command::Effect(surface.focused_effect?, EffectEdit::Toggle))
+            }
             (Button::PadMode { deck, mode }, _) if pressed => {
                 self.pad_modes[deck_id(deck).index()] = mode;
                 None
@@ -198,12 +273,21 @@ impl Dispatcher {
                 }
                 control
             }
-            Continuous::Eq { .. }
-            | Continuous::Filter(_)
-            | Continuous::BeatFxLevelDepth
-            | Continuous::MicLevel
-            | Continuous::HeadphoneMix
-            | Continuous::HeadphoneLevel => return None,
+            Continuous::Eq { deck, band } => Control::Eq(deck_id(deck), eq_band(band)),
+            Continuous::Filter(deck) => Control::Filter(deck_id(deck)),
+            Continuous::BeatFxLevelDepth => {
+                let unit = surface.focused_effect?;
+                if self.depth_unit.replace(unit) != Some(unit) {
+                    self.depth_pickup = Pickup::default();
+                }
+                let takes_over =
+                    self.depth_pickup
+                        .takes_over(fraction, surface.effect_depth, false);
+                return takes_over.then_some(Command::Effect(unit, EffectEdit::Depth(fraction)));
+            }
+            Continuous::MicLevel | Continuous::HeadphoneMix | Continuous::HeadphoneLevel => {
+                return None;
+            }
         };
         Some(Command::SetControl(control, fraction))
     }
@@ -466,6 +550,145 @@ mod tests {
             &[moved(Continuous::Tempo(Deck::B), 0.1)],
         );
         assert_eq!(commands.len(), 1);
+    }
+
+    fn fx_surface() -> Surface {
+        Surface {
+            focused_effect: Some(EffectUnitId::ALL[1]),
+            effect_depth: 0.5,
+            ..Surface::default()
+        }
+    }
+
+    #[test]
+    fn eq_and_filter_knobs_turn_the_channel() {
+        let mut dispatcher = Dispatcher::default();
+        let commands = run(
+            &mut dispatcher,
+            &Surface::default(),
+            &[
+                moved(
+                    Continuous::Eq {
+                        deck: Deck::A,
+                        band: dubplate_midi::EqBand::Low,
+                    },
+                    0.0,
+                ),
+                moved(Continuous::Filter(Deck::B), 1.0),
+            ],
+        );
+        assert_eq!(
+            commands,
+            [
+                Command::SetControl(Control::Eq(DeckId::A, dubplate_engine::EqBand::Low), 0.0),
+                Command::SetControl(Control::Filter(DeckId::B), 1.0),
+            ]
+        );
+    }
+
+    #[test]
+    fn jogs_scratch_nudge_and_search_and_report_the_hand() {
+        let mut dispatcher = Dispatcher::default();
+        let turn = |mode, count, layer| ControlEvent {
+            action: Action::Encoder {
+                encoder: Encoder::Jog {
+                    deck: Deck::B,
+                    mode,
+                },
+                ticks: Ticks::new(count),
+            },
+            layer,
+        };
+        let commands = run(
+            &mut dispatcher,
+            &Surface::default(),
+            &[
+                press(Button::JogTouch(Deck::B)),
+                turn(JogMode::Scratch, -3, Layer::Normal),
+                release(Button::JogTouch(Deck::B)),
+                turn(JogMode::Nudge, 2, Layer::Normal),
+                turn(JogMode::Search, 5, Layer::Shift),
+            ],
+        );
+        assert_eq!(
+            commands,
+            [
+                Command::JogTouch(DeckId::B, true),
+                Command::Jog(DeckId::B, JogMotion::Scratch, -3),
+                Command::JogTouch(DeckId::B, false),
+                Command::Jog(DeckId::B, JogMotion::Nudge, 2),
+                Command::Jog(DeckId::B, JogMotion::Search, 5),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_beat_fx_section_drives_the_focused_unit() {
+        let mut dispatcher = Dispatcher::default();
+        let surface = fx_surface();
+        let unit = EffectUnitId::ALL[1];
+        let lever = |deck, on| ControlEvent {
+            action: Action::Switch {
+                switch: Switch::BeatFxChannel(deck),
+                on,
+            },
+            layer: Layer::Normal,
+        };
+        let commands = run(
+            &mut dispatcher,
+            &surface,
+            &[
+                press(Button::BeatFxSelect),
+                shift_press(Button::BeatFxSelect),
+                press(Button::BeatFxBeat(Arrow::Right)),
+                press(Button::BeatFxBeat(Arrow::Left)),
+                shift_press(Button::BeatFxBeat(Arrow::Right)),
+                lever(Deck::A, true),
+                lever(Deck::A, false),
+                lever(Deck::B, true),
+                press(Button::BeatFxOn),
+                release(Button::BeatFxOn),
+            ],
+        );
+        assert_eq!(
+            commands,
+            [
+                Command::Effect(unit, EffectEdit::StepKind(1)),
+                Command::Effect(unit, EffectEdit::StepKind(-1)),
+                Command::Effect(unit, EffectEdit::Beat(Direction::Up)),
+                Command::Effect(unit, EffectEdit::Beat(Direction::Down)),
+                Command::FocusEffectUnit(1),
+                Command::Effect(unit, EffectEdit::Target(EffectTarget::Deck(DeckId::A))),
+                Command::Effect(unit, EffectEdit::Target(EffectTarget::Master)),
+                Command::Effect(unit, EffectEdit::Target(EffectTarget::Deck(DeckId::B))),
+                Command::Effect(unit, EffectEdit::Toggle),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_level_knob_picks_up_the_focused_units_depth() {
+        let mut dispatcher = Dispatcher::default();
+        let surface = fx_surface();
+        let level = |fraction| moved(Continuous::BeatFxLevelDepth, fraction);
+        assert!(run(&mut dispatcher, &surface, &[level(0.9), level(0.8)]).is_empty());
+        let commands = run(&mut dispatcher, &surface, &[level(0.4)]);
+        assert!(
+            matches!(
+                commands[..],
+                [Command::Effect(_, EffectEdit::Depth(depth))] if (depth - 0.4).abs() < 1e-3
+            ),
+            "{commands:?}"
+        );
+        let other_unit = Surface {
+            focused_effect: Some(EffectUnitId::ALL[2]),
+            effect_depth: 0.1,
+            ..surface
+        };
+        assert!(
+            run(&mut dispatcher, &other_unit, &[level(0.4)]).is_empty(),
+            "a newly focused unit waits for the knob to reach its depth"
+        );
     }
 
     #[test]
