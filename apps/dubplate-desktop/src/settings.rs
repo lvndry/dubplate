@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::effects::EffectUnitSetting;
+
 const FILE_NAME: &str = "settings.toml";
 const LIBRARY_CACHE_NAME: &str = "library-cache.json";
 
@@ -48,6 +50,8 @@ pub struct Settings {
     pub music_folders: Vec<PathBuf>,
     /// Whether rekordbox's collection is part of the library.
     pub import_rekordbox: bool,
+    /// Each effect unit's effect, target, beat and depth, FX 1 first.
+    pub effect_units: Vec<EffectUnitSetting>,
 }
 
 impl Default for Settings {
@@ -57,6 +61,7 @@ impl Default for Settings {
             audio_device: None,
             music_folders: Vec::new(),
             import_rekordbox: false,
+            effect_units: Vec::new(),
         }
     }
 }
@@ -131,6 +136,12 @@ mod tests {
                 PathBuf::from("/Music/Amapiano"),
             ],
             import_rekordbox: true,
+            effect_units: vec![EffectUnitSetting {
+                effect: "reverb".to_owned(),
+                target: "M".to_owned(),
+                beat: "2".to_owned(),
+                depth: 0.25,
+            }],
         };
         settings.save(&path).unwrap();
         assert_eq!(Settings::load(&path).unwrap(), settings);

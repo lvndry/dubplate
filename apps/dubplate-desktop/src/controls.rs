@@ -1,6 +1,6 @@
 //! The mixer and tempo sliders: their positions, and how a pointer on a slider becomes a value.
 
-use dubplate_engine::{DeckId, decibels_to_gain};
+use dubplate_engine::{DeckId, EqBand, decibels_to_gain};
 use gpui::{Bounds, Pixels, Point};
 
 /// How far the tempo slider reaches each way: ±8%, a CDJ's default range.
@@ -29,6 +29,11 @@ pub enum Control {
     MasterLevel,
     /// A deck's trim, unity in the middle.
     Trim(DeckId),
+    /// One of a deck's EQ knobs: killed at the left, unity in the middle, +6 dB at the right.
+    Eq(DeckId, EqBand),
+    /// A deck's filter knob (CFX): low-pass to the left, flat in the middle, high-pass to the
+    /// right.
+    Filter(DeckId),
 }
 
 impl Control {
@@ -36,7 +41,11 @@ impl Control {
     pub fn resting(self) -> f32 {
         match self {
             Control::ChannelFader(_) | Control::MasterLevel => 1.0,
-            Control::Crossfader | Control::Tempo(_) | Control::Trim(_) => 0.5,
+            Control::Crossfader
+            | Control::Tempo(_)
+            | Control::Trim(_)
+            | Control::Eq(..)
+            | Control::Filter(_) => 0.5,
         }
     }
 }
@@ -175,6 +184,10 @@ pub struct MixerPositions {
     pub master_level: f32,
     /// Each deck's trim knob, from 0.0 to 1.0 with unity in the middle.
     pub trims: [f32; 2],
+    /// Each deck's EQ knobs, in the order of [`EqBand::ALL`], unity in the middle.
+    pub eqs: [[f32; 3]; 2],
+    /// Each deck's filter knob, flat in the middle.
+    pub filters: [f32; 2],
 }
 
 impl MixerPositions {
@@ -186,6 +199,8 @@ impl MixerPositions {
             Control::Tempo(deck) => tempo_fraction(self.tempos[deck.index()]),
             Control::MasterLevel => self.master_level,
             Control::Trim(deck) => self.trims[deck.index()],
+            Control::Eq(deck, band) => self.eqs[deck.index()][band.index()],
+            Control::Filter(deck) => self.filters[deck.index()],
         }
     }
 }
@@ -198,6 +213,8 @@ impl Default for MixerPositions {
             crossfader: 0.5,
             master_level: 1.0,
             trims: [0.5, 0.5],
+            eqs: [[0.5; 3]; 2],
+            filters: [0.5, 0.5],
         }
     }
 }
