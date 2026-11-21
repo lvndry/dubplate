@@ -181,7 +181,18 @@ fn run_session(
     controller.set_sync(DeckId::A, SyncMode::Beat)?;
     render_armed(renderer, &mut output[..9600], 2);
 
-    let steps: [Step; 33] = [
+    let steps: [Step; 44] = [
+        |controller| controller.beat_loop(DeckId::A, BeatLength::FOUR),
+        |controller| controller.halve_loop(DeckId::A),
+        |controller| controller.double_loop(DeckId::A),
+        |controller| controller.beat_jump(DeckId::A, 4.0),
+        |controller| controller.reloop_or_exit(DeckId::A),
+        |controller| controller.reloop_or_exit(DeckId::A),
+        |controller| controller.loop_in(DeckId::B),
+        |controller| controller.loop_out(DeckId::B),
+        |controller| controller.hot_cue(DeckId::B, 0.5),
+        |controller| controller.set_quantize(false),
+        |controller| controller.beat_jump(DeckId::B, -2.0),
         |controller| controller.set_tempo_fader(DeckId::B, 0.4),
         |controller| controller.set_tempo_range(DeckId::B, TempoRange::Wide),
         |controller| controller.set_pitch_bend(DeckId::A, 0.04),

@@ -13,7 +13,8 @@
 //! kills or restores the low, h the high, and j and l turn the filter knob left and right. The
 //! jog: , and . nudge the selected deck back and forward, n and m search back and forward. s
 //! switches beat sync on the selected deck, p makes it the tempo master and r steps through the
-//! tempo ranges. For
+//! tempo ranges. Loops: 4 sets a 4-beat loop, i and o are loop in and out, 9 and 0 halve and
+//! double the loop, u is reloop/exit, and ; and ' jump 4 beats back and forward. For
 //! the effects: 1, 2 and 3 switch effect units 1 to 3 on and off, e selects the next effect on
 //! unit 1, t moves unit 1 to the next target (deck A, deck B, master), [ and ] shorten and
 //! lengthen its beat, and - and = turn its depth down and up.
@@ -24,7 +25,7 @@ use std::time::{Duration, Instant};
 
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use dubplate_engine::{
-    AudioOutput, BeatGrid, Controller, DeckId, DecodeStatus, EffectKind, EffectTarget,
+    AudioOutput, BeatGrid, BeatLength, Controller, DeckId, DecodeStatus, EffectKind, EffectTarget,
     EffectUnitId, EngineError, EngineStats, EqBand, MasterTempo, OutputConfig, SyncMode, Track,
     decibels_to_gain, gain_to_decibels,
 };
@@ -124,6 +125,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!(
             "space play/pause, tab switch deck, c cue, up/down tempo, left/right crossfader, x throw crossfader, q quit\r\n\
              k/h kill low/high, j/l filter, ,/. nudge, n/m search, s sync, p master, r tempo range\r\n\
+             4 loop, i/o loop in/out, 9/0 halve/double, u reloop/exit, ;/' beat jump\r\n\
              1/2/3 effect units on/off, e next effect, t next target, [/] beat, -/= depth (unit 1)"
         );
         crossterm::terminal::enable_raw_mode()?;
@@ -243,6 +245,14 @@ fn control_channel(
             controller.set_sync(deck, sync)
         }
         'p' => controller.set_master_tempo(MasterTempo::Deck(deck)),
+        '4' => controller.beat_loop(deck, BeatLength::FOUR),
+        'i' => controller.loop_in(deck),
+        'o' => controller.loop_out(deck),
+        '9' => controller.halve_loop(deck),
+        '0' => controller.double_loop(deck),
+        'u' => controller.reloop_or_exit(deck),
+        ';' => controller.beat_jump(deck, -4.0),
+        '\'' => controller.beat_jump(deck, 4.0),
         'r' => {
             let range = controller.tempo_state(deck).tempo_range.next();
             controller.set_tempo_range(deck, range)
