@@ -1,48 +1,164 @@
-use dubplate_fx::{MAX_TEMPO_BPM, MIN_TEMPO_BPM};
+use std::fmt;
 
 use crate::deck::DeckId;
-use crate::error::{EngineError, check_range};
-use crate::track::MAX_TRACK_SECONDS;
 
 /// How much louder another deck must be before it takes over as the automatic tempo master,
 /// so two decks at the same level do not swap on every block. About 3 dB.
 const TAKEOVER_RATIO: f32 = 1.41;
 
-/// A track's beat grid at its own tempo, as rekordbox analyses it: the BPM and where the first
-/// beat falls.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct BeatGrid {
-    bpm: f64,
-    first_beat_seconds: f64,
+/// How far a deck's tempo fader reaches either side of the track's own tempo, like the TEMPO
+/// RANGE button of a CDJ.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub enum TempoRange {
+    /// ±6%, in steps of 0.02%.
+    SixPercent,
+    /// ±10%, in steps of 0.04%.
+    #[default]
+    TenPercent,
+    /// ±16%, in steps of 0.04%.
+    SixteenPercent,
+    /// ±100%, in steps of 0.5%. All the way down stops the track.
+    Wide,
 }
 
-impl BeatGrid {
-    /// A grid of `bpm` beats per minute whose first beat falls `first_beat_seconds` into the
-    /// track. The BPM must be one effects can follow, from [`MIN_TEMPO_BPM`] to
-    /// [`MAX_TEMPO_BPM`].
-    pub fn new(bpm: f64, first_beat_seconds: f64) -> Result<Self, EngineError> {
-        check_range("BPM", bpm, MIN_TEMPO_BPM, MAX_TEMPO_BPM)?;
-        let longest = MAX_TRACK_SECONDS as f64;
-        check_range("first beat", first_beat_seconds, -longest, longest)?;
-        Ok(Self {
-            bpm,
-            first_beat_seconds,
+impl TempoRange {
+    /// Every range, in the order the button steps through them.
+    pub const ALL: [TempoRange; 4] = [
+        TempoRange::SixPercent,
+        TempoRange::TenPercent,
+        TempoRange::SixteenPercent,
+        TempoRange::Wide,
+    ];
+
+    /// How far the fader reaches either side, as a share of the track's tempo.
+    pub fn span(self) -> f64 {
+        match self {
+            TempoRange::SixPercent => 0.06,
+            TempoRange::TenPercent => 0.10,
+            TempoRange::SixteenPercent => 0.16,
+            TempoRange::Wide => 1.0,
+        }
+    }
+
+    /// The smallest tempo step the fader makes, as a share of the track's tempo: rekordbox's
+    /// resolution for the range.
+    pub fn step(self) -> f64 {
+        match self {
+            TempoRange::SixPercent => 0.0002,
+            TempoRange::TenPercent | TempoRange::SixteenPercent => 0.0004,
+            TempoRange::Wide => 0.005,
+        }
+    }
+
+    /// The next range, wrapping from WIDE back to ±6%.
+    pub fn next(self) -> TempoRange {
+        let index = Self::ALL
+            .iter()
+            .position(|range| *range == self)
+            .unwrap_or(0);
+        Self::ALL[(index + 1) % Self::ALL.len()]
+    }
+
+    pub(crate) fn index(self) -> u8 {
+        match self {
+            TempoRange::SixPercent => 0,
+            TempoRange::TenPercent => 1,
+            TempoRange::SixteenPercent => 2,
+            TempoRange::Wide => 3,
+        }
+    }
+
+    pub(crate) fn from_index(index: u8) -> TempoRange {
+        Self::ALL
+            .get(usize::from(index))
+            .copied()
+            .unwrap_or_default()
+    }
+}
+
+impl fmt::Display for TempoRange {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            TempoRange::SixPercent => "±6%",
+            TempoRange::TenPercent => "±10%",
+            TempoRange::SixteenPercent => "±16%",
+            TempoRange::Wide => "WIDE",
         })
     }
+}
 
-    /// The track's own tempo in beats per minute.
-    pub fn bpm(self) -> f64 {
-        self.bpm
+/// A deck's tempo fader. When the deck's tempo comes from somewhere else, such as sync, the
+/// fader no longer matches it; like a CDJ's, it then waits to be moved through the playing
+/// tempo before it takes over again, so letting go of sync never makes the tempo jump.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct TempoFader {
+    position: f64,
+    range: TempoRange,
+    in_control: bool,
+}
+
+impl Default for TempoFader {
+    fn default() -> Self {
+        Self {
+            position: 0.0,
+            range: TempoRange::default(),
+            in_control: true,
+        }
+    }
+}
+
+impl TempoFader {
+    /// The tempo the fader asks for, where 1.0 is the track's own tempo.
+    pub(crate) fn tempo(&self) -> f64 {
+        (1.0 + self.position * self.range.span()).max(0.0)
     }
 
-    /// Where the first beat falls, in seconds from the start of the track.
-    pub fn first_beat_seconds(self) -> f64 {
-        self.first_beat_seconds
+    pub(crate) fn range(&self) -> TempoRange {
+        self.range
     }
 
-    /// Beats from the first beat to `seconds` into the track.
-    pub fn beat_at(self, seconds: f64) -> f64 {
-        (seconds - self.first_beat_seconds) * self.bpm / 60.0
+    pub(crate) fn is_in_control(&self) -> bool {
+        self.in_control
+    }
+
+    /// Moves the fader to `position`, from -1 (slowest) to 1 (fastest), in the range's steps.
+    /// Returns the tempo to play when the fader is in control.
+    pub(crate) fn move_to(&mut self, position: f64, playing_tempo: f64) -> Option<f64> {
+        let steps = (position.clamp(-1.0, 1.0) * self.range.span() / self.range.step()).round();
+        self.slide(steps * self.range.step() / self.range.span(), playing_tempo)
+    }
+
+    /// Moves the fader to where it asks for `tempo`, which may lie outside the range.
+    pub(crate) fn move_to_tempo(&mut self, tempo: f64, playing_tempo: f64) -> Option<f64> {
+        self.slide((tempo - 1.0) / self.range.span(), playing_tempo)
+    }
+
+    fn slide(&mut self, position: f64, playing_tempo: f64) -> Option<f64> {
+        let before = self.tempo() - playing_tempo;
+        self.position = position;
+        let after = self.tempo() - playing_tempo;
+        if !self.in_control && before * after <= 0.0 {
+            self.in_control = true;
+        }
+        self.in_control.then(|| self.tempo())
+    }
+
+    /// Changes the range. The fader keeps its position, so the tempo it asks for changes, as on
+    /// a CDJ. Returns the tempo to play when the fader is in control.
+    pub(crate) fn set_range(&mut self, range: TempoRange) -> Option<f64> {
+        self.range = range;
+        self.in_control.then(|| self.tempo())
+    }
+
+    /// Hands the tempo to something else, such as sync.
+    pub(crate) fn hand_over(&mut self) {
+        self.in_control = false;
+    }
+
+    /// Takes the tempo back: at once when the fader sits on `playing_tempo`, otherwise once it
+    /// is moved through it.
+    pub(crate) fn take_back(&mut self, playing_tempo: f64) {
+        self.in_control = (self.tempo() - playing_tempo).abs() < 1e-9;
     }
 }
 
@@ -253,12 +369,33 @@ mod tests {
     }
 
     #[test]
-    fn grids_are_checked_and_count_beats_from_the_first_one() {
-        let grid = BeatGrid::new(120.0, 0.5).unwrap();
-        assert_eq!(grid.beat_at(0.5), 0.0);
-        assert_eq!(grid.beat_at(2.5), 4.0);
-        assert!(BeatGrid::new(0.0, 0.0).is_err());
-        assert!(BeatGrid::new(f64::NAN, 0.0).is_err());
-        assert!(BeatGrid::new(128.0, f64::INFINITY).is_err());
+    fn the_fader_moves_in_the_range_steps() {
+        let mut fader = TempoFader::default();
+        assert_eq!(fader.move_to(0.5, 1.0), Some(1.05));
+        fader.set_range(TempoRange::SixPercent);
+        let tempo = fader.move_to(0.123_45, 1.0).unwrap();
+        assert!((tempo - 1.0074).abs() < 1e-12, "{tempo}");
+        fader.set_range(TempoRange::Wide);
+        assert_eq!(fader.move_to(-1.0, 1.0), Some(0.0));
+        assert_eq!(TempoRange::Wide.next(), TempoRange::SixPercent);
+    }
+
+    #[test]
+    fn a_fader_that_lost_control_takes_over_once_moved_through_the_playing_tempo() {
+        let mut fader = TempoFader::default();
+        fader.move_to(0.0, 1.0);
+        fader.hand_over();
+        fader.take_back(1.03);
+        assert!(!fader.is_in_control());
+        assert_eq!(fader.move_to(0.2, 1.03), None);
+        assert_eq!(fader.move_to(0.4, 1.03), Some(1.04));
+        assert!(fader.is_in_control());
+    }
+
+    #[test]
+    fn changing_the_range_keeps_the_fader_position() {
+        let mut fader = TempoFader::default();
+        fader.move_to(0.5, 1.0);
+        assert_eq!(fader.set_range(TempoRange::SixteenPercent), Some(1.08));
     }
 }

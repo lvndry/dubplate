@@ -70,7 +70,7 @@ The audio engine plays tracks on two decks with a crossfader. To hear it:
 cargo run --release -p dubplate-engine --example play -- <file-a> [file-b] [--buffer 256]
 ```
 
-It prints the buffer size, the output latency and the dropout counters every second. In a terminal, space plays or pauses the selected deck, tab selects the other deck, c is the cue button, up and down change the tempo, left and right move the crossfader, x throws the crossfader to the other side and q quits. On the selected deck, k kills or brings back the low, h the high, j and l turn the filter knob, , and . nudge the jog back and forward, and n and m search back and forward.
+It prints the buffer size, the output latency and the dropout counters every second. In a terminal, space plays or pauses the selected deck, tab selects the other deck, c is the cue button, up and down change the tempo, left and right move the crossfader, x throws the crossfader to the other side and q quits. On the selected deck, k kills or brings back the low, h the high, j and l turn the filter knob, , and . nudge the jog back and forward, n and m search back and forward, s switches beat sync, p makes the deck the tempo master and r steps through the tempo ranges.
 
 ## Mix with the EQ, the filter and the jogs
 
@@ -95,6 +95,14 @@ cargo run -p dubplate -- midi monitor --device "DDJ-FLX4" --lights
 ```
 
 `monitor` prints every message with the time, the bytes and what Dubplate reads from it, such as `B0 22 41  deck A jog turn +1 (scratch)`, until Ctrl-C. `--lights` lights each button while it is held.
+
+## Sync and beatmatching
+
+Each deck's tempo fader has a range like a CDJ's TEMPO RANGE button: ±6%, ±10%, ±16% or WIDE (±100%), in rekordbox's steps of 0.02%, 0.04% or 0.5%. A pitch bend held on a deck speeds it up or slows it down for as long as it is held and glides back.
+
+SYNC follows the tempo master, the deck chosen with the MASTER button or, by default, the louder playing deck. Tempo sync matches the master's BPM. Beat sync also puts the deck's beats on the master's: it jumps to the nearest beat at once, then holds the lock with bends too small to hear. Synced decks follow every move of the master's tempo fader, and a track at half or double the master's tempo locks to every other beat. Nudging, scratching or bending a following deck drops it to tempo sync, as on a CDJ-3000, so it can still be ridden by hand. When sync goes off, or a synced deck becomes the master, the tempo holds and the fader takes over again once it is moved through the playing tempo.
+
+Beat grids can change tempo: built from every beat rekordbox stores, with its BPM, a grid follows a live drummer, and sync and effects follow it beat by beat.
 
 ## Effects while you mix
 
