@@ -1634,6 +1634,7 @@ dependencies = [
  "async-channel",
  "dirs 7.0.0",
  "dubplate-engine",
+ "dubplate-library",
  "dubplate-midi",
  "dubplate-rekordbox",
  "gpui-kit",
@@ -1667,6 +1668,17 @@ dependencies = [
  "dubplate-engine",
  "hound",
  "tempfile",
+]
+
+[[package]]
+name = "dubplate-library"
+version = "0.1.0"
+dependencies = [
+ "lofty",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

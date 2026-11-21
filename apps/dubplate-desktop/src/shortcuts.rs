@@ -57,7 +57,7 @@ const fn pad(keystroke: &'static str, deck: DeckId, pad: HotCuePad) -> Shortcut 
 }
 
 /// Every keyboard shortcut.
-pub const SHORTCUTS: [Shortcut; 35] = [
+pub const SHORTCUTS: [Shortcut; 37] = [
     outside_text("space", Command::TogglePlay(DeckId::A)),
     outside_text("shift-space", Command::TogglePlay(DeckId::B)),
     outside_text("c", Command::Cue(DeckId::A, Press::Tap)),
@@ -92,6 +92,8 @@ pub const SHORTCUTS: [Shortcut; 35] = [
     anywhere("cmd-f", Command::FocusSearch),
     anywhere("ctrl-f", Command::FocusSearch),
     outside_text("?", Command::ToggleHelp),
+    anywhere("cmd-,", Command::ToggleLibrary),
+    anywhere("cmd-o", Command::AddMusicFolders),
     anywhere("escape", Command::Dismiss),
 ];
 
@@ -172,6 +174,8 @@ pub fn help_lines() -> Vec<HelpLine> {
         ),
         line(&["up", "down"], "Select the previous / next track"),
         line(&["/", "cmd-f"], "Search titles and artists"),
+        line(&["cmd-o"], "Add music folders to the library"),
+        line(&["cmd-,"], "Library: music folders and rekordbox"),
         line(&["?", "escape"], "Show / close this help"),
     ]
 }

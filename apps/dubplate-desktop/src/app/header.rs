@@ -10,7 +10,6 @@ use gpui::{
 use super::DubplateApp;
 use crate::assets::LOGO_PATH;
 use crate::browser::{LibraryStatus, search_field};
-use crate::collection::CrateIndex;
 use crate::commands::Command;
 use crate::fonts::MONO_FAMILY;
 use crate::theme;
@@ -99,18 +98,19 @@ fn mode(label: &'static str, current: bool) -> impl IntoElement {
 }
 
 fn status(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoElement {
-    let (library_colour, library_text): (Rgba, SharedString) = match &app.library {
-        LibraryStatus::Reading => (theme::MUTED, "Reading rekordbox\u{2026}".into()),
-        LibraryStatus::Ready(collection) => (
-            theme::OK,
-            format!(
-                "rekordbox \u{b7} {} tracks",
-                collection.crate_at(CrateIndex::COLLECTION).tracks.len()
-            )
-            .into(),
-        ),
-        LibraryStatus::Failed(_) => (theme::ALERT, "rekordbox not read".into()),
-    };
+    let (library_colour, library_text): (Rgba, SharedString) =
+        match (app.sources.files_seen(), &app.library) {
+            (Some(files), _) => (
+                theme::MUTED,
+                format!("Scanning\u{2026} {files} files").into(),
+            ),
+            (None, LibraryStatus::Reading) => (theme::MUTED, "Opening library\u{2026}".into()),
+            (None, LibraryStatus::Ready(collection)) => (
+                theme::OK,
+                format!("{} tracks", collection.track_count()).into(),
+            ),
+            (None, LibraryStatus::Unchosen) => (theme::MUTED, "No music yet".into()),
+        };
     let (audio_colour, audio_text): (Rgba, SharedString) = match &app.engine {
         Ok(engine) => {
             let stats = engine.controller.stats();
@@ -145,9 +145,19 @@ fn status(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoElem
         .text_color(theme::MUTED)
         .child(
             div()
+                .id("library-status")
                 .flex()
                 .items_center()
                 .gap(px(6.0))
+                .h(px(28.0))
+                .px(px(8.0))
+                .rounded(theme::CONTROL_RADIUS)
+                .cursor_pointer()
+                .hover(|chip| chip.bg(theme::RAISED))
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                    this.perform(Command::ToggleLibrary, window, cx);
+                }))
                 .child(dot(library_colour))
                 .child(library_text),
         )

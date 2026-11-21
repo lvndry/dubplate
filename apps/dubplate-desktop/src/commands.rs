@@ -72,6 +72,10 @@ pub enum Command {
     FocusSearch,
     /// Show or hide the list of shortcuts.
     ToggleHelp,
+    /// Show or hide the library's settings: the music folders and rekordbox.
+    ToggleLibrary,
+    /// Open the folder picker to add music folders to the library.
+    AddMusicFolders,
     /// Close the help or leave the search field.
     Dismiss,
 }
