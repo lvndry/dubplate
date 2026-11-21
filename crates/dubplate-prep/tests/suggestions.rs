@@ -1,10 +1,13 @@
 //! Next-track suggestions over a small afro house and amapiano crate.
 
+use std::path::PathBuf;
+
 use dubplate_prep::{EnergyDirection, Key, PrepTrack, suggest_next};
 
 fn track(id: &str, key: &str, bpm: f32, energy: f32) -> PrepTrack {
     PrepTrack {
-        rekordbox_id: id.to_owned(),
+        track_path: PathBuf::from(format!("/music/{id}.mp3")),
+        rekordbox_id: None,
         title: id.to_owned(),
         artist: String::new(),
         key: Key::parse_file_key(key),
@@ -42,12 +45,12 @@ fn suggests_compatible_tracks_and_leaves_out_clashes_far_tempos_and_the_set() {
         &reference,
         &candidates,
         EnergyDirection::Same,
-        |candidate| candidate.rekordbox_id == "already-in-set",
+        |candidate| candidate.title == "already-in-set",
         10,
     );
     let ids: Vec<&str> = suggestions
         .iter()
-        .map(|suggestion| suggestion.track.rekordbox_id.as_str())
+        .map(|suggestion| suggestion.track.title.as_str())
         .collect();
 
     assert_eq!(ids.first(), Some(&"same-key"));
@@ -72,7 +75,7 @@ fn lifting_the_energy_puts_the_more_energetic_track_first() {
 
     let suggestions = suggest_next(&reference, &candidates, EnergyDirection::Up, |_| false, 2);
 
-    assert_eq!(suggestions[0].track.rekordbox_id, "lift");
+    assert_eq!(suggestions[0].track.title, "lift");
     assert_eq!(
         suggestions[0].reason(),
         "One step on the wheel · +0.4% · energy +2"

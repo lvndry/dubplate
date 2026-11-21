@@ -1,11 +1,16 @@
+use std::path::PathBuf;
+
 use euphoria_core::harmony::MixTrack;
 use euphoria_core::key::Key;
 
-/// A track as set preparation sees it: who it is in rekordbox and what mixing needs to know.
+/// A track as set preparation sees it: which file it is and what mixing needs to know.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PrepTrack {
-    /// rekordbox's identifier for the track.
-    pub rekordbox_id: String,
+    /// The audio file, the track's identity in a set: tracks from the DJ's own folders have no
+    /// rekordbox id.
+    pub track_path: PathBuf,
+    /// rekordbox's identifier, when the track is in the rekordbox collection.
+    pub rekordbox_id: Option<String>,
     /// The title.
     pub title: String,
     /// The artist.
@@ -19,17 +24,18 @@ pub struct PrepTrack {
 }
 
 impl PrepTrack {
-    /// Reads the mixing facts of a rekordbox track. rekordbox has no energy rating, so
-    /// `energy` comes from analysis or from the DJ.
-    pub fn from_rekordbox(track: &dubplate_rekordbox::Track, energy: Option<f32>) -> Self {
-        Self {
-            rekordbox_id: track.id.clone(),
+    /// Reads the mixing facts of a rekordbox track, or None when rekordbox has no file for it.
+    /// rekordbox has no energy rating, so `energy` comes from analysis or from the DJ.
+    pub fn from_rekordbox(track: &dubplate_rekordbox::Track, energy: Option<f32>) -> Option<Self> {
+        Some(Self {
+            track_path: track.file_path.clone()?,
+            rekordbox_id: Some(track.id.clone()),
             title: track.title.clone().unwrap_or_default(),
             artist: track.artist.clone().unwrap_or_default(),
             key: track.key.as_deref().and_then(Key::parse_file_key),
             bpm: track.bpm.map(|bpm| bpm as f32),
             energy,
-        }
+        })
     }
 }
 
