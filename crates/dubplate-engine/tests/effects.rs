@@ -338,8 +338,10 @@ fn the_controller_reports_unit_settings_and_rejects_bad_values() {
 fn loading_a_track_clears_the_deck_beat_grid() {
     let (mut controller, _renderer) = offline_engine(SAMPLE_RATE);
     let grid = BeatGrid::new(124.0, 0.12).unwrap();
-    controller.set_beat_grid(DeckId::A, Some(grid)).unwrap();
-    assert_eq!(controller.beat_grid(DeckId::A), Some(grid));
+    controller
+        .set_beat_grid(DeckId::A, Some(grid.clone()))
+        .unwrap();
+    assert_eq!(controller.beat_grid(DeckId::A), Some(&grid));
     controller
         .load_track(DeckId::A, constant_track(0.1, 0.1, 1.0, SAMPLE_RATE))
         .unwrap();

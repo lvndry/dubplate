@@ -28,11 +28,13 @@ mod deck;
 mod decode;
 mod effects;
 mod error;
+mod grid;
 mod jog;
 mod mixer;
 mod output;
 mod processor;
 mod state;
+mod sync;
 mod tempo;
 mod track;
 
@@ -47,12 +49,14 @@ pub use decode::decode_file;
 pub use dubplate_fx::{BeatLength, EffectKind, EqBand};
 pub use effects::{EffectTarget, EffectUnitId, EffectUnitState};
 pub use error::EngineError;
+pub use grid::{BeatGrid, GridBeat};
 pub use jog::DEFAULT_JOG_TICKS_PER_REVOLUTION;
 pub use mixer::Renderer;
 pub use output::{AudioOutput, OutputConfig};
 pub use processor::{AudioProcessor, ProcessContext, StereoBlock};
-pub use state::{DeckState, EngineStats, Meters, PlatterState};
-pub use tempo::{BeatClock, BeatGrid, MasterTempo};
+pub use state::{DeckState, EngineStats, Meters, PlatterState, TempoState};
+pub use sync::SyncMode;
+pub use tempo::{BeatClock, MasterTempo, TempoRange};
 pub use track::{DecodeStatus, MAX_SAMPLE_RATE, MAX_TRACK_SECONDS, MIN_SAMPLE_RATE, Track};
 
 /// Number of decks.

@@ -12,8 +12,8 @@ use common::{SAMPLE_RATE, constant_track, wait_until_decoded, write_wav};
 use dubplate_engine::cpal::{OutputCallbackInfo, OutputStreamTimestamp, StreamInstant};
 use dubplate_engine::{
     AudioProcessor, BeatGrid, BeatLength, Controller, DeckId, EffectKind, EffectTarget,
-    EffectUnitId, EngineError, EqBand, MasterTempo, ProcessContext, Renderer, StereoBlock,
-    offline_engine,
+    EffectUnitId, EngineError, EqBand, GridBeat, MasterTempo, ProcessContext, Renderer,
+    StereoBlock, SyncMode, TempoRange, offline_engine,
 };
 
 struct CountingAllocator;
@@ -170,8 +170,25 @@ fn run_session(
     controller.set_master_tempo(MasterTempo::Deck(DeckId::B))?;
     controller.set_beat_grid(DeckId::A, None)?;
     render_armed(renderer, &mut output[..4800], 2);
+    let beats: Vec<GridBeat> = (0..64)
+        .map(|index| GridBeat {
+            seconds: 0.1 + f64::from(index) * 0.49,
+            bpm: 120.0 + f64::from(index % 4),
+        })
+        .collect();
+    controller.set_beat_grid(DeckId::A, Some(BeatGrid::from_beats(&beats)?))?;
+    controller.set_sync(DeckId::A, SyncMode::Beat)?;
+    render_armed(renderer, &mut output[..9600], 2);
 
-    let steps: [Step; 25] = [
+    let steps: [Step; 33] = [
+        |controller| controller.set_tempo_fader(DeckId::B, 0.4),
+        |controller| controller.set_tempo_range(DeckId::B, TempoRange::Wide),
+        |controller| controller.set_pitch_bend(DeckId::A, 0.04),
+        |controller| controller.set_pitch_bend(DeckId::A, 0.0),
+        |controller| controller.set_sync(DeckId::A, SyncMode::Tempo),
+        |controller| controller.set_sync_half_and_double(false),
+        |controller| controller.set_beat_grid(DeckId::B, Some(BeatGrid::new(70.0, 0.2)?)),
+        |controller| controller.set_sync(DeckId::A, SyncMode::Off),
         |controller| controller.set_eq(DeckId::A, EqBand::Low, 0.0),
         |controller| controller.set_eq(DeckId::B, EqBand::High, 1.0),
         |controller| controller.set_filter(DeckId::A, 0.1),
