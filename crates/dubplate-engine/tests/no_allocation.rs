@@ -11,8 +11,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use common::{SAMPLE_RATE, constant_track, wait_until_decoded, write_wav};
 use dubplate_engine::cpal::{OutputCallbackInfo, OutputStreamTimestamp, StreamInstant};
 use dubplate_engine::{
-    AudioProcessor, Controller, DeckId, EngineError, ProcessContext, Renderer, StereoBlock,
-    offline_engine,
+    AudioProcessor, BeatGrid, BeatLength, Controller, DeckId, EffectKind, EffectTarget,
+    EffectUnitId, EngineError, MasterTempo, ProcessContext, Renderer, StereoBlock, offline_engine,
 };
 
 struct CountingAllocator;
@@ -138,9 +138,37 @@ fn run_session(
     wait_until_decoded(&track_b);
     controller.set_deck_insert(DeckId::A, 0, Some(echo()))?;
     controller.set_master_insert(1, Some(echo()))?;
+    controller.set_beat_grid(DeckId::A, Some(BeatGrid::new(124.0, 0.05)?))?;
+    controller.set_beat_grid(DeckId::B, Some(BeatGrid::new(128.0, 0.0)?))?;
+    let targets = [
+        EffectTarget::Deck(DeckId::A),
+        EffectTarget::Deck(DeckId::B),
+        EffectTarget::Master,
+    ];
+    for (unit, target) in EffectUnitId::ALL.into_iter().zip(targets) {
+        controller.set_effect_target(unit, target)?;
+        controller.set_effect_enabled(unit, true)?;
+    }
     controller.play(DeckId::A)?;
     controller.play(DeckId::B)?;
     render_armed(renderer, &mut output, 2);
+
+    for (step, kind) in EffectKind::ALL.into_iter().enumerate() {
+        let unit = EffectUnitId::ALL[step % EffectUnitId::ALL.len()];
+        let target = targets[step % targets.len()];
+        let beat = BeatLength::STANDARD[step % BeatLength::STANDARD.len()];
+        controller.set_effect_kind(unit, kind)?;
+        controller.set_effect_target(unit, target)?;
+        controller.set_effect_beat(unit, beat)?;
+        controller.set_effect_depth(unit, step as f32 / EffectKind::ALL.len() as f32)?;
+        if step % 4 == 3 {
+            controller.toggle_effect(unit)?;
+        }
+        render_armed(renderer, &mut output[..4800], 2);
+    }
+    controller.set_master_tempo(MasterTempo::Deck(DeckId::B))?;
+    controller.set_beat_grid(DeckId::A, None)?;
+    render_armed(renderer, &mut output[..4800], 2);
 
     let steps: [Step; 12] = [
         |controller| controller.set_tempo(DeckId::A, 1.06),

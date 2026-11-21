@@ -44,7 +44,7 @@ mod unit;
 
 pub use beat::{BeatLength, ParseBeatLengthError};
 pub use config::EffectConfig;
-pub use context::ProcessContext;
+pub use context::{MAX_TEMPO_BPM, MIN_TEMPO_BPM, ProcessContext};
 pub use effect::{Effect, EffectKind, ParseEffectKindError, create};
 pub use effects::backspin::Backspin;
 pub use effects::brake::Brake;
