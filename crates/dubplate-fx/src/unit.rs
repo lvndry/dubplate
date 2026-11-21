@@ -177,7 +177,9 @@ impl<K: Kernel> Unit<K> {
 
             let wet_gain = match K::MIX_LAW {
                 MixLaw::Crossfade => wanted_wet_gain,
-                MixLaw::Blend => self.headroom.wet_gain(dry, dry_gain, wet, wanted_wet_gain),
+                MixLaw::Blend => self
+                    .headroom
+                    .limit_wet_gain(dry, dry_gain, wet, wanted_wet_gain),
             };
 
             *left_sample = sanitize_output(dry[0] * dry_gain + wet[0] * wet_gain);
