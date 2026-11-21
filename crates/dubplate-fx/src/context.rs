@@ -2,8 +2,10 @@ const FALLBACK_SAMPLE_RATE: f32 = 48_000.0;
 const MIN_SAMPLE_RATE: f32 = 8_000.0;
 const MAX_SAMPLE_RATE: f32 = 768_000.0;
 const FALLBACK_TEMPO_BPM: f64 = 120.0;
-const MIN_TEMPO_BPM: f64 = 20.0;
-const MAX_TEMPO_BPM: f64 = 999.0;
+/// The slowest tempo effects follow, in beats per minute. A slower tempo is clamped to it.
+pub const MIN_TEMPO_BPM: f64 = 20.0;
+/// The fastest tempo effects follow, in beats per minute. A faster tempo is clamped to it.
+pub const MAX_TEMPO_BPM: f64 = 999.0;
 
 /// The format and musical timing of one block of audio.
 #[derive(Clone, Copy, Debug, PartialEq)]

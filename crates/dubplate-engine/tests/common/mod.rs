@@ -92,3 +92,22 @@ pub fn assert_close(actual: f64, expected: f64, tolerance: f64) {
         "expected {expected}, got {actual}"
     );
 }
+
+/// A stereo track holding a sine wave on each side, either of which can be silent.
+pub fn sine_track(
+    frequency: f64,
+    left_amplitude: f32,
+    right_amplitude: f32,
+    seconds: f64,
+    sample_rate: u32,
+) -> Track {
+    let frame_count = (seconds * f64::from(sample_rate)) as usize;
+    let samples: Vec<f32> = (0..frame_count)
+        .flat_map(|index| {
+            let phase = std::f64::consts::TAU * frequency * index as f64 / f64::from(sample_rate);
+            let value = phase.sin() as f32;
+            [value * left_amplitude, value * right_amplitude]
+        })
+        .collect();
+    Track::from_interleaved_stereo(&samples, sample_rate).expect("valid test track")
+}

@@ -6,8 +6,10 @@ use rtrb::{Consumer, Producer};
 
 use crate::curves::{Ramp, channel_fader_gain, crossfader_gains};
 use crate::deck::{Deck, DeckId};
+use crate::effects::{EffectChange, EffectRack, EffectTarget, EffectUnitId};
 use crate::processor::{AudioProcessor, ProcessContext, StereoBlock};
 use crate::state::{GapDetector, SharedState, raise_peak};
+use crate::tempo::{BeatGrid, DeckLevel, MasterTempo, TempoMaster};
 use crate::track::TrackBuffer;
 use crate::{DECK_COUNT, INSERT_SLOTS, MAX_BLOCK_FRAMES};
 
@@ -54,6 +56,15 @@ pub(crate) enum Command {
         slot: usize,
         processor: Option<Box<dyn AudioProcessor>>,
     },
+    SetBeatGrid {
+        deck: DeckId,
+        beat_grid: Option<BeatGrid>,
+    },
+    SetMasterTempo(MasterTempo),
+    ChangeEffect {
+        unit: EffectUnitId,
+        change: EffectChange,
+    },
 }
 
 /// Something the audio thread no longer needs. It goes back to the control side to be dropped,
@@ -97,6 +108,8 @@ impl RetireQueue {
 pub struct Renderer {
     decks: [Deck; DECK_COUNT],
     master_inserts: [Option<Box<dyn AudioProcessor>>; INSERT_SLOTS],
+    effects: EffectRack,
+    tempo_master: TempoMaster,
     master_block: StereoBlock,
     master_gain: Ramp,
     crossfader: f32,
@@ -120,6 +133,8 @@ impl Renderer {
                 Deck::new(sample_rate, MAX_BLOCK_FRAMES, declick_frames)
             }),
             master_inserts: std::array::from_fn(|_| None),
+            effects: EffectRack::new(sample_rate),
+            tempo_master: TempoMaster::default(),
             master_block: StereoBlock::with_capacity(MAX_BLOCK_FRAMES),
             master_gain: Ramp::new(1.0, declick_frames),
             crossfader: 0.5,
@@ -203,25 +218,37 @@ impl Renderer {
     fn render_block(&mut self, frame_count: usize) -> bool {
         self.master_block.set_frame_count(frame_count);
         self.master_block.silence();
+        let deck_contexts = self.decks.each_ref().map(|deck| ProcessContext {
+            sample_rate: self.sample_rate,
+            tempo: deck.tempo(),
+            beat_clock: deck.beat_clock(),
+        });
+        let tempo_master = self.choose_tempo_master();
         let mut starved = false;
-        for deck in &mut self.decks {
-            let context = ProcessContext {
-                sample_rate: self.sample_rate,
-                tempo: deck.tempo(),
-            };
-            starved |= deck.render(frame_count, &context, &mut self.retire).starved;
-        }
-        for (index, deck) in self.decks.iter_mut().enumerate() {
+        for (deck_id, (deck, context)) in DeckId::ALL
+            .into_iter()
+            .zip(self.decks.iter_mut().zip(&deck_contexts))
+        {
+            starved |= deck.render(frame_count, context, &mut self.retire).starved;
+            deck.apply_channel_gain();
+            self.effects
+                .process(EffectTarget::Deck(deck_id), &mut deck.block, context);
             let peak = deck.mix_into(&mut self.master_block);
-            raise_peak(&self.shared.decks[index].peak, peak);
+            raise_peak(&self.shared.decks[deck_id.index()].peak, peak);
         }
-        let context = ProcessContext {
+        let master_context = ProcessContext {
             sample_rate: self.sample_rate,
             tempo: 1.0,
+            beat_clock: tempo_master.and_then(|deck| deck_contexts[deck.index()].beat_clock),
         };
         for processor in self.master_inserts.iter_mut().flatten() {
-            processor.process(&mut self.master_block, &context);
+            processor.process(&mut self.master_block, &master_context);
         }
+        self.effects.process(
+            EffectTarget::Master,
+            &mut self.master_block,
+            &master_context,
+        );
         let (left_channel, right_channel) = self.master_block.channels_mut();
         let mut peak = 0.0_f32;
         for (left, right) in left_channel.iter_mut().zip(right_channel.iter_mut()) {
@@ -232,6 +259,18 @@ impl Renderer {
         }
         raise_peak(&self.shared.master_peak, peak);
         starved
+    }
+
+    fn choose_tempo_master(&mut self) -> Option<DeckId> {
+        let levels = DeckId::ALL.map(|deck_id| {
+            let deck = &self.decks[deck_id.index()];
+            DeckLevel {
+                deck: deck_id,
+                has_beat_grid: deck.has_beat_grid(),
+                level: deck.level(),
+            }
+        });
+        self.tempo_master.update(&levels)
     }
 
     fn apply_commands(&mut self) {
@@ -285,6 +324,11 @@ impl Renderer {
                     &mut self.retire,
                 );
             }
+            Command::SetBeatGrid { deck, beat_grid } => {
+                self.decks[deck.index()].set_beat_grid(beat_grid);
+            }
+            Command::SetMasterTempo(source) => self.tempo_master.set_source(source),
+            Command::ChangeEffect { unit, change } => self.effects.change(unit, change),
         }
     }
 
@@ -306,6 +350,15 @@ impl Renderer {
             shared.cue_point_seconds.store(deck.cue_point_seconds());
             shared.tempo.store(deck.tempo());
         }
+        for (sounding, shared) in self
+            .effects
+            .sounding()
+            .into_iter()
+            .zip(&self.shared.effect_sounding)
+        {
+            shared.store(sounding, Ordering::Relaxed);
+        }
+        self.shared.tempo_master.store(self.tempo_master.current());
     }
 }
 

@@ -1,3 +1,5 @@
+use crate::tempo::BeatClock;
+
 /// A block of stereo audio handed to processors, stored as one buffer per channel.
 ///
 /// The buffers are allocated once with a fixed capacity and never grow, so a block can be
@@ -76,6 +78,9 @@ pub struct ProcessContext {
     /// Playback speed of the deck the processor sits on, where 1.0 is the track's own tempo.
     /// Always 1.0 on the master bus.
     pub tempo: f64,
+    /// The tempo and beat position of the music, when its beat grid is known. On the master bus
+    /// it is the tempo master deck's.
+    pub beat_clock: Option<BeatClock>,
 }
 
 /// An effect or other processing stage that sits in a deck's or the master's insert slot.

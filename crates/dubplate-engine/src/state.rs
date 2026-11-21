@@ -1,7 +1,8 @@
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
 use std::time::Duration;
 
-use crate::DECK_COUNT;
+use crate::deck::DeckId;
+use crate::{DECK_COUNT, EFFECT_UNIT_COUNT};
 
 const WARMUP_CALLBACKS: u64 = 20;
 const NO_LATENCY: u64 = u64::MAX;
@@ -11,6 +12,8 @@ const NO_LATENCY: u64 = u64::MAX;
 pub(crate) struct SharedState {
     pub(crate) decks: [DeckShared; DECK_COUNT],
     pub(crate) master_peak: AtomicU32,
+    pub(crate) effect_sounding: [AtomicBool; EFFECT_UNIT_COUNT],
+    pub(crate) tempo_master: AtomicDeck,
     pub(crate) stats: SharedStats,
 }
 
@@ -51,6 +54,25 @@ impl AtomicF64 {
     }
 }
 
+/// An `Option<DeckId>` stored as 0 for none and the deck's index plus one.
+#[derive(Default)]
+pub(crate) struct AtomicDeck(AtomicU8);
+
+impl AtomicDeck {
+    pub(crate) fn store(&self, deck: Option<DeckId>) {
+        let encoded = deck.map_or(0, |deck| deck.index() + 1);
+        self.0
+            .store(u8::try_from(encoded).unwrap_or(0), Ordering::Relaxed);
+    }
+
+    pub(crate) fn load(&self) -> Option<DeckId> {
+        let encoded = usize::from(self.0.load(Ordering::Relaxed));
+        encoded
+            .checked_sub(1)
+            .and_then(|index| DeckId::ALL.get(index).copied())
+    }
+}
+
 /// Raises a peak meter. Non-negative `f32` values order the same way as their bits, so an
 /// integer maximum on the bits is a float maximum.
 pub(crate) fn raise_peak(meter: &AtomicU32, peak: f32) {
@@ -70,6 +92,8 @@ impl SharedState {
                 deck
             }),
             master_peak: AtomicU32::new(0),
+            effect_sounding: std::array::from_fn(|_| AtomicBool::new(false)),
+            tempo_master: AtomicDeck::default(),
             stats: SharedStats {
                 sample_rate,
                 callbacks: AtomicU64::new(0),
@@ -227,7 +251,7 @@ pub struct DeckState {
 /// Peak levels since the previous reading, as linear sample values where 1.0 is full scale.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Meters {
-    /// Peak of each deck after its fader and the crossfader.
+    /// Peak of each deck after its fader, the crossfader and the effect units on it.
     pub deck_peaks: [f32; DECK_COUNT],
     /// Peak of the master output.
     pub master_peak: f32,
