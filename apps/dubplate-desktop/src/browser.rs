@@ -70,6 +70,17 @@ pub enum BrowserPane {
     Tracks,
 }
 
+/// Which side of the browser a controller's browse knob moves through, as rekordbox's tree view
+/// and track list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BrowserPane {
+    /// The crates on the left.
+    Crates,
+    /// The tracks of the chosen crate.
+    #[default]
+    Tracks,
+}
+
 /// A track being dragged from the browser to a deck.
 #[derive(Debug, Clone)]
 pub struct DraggedTrack {

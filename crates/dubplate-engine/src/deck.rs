@@ -1,7 +1,11 @@
 use std::sync::Arc;
 
+use dubplate_fx::EqBand;
+
 use crate::INSERT_SLOTS;
+use crate::channel::ChannelStrip;
 use crate::curves::{Ramp, channel_fader_gain};
+use crate::jog::{BlockStart, JogInput, Platter};
 use crate::mixer::RetireQueue;
 use crate::processor::{AudioProcessor, ProcessContext, StereoBlock};
 use crate::tempo::{BeatClock, BeatGrid};
@@ -43,10 +47,18 @@ struct Tail {
 }
 
 impl Tail {
+    /// The tail's gain on its next frame. It falls one step before the first frame, so with
+    /// the new position fading in from one step the two always add up to the level before the
+    /// jump.
     fn gain(&self, declick_frames: u32) -> f32 {
-        self.start_gain * self.remaining_frames as f32 / declick_frames as f32
+        self.start_gain * self.remaining_frames.saturating_sub(1) as f32 / declick_frames as f32
     }
 }
+
+/// Below this share of its own speed the record is too slow to be heard; the level follows the
+/// speed down to silence, as a stylus does, so a record held still is silent instead of
+/// holding a constant offset.
+const AUDIBLE_SPEED: f64 = 0.05;
 
 /// What rendering one block of a deck found.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -68,6 +80,8 @@ pub(crate) struct Deck {
     trim: Ramp,
     channel_gain: Ramp,
     fader_position: f32,
+    platter: Platter,
+    strip: ChannelStrip,
     pub(crate) inserts: [Option<Box<dyn AudioProcessor>>; INSERT_SLOTS],
     pub(crate) block: StereoBlock,
     output_rate: f64,
@@ -89,6 +103,8 @@ impl Deck {
             trim: Ramp::new(1.0, declick_frames),
             channel_gain: Ramp::new(1.0, declick_frames),
             fader_position: 1.0,
+            platter: Platter::new(output_rate),
+            strip: ChannelStrip::new(output_rate),
             inserts: std::array::from_fn(|_| None),
             block: StereoBlock::with_capacity(max_block_frames),
             output_rate: f64::from(output_rate.max(1)),
@@ -106,6 +122,27 @@ impl Deck {
 
     pub(crate) fn tempo(&self) -> f64 {
         self.tempo
+    }
+
+    /// The speed the record turns at, where 1.0 is the track's own tempo: the tempo, bent by a
+    /// nudge, or the hand's speed while scratching.
+    pub(crate) fn speed(&self) -> f64 {
+        if self.rate == 0.0 {
+            return 0.0;
+        }
+        self.platter.last_step() / self.rate * self.tempo
+    }
+
+    pub(crate) fn is_touched(&self) -> bool {
+        self.platter.is_touched()
+    }
+
+    pub(crate) fn vinyl_mode(&self) -> bool {
+        self.platter.vinyl_mode()
+    }
+
+    pub(crate) fn mixer_latency_frames(&self) -> usize {
+        self.strip.latency_frames()
     }
 
     pub(crate) fn fader_position(&self) -> f32 {
@@ -156,6 +193,7 @@ impl Deck {
 
     fn update_rate(&mut self) {
         self.rate = self.tempo * self.source_rate() / self.output_rate;
+        self.platter.set_track_rate(self.source_rate());
     }
 
     /// Hands what the deck is playing over to a fading tail and silences the main voice. Tails
@@ -172,7 +210,7 @@ impl Deck {
         let tail = Tail {
             track,
             position: self.position,
-            rate: self.rate,
+            rate: self.platter.last_step(),
             start_gain: gain,
             remaining_frames: self.declick_frames,
         };
@@ -207,6 +245,7 @@ impl Deck {
         self.position = 0.0;
         self.cue_point = 0.0;
         self.beat_grid = None;
+        self.platter.stop();
         self.update_rate();
     }
 
@@ -218,10 +257,13 @@ impl Deck {
         self.transport.set_target(1.0);
     }
 
+    /// Stops the motor. A hand on the record keeps the music under it.
     pub(crate) fn pause(&mut self, retire: &mut RetireQueue) {
         if self.playing {
             self.playing = false;
-            self.start_tail(retire);
+            if !self.platter.is_holding() {
+                self.start_tail(retire);
+            }
         }
     }
 
@@ -242,8 +284,13 @@ impl Deck {
     }
 
     pub(crate) fn seek(&mut self, seconds: f64, retire: &mut RetireQueue) {
+        self.jump_to_frame(seconds * self.source_rate(), retire);
+    }
+
+    /// Jumps to a frame of the track, fading the old position out while the new one fades in.
+    fn jump_to_frame(&mut self, frame: f64, retire: &mut RetireQueue) {
         self.start_tail(retire);
-        self.position = self.clamp_position(seconds * self.source_rate());
+        self.position = self.clamp_position(frame);
         if self.playing {
             if self.at_end() {
                 self.playing = false;
@@ -256,6 +303,30 @@ impl Deck {
     pub(crate) fn set_tempo(&mut self, tempo: f64) {
         self.tempo = tempo;
         self.update_rate();
+    }
+
+    pub(crate) fn jog(&mut self, input: JogInput) {
+        self.platter.apply(input, self.playing);
+    }
+
+    pub(crate) fn set_jog_ticks_per_revolution(&mut self, ticks: u32) {
+        self.platter.set_ticks_per_revolution(ticks);
+    }
+
+    pub(crate) fn set_vinyl_mode(&mut self, enabled: bool) {
+        self.platter.set_vinyl_mode(enabled);
+    }
+
+    pub(crate) fn set_eq(&mut self, band: EqBand, position: f32) {
+        self.strip.set_eq(band, position);
+    }
+
+    pub(crate) fn set_filter(&mut self, position: f32) {
+        self.strip.set_filter(position);
+    }
+
+    pub(crate) fn set_filter_resonance(&mut self, resonance: f32) {
+        self.strip.set_filter_resonance(resonance);
     }
 
     pub(crate) fn set_trim(&mut self, gain: f32) {
@@ -295,8 +366,8 @@ impl Deck {
             .is_some_and(|frames| self.position >= frames as f64)
     }
 
-    /// Renders `frame_count` frames into the deck's block, after the trim gain and the inserts
-    /// and before the channel fader.
+    /// Renders `frame_count` frames into the deck's block, after the trim, the EQ, the filter
+    /// and the inserts, and before the channel fader.
     pub(crate) fn render(
         &mut self,
         frame_count: usize,
@@ -304,8 +375,22 @@ impl Deck {
         retire: &mut RetireQueue,
     ) -> DeckRender {
         let mut result = DeckRender::default();
+        if let Some(frames) = self.platter.take_search() {
+            self.jump_to_frame(self.position + frames, retire);
+        }
+        let motor_step = if self.playing { self.rate } else { 0.0 };
+        self.platter.begin_block(BlockStart {
+            motor_step,
+            frames: frame_count,
+        });
+        let holding = self.platter.is_holding();
+        let transport_target = if self.playing || holding { 1.0 } else { 0.0 };
+        if self.transport.target() != transport_target {
+            self.transport.set_target(transport_target);
+        }
         self.block.set_frame_count(frame_count);
-        let rate = self.rate;
+        let audible_step =
+            self.rate.abs().max(f64::EPSILON) / self.tempo.max(f64::EPSILON) * AUDIBLE_SPEED;
         let end_frame = self
             .track
             .as_ref()
@@ -315,14 +400,20 @@ impl Deck {
         for (left, right) in left_channel.iter_mut().zip(right_channel.iter_mut()) {
             let mut left_sum = 0.0;
             let mut right_sum = 0.0;
+            let step = self.platter.next_step(motor_step);
             let transport_gain = self.transport.next_value();
             if transport_gain > 0.0
                 && let Some(track) = &self.track
             {
-                let (sample_left, sample_right, missing) = read_interpolated(track, self.position);
-                result.starved |= missing;
-                left_sum += sample_left * transport_gain;
-                right_sum += sample_right * transport_gain;
+                let stylus_gain = (step.abs() / audible_step).min(1.0) as f32;
+                let gain = transport_gain * stylus_gain;
+                if gain > 0.0 {
+                    let (sample_left, sample_right, missing) =
+                        read_interpolated(track, self.position);
+                    result.starved |= missing;
+                    left_sum += sample_left * gain;
+                    right_sum += sample_right * gain;
+                }
             }
             for slot in &mut self.tails {
                 let Some(tail) = slot else {
@@ -342,18 +433,23 @@ impl Deck {
                     retire.track(finished.track);
                 }
             }
-            if self.playing {
-                self.position += rate;
-                if end_frame.is_some_and(|end| self.position >= end) {
-                    self.position = end_frame.unwrap_or(self.position);
-                    self.playing = false;
-                    self.transport.jump_to(0.0);
+            if step != 0.0 {
+                self.position = (self.position + step).max(0.0);
+                if let Some(end) = end_frame
+                    && self.position >= end
+                {
+                    self.position = end;
+                    if self.playing && !holding {
+                        self.playing = false;
+                        self.transport.jump_to(0.0);
+                    }
                 }
             }
             let trim = self.trim.next_value();
             *left = left_sum * trim;
             *right = right_sum * trim;
         }
+        self.strip.process(&mut self.block);
         for processor in self.inserts.iter_mut().flatten() {
             processor.process(&mut self.block, context);
         }

@@ -70,7 +70,19 @@ The audio engine plays tracks on two decks with a crossfader. To hear it:
 cargo run --release -p dubplate-engine --example play -- <file-a> [file-b] [--buffer 256]
 ```
 
-It prints the buffer size, the output latency and the dropout counters every second. In a terminal, space plays or pauses the selected deck, tab selects the other deck, c is the cue button, up and down change the tempo, left and right move the crossfader, x throws the crossfader to the other side and q quits.
+It prints the buffer size, the output latency and the dropout counters every second. In a terminal, space plays or pauses the selected deck, tab selects the other deck, c is the cue button, up and down change the tempo, left and right move the crossfader, x throws the crossfader to the other side and q quits. On the selected deck, k kills or brings back the low, h the high, j and l turn the filter knob, , and . nudge the jog back and forward, and n and m search back and forward.
+
+## Mix with the EQ, the filter and the jogs
+
+Each channel has a three-band isolator EQ like a Pioneer DJM's: the knob's centre leaves the music untouched, fully left kills the band and fully right boosts it by 6 dB. The bands split at 250 Hz and 2.5 kHz. A killed low is more than 65 dB down at 60 Hz, a killed high more than 45 dB down at 8 kHz. The bands come from phase-linear Bessel filters subtracted from a delayed copy of the music, so killing the low leaves a kick's attack as sharp as it was; a Linkwitz-Riley crossover, the usual choice, rounds it off. The cost is a constant 2.7 ms delay on both decks, which `EngineStats::mixer_latency_ms` reports.
+
+After the EQ, the filter knob (CFX on the DDJ-FLX4) closes a low-pass to the left and opens a high-pass to the right, with resonance, and passes the music untouched at its centre. It is the sweep filter of the effects, so the two sound the same.
+
+The jog wheels take the ticks a controller reports, 720 per revolution on the DDJ-FLX4:
+
+- In vinyl mode, a hand on the platter top stops the record in a few milliseconds, and turning it scratches: one revolution moves 1.8 seconds of the track, as a record at 33⅓ RPM, forwards or backwards, and bringing the platter back returns to the same frame. Letting go returns to the deck's tempo, or to a stop on a paused deck.
+- Turning the edge of a playing deck bends its tempo with the wheel's speed to line up beats. The bend fades out smoothly when the wheel stops, and every revolution moves the music 0.3 seconds whatever the speed. On a stopped deck the wheel moves the playhead by hand, to find a beat by ear.
+- With SHIFT, the wheel searches through the track, 15 seconds per revolution.
 
 ## Check your controller
 
@@ -104,7 +116,7 @@ cargo run --release -p dubplate-engine --example play -- <file-a> <file-b> --bpm
 
 - `crates/dubplate-rekordbox`: reads the rekordbox library and, in `src/analysis`, the per-track analysis files. `schema/rekordbox-7.2.19.sql` holds the tables of rekordbox 7.2.19, with no data, and the tests build an encrypted library from it.
 - `crates/dubplate-engine`: the audio engine. Decks, mixer and crossfader run on a real-time audio thread that never allocates, locks or waits; tracks decode on their own threads; the control side talks to it through lock-free queues. Effect units run the effects of `dubplate-fx` on a deck or the master, in time with the beat grid; any other processor plugs into the insert slots through the `AudioProcessor` trait.
-- `crates/dubplate-fx`: the DJ effects (echo, ping-pong, reverb, filters, the one-knob sweep filter, flanger, phaser, trance gate, bit crusher, brake and backspin). They run on the audio thread without allocating, follow the tempo and beat grid, never click when a knob moves, let echo and reverb trails ring out, and keep those trails under full scale on a full-level track.
+- `crates/dubplate-fx`: the DJ effects (echo, ping-pong, reverb, filters, the one-knob sweep filter, flanger, phaser, trance gate, bit crusher, brake and backspin) and the mixer channel's isolator EQ. They run on the audio thread without allocating, follow the tempo and beat grid, never click when a knob moves, let echo and reverb trails ring out, and keep those trails under full scale on a full-level track.
 - `crates/dubplate-midi`: MIDI controllers. DJ actions that do not depend on the controller, controller mappings as TOML in `mappings/` (the DDJ-FLX4 first), decoding on the MIDI thread without allocating, and the messages that light the controller.
 - `apps/dubplate-cli`: the `dubplate` command.
 - `apps/dubplate-desktop`: the desktop app, built with GPUI. Its fonts are Inter and Geist Mono, both under the SIL Open Font License (`apps/dubplate-desktop/assets/fonts`).

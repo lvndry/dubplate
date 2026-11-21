@@ -64,6 +64,15 @@ impl DelayLine {
         ((cubic_term * position + curve_term) * position + slope_term) * position + far
     }
 
+    /// Writes `sample` and returns the one written `delay` periods earlier, or `sample` itself
+    /// for no delay.
+    #[inline]
+    pub(crate) fn delay_whole(&mut self, sample: f32, delay: usize) -> f32 {
+        let delayed = if delay == 0 { sample } else { self.at(delay) };
+        self.write(sample);
+        delayed
+    }
+
     /// Reads with linear interpolation, which never boosts any frequency inside a feedback loop.
     #[inline]
     pub(crate) fn read_linear(&self, delay_samples: f32) -> f32 {
@@ -89,6 +98,16 @@ mod tests {
         }
         assert_eq!(line.read_cubic(5.0), 35.0);
         assert_eq!(line.read_linear(5.0), 35.0);
+    }
+
+    #[test]
+    fn whole_delays_return_the_sample_written_that_many_periods_earlier() {
+        let mut line = DelayLine::new(8);
+        let delayed: Vec<f32> = (0..6)
+            .map(|index| line.delay_whole(index as f32 + 1.0, 2))
+            .collect();
+        assert_eq!(delayed, vec![0.0, 0.0, 1.0, 2.0, 3.0, 4.0]);
+        assert_eq!(line.delay_whole(9.0, 0), 9.0);
     }
 
     #[test]
