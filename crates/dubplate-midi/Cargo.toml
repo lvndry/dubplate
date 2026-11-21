@@ -1,0 +1,17 @@
+[package]
+name = "dubplate-midi"
+description = "MIDI controllers for Dubplate: DJ actions, controller mappings and LED feedback"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+midir = "0.11.1"
+rtrb = "0.4.1"
+serde = { version = "1.0.229", features = ["derive"] }
+thiserror = "2.0.21"
+toml = "1.2.2"
+
+[lints]
+workspace = true

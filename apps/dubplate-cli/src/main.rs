@@ -7,6 +7,7 @@ use clap::{Parser, Subcommand};
 use dubplate_rekordbox::{DatabaseKey, Library, Playlist, PlaylistKind, Track};
 
 mod analysis;
+mod midi;
 
 const KEY_ENVIRONMENT_VARIABLE: &str = "DUBPLATE_REKORDBOX_KEY";
 
@@ -26,6 +27,9 @@ enum Command {
     /// Work with a rekordbox library.
     #[command(subcommand)]
     Rekordbox(RekordboxCommand),
+    /// Work with MIDI controllers.
+    #[command(subcommand)]
+    Midi(midi::MidiCommand),
 }
 
 #[derive(Subcommand)]
@@ -68,6 +72,7 @@ fn main() -> Result<()> {
             library,
             json,
         }) => analysis(&master_db_or_default(library)?, &track, json),
+        Command::Midi(command) => midi::run(command),
     }
 }
 
