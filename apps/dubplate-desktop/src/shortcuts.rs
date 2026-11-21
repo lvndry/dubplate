@@ -5,7 +5,7 @@ use dubplate_engine::DeckId;
 use dubplate_rekordbox::HotCuePad;
 use gpui::{Action, KeyBinding};
 
-use crate::commands::{Command, Direction, Press};
+use crate::commands::{Command, Direction, Mode, Press, SetEdit};
 
 /// The key context of the window. Keys that type text only count outside the search field.
 pub const WINDOW_CONTEXT: &str = "Dubplate";
@@ -57,7 +57,7 @@ const fn pad(keystroke: &'static str, deck: DeckId, pad: HotCuePad) -> Shortcut 
 }
 
 /// Every keyboard shortcut.
-pub const SHORTCUTS: [Shortcut; 37] = [
+pub const SHORTCUTS: [Shortcut; 50] = [
     outside_text("space", Command::TogglePlay(DeckId::A)),
     outside_text("shift-space", Command::TogglePlay(DeckId::B)),
     outside_text("c", Command::Cue(DeckId::A, Press::Tap)),
@@ -91,6 +91,19 @@ pub const SHORTCUTS: [Shortcut; 37] = [
     outside_text("/", Command::FocusSearch),
     anywhere("cmd-f", Command::FocusSearch),
     anywhere("ctrl-f", Command::FocusSearch),
+    anywhere("cmd-1", Command::SwitchMode(Mode::Prepare)),
+    anywhere("cmd-2", Command::SwitchMode(Mode::Perform)),
+    outside_text("enter", Command::EditSet(SetEdit::Add)),
+    outside_text("cmd-enter", Command::EditSet(SetEdit::InsertAfterSelection)),
+    outside_text("alt-up", Command::EditSet(SetEdit::Move(Direction::Up))),
+    outside_text("alt-down", Command::EditSet(SetEdit::Move(Direction::Down))),
+    outside_text("backspace", Command::EditSet(SetEdit::Remove)),
+    outside_text("f", Command::EditSet(SetEdit::TogglePlanned)),
+    outside_text("y", Command::EditSet(SetEdit::AcceptProposedCues)),
+    outside_text("b", Command::EditSet(SetEdit::ToggleBackup)),
+    outside_text("cmd-z", Command::EditSet(SetEdit::Undo)),
+    outside_text("tab", Command::SwitchPrepareFocus),
+    anywhere("cmd-l", Command::LoadSet),
     outside_text("?", Command::ToggleHelp),
     anywhere("cmd-,", Command::ToggleLibrary),
     anywhere("cmd-o", Command::AddMusicFolders),
@@ -174,6 +187,13 @@ pub fn help_lines() -> Vec<HelpLine> {
         ),
         line(&["up", "down"], "Select the previous / next track"),
         line(&["/", "cmd-f"], "Search titles and artists"),
+        line(&["cmd-1", "cmd-2"], "Prepare / Perform"),
+        line(&["enter", "cmd-enter"], "Add to the set / insert after the selected set track"),
+        line(&["alt-up", "alt-down"], "Move the selected set track up / down"),
+        line(&["backspace", "cmd-z"], "Take out of the set / undo"),
+        line(&["f", "y"], "Seam planned or free / accept the proposed cues"),
+        line(&["b", "tab"], "Keep as a backup / move between library and set"),
+        line(&["cmd-l"], "Load the set's first two tracks on the decks"),
         line(&["cmd-o"], "Add music folders to the library"),
         line(&["cmd-,"], "Library: music folders and rekordbox"),
         line(&["?", "escape"], "Show / close this help"),

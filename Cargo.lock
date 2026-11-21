@@ -1636,6 +1636,7 @@ dependencies = [
  "dubplate-engine",
  "dubplate-library",
  "dubplate-midi",
+ "dubplate-prep",
  "dubplate-rekordbox",
  "gpui-kit",
  "objc2 0.6.5",

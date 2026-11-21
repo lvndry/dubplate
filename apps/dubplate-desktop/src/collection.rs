@@ -18,6 +18,13 @@ use crate::search::SearchText;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TrackIndex(usize);
 
+impl TrackIndex {
+    /// Its position in the collection.
+    pub fn position(self) -> usize {
+        self.0
+    }
+}
+
 /// The position of a crate in the sidebar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct CrateIndex(usize);
@@ -162,6 +169,7 @@ pub struct Collection {
     tracks: Vec<Arc<CollectionTrack>>,
     crates: Vec<Crate>,
     share_directory: Option<PathBuf>,
+    by_identity: HashMap<String, TrackIndex>,
 }
 
 impl Collection {
@@ -232,10 +240,16 @@ impl Collection {
         }
         crates[0].tracks = (0..tracks.len()).map(TrackIndex).collect();
         crates.extend(playlist_crates);
+        let by_identity = tracks
+            .iter()
+            .enumerate()
+            .map(|(position, track)| (track.identity(), TrackIndex(position)))
+            .collect();
         Self {
             tracks,
             crates,
             share_directory: rekordbox.map(|rekordbox| rekordbox.share_directory.clone()),
+            by_identity,
         }
     }
 
@@ -247,10 +261,15 @@ impl Collection {
     /// The track that is the file or rekordbox entry `identity` names, if the collection holds
     /// it.
     pub fn find(&self, identity: &str) -> Option<TrackIndex> {
+        self.by_identity.get(identity).copied()
+    }
+
+    /// Every track with its position, in the collection's order.
+    pub fn indexed_tracks(&self) -> impl Iterator<Item = (TrackIndex, &Arc<CollectionTrack>)> {
         self.tracks
             .iter()
-            .position(|track| track.identity() == identity)
-            .map(TrackIndex)
+            .enumerate()
+            .map(|(position, track)| (TrackIndex(position), track))
     }
 
     /// The track at `index`.
