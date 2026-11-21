@@ -6,11 +6,10 @@ use std::time::{Duration, Instant};
 use dubplate_engine::{DECK_COUNT, DeckId, EffectTarget, EffectUnitId};
 use dubplate_midi::{
     Action, Button, ButtonState, Continuous, ControlEvent, Deck, Direction as Arrow, Encoder,
-    JogMode, Layer, PadIndex, PadMode, Position, Switch,
+    JogMode, Layer, PadIndex, Position, Switch,
 };
-use dubplate_rekordbox::HotCuePad;
 
-use crate::commands::{Command, Direction, EffectEdit, JogMotion, Press};
+use crate::commands::{Command, Direction, EffectEdit, JogMotion, LoopAction, PadPress, Press};
 use crate::controls::{Control, MixerPositions};
 
 /// Two presses of LOAD this close together load the other deck's track, as rekordbox does.
@@ -39,6 +38,11 @@ pub fn deck_id(deck: Deck) -> DeckId {
     }
 }
 
+/// Where a pad sits among a deck's pads, 0 for pad 1.
+fn pad_position(pad: PadIndex) -> usize {
+    usize::from(pad.number()).saturating_sub(1)
+}
+
 /// The engine's EQ band for a controller's EQ knob.
 fn eq_band(band: dubplate_midi::EqBand) -> dubplate_engine::EqBand {
     match band {
@@ -54,13 +58,6 @@ pub fn controller_deck(deck: DeckId) -> Deck {
         DeckId::A => Deck::A,
         DeckId::B => Deck::B,
     }
-}
-
-/// The hot cue a pad sets and calls, pad 1 being A.
-pub fn hot_cue_pad(pad: PadIndex) -> Option<HotCuePad> {
-    HotCuePad::ALL
-        .get(usize::from(pad.number()).checked_sub(1)?)
-        .copied()
 }
 
 /// A hardware control that only takes over the value on screen once it reaches it, so a slider
@@ -85,12 +82,10 @@ impl Pickup {
     }
 }
 
-/// The controller's side of the conversation: which pad mode each deck is in, LOAD presses for
-/// instant doubles, where the BEAT FX channel lever sits, and the pick-up of the tempo sliders
-/// and the effect level knob.
+/// The controller's side of the conversation: LOAD presses for instant doubles, where the BEAT
+/// FX channel lever sits, and the pick-up of the tempo sliders and the effect level knob.
 #[derive(Debug)]
 pub struct Dispatcher {
-    pad_modes: [PadMode; DECK_COUNT],
     last_load: [Option<Instant>; DECK_COUNT],
     tempo_pickups: [Pickup; DECK_COUNT],
     fx_lever: [bool; DECK_COUNT],
@@ -101,7 +96,6 @@ pub struct Dispatcher {
 impl Default for Dispatcher {
     fn default() -> Self {
         Self {
-            pad_modes: [PadMode::HotCue; DECK_COUNT],
             last_load: [None; DECK_COUNT],
             tempo_pickups: [Pickup::default(); DECK_COUNT],
             fx_lever: [false; DECK_COUNT],
@@ -112,11 +106,6 @@ impl Default for Dispatcher {
 }
 
 impl Dispatcher {
-    /// The pad mode a deck's pads are in, as the controller last said.
-    pub fn pad_mode(&self, deck: DeckId) -> PadMode {
-        self.pad_modes[deck.index()]
-    }
-
     /// What `event`, which arrived at `now`, asks of the app, if anything.
     pub fn dispatch(
         &mut self,
@@ -215,21 +204,30 @@ impl Dispatcher {
                 Some(Command::Effect(surface.focused_effect?, EffectEdit::Toggle))
             }
             (Button::PadMode { deck, mode }, _) if pressed => {
-                self.pad_modes[deck_id(deck).index()] = mode;
-                None
+                Some(Command::SetPadMode(deck_id(deck), mode))
             }
-            (Button::Pad { deck, mode, pad }, layer) => {
-                let deck = deck_id(deck);
-                self.pad_modes[deck.index()] = mode;
-                match (mode, layer) {
-                    (PadMode::HotCue, Layer::Normal) => {
-                        Some(Command::HotCue(deck, hot_cue_pad(pad)?, press))
-                    }
-                    (PadMode::HotCue, Layer::Shift) if pressed => {
-                        Some(Command::DeleteHotCue(deck, hot_cue_pad(pad)?))
-                    }
-                    _ => None,
-                }
+            (Button::Pad { deck, mode, pad }, layer) => Some(Command::Pad(PadPress {
+                deck: deck_id(deck),
+                pad: pad_position(pad),
+                mode: Some(mode),
+                press,
+                shift: layer == Layer::Shift,
+            })),
+            (Button::LoopIn(deck), Layer::Normal) if pressed => {
+                Some(Command::Loop(deck_id(deck), LoopAction::In))
+            }
+            (Button::LoopOut(deck), Layer::Normal) if pressed => {
+                Some(Command::Loop(deck_id(deck), LoopAction::Out))
+            }
+            (Button::FourBeatExit(deck), Layer::Normal) if pressed => {
+                Some(Command::Loop(deck_id(deck), LoopAction::FourBeatOrExit))
+            }
+            (Button::CueLoopCall { deck, direction }, Layer::Normal) if pressed => {
+                let action = match direction {
+                    Arrow::Left => LoopAction::Halve,
+                    Arrow::Right => LoopAction::Double,
+                };
+                Some(Command::Loop(deck_id(deck), action))
             }
             _ => None,
         }
@@ -295,7 +293,7 @@ impl Dispatcher {
 
 #[cfg(test)]
 mod tests {
-    use dubplate_midi::{Ticks, U14};
+    use dubplate_midi::{PadMode, Ticks, U14};
 
     use super::*;
 
@@ -377,7 +375,7 @@ mod tests {
     }
 
     #[test]
-    fn hot_cue_pads_call_and_set_and_shift_deletes() {
+    fn pads_carry_their_mode_and_shift_and_mode_buttons_choose_the_mode() {
         let mut dispatcher = Dispatcher::default();
         let surface = Surface::default();
         let commands = run(
@@ -386,45 +384,65 @@ mod tests {
             &[
                 press(pad(Deck::A, PadMode::HotCue, 1)),
                 release(pad(Deck::A, PadMode::HotCue, 1)),
-                shift_press(pad(Deck::B, PadMode::HotCue, 8)),
-                button(
-                    pad(Deck::B, PadMode::HotCue, 8),
-                    ButtonState::Released,
-                    Layer::Shift,
-                ),
+                shift_press(pad(Deck::B, PadMode::BeatJump, 8)),
+                shift_press(Button::PadMode {
+                    deck: Deck::B,
+                    mode: PadMode::BeatLoop,
+                }),
             ],
         );
+        let pad_press = |deck, pad, mode, press, shift| {
+            Command::Pad(PadPress {
+                deck,
+                pad,
+                mode: Some(mode),
+                press,
+                shift,
+            })
+        };
         assert_eq!(
             commands,
             [
-                Command::HotCue(DeckId::A, HotCuePad::A, Press::Down),
-                Command::HotCue(DeckId::A, HotCuePad::A, Press::Up),
-                Command::DeleteHotCue(DeckId::B, HotCuePad::H),
+                pad_press(DeckId::A, 0, PadMode::HotCue, Press::Down, false),
+                pad_press(DeckId::A, 0, PadMode::HotCue, Press::Up, false),
+                pad_press(DeckId::B, 7, PadMode::BeatJump, Press::Down, true),
+                Command::SetPadMode(DeckId::B, PadMode::BeatLoop),
             ]
         );
     }
 
     #[test]
-    fn pad_mode_buttons_and_pads_tell_which_mode_the_pads_are_in() {
+    fn the_loop_section_follows_rekordbox() {
         let mut dispatcher = Dispatcher::default();
         let surface = Surface::default();
         let commands = run(
             &mut dispatcher,
             &surface,
-            &[shift_press(Button::PadMode {
-                deck: Deck::B,
-                mode: PadMode::BeatLoop,
-            })],
+            &[
+                press(Button::LoopIn(Deck::A)),
+                press(Button::LoopOut(Deck::A)),
+                press(Button::FourBeatExit(Deck::B)),
+                press(Button::CueLoopCall {
+                    deck: Deck::B,
+                    direction: Arrow::Left,
+                }),
+                press(Button::CueLoopCall {
+                    deck: Deck::B,
+                    direction: Arrow::Right,
+                }),
+                shift_press(Button::LoopIn(Deck::A)),
+            ],
         );
-        assert!(commands.is_empty());
-        assert_eq!(dispatcher.pad_mode(DeckId::B), PadMode::BeatLoop);
-        assert_eq!(dispatcher.pad_mode(DeckId::A), PadMode::HotCue);
-        run(
-            &mut dispatcher,
-            &surface,
-            &[press(pad(Deck::A, PadMode::Sampler, 2))],
+        assert_eq!(
+            commands,
+            [
+                Command::Loop(DeckId::A, LoopAction::In),
+                Command::Loop(DeckId::A, LoopAction::Out),
+                Command::Loop(DeckId::B, LoopAction::FourBeatOrExit),
+                Command::Loop(DeckId::B, LoopAction::Halve),
+                Command::Loop(DeckId::B, LoopAction::Double),
+            ]
         );
-        assert_eq!(dispatcher.pad_mode(DeckId::A), PadMode::Sampler);
     }
 
     #[test]
@@ -701,7 +719,6 @@ mod tests {
             &[
                 moved(Continuous::MicLevel, 0.5),
                 press(Button::Sync(Deck::A)),
-                press(pad(Deck::A, PadMode::Sampler, 1)),
                 shift_press(Button::Load(Deck::A)),
             ],
         );

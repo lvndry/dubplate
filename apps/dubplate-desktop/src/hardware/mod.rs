@@ -8,7 +8,7 @@ mod link;
 use std::time::{Duration, Instant};
 
 pub use dispatch::{Dispatcher, Surface, controller_deck};
-pub use lights::{DeckLights, Lights, PAD_COUNT, meter_level};
+pub use lights::{DeckLights, Lights, meter_level};
 pub use link::LinkEvent;
 
 use dubplate_midi::Feedback;

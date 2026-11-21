@@ -2,10 +2,9 @@
 //! and the help overlay both come from [`SHORTCUTS`].
 
 use dubplate_engine::DeckId;
-use dubplate_rekordbox::HotCuePad;
 use gpui::{Action, KeyBinding};
 
-use crate::commands::{Command, Direction, Mode, Press, SetEdit};
+use crate::commands::{Command, Direction, LoopAction, Mode, PadPress, Press, SetEdit};
 
 /// The key context of the window. Keys that type text only count outside the search field.
 pub const WINDOW_CONTEXT: &str = "Dubplate";
@@ -52,32 +51,41 @@ const fn anywhere(keystroke: &'static str, command: Command) -> Shortcut {
     }
 }
 
-const fn pad(keystroke: &'static str, deck: DeckId, pad: HotCuePad) -> Shortcut {
-    outside_text(keystroke, Command::HotCue(deck, pad, Press::Tap))
+const fn pad(keystroke: &'static str, deck: DeckId, pad: usize) -> Shortcut {
+    outside_text(
+        keystroke,
+        Command::Pad(PadPress {
+            deck,
+            pad,
+            mode: None,
+            press: Press::Tap,
+            shift: false,
+        }),
+    )
 }
 
 /// Every keyboard shortcut.
-pub const SHORTCUTS: [Shortcut; 50] = [
+pub const SHORTCUTS: [Shortcut; 54] = [
     outside_text("space", Command::TogglePlay(DeckId::A)),
     outside_text("shift-space", Command::TogglePlay(DeckId::B)),
     outside_text("c", Command::Cue(DeckId::A, Press::Tap)),
     outside_text("shift-c", Command::Cue(DeckId::B, Press::Tap)),
-    pad("1", DeckId::A, HotCuePad::A),
-    pad("2", DeckId::A, HotCuePad::B),
-    pad("3", DeckId::A, HotCuePad::C),
-    pad("4", DeckId::A, HotCuePad::D),
-    pad("5", DeckId::A, HotCuePad::E),
-    pad("6", DeckId::A, HotCuePad::F),
-    pad("7", DeckId::A, HotCuePad::G),
-    pad("8", DeckId::A, HotCuePad::H),
-    pad("shift-1", DeckId::B, HotCuePad::A),
-    pad("shift-2", DeckId::B, HotCuePad::B),
-    pad("shift-3", DeckId::B, HotCuePad::C),
-    pad("shift-4", DeckId::B, HotCuePad::D),
-    pad("shift-5", DeckId::B, HotCuePad::E),
-    pad("shift-6", DeckId::B, HotCuePad::F),
-    pad("shift-7", DeckId::B, HotCuePad::G),
-    pad("shift-8", DeckId::B, HotCuePad::H),
+    pad("1", DeckId::A, 0),
+    pad("2", DeckId::A, 1),
+    pad("3", DeckId::A, 2),
+    pad("4", DeckId::A, 3),
+    pad("5", DeckId::A, 4),
+    pad("6", DeckId::A, 5),
+    pad("7", DeckId::A, 6),
+    pad("8", DeckId::A, 7),
+    pad("shift-1", DeckId::B, 0),
+    pad("shift-2", DeckId::B, 1),
+    pad("shift-3", DeckId::B, 2),
+    pad("shift-4", DeckId::B, 3),
+    pad("shift-5", DeckId::B, 4),
+    pad("shift-6", DeckId::B, 5),
+    pad("shift-7", DeckId::B, 6),
+    pad("shift-8", DeckId::B, 7),
     outside_text("-", Command::NudgeTempo(DeckId::A, Direction::Down)),
     outside_text("=", Command::NudgeTempo(DeckId::A, Direction::Up)),
     outside_text("shift--", Command::NudgeTempo(DeckId::B, Direction::Down)),
@@ -104,6 +112,13 @@ pub const SHORTCUTS: [Shortcut; 50] = [
     outside_text("cmd-z", Command::EditSet(SetEdit::Undo)),
     outside_text("tab", Command::SwitchPrepareFocus),
     anywhere("cmd-l", Command::LoadSet),
+    outside_text("m", Command::CyclePadMode(DeckId::A)),
+    outside_text("shift-m", Command::CyclePadMode(DeckId::B)),
+    outside_text("l", Command::Loop(DeckId::A, LoopAction::FourBeatOrExit)),
+    outside_text(
+        "shift-l",
+        Command::Loop(DeckId::B, LoopAction::FourBeatOrExit),
+    ),
     outside_text("?", Command::ToggleHelp),
     anywhere("cmd-,", Command::ToggleLibrary),
     anywhere("cmd-o", Command::AddMusicFolders),
@@ -176,7 +191,7 @@ pub fn help_lines() -> Vec<HelpLine> {
         line(&["c", "shift-c"], "Cue deck A / deck B"),
         line(
             &["1", "shift-1"],
-            "Hot cues A to H with 1 to 8 (sets an empty one), deck A / deck B",
+            "Pads 1 to 8 in the deck's pad mode (hot cues set an empty one), deck A / deck B",
         ),
         line(&["-", "="], "Tempo down / up, deck A"),
         line(&["shift--", "shift-="], "Tempo down / up, deck B"),
@@ -187,6 +202,8 @@ pub fn help_lines() -> Vec<HelpLine> {
         ),
         line(&["up", "down"], "Select the previous / next track"),
         line(&["/", "cmd-f"], "Search titles and artists"),
+        line(&["m", "shift-m"], "Next pad mode, deck A / deck B"),
+        line(&["l", "shift-l"], "Four-beat loop or exit, deck A / deck B"),
         line(&["cmd-1", "cmd-2"], "Prepare / Perform"),
         line(
             &["enter", "cmd-enter"],
@@ -259,7 +276,16 @@ mod tests {
             let twin_command = match shortcut.command {
                 Command::TogglePlay(DeckId::A) => Command::TogglePlay(DeckId::B),
                 Command::Cue(DeckId::A, press) => Command::Cue(DeckId::B, press),
-                Command::HotCue(DeckId::A, pad, press) => Command::HotCue(DeckId::B, pad, press),
+                Command::Pad(
+                    press @ PadPress {
+                        deck: DeckId::A, ..
+                    },
+                ) => Command::Pad(PadPress {
+                    deck: DeckId::B,
+                    ..press
+                }),
+                Command::CyclePadMode(DeckId::A) => Command::CyclePadMode(DeckId::B),
+                Command::Loop(DeckId::A, action) => Command::Loop(DeckId::B, action),
                 Command::NudgeTempo(DeckId::A, direction) => {
                     Command::NudgeTempo(DeckId::B, direction)
                 }
@@ -276,25 +302,29 @@ mod tests {
     }
 
     #[test]
-    fn the_hot_cue_keys_follow_the_pads() {
-        let deck_a_pads: Vec<(&str, char)> = SHORTCUTS
+    fn the_pad_keys_follow_the_pads() {
+        let deck_a_pads: Vec<(&str, usize)> = SHORTCUTS
             .iter()
             .filter_map(|shortcut| match shortcut.command {
-                Command::HotCue(DeckId::A, pad, _) => Some((shortcut.keystroke, pad.letter())),
+                Command::Pad(PadPress {
+                    deck: DeckId::A,
+                    pad,
+                    ..
+                }) => Some((shortcut.keystroke, pad)),
                 _ => None,
             })
             .collect();
         assert_eq!(
             deck_a_pads,
             [
-                ("1", 'A'),
-                ("2", 'B'),
-                ("3", 'C'),
-                ("4", 'D'),
-                ("5", 'E'),
-                ("6", 'F'),
-                ("7", 'G'),
-                ("8", 'H')
+                ("1", 0),
+                ("2", 1),
+                ("3", 2),
+                ("4", 3),
+                ("5", 4),
+                ("6", 5),
+                ("7", 6),
+                ("8", 7)
             ]
         );
     }

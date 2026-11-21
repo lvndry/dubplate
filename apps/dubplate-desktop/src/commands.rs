@@ -3,7 +3,7 @@
 //! one place.
 
 use dubplate_engine::{DeckId, EffectKind, EffectTarget, EffectUnitId};
-use dubplate_rekordbox::HotCuePad;
+use dubplate_midi::PadMode;
 
 use crate::controls::Control;
 
@@ -68,6 +68,37 @@ pub enum SetEdit {
     Undo,
 }
 
+/// A press on one of a deck's performance pads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PadPress {
+    /// The deck.
+    pub deck: DeckId,
+    /// The pad, 0 for pad 1.
+    pub pad: usize,
+    /// The mode the controller sent it in, or `None` for the deck's current mode, as from the
+    /// keys and the screen.
+    pub mode: Option<PadMode>,
+    /// Down, up or both.
+    pub press: Press,
+    /// Whether SHIFT was held.
+    pub shift: bool,
+}
+
+/// A loop button.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoopAction {
+    /// LOOP IN: where the loop starts.
+    In,
+    /// LOOP OUT: where it ends, turning it on.
+    Out,
+    /// 4 BEAT/EXIT: a four-beat loop, or leave the loop that is on.
+    FourBeatOrExit,
+    /// Halve the loop that is on.
+    Halve,
+    /// Double the loop that is on.
+    Double,
+}
+
 /// What turning a jog wheel does to the track.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum JogMotion {
@@ -105,10 +136,14 @@ pub enum Command {
     Cue(DeckId, Press),
     /// Go back to the start of the track, as SHIFT + CUE does.
     JumpToStart(DeckId),
-    /// A hot cue pad: jumps to its cue, or sets one where the deck is when the pad is empty.
-    HotCue(DeckId, HotCuePad, Press),
-    /// Delete a hot cue.
-    DeleteHotCue(DeckId, HotCuePad),
+    /// A performance pad, doing what its pad mode says.
+    Pad(PadPress),
+    /// Put a deck's pads in a pad mode.
+    SetPadMode(DeckId, PadMode),
+    /// Put a deck's pads in the next pad mode.
+    CyclePadMode(DeckId),
+    /// A loop button.
+    Loop(DeckId, LoopAction),
     /// Load the track selected in the browser.
     LoadSelected(DeckId),
     /// Load the track playing on the other deck at the same place, as pressing LOAD twice does.

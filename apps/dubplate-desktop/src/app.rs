@@ -12,6 +12,8 @@ mod lanes;
 mod library;
 mod library_panel;
 mod mixer;
+mod pad_grid;
+mod pads;
 mod prepare;
 mod set_panel;
 mod slider;
@@ -44,17 +46,18 @@ use crate::controls::{
     nudged_tempo, tempo_at, tempo_fraction, trim_gain_at,
 };
 use crate::deck::{
-    Deck, DeckContent, HotCues, LoadError, PreparedTrack, TrackVisuals, pad_position, prepare_track,
+    Deck, DeckContent, HotCues, LoadError, PreparedTrack, TrackVisuals, prepare_track,
 };
 use crate::effects::{EffectUnitSetting, search, step_beat, step_effect};
 use crate::fonts::UI_FAMILY;
 use crate::frame_stats::FrameStats;
 use crate::hardware::{
-    DeckLights, Hardware, Lights, LinkEvent, PAD_COUNT, Surface, controller_deck, meter_level,
+    DeckLights, Hardware, Lights, LinkEvent, Surface, controller_deck, meter_level,
 };
 use crate::library::LibrarySources;
 use crate::loading::{LoadRefusal, LoadSource, check_deck_free, check_file};
 use crate::meter::PeakMeter;
+use crate::pads::next_mode;
 use crate::prep::{Catalogue, TrackCheck};
 use crate::set::SetEditor;
 use crate::settings::Settings;
@@ -155,6 +158,8 @@ pub struct DubplateApp {
     lights_settling: bool,
     effect_focus: EffectUnitId,
     mode: Mode,
+    pad_modes: [PadMode; DECK_COUNT],
+    beat_jump_scales: [i32; DECK_COUNT],
     set_editor: Option<SetEditor>,
     set_selection: Option<usize>,
     prepare_focus: PrepareFocus,
@@ -269,6 +274,8 @@ impl DubplateApp {
             lights_settling: false,
             effect_focus: EffectUnitId::ALL[0],
             mode: Mode::Perform,
+            pad_modes: [PadMode::HotCue; DECK_COUNT],
+            beat_jump_scales: [0; DECK_COUNT],
             set_editor,
             set_selection: None,
             prepare_focus: PrepareFocus::Library,
@@ -508,14 +515,12 @@ impl DubplateApp {
                     self.jump(deck, 0.0, cx);
                 }
             }
-            Command::HotCue(deck, pad, press) => {
-                if matches!(press, Press::Down | Press::Tap) {
-                    self.press_hot_cue(deck, pad, cx);
-                }
+            Command::Pad(press) => self.press_pad(press, cx),
+            Command::SetPadMode(deck, mode) => self.pad_modes[deck.index()] = mode,
+            Command::CyclePadMode(deck) => {
+                self.pad_modes[deck.index()] = next_mode(self.pad_modes[deck.index()]);
             }
-            Command::DeleteHotCue(deck, pad) => self.edit_hot_cues(deck, |hot_cues| {
-                hot_cues.delete(pad);
-            }),
+            Command::Loop(deck, action) => self.loop_button(deck, action, cx),
             Command::LoadSelected(deck) => {
                 if let Some(track) = self.browser.read(cx).selected() {
                     self.load(deck, LoadSource::Collection(track), cx);
@@ -651,9 +656,7 @@ impl DubplateApp {
         match self.deck(deck).hot_cues.get(pad) {
             Some(seconds) => {
                 self.decks[deck.index()].cue_preview = false;
-                self.engine_command(cx, |controller| {
-                    transport::call_hot_cue(controller, deck, seconds)
-                });
+                self.engine_command(cx, |controller| controller.hot_cue(deck, seconds));
             }
             None => {
                 let seconds = self.quantized(deck, self.heard_seconds(deck));
@@ -1042,22 +1045,16 @@ impl DubplateApp {
         } else {
             loaded && (at_cue || blink)
         };
-        let mut pads = [false; PAD_COUNT];
-        if loaded {
-            for (pad, _) in side.hot_cues.iter() {
-                if let Some(lit) = pads.get_mut(pad_position(pad)) {
-                    *lit = true;
-                }
-            }
-        }
+        let pad_lights = self.pad_lights(deck, blink);
         DeckLights {
             play,
             cue,
-            pad_mode: self.hardware.as_ref().map_or(PadMode::HotCue, |hardware| {
-                hardware.dispatcher.pad_mode(deck)
-            }),
-            pads,
+            pad_mode: self.pad_modes[deck.index()],
+            pads: pad_lights.pads,
             level: meter_level(self.deck_meters[deck.index()].decibels()),
+            loop_in: pad_lights.loop_in,
+            loop_out: pad_lights.loop_out,
+            four_beat: pad_lights.four_beat,
         }
     }
 
