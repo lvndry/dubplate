@@ -101,16 +101,17 @@ fn lane(
     let zoom = zoomed
         .as_ref()
         .map_or(Zoom::DEFAULT, |waveform| waveform.zoom());
-    let flags = match (content, &app.deck(deck).track) {
-        (DeckContent::Loaded(_), Some(track)) => track
+    let flags = match content {
+        DeckContent::Loaded(_) => app
+            .deck(deck)
             .hot_cues
             .iter()
-            .map(|cue| {
-                let offset = (cue.seconds - playhead_seconds) * zoom.pixels_per_second();
-                (cue.pad.letter(), offset as f32)
+            .map(|(pad, seconds)| {
+                let offset = (seconds - playhead_seconds) * zoom.pixels_per_second();
+                (pad.letter(), offset as f32)
             })
             .collect(),
-        _ => Vec::new(),
+        DeckContent::Empty | DeckContent::Loading | DeckContent::Failed(_) => Vec::new(),
     };
     let lane = div()
         .id(("lane", deck.index()))

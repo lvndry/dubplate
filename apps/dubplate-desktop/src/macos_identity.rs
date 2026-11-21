@@ -1,12 +1,16 @@
 //! How the app presents itself on macOS when its binary is started on its own, outside
 //! Dubplate.app: the name "Dubplate" in the menu bar and the One groove icon in the Dock. The
-//! bundle that `cargo run` and `scripts/bundle-macos.sh` make also names the Dock item.
+//! bundle that `cargo run` and `scripts/bundle-macos.sh` make also names the Dock item. Also
+//! keeps macOS from slowing the app down while another app is in front.
 
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2::{AnyThread, ClassType, MainThreadMarker};
 use objc2_app_kit::{NSApplication, NSImage};
-use objc2_foundation::{NSBundle, NSData, NSMutableDictionary, NSObjectProtocol, NSString};
+use objc2_foundation::{
+    NSActivityOptions, NSBundle, NSData, NSMutableDictionary, NSObjectProtocol, NSProcessInfo,
+    NSString,
+};
 
 /// The app icon, rendered from `assets/logo/app-icon.svg` by the build script.
 const APP_ICON_PNG: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/app-icon.png"));
@@ -28,6 +32,19 @@ pub fn set_app_name(name: &str) {
     for key in ["CFBundleName", "CFBundleDisplayName"] {
         information.insert(&*NSString::from_str(key), &value);
     }
+}
+
+/// Tells macOS that Dubplate answers the DJ in real time, so App Nap never slows its timers
+/// and its controller handling while another app is in front. The Mac may still sleep when
+/// idle. Lasts until the app quits.
+pub fn stay_responsive() {
+    let activity = NSProcessInfo::processInfo().beginActivityWithOptions_reason(
+        NSActivityOptions::UserInitiatedAllowingIdleSystemSleep
+            | NSActivityOptions::LatencyCritical,
+        &NSString::from_str("Playing music from DJ controllers"),
+    );
+    // The activity ends when its token is released; the app keeps it until it quits.
+    std::mem::forget(activity);
 }
 
 /// Shows the One groove icon in the Dock. Does nothing off the main thread or when the image

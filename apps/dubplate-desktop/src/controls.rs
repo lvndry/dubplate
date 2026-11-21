@@ -11,6 +11,46 @@ pub const TEMPO_STEP: f64 = 0.001;
 pub const CROSSFADER_STEP: f32 = 0.05;
 /// The master level slider's range below unity, in decibels; the bottom mutes.
 const MASTER_RANGE_DB: f32 = 40.0;
+/// How far the trim knob boosts at its right end, in decibels.
+const TRIM_BOOST_DB: f32 = 9.0;
+/// How far the trim knob cuts just before its left end, in decibels; the end mutes.
+const TRIM_CUT_DB: f32 = 30.0;
+
+/// A fader or knob of the mixer or a deck, with a position from 0.0 to 1.0.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Control {
+    /// A deck's channel fader.
+    ChannelFader(DeckId),
+    /// The crossfader.
+    Crossfader,
+    /// A deck's tempo.
+    Tempo(DeckId),
+    /// The master level.
+    MasterLevel,
+    /// A deck's trim, unity in the middle.
+    Trim(DeckId),
+}
+
+impl Control {
+    /// Where the control rests: a double-click puts it back there.
+    pub fn resting(self) -> f32 {
+        match self {
+            Control::ChannelFader(_) | Control::MasterLevel => 1.0,
+            Control::Crossfader | Control::Tempo(_) | Control::Trim(_) => 0.5,
+        }
+    }
+}
+
+impl From<Slider> for Control {
+    fn from(slider: Slider) -> Self {
+        match slider {
+            Slider::ChannelFader(deck) => Control::ChannelFader(deck),
+            Slider::Crossfader => Control::Crossfader,
+            Slider::Tempo(deck) => Control::Tempo(deck),
+            Slider::MasterLevel => Control::MasterLevel,
+        }
+    }
+}
 
 /// A slider the DJ can drag.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -108,10 +148,23 @@ pub fn master_gain_at(fraction: f32) -> f32 {
     }
 }
 
-/// Where the mixer and tempo sliders are. The interface keeps them, rather than reading them
+/// The trim gain at a trim knob position: unity in the middle, muted at the left end.
+pub fn trim_gain_at(fraction: f32) -> f32 {
+    if fraction <= 0.0 {
+        return 0.0;
+    }
+    let decibels = if fraction >= 0.5 {
+        TRIM_BOOST_DB * (fraction * 2.0 - 1.0)
+    } else {
+        -TRIM_CUT_DB * (1.0 - fraction * 2.0)
+    };
+    decibels_to_gain(decibels)
+}
+
+/// Where the mixer and tempo controls are. The interface keeps them, rather than reading them
 /// back from the engine, so quick key presses each count before the engine has caught up.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct SliderPositions {
+pub struct MixerPositions {
     /// Each deck's tempo, where 1.0 is the track's own tempo.
     pub tempos: [f64; 2],
     /// Each deck's channel fader, from 0.0 to 1.0.
@@ -120,15 +173,31 @@ pub struct SliderPositions {
     pub crossfader: f32,
     /// The master level slider, from 0.0 (muted) to 1.0 (unity).
     pub master_level: f32,
+    /// Each deck's trim knob, from 0.0 to 1.0 with unity in the middle.
+    pub trims: [f32; 2],
 }
 
-impl Default for SliderPositions {
+impl MixerPositions {
+    /// Where `control` is, from 0.0 to 1.0.
+    pub fn fraction(&self, control: Control) -> f32 {
+        match control {
+            Control::ChannelFader(deck) => self.channel_faders[deck.index()],
+            Control::Crossfader => self.crossfader,
+            Control::Tempo(deck) => tempo_fraction(self.tempos[deck.index()]),
+            Control::MasterLevel => self.master_level,
+            Control::Trim(deck) => self.trims[deck.index()],
+        }
+    }
+}
+
+impl Default for MixerPositions {
     fn default() -> Self {
         Self {
             tempos: [1.0, 1.0],
             channel_faders: [1.0, 1.0],
             crossfader: 0.5,
             master_level: 1.0,
+            trims: [0.5, 0.5],
         }
     }
 }
@@ -178,6 +247,25 @@ mod tests {
         assert!((nudged_tempo(1.0123, -1.0) - 1.011).abs() < 1e-9);
         assert!((nudged_tempo(1.08, 1.0) - 1.08).abs() < 1e-9);
         assert!((nudged_tempo(0.92, -1.0) - 0.92).abs() < 1e-9);
+    }
+
+    #[test]
+    fn the_trim_is_unity_in_the_middle_and_mutes_at_the_left() {
+        assert!((trim_gain_at(0.5) - 1.0).abs() < 1e-6);
+        assert_eq!(trim_gain_at(0.0), 0.0);
+        assert!((trim_gain_at(1.0) - decibels_to_gain(9.0)).abs() < 1e-5);
+        assert!(trim_gain_at(0.25) < 1.0);
+    }
+
+    #[test]
+    fn every_slider_is_a_control_resting_where_a_double_click_puts_it() {
+        assert_eq!(Control::from(Slider::MasterLevel).resting(), 1.0);
+        assert_eq!(Control::from(Slider::Tempo(DeckId::B)).resting(), 0.5);
+        let positions = MixerPositions::default();
+        for slider in Slider::ALL {
+            let control = Control::from(slider);
+            assert_eq!(positions.fraction(control), control.resting(), "{slider:?}");
+        }
     }
 
     #[test]
