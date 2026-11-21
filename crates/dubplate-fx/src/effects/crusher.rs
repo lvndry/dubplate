@@ -1,0 +1,114 @@
+use crate::context::BlockTiming;
+use crate::dsp::smoothing::Smoothed;
+use crate::effect::EffectKind;
+use crate::unit::{Controls, Frame, Kernel, MixLaw, Unit, implement_effect, knob};
+
+const MIN_BITS: f32 = 1.0;
+const MAX_BITS: f32 = 16.0;
+const MIN_RATE_HZ: f32 = 400.0;
+const MAX_RATE_HZ: f32 = 48_000.0;
+const CONTROL_SMOOTHING_SECONDS: f32 = 0.02;
+const DEFAULT_BITS: f32 = 8.0;
+const DEFAULT_RATE_HZ: f32 = 11_025.0;
+
+/// A bit crusher with sample-rate reduction, for lo-fi grit.
+///
+/// It holds each sample for as long as the reduced rate asks and rounds it to fewer levels.
+/// Both controls move continuously, so sweeping them is smooth rather than stepped.
+///
+/// The depth knob crushes from 16 bits at 48 kHz (clean) down to 3 bits at 1.5 kHz.
+pub struct Crusher {
+    unit: Unit<CrusherKernel>,
+}
+
+impl Crusher {
+    /// Builds a crusher at 8 bits and 11 kHz, switched off.
+    pub fn new() -> Self {
+        Self {
+            unit: Unit::new(CrusherKernel::new(), 1.0),
+        }
+    }
+
+    /// Sets the resolution, from 1 to 16 bits. Fractions of a bit are allowed.
+    pub fn set_bits(&mut self, bits: f32) {
+        let current = &mut self.unit.kernel.bits;
+        current.set_target(knob(bits, MIN_BITS, MAX_BITS, current.target()));
+    }
+
+    /// Sets the reduced sample rate, from 400 Hz to 48 kHz.
+    pub fn set_rate_hz(&mut self, hertz: f32) {
+        let current = &mut self.unit.kernel.rate_octaves;
+        let hertz = knob(hertz, MIN_RATE_HZ, MAX_RATE_HZ, current.target().exp2());
+        current.set_target(hertz.log2());
+    }
+}
+
+impl Default for Crusher {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+implement_effect!(Crusher);
+
+impl Controls for Crusher {
+    fn effect_kind(&self) -> EffectKind {
+        EffectKind::Crusher
+    }
+
+    fn apply_depth(&mut self, depth: f32) {
+        self.set_bits(MAX_BITS - 13.0 * depth);
+        let octaves = MAX_RATE_HZ.log2() + (1_500.0_f32.log2() - MAX_RATE_HZ.log2()) * depth;
+        self.set_rate_hz(octaves.exp2());
+    }
+}
+
+pub(crate) struct CrusherKernel {
+    bits: Smoothed,
+    rate_octaves: Smoothed,
+    hold_phase: f32,
+    held: Frame,
+    sample_rate: f32,
+}
+
+impl CrusherKernel {
+    fn new() -> Self {
+        Self {
+            bits: Smoothed::new(DEFAULT_BITS, CONTROL_SMOOTHING_SECONDS),
+            rate_octaves: Smoothed::new(DEFAULT_RATE_HZ.log2(), CONTROL_SMOOTHING_SECONDS),
+            hold_phase: 1.0,
+            held: [0.0; 2],
+            sample_rate: 48_000.0,
+        }
+    }
+}
+
+impl Kernel for CrusherKernel {
+    const TRAILS: bool = false;
+    const MIX_LAW: MixLaw = MixLaw::Crossfade;
+
+    fn begin_block(&mut self, timing: &BlockTiming) {
+        self.sample_rate = timing.sample_rate;
+        self.bits.prepare(timing.sample_rate);
+        self.rate_octaves.prepare(timing.sample_rate);
+    }
+
+    #[inline]
+    fn tick(&mut self, input: Frame, _beat_position: f64) -> Frame {
+        let levels = (self.bits.next() - 1.0).exp2();
+        let rate = self.rate_octaves.next().exp2();
+        self.hold_phase += rate / self.sample_rate;
+        if self.hold_phase >= 1.0 {
+            self.hold_phase = (self.hold_phase - 1.0).min(1.0);
+            self.held = input;
+        }
+        self.held.map(|sample| (sample * levels).round() / levels)
+    }
+
+    fn reset(&mut self) {
+        self.hold_phase = 1.0;
+        self.held = [0.0; 2];
+        self.bits.snap_to_target();
+        self.rate_octaves.snap_to_target();
+    }
+}

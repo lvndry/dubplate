@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/dubplate-rekordbox", "apps/dubplate-cli"]
+members = ["crates/dubplate-rekordbox", "crates/dubplate-fx", "apps/dubplate-cli"]
 
 [workspace.package]
 edition = "2024"

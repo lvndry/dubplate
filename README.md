@@ -31,7 +31,20 @@ cargo run -p dubplate -- rekordbox inspect --library /path/to/master.db
 ## Layout
 
 - `crates/dubplate-rekordbox`: reads the rekordbox library. `schema/rekordbox-7.2.19.sql` holds the tables of rekordbox 7.2.19, with no data, and the tests build an encrypted library from it.
+- `crates/dubplate-fx`: the DJ effects (echo, ping-pong, reverb, filters, the one-knob sweep filter, flanger, phaser, trance gate, bit crusher, brake and backspin). They run on the audio thread without allocating, follow the tempo and beat grid, never click when a knob moves, and let echo and reverb trails ring out.
 - `apps/dubplate-cli`: the `dubplate` command.
+
+## Hear the effects
+
+Render any WAV file through one effect:
+
+```
+cargo run --release -p dubplate-fx --example render -- input.wav echo output.wav --bpm 124
+cargo run --release -p dubplate-fx --example render -- input.wav sweep output.wav --depth 0 --depth-to 1
+cargo run --release -p dubplate-fx --example render -- input.wav reverb output.wav --on 8 --off 16
+```
+
+`--on` and `--off` switch the effect at those seconds, `--depth` turns the performance knob and `--beat` sets a beat length such as `1/2` or `4`. Run it with no arguments to list the effects.
 
 ## Development
 
