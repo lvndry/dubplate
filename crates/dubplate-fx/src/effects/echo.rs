@@ -6,13 +6,14 @@ use crate::dsp::delay_time::DelayTime;
 use crate::dsp::shaping::flush_denormal;
 use crate::dsp::smoothing::Smoothed;
 use crate::effect::EffectKind;
-use crate::effects::tape::{RepeatTone, RepeatToneGains, read_taps};
+use crate::effects::tape::{
+    DEFAULT_DEPTH, RepeatTone, RepeatToneGains, TrailLevel, feedback_for_depth, mix_for_depth,
+    read_taps,
+};
 use crate::unit::{Controls, Frame, Kernel, MixLaw, Unit, implement_effect, knob};
 
 const FEEDBACK_SMOOTHING_SECONDS: f32 = 0.02;
 const TRAIL_MARGIN_SECONDS: f32 = 0.05;
-const DEFAULT_FEEDBACK: f32 = 0.5;
-const DEFAULT_MIX: f32 = 0.5;
 
 /// A tempo-synced stereo echo with feedback.
 ///
@@ -20,21 +21,25 @@ const DEFAULT_MIX: f32 = 0.5;
 /// Repeats darken and saturate a little on every pass, like a tape echo. Switched off, the echo
 /// stops taking in new audio and lets its repeats ring out.
 ///
-/// The depth knob raises the echo level up to the dry level and the feedback from 0.35 to 0.85.
+/// The depth knob raises the echo from silence to its full level, which sits under the music,
+/// and the feedback from 0.35 to 0.85. Whatever the feedback, the trail sounds about as loud:
+/// more feedback makes it last longer, not louder. The repeats never build up past the music
+/// that feeds them and are held under the room the music leaves below full scale.
 pub struct Echo {
     unit: Unit<EchoKernel>,
 }
 
 impl Echo {
-    /// Builds an echo at 1/2 beat, feedback 0.5 and mix 0.5, switched off. This allocates.
+    /// Builds an echo at 1/2 beat with the depth knob at 0.6 (feedback 0.65, mix 0.3), switched
+    /// off. This allocates.
     pub fn new(config: &EffectConfig) -> Self {
         Self {
-            unit: Unit::new(EchoKernel::new(config), DEFAULT_MIX),
+            unit: Unit::new(EchoKernel::new(config), mix_for_depth(DEFAULT_DEPTH)),
         }
     }
 
     /// Sets how much of each repeat comes back, from 0 (a single repeat) to 1 (repeats that
-    /// fade only through the tape tone).
+    /// hold at the level of the music while it plays, and fade slowly once it stops).
     pub fn set_feedback(&mut self, feedback: f32) {
         let kernel = &mut self.unit.kernel;
         kernel
@@ -56,8 +61,8 @@ impl Controls for Echo {
     }
 
     fn apply_depth(&mut self, depth: f32) {
-        self.unit.set_mix(0.5 * depth);
-        self.set_feedback(0.35 + 0.5 * depth);
+        self.unit.set_mix(mix_for_depth(depth));
+        self.set_feedback(feedback_for_depth(depth));
     }
 
     fn apply_beat(&mut self, beat: BeatLength) {
@@ -73,6 +78,7 @@ pub(crate) struct EchoKernel {
     lines: [DelayLine; 2],
     tones: [RepeatTone; 2],
     tone_gains: RepeatToneGains,
+    trail_level: TrailLevel,
     time: DelayTime,
     beat: BeatLength,
     feedback: Smoothed,
@@ -86,9 +92,13 @@ impl EchoKernel {
             lines: [DelayLine::new(capacity), DelayLine::new(capacity)],
             tones: [RepeatTone::default(); 2],
             tone_gains: RepeatToneGains::default(),
+            trail_level: TrailLevel::new(),
             time: DelayTime::new(),
             beat: BeatLength::HALF,
-            feedback: Smoothed::new(DEFAULT_FEEDBACK, FEEDBACK_SMOOTHING_SECONDS),
+            feedback: Smoothed::new(
+                feedback_for_depth(DEFAULT_DEPTH),
+                FEEDBACK_SMOOTHING_SECONDS,
+            ),
             sample_rate: 0.0,
         }
     }
@@ -103,6 +113,7 @@ impl Kernel for EchoKernel {
             self.sample_rate = timing.sample_rate;
             self.feedback.prepare(timing.sample_rate);
             self.tone_gains = RepeatToneGains::new(timing.sample_rate);
+            self.trail_level.prepare(timing.sample_rate);
         }
         let samples = timing.beats_to_samples(self.beat.beats()) as f32;
         let longest = self.lines[0].max_delay();
@@ -110,26 +121,32 @@ impl Kernel for EchoKernel {
             samples.clamp(MIN_DELAY_SAMPLES, longest),
             timing.sample_rate,
         );
+        self.trail_level.set_loop_samples(self.time.longest());
     }
 
     #[inline]
     fn tick(&mut self, input: Frame, _beat_position: f64) -> Frame {
         let taps = self.time.next();
-        let feedback = self.feedback.next();
-        let mut wet = [0.0; 2];
-        for (((line, tone), channel_input), channel_wet) in self
+        let delayed = [
+            read_taps(&self.lines[0], &taps),
+            read_taps(&self.lines[1], &taps),
+        ];
+        let gains = self.trail_level.next(
+            self.feedback.next(),
+            input[0].abs().max(input[1].abs()),
+            delayed[0].abs().max(delayed[1].abs()),
+        );
+        for (((line, tone), channel_input), channel_delayed) in self
             .lines
             .iter_mut()
             .zip(&mut self.tones)
             .zip(input)
-            .zip(&mut wet)
+            .zip(delayed)
         {
-            let delayed = read_taps(line, &taps);
-            let repeat = tone.shape(delayed, &self.tone_gains) * feedback;
+            let repeat = tone.shape(channel_delayed, &self.tone_gains) * gains.feedback;
             line.write(flush_denormal(channel_input + repeat));
-            *channel_wet = delayed;
         }
-        wet
+        delayed.map(|channel_delayed| channel_delayed * gains.output)
     }
 
     fn reset(&mut self) {
@@ -139,6 +156,7 @@ impl Kernel for EchoKernel {
         for tone in &mut self.tones {
             tone.reset();
         }
+        self.trail_level.reset();
         self.feedback.snap_to_target();
     }
 

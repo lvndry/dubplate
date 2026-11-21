@@ -6,13 +6,14 @@ use crate::dsp::delay_time::DelayTime;
 use crate::dsp::shaping::flush_denormal;
 use crate::dsp::smoothing::Smoothed;
 use crate::effect::EffectKind;
-use crate::effects::tape::{RepeatTone, RepeatToneGains, read_taps};
+use crate::effects::tape::{
+    DEFAULT_DEPTH, RepeatTone, RepeatToneGains, TrailLevel, feedback_for_depth, mix_for_depth,
+    read_taps,
+};
 use crate::unit::{Controls, Frame, Kernel, MixLaw, Unit, implement_effect, knob};
 
 const FEEDBACK_SMOOTHING_SECONDS: f32 = 0.02;
 const TRAIL_MARGIN_SECONDS: f32 = 0.05;
-const DEFAULT_FEEDBACK: f32 = 0.55;
-const DEFAULT_MIX: f32 = 0.5;
 
 /// A tempo-synced echo whose repeats bounce from left to right.
 ///
@@ -20,17 +21,20 @@ const DEFAULT_MIX: f32 = 0.5;
 /// one beat length later, and so on, each a little quieter. Like [`crate::Echo`], it follows
 /// the tempo live, ages its repeats like tape and rings out when switched off.
 ///
-/// The depth knob raises the echo level up to the dry level and the feedback from 0.35 to 0.85.
+/// The depth knob raises the echo from silence to its full level, which sits under the music,
+/// and the feedback from 0.35 to 0.85. Whatever the feedback, the trail sounds about as loud:
+/// more feedback makes it last longer, not louder. The repeats never build up past the music
+/// that feeds them and are held under the room the music leaves below full scale.
 pub struct PingPong {
     unit: Unit<PingPongKernel>,
 }
 
 impl PingPong {
-    /// Builds a ping-pong delay at 1/2 beat, feedback 0.55 and mix 0.5, switched off. This
-    /// allocates.
+    /// Builds a ping-pong delay at 1/2 beat with the depth knob at 0.6 (feedback 0.65, mix 0.3),
+    /// switched off. This allocates.
     pub fn new(config: &EffectConfig) -> Self {
         Self {
-            unit: Unit::new(PingPongKernel::new(config), DEFAULT_MIX),
+            unit: Unit::new(PingPongKernel::new(config), mix_for_depth(DEFAULT_DEPTH)),
         }
     }
 
@@ -56,8 +60,8 @@ impl Controls for PingPong {
     }
 
     fn apply_depth(&mut self, depth: f32) {
-        self.unit.set_mix(0.5 * depth);
-        self.set_feedback(0.35 + 0.5 * depth);
+        self.unit.set_mix(mix_for_depth(depth));
+        self.set_feedback(feedback_for_depth(depth));
     }
 
     fn apply_beat(&mut self, beat: BeatLength) {
@@ -72,8 +76,9 @@ impl Controls for PingPong {
 pub(crate) struct PingPongKernel {
     left_line: DelayLine,
     right_line: DelayLine,
-    tone: RepeatTone,
+    tones: [RepeatTone; 2],
     tone_gains: RepeatToneGains,
+    trail_level: TrailLevel,
     time: DelayTime,
     beat: BeatLength,
     feedback: Smoothed,
@@ -86,11 +91,15 @@ impl PingPongKernel {
         Self {
             left_line: DelayLine::new(capacity),
             right_line: DelayLine::new(capacity),
-            tone: RepeatTone::default(),
+            tones: [RepeatTone::default(); 2],
             tone_gains: RepeatToneGains::default(),
+            trail_level: TrailLevel::new(),
             time: DelayTime::new(),
             beat: BeatLength::HALF,
-            feedback: Smoothed::new(DEFAULT_FEEDBACK, FEEDBACK_SMOOTHING_SECONDS),
+            feedback: Smoothed::new(
+                feedback_for_depth(DEFAULT_DEPTH),
+                FEEDBACK_SMOOTHING_SECONDS,
+            ),
             sample_rate: 0.0,
         }
     }
@@ -105,6 +114,7 @@ impl Kernel for PingPongKernel {
             self.sample_rate = timing.sample_rate;
             self.feedback.prepare(timing.sample_rate);
             self.tone_gains = RepeatToneGains::new(timing.sample_rate);
+            self.trail_level.prepare(timing.sample_rate);
         }
         let samples = timing.beats_to_samples(self.beat.beats()) as f32;
         let longest = self.left_line.max_delay();
@@ -112,26 +122,35 @@ impl Kernel for PingPongKernel {
             samples.clamp(MIN_DELAY_SAMPLES, longest),
             timing.sample_rate,
         );
+        self.trail_level.set_loop_samples(2.0 * self.time.longest());
     }
 
     #[inline]
     fn tick(&mut self, input: Frame, _beat_position: f64) -> Frame {
         let taps = self.time.next();
-        let feedback = self.feedback.next();
         let delayed_left = read_taps(&self.left_line, &taps);
         let delayed_right = read_taps(&self.right_line, &taps);
         let centre = 0.5 * (input[0] + input[1]);
-        let returning = self.tone.shape(delayed_right, &self.tone_gains) * feedback;
+        let gains = self.trail_level.next(
+            self.feedback.next(),
+            centre.abs(),
+            delayed_left.abs().max(delayed_right.abs()),
+        );
+        let [left_tone, right_tone] = &mut self.tones;
+        let returning = left_tone.shape(delayed_right, &self.tone_gains) * gains.feedback;
+        let crossing = right_tone.shape(delayed_left, &self.tone_gains) * gains.feedback;
         self.left_line.write(flush_denormal(centre + returning));
-        self.right_line
-            .write(flush_denormal(delayed_left * feedback));
-        [delayed_left, delayed_right]
+        self.right_line.write(flush_denormal(crossing));
+        [delayed_left * gains.output, delayed_right * gains.output]
     }
 
     fn reset(&mut self) {
         self.left_line.clear();
         self.right_line.clear();
-        self.tone.reset();
+        for tone in &mut self.tones {
+            tone.reset();
+        }
+        self.trail_level.reset();
         self.feedback.snap_to_target();
     }
 

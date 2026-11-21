@@ -5,6 +5,7 @@ use crate::context::BlockTiming;
 use crate::dsp::delay_line::{DelayLine, MIN_DELAY_SAMPLES};
 use crate::dsp::delay_time::DelayTime;
 use crate::dsp::filters::{OnePole, Svf, SvfCoefficients, one_pole_gain};
+use crate::dsp::loudness::loop_loudness_gain;
 use crate::dsp::shaping::flush_denormal;
 use crate::dsp::smoothing::Smoothed;
 use crate::effect::EffectKind;
@@ -202,11 +203,17 @@ impl ReverbKernel {
 
     fn update_controls(&mut self) {
         let decay_samples = self.decay_seconds.current() * self.sample_rate;
+        let reference_samples = LEVEL_REFERENCE_DECAY_SECONDS * self.sample_rate;
         let size_scale = self.size_scale.current();
+        let mut loudness = 0.0;
+        let mut reference_loudness = 0.0;
         for (gain, base) in self.line_gains.iter_mut().zip(self.line_base_samples) {
-            *gain = 10.0_f32.powf(-3.0 * base * size_scale / decay_samples);
+            let line_samples = base * size_scale;
+            *gain = decay_gain(line_samples, decay_samples);
+            loudness += loop_loudness_gain(*gain);
+            reference_loudness += loop_loudness_gain(decay_gain(line_samples, reference_samples));
         }
-        let level = (LEVEL_REFERENCE_DECAY_SECONDS / self.decay_seconds.current()).sqrt();
+        let level = loudness / reference_loudness;
         self.output_gain = OUTPUT_GAIN * level.min(MAX_LEVEL_BOOST);
         let damping_hz = BRIGHTEST_DAMPING_HZ
             * (DARKEST_DAMPING_HZ / BRIGHTEST_DAMPING_HZ).powf(self.damping.current());
@@ -221,6 +228,12 @@ impl ReverbKernel {
             self.sample_rate,
         );
     }
+}
+
+/// The gain per pass that makes a line of `line_samples` fall by 60 dB in `decay_samples`.
+#[inline]
+fn decay_gain(line_samples: f32, decay_samples: f32) -> f32 {
+    10.0_f32.powf(-3.0 * line_samples / decay_samples)
 }
 
 impl Kernel for ReverbKernel {

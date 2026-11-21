@@ -6,12 +6,22 @@ use common::{Deck, Stereo, decibels, loudest_index, peak, rms, seconds_to_frames
 use dubplate_fx::{BeatLength, Echo, Effect, EffectConfig, PingPong, Reverb};
 
 const IMPULSE_AT: usize = 4_800;
+/// Half scale, so a repeat at the level of the hit still fits under full scale next to it.
+const IMPULSE_LEVEL: f32 = 0.5;
 
 fn impulse(frames: usize, at: usize) -> Stereo {
     let mut audio = Stereo::silence(frames);
-    audio.left[at] = 1.0;
-    audio.right[at] = 1.0;
+    audio.left[at] = IMPULSE_LEVEL;
+    audio.right[at] = IMPULSE_LEVEL;
     audio
+}
+
+/// The level of the first repeat of a hit: the trail plays at 0.7 of the music and is scaled
+/// by the feedback so it sounds about as loud at any feedback, keeping 90 % of its loudness
+/// through the tape tone on each pass.
+fn first_repeat_level(feedback: f32) -> f32 {
+    let kept = feedback * 0.9;
+    IMPULSE_LEVEL * 0.7 * (1.0 - kept * kept).sqrt()
 }
 
 fn echo_with(feedback: f32) -> Echo {
@@ -36,9 +46,9 @@ fn echo_repeats_half_a_beat_at_120_bpm_after_a_quarter_second() {
         repeat_at.abs_diff(expected) <= 1,
         "first repeat at {repeat_at}, expected {expected}"
     );
-    assert!((audio.left[repeat_at] - 1.0).abs() < 1e-3);
+    assert!((audio.left[repeat_at] - first_repeat_level(0.0)).abs() < 1e-3);
     assert_eq!(
-        audio.left[IMPULSE_AT], 1.0,
+        audio.left[IMPULSE_AT], IMPULSE_LEVEL,
         "the dry signal passes at full level"
     );
 }
@@ -70,8 +80,8 @@ fn echo_keeps_its_tail_when_switched_off_and_takes_in_nothing_new() {
     let frames = seconds_to_frames(1.0);
     let mut audio = impulse(frames, IMPULSE_AT);
     let late_impulse = IMPULSE_AT + seconds_to_frames(0.31);
-    audio.left[late_impulse] = 1.0;
-    audio.right[late_impulse] = 1.0;
+    audio.left[late_impulse] = IMPULSE_LEVEL;
+    audio.right[late_impulse] = IMPULSE_LEVEL;
 
     let switch_off_at = IMPULSE_AT + seconds_to_frames(0.1);
     deck.play_range(&mut echo, &mut audio, 0, switch_off_at);
@@ -85,7 +95,7 @@ fn echo_keeps_its_tail_when_switched_off_and_takes_in_nothing_new() {
     let first_repeat = IMPULSE_AT + seconds_to_frames(0.25);
     let third_repeat = IMPULSE_AT + seconds_to_frames(0.75);
     assert!(
-        audio.left[first_repeat] > 0.95,
+        (audio.left[first_repeat] - first_repeat_level(0.5)).abs() < 1e-3,
         "the first repeat rings out"
     );
     for sample_index in first_repeat - 8..third_repeat + 256 {
@@ -106,7 +116,7 @@ fn echo_keeps_its_tail_when_switched_off_and_takes_in_nothing_new() {
         "audio played after switching off must not be echoed"
     );
     assert_eq!(
-        audio.left[late_impulse], 1.0,
+        audio.left[late_impulse], IMPULSE_LEVEL,
         "the dry signal is back at full level"
     );
 }
@@ -157,12 +167,20 @@ fn ping_pong_bounces_left_then_right() {
 
     let first = IMPULSE_AT + 12_000;
     let second = IMPULSE_AT + 24_000;
-    assert!(audio.left[first] > 0.9, "first bounce on the left");
+    let first_level = first_repeat_level(0.5);
+    assert!(
+        (audio.left[first] - first_level).abs() < 1e-3,
+        "first bounce on the left"
+    );
     assert!(
         audio.right[first].abs() < 1e-3,
         "first bounce not on the right"
     );
-    assert!(audio.right[second] > 0.4, "second bounce on the right");
+    let second_level = peak(&audio.right[second - 8..second + 64]);
+    assert!(
+        (0.2 * first_level..=0.5 * first_level).contains(&second_level),
+        "second bounce on the right at {second_level}: at most half as loud, aged by the tape"
+    );
     assert!(
         audio.left[second].abs() < 1e-3,
         "second bounce not on the left"
