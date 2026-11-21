@@ -42,7 +42,7 @@ The desktop app opens on your rekordbox collection with two decks, a mixer and t
 cargo run --release -p dubplate-desktop
 ```
 
-To get a `Dubplate.app` with the One groove icon instead:
+On macOS, `cargo run` starts it from a `Dubplate.app` next to the binary (see `.cargo/config.toml`), so the menu bar and the Dock show Dubplate and the One groove icon. To build a release `Dubplate.app` to keep:
 
 ```
 ./scripts/bundle-macos.sh && open target/release/Dubplate.app

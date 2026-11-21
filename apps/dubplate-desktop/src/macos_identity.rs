@@ -1,6 +1,6 @@
-//! How the app presents itself on macOS when it runs outside an app bundle, as `cargo run`
-//! does: the name "Dubplate" in the menu bar and the Dock, and the One groove icon in the Dock.
-//! The app bundle (`scripts/bundle-macos.sh`) has both in its `Info.plist` and icon.
+//! How the app presents itself on macOS when its binary is started on its own, outside
+//! Dubplate.app: the name "Dubplate" in the menu bar and the One groove icon in the Dock. The
+//! bundle that `cargo run` and `scripts/bundle-macos.sh` make also names the Dock item.
 
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;

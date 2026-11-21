@@ -1,29 +1,42 @@
 #!/bin/sh
-# Builds the desktop app in release mode and packages it as Dubplate.app, with the One groove
-# icon drawn from assets/logo/app-icon.svg.
+# Packages the desktop app as Dubplate.app, with the One groove icon drawn from
+# assets/logo/app-icon.svg, so macOS shows the name Dubplate and the icon in the menu bar
+# and the Dock.
 #
 #   ./scripts/bundle-macos.sh && open target/release/Dubplate.app
 #
-# Pass --skip-build to package the binary already in target/release. The app gets an ad hoc
-# signature, which lets it run on the Mac that built it.
+# Options:
+#   --skip-build     package the binary already in target/release
+#   --binary PATH    package PATH instead, next to it, without building (implies --skip-build)
+#   --link           hard link the binary instead of copying it, keep an icon already made and
+#                    skip signing: what `cargo run` does through scripts/run-macos.sh
+#
+# The release bundle gets an ad hoc signature, which lets it run on the Mac that built it.
 
 set -eu
 
 repository=$(cd "$(dirname "$0")/.." && pwd)
-bundle="$repository/target/release/Dubplate.app"
 binary="$repository/target/release/dubplate-desktop"
 icon_artwork="$repository/assets/logo/app-icon.svg"
 version=$(sed -n 's/^version = "\(.*\)"$/\1/p' "$repository/apps/dubplate-desktop/Cargo.toml" | head -n 1)
 build=yes
+link=no
 
-for argument in "$@"; do
-  case "$argument" in
+while [ $# -gt 0 ]; do
+  case "$1" in
     --skip-build) build=no ;;
+    --binary)
+      binary=$2
+      build=no
+      shift
+      ;;
+    --link) link=yes ;;
     *)
-      echo "error: unknown option $argument (expected --skip-build)" >&2
+      echo "error: unknown option $1 (expected --skip-build, --binary PATH or --link)" >&2
       exit 1
       ;;
   esac
+  shift
 done
 
 if [ "$(uname -s)" != "Darwin" ]; then
@@ -35,20 +48,31 @@ if [ "$build" = yes ]; then
   cargo build --release --locked -p dubplate-desktop --manifest-path "$repository/Cargo.toml"
 fi
 
-rm -rf "$bundle"
-mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Resources"
-cp "$binary" "$bundle/Contents/MacOS/Dubplate"
+bundle="$(dirname "$binary")/Dubplate.app"
+resources="$bundle/Contents/Resources"
+icon="$resources/AppIcon.icns"
+if [ "$link" = no ]; then
+  rm -rf "$bundle"
+fi
+mkdir -p "$bundle/Contents/MacOS" "$resources"
+if [ "$link" = yes ]; then
+  ln -f "$binary" "$bundle/Contents/MacOS/Dubplate"
+else
+  cp "$binary" "$bundle/Contents/MacOS/Dubplate"
+fi
 
-work=$(mktemp -d)
-trap 'rm -rf "$work"' EXIT
-iconset="$work/AppIcon.iconset"
-mkdir -p "$iconset"
-for size in 16 32 128 256 512; do
-  sips -s format png -z "$size" "$size" "$icon_artwork" --out "$iconset/icon_${size}x${size}.png" > /dev/null
-  double=$((size * 2))
-  sips -s format png -z "$double" "$double" "$icon_artwork" --out "$iconset/icon_${size}x${size}@2x.png" > /dev/null
-done
-iconutil --convert icns --output "$bundle/Contents/Resources/AppIcon.icns" "$iconset"
+if [ ! -f "$icon" ] || [ "$icon_artwork" -nt "$icon" ]; then
+  work=$(mktemp -d)
+  trap 'rm -rf "$work"' EXIT
+  iconset="$work/AppIcon.iconset"
+  mkdir -p "$iconset"
+  for size in 16 32 128 256 512; do
+    double=$((size * 2))
+    sips -s format png -z "$size" "$size" "$icon_artwork" --out "$iconset/icon_${size}x${size}.png" > /dev/null
+    sips -s format png -z "$double" "$double" "$icon_artwork" --out "$iconset/icon_${size}x${size}@2x.png" > /dev/null
+  done
+  iconutil --convert icns --output "$icon" "$iconset"
+fi
 
 cat > "$bundle/Contents/Info.plist" << PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -86,6 +110,8 @@ cat > "$bundle/Contents/Info.plist" << PLIST
 PLIST
 plutil -lint "$bundle/Contents/Info.plist" > /dev/null
 
-codesign --force --sign - "$bundle"
-codesign --verify --strict "$bundle"
-echo "Built $bundle"
+if [ "$link" = no ]; then
+  codesign --force --sign - "$bundle"
+  codesign --verify --strict "$bundle"
+  echo "Built $bundle"
+fi
