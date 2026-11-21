@@ -1,0 +1,251 @@
+# Pioneer DDJ-FLX4.
+#
+# Messages follow Pioneer's "DDJ-FLX4 List of MIDI messages" (Ver 1.0, AlphaTheta, 2022). Each
+# `message` is the status and first data byte in hex, as in the list's MIDI-IN and MIDI-OUT
+# columns. Behaviour the list leaves out (the keepalive, the jog resolution and two lights) was
+# checked against the open-source Mixxx mapping for this controller; those lines say so.
+#
+# The FLX4 sends a separate message for each control with SHIFT held. Those are the entries with
+# `layer = "shift"`.
+
+name = "Pioneer DDJ-FLX4"
+ports = ["DDJ-FLX4"]
+
+# Mixxx scratches with 720 ticks per turn of the platter.
+jog_ticks_per_revolution = 720
+
+# Asks the unit to report every fader and knob position (Mixxx).
+startup = [[0xF0, 0x00, 0x40, 0x05, 0x00, 0x00, 0x04, 0x05, 0x00, 0x50, 0x02, 0xF7]]
+
+# Mixxx repeats the same message every 200 ms while the unit is open.
+keepalive = { interval_ms = 200, message = [0xF0, 0x00, 0x40, 0x05, 0x00, 0x00, 0x04, 0x05, 0x00, 0x50, 0x02, 0xF7] }
+
+buttons = [
+  # 1-1 PLAY/PAUSE
+  { button = { play = "a" }, message = "90 0B", light = true },
+  { button = { play = "a" }, message = "90 0E", layer = "shift", light = true },
+  { button = { play = "b" }, message = "91 0B", light = true },
+  { button = { play = "b" }, message = "91 0E", layer = "shift", light = true },
+
+  # 1-2 CUE
+  { button = { cue = "a" }, message = "90 0C", light = true },
+  { button = { cue = "a" }, message = "90 48", layer = "shift", light = true },
+  { button = { cue = "b" }, message = "91 0C", light = true },
+  { button = { cue = "b" }, message = "91 48", layer = "shift", light = true },
+
+  # 1-3 SHIFT
+  { button = { shift = "a" }, message = "90 3F" },
+  { button = { shift = "b" }, message = "91 3F" },
+
+  # 1-4 JOG DIAL touch
+  { button = { jog-touch = "a" }, message = "90 36" },
+  { button = { jog-touch = "a" }, message = "90 67", layer = "shift" },
+  { button = { jog-touch = "b" }, message = "91 36" },
+  { button = { jog-touch = "b" }, message = "91 67", layer = "shift" },
+
+  # 1-5 IN
+  { button = { loop-in = "a" }, message = "90 10", light = true },
+  { button = { loop-in = "a" }, message = "90 4C", layer = "shift", light = true },
+  { button = { loop-in = "b" }, message = "91 10", light = true },
+  { button = { loop-in = "b" }, message = "91 4C", layer = "shift", light = true },
+
+  # 1-6 OUT
+  { button = { loop-out = "a" }, message = "90 11", light = true },
+  { button = { loop-out = "a" }, message = "90 4E", layer = "shift", light = true },
+  { button = { loop-out = "b" }, message = "91 11", light = true },
+  { button = { loop-out = "b" }, message = "91 4E", layer = "shift", light = true },
+
+  # 1-7 4 BEAT/EXIT. Pioneer lists no light; Mixxx lights it on these messages.
+  { button = { four-beat-exit = "a" }, message = "90 4D", light = true },
+  { button = { four-beat-exit = "a" }, message = "90 50", layer = "shift", light = true },
+  { button = { four-beat-exit = "b" }, message = "91 4D", light = true },
+  { button = { four-beat-exit = "b" }, message = "91 50", layer = "shift", light = true },
+
+  # 1-8 and 1-9 CUE/LOOP CALL
+  { button = { cue-loop-call = { deck = "a", direction = "left" } }, message = "90 51" },
+  { button = { cue-loop-call = { deck = "a", direction = "left" } }, message = "90 3E", layer = "shift" },
+  { button = { cue-loop-call = { deck = "a", direction = "right" } }, message = "90 53" },
+  { button = { cue-loop-call = { deck = "a", direction = "right" } }, message = "90 3D", layer = "shift" },
+  { button = { cue-loop-call = { deck = "b", direction = "left" } }, message = "91 51" },
+  { button = { cue-loop-call = { deck = "b", direction = "left" } }, message = "91 3E", layer = "shift" },
+  { button = { cue-loop-call = { deck = "b", direction = "right" } }, message = "91 53" },
+  { button = { cue-loop-call = { deck = "b", direction = "right" } }, message = "91 3D", layer = "shift" },
+
+  # 1-10 BEAT SYNC. The unit sends the press when the button is released.
+  { button = { sync = "a" }, message = "90 58", light = true },
+  { button = { sync-hold = "a" }, message = "90 5C" },
+  { button = { sync = "a" }, message = "90 60", layer = "shift", light = true },
+  { button = { sync = "b" }, message = "91 58", light = true },
+  { button = { sync-hold = "b" }, message = "91 5C" },
+  { button = { sync = "b" }, message = "91 60", layer = "shift", light = true },
+
+  # 2-2 FX SELECT
+  { button = "beat-fx-select", message = "94 63" },
+  { button = "beat-fx-select", message = "94 64", layer = "shift" },
+
+  # 2-3 and 2-4 BEAT ◁ ▷
+  { button = { beat-fx-beat = "left" }, message = "94 4A" },
+  { button = { beat-fx-beat = "left" }, message = "94 66", layer = "shift" },
+  { button = { beat-fx-beat = "right" }, message = "94 4B" },
+  { button = { beat-fx-beat = "right" }, message = "94 6B", layer = "shift" },
+
+  # 2-6 FX ON/OFF: channel 5 with the lever on CH1 or CH1&CH2, channel 6 on CH2. Pioneer lists
+  # no light; Mixxx lights it on channel 5, and the list notes it blinks while on.
+  { button = "beat-fx-on", message = "94 47", light = true },
+  { button = "beat-fx-on", message = "95 47" },
+  { button = "beat-fx-on", message = "94 43", layer = "shift", light = true },
+  { button = "beat-fx-on", message = "95 43", layer = "shift" },
+
+  # 3-2 MASTER CUE
+  { button = "master-cue", message = "96 63" },
+  { button = "master-cue", message = "96 78", layer = "shift" },
+
+  # 3-6 CH CUE
+  { button = { headphone-cue = "a" }, message = "90 54", light = true },
+  { button = { headphone-cue = "a" }, message = "90 68", layer = "shift", light = true },
+  { button = { headphone-cue = "b" }, message = "91 54", light = true },
+  { button = { headphone-cue = "b" }, message = "91 68", layer = "shift", light = true },
+
+  # 3-7 and 3-8 fader start, sent by the channel faders and the crossfader with SHIFT held
+  { button = { fader-start = { deck = "a", start = "play" } }, message = "90 66", layer = "shift" },
+  { button = { fader-start = { deck = "a", start = "cue" } }, message = "90 52", layer = "shift" },
+  { button = { fader-start = { deck = "b", start = "play" } }, message = "91 66", layer = "shift" },
+  { button = { fader-start = { deck = "b", start = "cue" } }, message = "91 52", layer = "shift" },
+
+  # 3-10 SMART CFX and 3-13 SMART FADER
+  { button = "smart-cfx", message = "96 00", light = true },
+  { button = "smart-cfx", message = "96 08", layer = "shift" },
+  { button = "smart-fader", message = "96 01", light = true },
+  { button = "smart-fader", message = "96 09", layer = "shift" },
+
+  # 4-1 BROWSE push
+  { button = "browse-push", message = "96 41" },
+  { button = "browse-push", message = "96 42", layer = "shift" },
+
+  # 4-2 and 4-3 LOAD
+  { button = { load = "a" }, message = "96 46" },
+  { button = { load = "a" }, message = "96 68", layer = "shift" },
+  { button = { load = "b" }, message = "96 47" },
+  { button = { load = "b" }, message = "96 7A", layer = "shift" },
+
+  # 5-1 to 5-4 pad mode buttons. With SHIFT each selects the mode printed under it.
+  { button = { pad-mode = { deck = "a", mode = "hot-cue" } }, message = "90 1B", light = true },
+  { button = { pad-mode = { deck = "a", mode = "keyboard" } }, message = "90 69", layer = "shift", light = true },
+  { button = { pad-mode = { deck = "a", mode = "pad-fx-1" } }, message = "90 1E", light = true },
+  { button = { pad-mode = { deck = "a", mode = "pad-fx-2" } }, message = "90 6B", layer = "shift", light = true },
+  { button = { pad-mode = { deck = "a", mode = "beat-jump" } }, message = "90 20", light = true },
+  { button = { pad-mode = { deck = "a", mode = "beat-loop" } }, message = "90 6D", layer = "shift", light = true },
+  { button = { pad-mode = { deck = "a", mode = "sampler" } }, message = "90 22", light = true },
+  { button = { pad-mode = { deck = "a", mode = "key-shift" } }, message = "90 6F", layer = "shift", light = true },
+  { button = { pad-mode = { deck = "b", mode = "hot-cue" } }, message = "91 1B", light = true },
+  { button = { pad-mode = { deck = "b", mode = "keyboard" } }, message = "91 69", layer = "shift", light = true },
+  { button = { pad-mode = { deck = "b", mode = "pad-fx-1" } }, message = "91 1E", light = true },
+  { button = { pad-mode = { deck = "b", mode = "pad-fx-2" } }, message = "91 6B", layer = "shift", light = true },
+  { button = { pad-mode = { deck = "b", mode = "beat-jump" } }, message = "91 20", light = true },
+  { button = { pad-mode = { deck = "b", mode = "beat-loop" } }, message = "91 6D", layer = "shift", light = true },
+  { button = { pad-mode = { deck = "b", mode = "sampler" } }, message = "91 22", light = true },
+  { button = { pad-mode = { deck = "b", mode = "key-shift" } }, message = "91 6F", layer = "shift", light = true },
+]
+
+switches = [
+  # 2-1 FX CH SELECT. The lever also sends 94 11 and 95 10, always 00.
+  { switch = { beat-fx-channel = "a" }, message = "94 10" },
+  { switch = { beat-fx-channel = "b" }, message = "95 11" },
+
+  # 3-14 MONO/STEREO for smartphones: 7F is mono.
+  { switch = "mono-output", message = "96 6D" },
+]
+
+# 14-bit faders and knobs: `message` carries the most significant half and comes first.
+continuous = [
+  # 1-11 TEMPO, 0 at the "-" end
+  { control = { tempo = "a" }, message = "B0 00", lsb = "B0 20" },
+  { control = { tempo = "b" }, message = "B1 00", lsb = "B1 20" },
+
+  # 2-5 LEVEL/DEPTH
+  { control = "beat-fx-level-depth", message = "B4 02", lsb = "B4 22" },
+
+  # 3-1 MASTER LEVEL
+  { control = "master-level", message = "B6 08", lsb = "B6 28" },
+
+  # 3-3 TRIM
+  { control = { trim = "a" }, message = "B0 04", lsb = "B0 24" },
+  { control = { trim = "b" }, message = "B1 04", lsb = "B1 24" },
+
+  # 3-4 EQ
+  { control = { eq = { deck = "a", band = "high" } }, message = "B0 07", lsb = "B0 27" },
+  { control = { eq = { deck = "a", band = "mid" } }, message = "B0 0B", lsb = "B0 2B" },
+  { control = { eq = { deck = "a", band = "low" } }, message = "B0 0F", lsb = "B0 2F" },
+  { control = { eq = { deck = "b", band = "high" } }, message = "B1 07", lsb = "B1 27" },
+  { control = { eq = { deck = "b", band = "mid" } }, message = "B1 0B", lsb = "B1 2B" },
+  { control = { eq = { deck = "b", band = "low" } }, message = "B1 0F", lsb = "B1 2F" },
+
+  # 3-5 CFX
+  { control = { filter = "a" }, message = "B6 17", lsb = "B6 37" },
+  { control = { filter = "b" }, message = "B6 18", lsb = "B6 38" },
+
+  # 3-7 CH FADER
+  { control = { channel-fader = "a" }, message = "B0 13", lsb = "B0 33" },
+  { control = { channel-fader = "b" }, message = "B1 13", lsb = "B1 33" },
+
+  # 3-8 CROSSFADER, 0 at the left
+  { control = "crossfader", message = "B6 1F", lsb = "B6 3F" },
+
+  # 3-9 MIC LEVEL
+  { control = "mic-level", message = "B6 05", lsb = "B6 25" },
+
+  # 3-11 HEADPHONE MIX and 3-12 HEADPHONE LEVEL
+  { control = "headphone-mix", message = "B6 0C", lsb = "B6 2C" },
+  { control = "headphone-level", message = "B6 0D", lsb = "B6 2D" },
+]
+
+encoders = [
+  # 1-4 JOG DIAL platter: 22 while touched in vinyl mode, 23 with vinyl mode off, 29 with SHIFT.
+  # Side of the wheel: 21, with or without SHIFT.
+  { encoder = { jog = { deck = "a", mode = "scratch" } }, message = "B0 22", encoding = "offset-64" },
+  { encoder = { jog = { deck = "a", mode = "nudge" } }, message = "B0 23", encoding = "offset-64" },
+  { encoder = { jog = { deck = "a", mode = "search" } }, message = "B0 29", encoding = "offset-64", layer = "shift" },
+  { encoder = { jog = { deck = "a", mode = "nudge" } }, message = "B0 21", encoding = "offset-64" },
+  { encoder = { jog = { deck = "b", mode = "scratch" } }, message = "B1 22", encoding = "offset-64" },
+  { encoder = { jog = { deck = "b", mode = "nudge" } }, message = "B1 23", encoding = "offset-64" },
+  { encoder = { jog = { deck = "b", mode = "search" } }, message = "B1 29", encoding = "offset-64", layer = "shift" },
+  { encoder = { jog = { deck = "b", mode = "nudge" } }, message = "B1 21", encoding = "offset-64" },
+
+  # 4-1 BROWSE turn
+  { encoder = "browse", message = "B6 40", encoding = "twos-complement" },
+  { encoder = "browse", message = "B6 64", encoding = "twos-complement", layer = "shift" },
+]
+
+# 5-5 PERFORMANCE PADS: pad N of a mode is the mode's first note plus N - 1. Each pad lights on
+# the message it sends.
+pad_modes = [
+  { mode = "hot-cue", first_pad = 0x00 },
+  { mode = "pad-fx-1", first_pad = 0x10 },
+  { mode = "beat-jump", first_pad = 0x20 },
+  { mode = "sampler", first_pad = 0x30 },
+  { mode = "keyboard", first_pad = 0x40 },
+  { mode = "pad-fx-2", first_pad = 0x50 },
+  { mode = "beat-loop", first_pad = 0x60 },
+  { mode = "key-shift", first_pad = 0x70 },
+]
+
+pad_banks = [
+  { deck = "a", status = 0x97, pads = 8, light = true },
+  { deck = "a", status = 0x98, pads = 8, layer = "shift", light = true },
+  { deck = "b", status = 0x99, pads = 8, light = true },
+  { deck = "b", status = 0x9A, pads = 8, layer = "shift", light = true },
+]
+
+outputs = [
+  # 3-15 CH LEVEL METER: 26-40 green, up to 56 green, up to 64 orange, up to 76 orange, 77-7F red.
+  { output = { level-meter = "a" }, message = "B0 02" },
+  { output = { level-meter = "b" }, message = "B1 02" },
+
+  # LOADED: plays the track loaded animation.
+  { output = { track-loaded = "a" }, message = "9F 00" },
+  { output = { track-loaded = "b" }, message = "9F 01" },
+
+  # VINYL MODE: on by default; only the computer can change it.
+  { output = { vinyl-mode = "a" }, message = "90 17" },
+  { output = { vinyl-mode = "b" }, message = "91 17" },
+]
