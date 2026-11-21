@@ -1,6 +1,8 @@
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
 use std::time::Duration;
 
+use dubplate_fx::BeatLength;
+
 use crate::deck::DeckId;
 use crate::sync::SyncMode;
 use crate::tempo::TempoRange;
@@ -32,6 +34,11 @@ pub(crate) struct DeckShared {
     pub(crate) sync_mode: AtomicU8,
     pub(crate) following: AtomicBool,
     pub(crate) fader_waits_for_pickup: AtomicBool,
+    pub(crate) loop_start_seconds: AtomicF64,
+    pub(crate) loop_end_seconds: AtomicF64,
+    pub(crate) loop_active: AtomicBool,
+    pub(crate) loop_length: AtomicU32,
+    pub(crate) pending_loop_start_seconds: AtomicF64,
     pub(crate) touched: AtomicBool,
     pub(crate) vinyl_mode: AtomicBool,
     pub(crate) peak: AtomicU32,
@@ -84,6 +91,20 @@ impl AtomicDeck {
     }
 }
 
+/// A loop length packed in one integer, numerator above denominator, 0 for none.
+pub(crate) fn encode_loop_length(length: Option<BeatLength>) -> u32 {
+    length.map_or(0, |length| {
+        let (numerator, denominator) = length.fraction_parts();
+        u32::from(numerator) << 16 | u32::from(denominator)
+    })
+}
+
+pub(crate) fn decode_loop_length(encoded: u32) -> Option<BeatLength> {
+    let numerator = u16::try_from(encoded >> 16).ok()?;
+    let denominator = u16::try_from(encoded & 0xFFFF).ok()?;
+    BeatLength::new(numerator, denominator)
+}
+
 /// Raises a peak meter. Non-negative `f32` values order the same way as their bits, so an
 /// integer maximum on the bits is a float maximum.
 pub(crate) fn raise_peak(meter: &AtomicU32, peak: f32) {
@@ -101,6 +122,9 @@ impl SharedState {
                 let deck = DeckShared::default();
                 deck.tempo.store(1.0);
                 deck.bpm.store(f64::NAN);
+                deck.loop_start_seconds.store(f64::NAN);
+                deck.loop_end_seconds.store(f64::NAN);
+                deck.pending_loop_start_seconds.store(f64::NAN);
                 deck.tempo_range
                     .store(TempoRange::default().index(), Ordering::Relaxed);
                 deck.vinyl_mode.store(true, Ordering::Relaxed);
@@ -288,6 +312,21 @@ pub struct TempoState {
     /// The tempo fader no longer matches the tempo, after sync or a range change, and waits
     /// to be moved through it before it takes over.
     pub fader_waits_for_pickup: bool,
+}
+
+/// A deck's loop, as the audio thread last published it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LoopState {
+    /// Where the loop starts, in seconds from the start of the track. `None` without a loop.
+    pub start_seconds: Option<f64>,
+    /// Where the loop ends, in seconds from the start of the track. `None` without a loop.
+    pub end_seconds: Option<f64>,
+    /// The playhead goes round the loop. An exited loop stays for RELOOP.
+    pub active: bool,
+    /// The length of a beat loop. `None` for a loop set with loop in and loop out.
+    pub length: Option<BeatLength>,
+    /// A loop in point waiting for its loop out, in seconds.
+    pub pending_start_seconds: Option<f64>,
 }
 
 /// What a deck's jog wheel is doing, as the audio thread last published it.

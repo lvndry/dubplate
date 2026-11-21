@@ -10,12 +10,12 @@ use crate::effects::{EffectChange, EffectRack, EffectTarget, EffectUnitId};
 use crate::grid::BeatGrid;
 use crate::jog::JogInput;
 use crate::processor::{AudioProcessor, ProcessContext, StereoBlock};
-use crate::state::{GapDetector, SharedState, raise_peak};
+use crate::state::{GapDetector, SharedState, encode_loop_length, raise_peak};
 use crate::sync::SyncMode;
 use crate::tempo::{DeckLevel, MasterTempo, TempoMaster, TempoRange};
 use crate::track::TrackBuffer;
 use crate::{DECK_COUNT, INSERT_SLOTS, MAX_BLOCK_FRAMES};
-use dubplate_fx::EqBand;
+use dubplate_fx::{BeatLength, EqBand};
 
 const DECLICK_SECONDS: f64 = 0.005;
 const MAX_COMMANDS_PER_CALLBACK: usize = 256;
@@ -108,6 +108,24 @@ pub(crate) enum Command {
         mode: SyncMode,
     },
     SetSyncHalfAndDouble(bool),
+    SetQuantize(bool),
+    HotCue {
+        deck: DeckId,
+        seconds: f64,
+    },
+    BeatJump {
+        deck: DeckId,
+        beats: f64,
+    },
+    LoopIn(DeckId),
+    LoopOut(DeckId),
+    BeatLoop {
+        deck: DeckId,
+        length: BeatLength,
+    },
+    HalveLoop(DeckId),
+    DoubleLoop(DeckId),
+    ReloopOrExit(DeckId),
 }
 
 /// Something the audio thread no longer needs. It goes back to the control side to be dropped,
@@ -412,6 +430,27 @@ impl Renderer {
             }
             Command::SetSync { deck, mode } => self.decks[deck.index()].set_sync(mode),
             Command::SetSyncHalfAndDouble(allowed) => self.sync_half_and_double = allowed,
+            Command::SetQuantize(enabled) => {
+                for deck in &mut self.decks {
+                    deck.set_quantize(enabled);
+                }
+            }
+            Command::HotCue { deck, seconds } => {
+                self.decks[deck.index()].hot_cue(seconds, &mut self.retire);
+            }
+            Command::BeatJump { deck, beats } => {
+                self.decks[deck.index()].beat_jump(beats, &mut self.retire);
+            }
+            Command::LoopIn(deck) => self.decks[deck.index()].loop_in(),
+            Command::LoopOut(deck) => self.decks[deck.index()].loop_out(&mut self.retire),
+            Command::BeatLoop { deck, length } => {
+                self.decks[deck.index()].beat_loop(length, &mut self.retire);
+            }
+            Command::HalveLoop(deck) => self.decks[deck.index()].halve_loop(&mut self.retire),
+            Command::DoubleLoop(deck) => self.decks[deck.index()].double_loop(&mut self.retire),
+            Command::ReloopOrExit(deck) => {
+                self.decks[deck.index()].reloop_or_exit(&mut self.retire);
+            }
             Command::SetMasterTempo(source) => self.tempo_master.set_source(source),
             Command::ChangeEffect { unit, change } => self.effects.change(unit, change),
             Command::SetEq {
@@ -468,6 +507,27 @@ impl Renderer {
             shared
                 .fader_waits_for_pickup
                 .store(deck.fader_waits_for_pickup(), Ordering::Relaxed);
+            let region = deck.loop_region();
+            let seconds_or_none = |frames: Option<f64>| {
+                frames.map_or(f64::NAN, |frames| deck.frames_to_seconds(frames))
+            };
+            shared
+                .loop_start_seconds
+                .store(seconds_or_none(region.map(|region| region.start)));
+            shared
+                .loop_end_seconds
+                .store(seconds_or_none(region.map(|region| region.end)));
+            shared.loop_active.store(
+                region.is_some_and(|region| region.active),
+                Ordering::Relaxed,
+            );
+            shared.loop_length.store(
+                encode_loop_length(region.and_then(|region| region.length)),
+                Ordering::Relaxed,
+            );
+            shared
+                .pending_loop_start_seconds
+                .store(seconds_or_none(deck.pending_loop_start()));
             shared.touched.store(deck.is_touched(), Ordering::Relaxed);
             shared
                 .vinyl_mode
