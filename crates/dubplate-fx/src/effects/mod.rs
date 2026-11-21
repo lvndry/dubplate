@@ -1,0 +1,13 @@
+pub(crate) mod backspin;
+pub(crate) mod brake;
+pub(crate) mod crusher;
+pub(crate) mod echo;
+pub(crate) mod filter;
+pub(crate) mod flanger;
+pub(crate) mod gate;
+pub(crate) mod phaser;
+pub(crate) mod ping_pong;
+pub(crate) mod reverb;
+pub(crate) mod sweep;
+mod tape;
+mod turntable;
