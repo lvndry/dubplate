@@ -1,5 +1,8 @@
 //! Decoding runs on the MIDI thread, where allocating could stall the jog wheels. This test
 //! counts every allocation made while decoding.
+//!
+//! Counting is armed per thread, so allocations by the test harness or other threads are not
+//! counted.
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
@@ -10,14 +13,20 @@ use dubplate_midi::{Button, Deck, Decoder, Feedback, Layer, Mapping};
 struct CountingAllocator;
 
 thread_local! {
+    static COUNTING: Cell<bool> = const { Cell::new(false) };
+}
+
+thread_local! {
     static ALLOCATIONS: Cell<usize> = const { Cell::new(0) };
 }
 
-// SAFETY: every call is forwarded unchanged to the system allocator; the counter is a
-// const-initialised thread local, which never allocates.
+// SAFETY: every call is forwarded unchanged to the system allocator; the counters are
+// const-initialised thread locals, which never allocate.
 unsafe impl GlobalAlloc for CountingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        ALLOCATIONS.with(|count| count.set(count.get() + 1));
+        if COUNTING.try_with(Cell::get).unwrap_or(false) {
+            ALLOCATIONS.with(|count| count.set(count.get() + 1));
+        }
         // SAFETY: the caller upholds `GlobalAlloc::alloc`'s contract, which `System` shares.
         unsafe { System.alloc(layout) }
     }
@@ -28,7 +37,9 @@ unsafe impl GlobalAlloc for CountingAllocator {
     }
 
     unsafe fn realloc(&self, pointer: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        ALLOCATIONS.with(|count| count.set(count.get() + 1));
+        if COUNTING.try_with(Cell::get).unwrap_or(false) {
+            ALLOCATIONS.with(|count| count.set(count.get() + 1));
+        }
         // SAFETY: the caller upholds `GlobalAlloc::realloc`'s contract, which `System` shares.
         unsafe { System.realloc(pointer, layout, new_size) }
     }
@@ -58,6 +69,7 @@ fn decoding_and_encoding_never_allocate() {
     };
 
     let before = ALLOCATIONS.with(Cell::get);
+    COUNTING.with(|flag| flag.set(true));
     let mut decoded = 0;
     for _ in 0..1000 {
         for message in &messages {
@@ -65,6 +77,7 @@ fn decoding_and_encoding_never_allocate() {
         }
         decoded += usize::from(mapping.encode(light).is_some());
     }
+    COUNTING.with(|flag| flag.set(false));
     let after = ALLOCATIONS.with(Cell::get);
 
     assert_eq!(decoded, 7000);
