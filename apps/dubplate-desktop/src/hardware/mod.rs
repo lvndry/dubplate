@@ -56,7 +56,7 @@ impl Hardware {
     /// Notes a controller that connected or went away.
     pub fn note(&mut self, event: &LinkEvent) {
         match event {
-            LinkEvent::Connected { port, name } => {
+            LinkEvent::Connected { port, name, .. } => {
                 self.connected.push(Connected {
                     port: port.clone(),
                     name: name.clone(),

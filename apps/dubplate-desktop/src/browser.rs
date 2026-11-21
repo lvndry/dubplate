@@ -19,24 +19,26 @@ use crate::deck::deck_letter;
 use crate::fonts::MONO_FAMILY;
 use crate::search::{SearchQuery, filter_tracks};
 use crate::theme;
+use crate::widgets::{Emphasis, button};
 
 const ROW_HEIGHT: Pixels = px(32.0);
 const SIDEBAR_WIDTH: Pixels = px(200.0);
 const BPM_WIDTH: Pixels = px(72.0);
 const KEY_WIDTH: Pixels = px(56.0);
 const TIME_WIDTH: Pixels = px(64.0);
+const SOURCE_WIDTH: Pixels = px(120.0);
 const LOAD_WIDTH: Pixels = px(84.0);
 const ROW_GROUP: &str = "track-row";
 
-/// Where the rekordbox library stands.
+/// Where the library stands.
 #[derive(Clone)]
 pub enum LibraryStatus {
-    /// Being copied and read.
+    /// Being opened.
     Reading,
-    /// Read.
+    /// Open, with every track from the sources the DJ chose.
     Ready(Arc<Collection>),
-    /// Could not be read, and why.
-    Failed(SharedString),
+    /// The DJ has not chosen any music folder nor rekordbox yet.
+    Unchosen,
 }
 
 /// What the browser asks the window to do.
@@ -51,6 +53,10 @@ pub enum BrowserEvent {
     },
     /// Load a track on whichever deck is free.
     LoadOnFreeDeck(TrackIndex),
+    /// Ask for music folders to add to the library.
+    AddMusicFolders,
+    /// Make rekordbox's collection part of the library.
+    ImportRekordbox,
 }
 
 /// Which side of the browser a controller's browse knob moves through, as rekordbox's tree view
@@ -136,7 +142,24 @@ impl Browser {
     }
 
     /// Shows the library as it now stands.
+    /// The selected track stays selected when it is still in the library.
     pub fn set_library(&mut self, library: LibraryStatus, cx: &mut Context<'_, Self>) {
+        let selected_identity = match (&self.library, self.selected) {
+            (LibraryStatus::Ready(collection), Some(track)) => {
+                Some(collection.track(track).identity())
+            }
+            _ => None,
+        };
+        if let LibraryStatus::Ready(collection) = &library {
+            self.selected = selected_identity.and_then(|identity| collection.find(&identity));
+            if collection
+                .indexed_crates()
+                .nth(self.crate_index.position())
+                .is_none()
+            {
+                self.crate_index = CrateIndex::COLLECTION;
+            }
+        }
         self.library = library;
         self.refilter(cx);
     }
@@ -250,7 +273,7 @@ impl Browser {
             LibraryStatus::Ready(collection) => {
                 filter_tracks(collection, self.crate_index, &self.query)
             }
-            LibraryStatus::Reading | LibraryStatus::Failed(_) => Vec::new(),
+            LibraryStatus::Reading | LibraryStatus::Unchosen => Vec::new(),
         };
         if self
             .selected
@@ -284,7 +307,7 @@ impl Browser {
                 let count: SharedString = match entry.kind {
                     CrateKind::Folder => "".into(),
                     CrateKind::Smart => "smart".into(),
-                    CrateKind::Collection | CrateKind::Playlist => {
+                    CrateKind::Collection | CrateKind::Playlist | CrateKind::MusicFolder => {
                         entry.tracks.len().to_string().into()
                     }
                 };
@@ -439,6 +462,14 @@ impl Browser {
                     .text_color(theme::MUTED),
             )
             .child(
+                text_cell(row.source.clone())
+                    .w(SOURCE_WIDTH)
+                    .flex_none()
+                    .px(px(8.0))
+                    .text_size(theme::SMALL_TEXT_SIZE)
+                    .text_color(theme::MUTED),
+            )
+            .child(
                 div()
                     .flex()
                     .flex_none()
@@ -497,6 +528,7 @@ fn header_row() -> impl IntoElement {
                 .px(px(8.0))
                 .justify_end(),
         )
+        .child(header("Source").w(SOURCE_WIDTH).flex_none().px(px(8.0)))
         .child(
             header("Load")
                 .w(LOAD_WIDTH)
@@ -596,16 +628,64 @@ impl Render for Browser {
             LibraryStatus::Ready(collection) => body
                 .child(self.render_sidebar(&collection, cx))
                 .child(self.render_table(collection, cx)),
-            LibraryStatus::Reading => body.child(message_panel(
-                "Reading your rekordbox library\u{2026}".into(),
-                None,
-            )),
-            LibraryStatus::Failed(problem) => body.child(message_panel(
-                "Dubplate could not read your rekordbox library.".into(),
-                Some(problem),
-            )),
+            LibraryStatus::Reading => {
+                body.child(message_panel("Opening your library\u{2026}".into(), None))
+            }
+            LibraryStatus::Unchosen => body.child(empty_library(cx)),
         }
     }
+}
+
+/// What the library shows before the DJ has chosen where their music is: a folder picker, and
+/// rekordbox as a separate choice.
+fn empty_library(cx: &mut Context<'_, Browser>) -> impl IntoElement {
+    div().flex().flex_1().items_center().justify_center().child(
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(10.0))
+            .w(px(420.0))
+            .child(
+                div()
+                    .text_size(px(15.0))
+                    .font_weight(gpui::FontWeight::MEDIUM)
+                    .child("Add your music"),
+            )
+            .child(div().text_color(theme::MUTED).child(
+                "Choose the folders that hold your tracks. Dubplate reads them, \
+                 and their subfolders, and never changes your files.",
+            ))
+            .child(
+                div()
+                    .flex()
+                    .gap(px(8.0))
+                    .pt(px(6.0))
+                    .child(
+                        button(
+                            "add-music-folders",
+                            "Add music folders\u{2026}",
+                            Emphasis::Primary,
+                        )
+                        .on_click(cx.listener(
+                            |_, _: &ClickEvent, _, cx| {
+                                cx.emit(BrowserEvent::AddMusicFolders);
+                            },
+                        )),
+                    )
+                    .child(
+                        button(
+                            "import-rekordbox",
+                            "Import rekordbox collection",
+                            Emphasis::Secondary,
+                        )
+                        .on_click(cx.listener(
+                            |_, _: &ClickEvent, _, cx| {
+                                cx.emit(BrowserEvent::ImportRekordbox);
+                            },
+                        )),
+                    ),
+            ),
+    )
 }
 
 fn message_panel(title: SharedString, detail: Option<SharedString>) -> impl IntoElement {

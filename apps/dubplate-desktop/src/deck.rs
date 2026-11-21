@@ -21,6 +21,8 @@ pub struct PreparedTrack {
     zoomed: Option<ZoomedWaveform>,
     overview: Option<OverviewWaveform>,
     beats: BeatMarks,
+    /// The tempo and first downbeat, for the engine's beat-synced effects.
+    pub beat_grid: Option<dubplate_engine::BeatGrid>,
     analysis_problem: Option<String>,
 }
 
@@ -113,6 +115,7 @@ pub fn prepare_track(
         (TrackOrigin::File, _, _) => {
             Err("Not in your rekordbox collection: no beat grid, cues or waveform".to_owned())
         }
+        (TrackOrigin::Folder, _, _) => Err("Not analysed yet: no beat grid or waveform".to_owned()),
         (TrackOrigin::Rekordbox, Some(analysis_path), Some(share_directory)) => {
             TrackAnalysis::read(share_directory, analysis_path).map_err(|error| error.to_string())
         }
@@ -128,6 +131,7 @@ pub fn prepare_track(
                 .as_ref()
                 .map(BeatMarks::from_grid)
                 .unwrap_or_default(),
+            beat_grid: analysis.beat_grid.as_ref().and_then(engine_beat_grid),
             analysis_problem: None,
         },
         Err(problem) => PreparedTrack {
@@ -135,9 +139,27 @@ pub fn prepare_track(
             zoomed: None,
             overview: None,
             beats: BeatMarks::default(),
+            beat_grid: None,
             analysis_problem: Some(problem),
         },
     })
+}
+
+/// rekordbox's grid as the engine keeps it: the tempo at the first downbeat, and where that
+/// downbeat falls, so effects land on the beat and the bar.
+fn engine_beat_grid(
+    grid: &dubplate_rekordbox::analysis::BeatGrid,
+) -> Option<dubplate_engine::BeatGrid> {
+    let first = grid
+        .beats
+        .iter()
+        .find(|beat| beat.beat_in_bar == 1)
+        .or_else(|| grid.beats.first())?;
+    dubplate_engine::BeatGrid::new(
+        f64::from(first.tempo_hundredths) / 100.0,
+        f64::from(first.time_ms) / 1000.0,
+    )
+    .ok()
 }
 
 /// The letter of a deck, as printed on it.

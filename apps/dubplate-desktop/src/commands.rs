@@ -2,7 +2,7 @@
 //! controller. Every input turns into a [`Command`], and the window carries each one out in
 //! one place.
 
-use dubplate_engine::DeckId;
+use dubplate_engine::{DeckId, EffectKind, EffectTarget, EffectUnitId};
 use dubplate_rekordbox::HotCuePad;
 
 use crate::controls::Control;
@@ -38,6 +38,34 @@ pub enum Press {
     Tap,
 }
 
+/// What turning a jog wheel does to the track.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JogMotion {
+    /// The hand on the platter moves the record.
+    Scratch,
+    /// The wheel's edge bends the tempo to line up beats.
+    Nudge,
+    /// With SHIFT held, moves quickly through the track.
+    Search,
+}
+
+/// A change to an effect unit.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum EffectEdit {
+    /// Choose this effect.
+    Kind(EffectKind),
+    /// Move through the effects in the picker's order, as FX SELECT does; negative goes back.
+    StepKind(i32),
+    /// The next longer ([`Direction::Up`]) or shorter beat length.
+    Beat(Direction),
+    /// Put the unit on a deck or the master.
+    Target(EffectTarget),
+    /// Turn the level and depth knob, from 0.0 to 1.0.
+    Depth(f32),
+    /// Switch the unit on or off.
+    Toggle,
+}
+
 /// Something the DJ asks for.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Command {
@@ -70,8 +98,21 @@ pub enum Command {
     SwitchBrowserPane,
     /// Put the cursor in the search field.
     FocusSearch,
+    /// A jog wheel turned by a number of ticks, positive clockwise.
+    Jog(DeckId, JogMotion, i32),
+    /// A hand touched or left a jog wheel's platter.
+    JogTouch(DeckId, bool),
+    /// Change an effect unit.
+    Effect(EffectUnitId, EffectEdit),
+    /// Choose which effect unit the controller's BEAT FX section drives, a number of units
+    /// along; negative goes back.
+    FocusEffectUnit(i32),
     /// Show or hide the list of shortcuts.
     ToggleHelp,
+    /// Show or hide the library's settings: the music folders and rekordbox.
+    ToggleLibrary,
+    /// Open the folder picker to add music folders to the library.
+    AddMusicFolders,
     /// Close the help or leave the search field.
     Dismiss,
 }
