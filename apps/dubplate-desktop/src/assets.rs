@@ -13,6 +13,8 @@ pub const SEARCH_ICON_PATH: &str = "icons/search.svg";
 pub const PLAY_ICON_PATH: &str = "icons/play.svg";
 /// Path of the pause bars.
 pub const PAUSE_ICON_PATH: &str = "icons/pause.svg";
+/// Path of the small arrow that opens a menu.
+pub const CHEVRON_DOWN_PATH: &str = "icons/chevron-down.svg";
 
 const LOGO: &[u8] = include_bytes!("../../../assets/logo/mark.svg");
 
@@ -42,7 +44,13 @@ mod tests {
 
     #[test]
     fn serves_the_mark_and_the_icons_the_views_use() {
-        for path in [LOGO_PATH, SEARCH_ICON_PATH, PLAY_ICON_PATH, PAUSE_ICON_PATH] {
+        for path in [
+            LOGO_PATH,
+            SEARCH_ICON_PATH,
+            PLAY_ICON_PATH,
+            PAUSE_ICON_PATH,
+            CHEVRON_DOWN_PATH,
+        ] {
             let image = AppAssets.load(path).unwrap();
             assert!(image.is_some_and(|bytes| !bytes.is_empty()), "{path}");
         }

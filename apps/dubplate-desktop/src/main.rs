@@ -7,9 +7,11 @@ mod collection;
 mod commands;
 mod controls;
 mod deck;
+mod effects;
 mod fonts;
 mod frame_stats;
 mod hardware;
+mod library;
 mod loading;
 #[cfg(target_os = "macos")]
 mod macos_identity;
@@ -21,6 +23,7 @@ mod shortcuts;
 mod theme;
 mod transport;
 mod waveform;
+mod widgets;
 
 use gpui::prelude::*;
 use gpui::{

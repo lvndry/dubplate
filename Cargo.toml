@@ -5,10 +5,14 @@ members = [
   "crates/dubplate-engine",
   "crates/dubplate-fx",
   "crates/dubplate-midi",
+  "crates/dubplate-library",
   "crates/dubplate-prep",
   "apps/dubplate-cli",
   "apps/dubplate-desktop",
 ]
+
+[workspace.dependencies]
+rusqlite = { version = "0.42.0", features = ["bundled-sqlcipher-vendored-openssl", "backup"] }
 
 [workspace.package]
 edition = "2024"

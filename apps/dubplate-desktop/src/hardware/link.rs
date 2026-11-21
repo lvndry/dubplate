@@ -31,6 +31,8 @@ pub enum LinkEvent {
         port: String,
         /// The controller's name from its mapping.
         name: String,
+        /// How many ticks its jog wheels report per turn, when its mapping says.
+        jog_ticks_per_revolution: Option<u16>,
     },
     /// A controller went away.
     Disconnected {
@@ -305,6 +307,7 @@ impl ControllerThread {
                 self.report(LinkEvent::Connected {
                     port: connection.port.clone(),
                     name: connection.name(),
+                    jog_ticks_per_revolution: connection.mapping.jog_ticks_per_revolution(),
                 });
                 let port = connection.port.clone();
                 self.connections.push(connection);
