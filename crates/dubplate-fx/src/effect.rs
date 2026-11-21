@@ -40,6 +40,13 @@ pub trait Effect: Send {
     /// out a trail. An inactive effect passes audio through untouched and costs almost nothing.
     fn is_active(&self) -> bool;
 
+    /// Whether the effect needs to hear the music while it is switched off, so it can act on the
+    /// live music the moment it is switched on. Brake and backspin do; the other effects do not,
+    /// and an engine may skip them entirely while they are off and not ringing.
+    fn needs_input_when_off(&self) -> bool {
+        false
+    }
+
     /// Sets the balance between the untouched music (0) and the effect (1).
     fn set_mix(&mut self, mix: f32);
 

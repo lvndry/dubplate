@@ -207,9 +207,10 @@ impl EffectUnit {
         }
     }
 
-    /// Runs the selected effect, when the unit sits on `target`, and every effect still
-    /// ringing out there. The selected effect runs even while off, because brake and backspin
-    /// need to hear the music before they are switched on.
+    /// Runs the selected effect, when the unit sits on `target`, and every effect still fading
+    /// out or ringing out there. An effect that is off, faded out and not ringing is skipped
+    /// unless it needs to hear the music while off; brake and backspin do, so they can stop the
+    /// turntable the moment they are switched on.
     fn process(
         &mut self,
         target: EffectTarget,
@@ -219,9 +220,14 @@ impl EffectUnit {
     ) {
         let selected = (self.settings.target == target).then_some(self.settings.kind);
         for effect in &mut self.banks[target.index()] {
-            if effect.is_active() || selected == Some(effect.kind()) {
-                effect.process(left, right, context);
+            let selected = selected == Some(effect.kind());
+            if !selected && !effect.is_active() {
+                continue;
             }
+            if !effect.is_enabled() && !effect.is_active() && !effect.needs_input_when_off() {
+                continue;
+            }
+            effect.process(left, right, context);
         }
     }
 
