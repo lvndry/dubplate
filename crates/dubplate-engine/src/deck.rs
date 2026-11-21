@@ -5,10 +5,12 @@ use dubplate_fx::EqBand;
 use crate::INSERT_SLOTS;
 use crate::channel::ChannelStrip;
 use crate::curves::{Ramp, channel_fader_gain};
+use crate::grid::BeatGrid;
 use crate::jog::{BlockStart, JogInput, Platter};
 use crate::mixer::RetireQueue;
 use crate::processor::{AudioProcessor, ProcessContext, StereoBlock};
-use crate::tempo::{BeatClock, BeatGrid};
+use crate::sync::{MasterBeat, PhaseAction, SyncFollow, SyncMode, phase_action, sync_multiple};
+use crate::tempo::{BeatClock, TempoFader, TempoRange};
 use crate::track::{FrameRead, MAX_TRACK_SECONDS, TrackBuffer};
 
 /// One of the decks.
@@ -77,6 +79,9 @@ pub(crate) struct Deck {
     tails: [Option<Tail>; MAX_TAILS],
     cue_point: f64,
     beat_grid: Option<BeatGrid>,
+    fader: TempoFader,
+    sync: SyncFollow,
+    phase_bend: f64,
     trim: Ramp,
     channel_gain: Ramp,
     fader_position: f32,
@@ -100,6 +105,9 @@ impl Deck {
             tails: std::array::from_fn(|_| None),
             cue_point: 0.0,
             beat_grid: None,
+            fader: TempoFader::default(),
+            sync: SyncFollow::default(),
+            phase_bend: 0.0,
             trim: Ramp::new(1.0, declick_frames),
             channel_gain: Ramp::new(1.0, declick_frames),
             fader_position: 1.0,
@@ -127,10 +135,7 @@ impl Deck {
     /// The speed the record turns at, where 1.0 is the track's own tempo: the tempo, bent by a
     /// nudge, or the hand's speed while scratching.
     pub(crate) fn speed(&self) -> f64 {
-        if self.rate == 0.0 {
-            return 0.0;
-        }
-        self.platter.last_step() / self.rate * self.tempo
+        self.platter.last_step() * self.output_rate / self.source_rate()
     }
 
     pub(crate) fn is_touched(&self) -> bool {
@@ -153,14 +158,24 @@ impl Deck {
         self.beat_grid.is_some()
     }
 
-    pub(crate) fn set_beat_grid(&mut self, beat_grid: Option<BeatGrid>) {
-        self.beat_grid = beat_grid;
+    pub(crate) fn set_beat_grid(&mut self, beat_grid: Option<BeatGrid>, retire: &mut RetireQueue) {
+        if let Some(previous) = std::mem::replace(&mut self.beat_grid, beat_grid) {
+            retire.beat_grid(previous);
+        }
+        self.sync.multiple = None;
+    }
+
+    /// The tempo as it plays, in beats per minute, when the deck has a beat grid.
+    pub(crate) fn bpm(&self) -> Option<f64> {
+        self.beat_grid
+            .as_ref()
+            .map(|grid| grid.bpm_at(self.position_seconds()) * self.tempo)
     }
 
     /// The tempo and beat position at the next frame the deck plays, when it has a beat grid.
     pub(crate) fn beat_clock(&self) -> Option<BeatClock> {
-        self.beat_grid.map(|grid| BeatClock {
-            bpm: grid.bpm() * self.tempo,
+        self.beat_grid.as_ref().map(|grid| BeatClock {
+            bpm: grid.bpm_at(self.position_seconds()) * self.tempo,
             beat_position: grid.beat_at(self.position_seconds()),
         })
     }
@@ -192,7 +207,7 @@ impl Deck {
     }
 
     fn update_rate(&mut self) {
-        self.rate = self.tempo * self.source_rate() / self.output_rate;
+        self.rate = self.tempo * (1.0 + self.phase_bend) * self.source_rate() / self.output_rate;
         self.platter.set_track_rate(self.source_rate());
     }
 
@@ -244,7 +259,10 @@ impl Deck {
         self.playing = false;
         self.position = 0.0;
         self.cue_point = 0.0;
-        self.beat_grid = None;
+        if let Some(previous) = self.beat_grid.take() {
+            retire.beat_grid(previous);
+        }
+        self.sync.multiple = None;
         self.platter.stop();
         self.update_rate();
     }
@@ -300,12 +318,165 @@ impl Deck {
         }
     }
 
-    pub(crate) fn set_tempo(&mut self, tempo: f64) {
+    fn apply_tempo(&mut self, tempo: f64) {
         self.tempo = tempo;
+        self.phase_bend = 0.0;
+        self.update_rate();
+    }
+
+    /// Sets the tempo the fader asks for directly, where 1.0 is the track's own tempo.
+    pub(crate) fn set_tempo(&mut self, tempo: f64) {
+        if let Some(tempo) = self.fader.move_to_tempo(tempo, self.tempo) {
+            self.play_fader_tempo(tempo);
+        }
+    }
+
+    /// Moves the tempo fader, from -1 (slowest) to 1 (fastest).
+    pub(crate) fn set_tempo_fader(&mut self, position: f64) {
+        if let Some(tempo) = self.fader.move_to(position, self.tempo) {
+            self.play_fader_tempo(tempo);
+        }
+    }
+
+    pub(crate) fn set_tempo_range(&mut self, range: TempoRange) {
+        if let Some(tempo) = self.fader.set_range(range) {
+            self.play_fader_tempo(tempo);
+        }
+    }
+
+    fn play_fader_tempo(&mut self, tempo: f64) {
+        if !self.sync.following {
+            self.apply_tempo(tempo);
+        }
+    }
+
+    pub(crate) fn tempo_range(&self) -> TempoRange {
+        self.fader.range()
+    }
+
+    /// Whether the tempo fader waits to be moved through the playing tempo before it takes
+    /// over again.
+    pub(crate) fn fader_waits_for_pickup(&self) -> bool {
+        !self.fader.is_in_control()
+    }
+
+    pub(crate) fn set_pitch_bend(&mut self, bend: f64) {
+        if bend != 0.0 {
+            self.loosen_beat_sync();
+        }
+        self.platter.set_held_bend(bend);
+    }
+
+    pub(crate) fn sync_mode(&self) -> SyncMode {
+        self.sync.mode
+    }
+
+    pub(crate) fn is_following(&self) -> bool {
+        self.sync.following
+    }
+
+    pub(crate) fn set_sync(&mut self, mode: SyncMode) {
+        self.sync.mode = mode;
+        self.sync.multiple = None;
+        self.sync.locked = false;
+    }
+
+    /// A hand on a following deck drops beat sync to tempo sync, as on a CDJ-3000.
+    fn loosen_beat_sync(&mut self) {
+        if self.sync.following && self.sync.mode == SyncMode::Beat {
+            self.sync.mode = SyncMode::Tempo;
+        }
+    }
+
+    /// What a following deck needs from this deck as the tempo master.
+    pub(crate) fn master_beat(&self, deck: DeckId) -> Option<MasterBeat> {
+        let grid = self.beat_grid.as_ref()?;
+        let seconds = self.position_seconds();
+        Some(MasterBeat {
+            deck,
+            bpm: grid.bpm_at(seconds) * self.tempo,
+            beat: grid.beat_at(seconds),
+            running: self.playing && !self.platter.is_holding(),
+        })
+    }
+
+    /// Stops following the tempo master; the tempo fader takes over once it reaches the
+    /// playing tempo.
+    pub(crate) fn stop_following(&mut self) {
+        self.sync.locked = false;
+        if self.sync.following {
+            self.sync.following = false;
+            self.phase_bend = 0.0;
+            self.update_rate();
+            self.fader.take_back(self.tempo);
+        }
+    }
+
+    /// Follows the tempo master for the next block: its tempo, and with beat sync its beats.
+    pub(crate) fn follow(
+        &mut self,
+        master: MasterBeat,
+        allow_half_and_double: bool,
+        retire: &mut RetireQueue,
+    ) {
+        if !self.sync.following {
+            self.sync.following = true;
+            self.fader.hand_over();
+        }
+        let Some(grid) = &self.beat_grid else {
+            return;
+        };
+        let seconds = self.position_seconds();
+        let own_bpm = grid.bpm_at(seconds);
+        let multiple = match self.sync.multiple {
+            Some((deck, multiple)) if deck == master.deck => multiple,
+            _ => {
+                let multiple =
+                    sync_multiple(master.bpm, own_bpm * self.tempo, allow_half_and_double);
+                self.sync.multiple = Some((master.deck, multiple));
+                multiple
+            }
+        };
+        let tempo = master.bpm * multiple / own_bpm;
+        let lock_beats = self.sync.mode == SyncMode::Beat
+            && master.running
+            && self.playing
+            && !self.platter.is_holding();
+        let mut phase_bend = 0.0;
+        if lock_beats {
+            let beat = grid.beat_at(seconds);
+            let beats_per_second = own_bpm * tempo / 60.0;
+            match phase_action(
+                master.beat * multiple,
+                beat,
+                beats_per_second,
+                self.sync.locked,
+            ) {
+                PhaseAction::Jump(beats) => {
+                    let mut target = grid.seconds_at(beat + beats);
+                    if target < 0.0 {
+                        target = grid.seconds_at(beat + beats + 1.0);
+                    }
+                    self.jump_to_frame(target * self.source_rate(), retire);
+                }
+                PhaseAction::Bend(bend) => phase_bend = bend,
+            }
+        }
+        self.sync.locked = lock_beats;
+        self.tempo = tempo;
+        self.phase_bend = phase_bend;
         self.update_rate();
     }
 
     pub(crate) fn jog(&mut self, input: JogInput) {
+        if self.playing
+            && matches!(
+                input,
+                JogInput::Nudge(_) | JogInput::Scratch(_) | JogInput::Touch(true)
+            )
+        {
+            self.loosen_beat_sync();
+        }
         self.platter.apply(input, self.playing);
     }
 
@@ -389,8 +560,7 @@ impl Deck {
             self.transport.set_target(transport_target);
         }
         self.block.set_frame_count(frame_count);
-        let audible_step =
-            self.rate.abs().max(f64::EPSILON) / self.tempo.max(f64::EPSILON) * AUDIBLE_SPEED;
+        let audible_step = self.source_rate() / self.output_rate * AUDIBLE_SPEED;
         let end_frame = self
             .track
             .as_ref()

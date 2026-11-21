@@ -78,6 +78,8 @@ pub(crate) struct Platter {
     nudge_ticks: i64,
     nudge_target: f64,
     nudge_velocity: f64,
+    held_bend_target: f64,
+    held_bend: f64,
     search_ticks: i64,
     carry: f64,
     last_step: f64,
@@ -98,6 +100,8 @@ impl Platter {
             nudge_ticks: 0,
             nudge_target: 0.0,
             nudge_velocity: 0.0,
+            held_bend_target: 0.0,
+            held_bend: 0.0,
             search_ticks: 0,
             carry: 0.0,
             last_step: 0.0,
@@ -222,6 +226,12 @@ impl Platter {
         }
     }
 
+    /// Bends the tempo by `bend`, a share of the tempo, until set back to 0, like holding a
+    /// pitch bend button. The bend glides in and out.
+    pub(crate) fn set_held_bend(&mut self, bend: f64) {
+        self.held_bend_target = bend;
+    }
+
     /// Takes the SHIFT search the wheel asked for since the previous block, in track frames.
     pub(crate) fn take_search(&mut self) -> Option<f64> {
         if self.search_ticks == 0 {
@@ -271,7 +281,8 @@ impl Platter {
             None => {
                 self.nudge_velocity +=
                     (self.nudge_target - self.nudge_velocity) * self.nudge_coefficient;
-                let bend = (self.nudge_velocity * NUDGE_SECONDS_PER_REVOLUTION)
+                self.held_bend += (self.held_bend_target - self.held_bend) * self.nudge_coefficient;
+                let bend = (self.nudge_velocity * NUDGE_SECONDS_PER_REVOLUTION + self.held_bend)
                     .clamp(-MAX_NUDGE_BEND, MAX_NUDGE_BEND);
                 if self.carry != 0.0 {
                     self.carry *= self.release_decay;

@@ -2,6 +2,8 @@ use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
 use std::time::Duration;
 
 use crate::deck::DeckId;
+use crate::sync::SyncMode;
+use crate::tempo::TempoRange;
 use crate::{DECK_COUNT, EFFECT_UNIT_COUNT};
 
 const WARMUP_CALLBACKS: u64 = 20;
@@ -25,6 +27,11 @@ pub(crate) struct DeckShared {
     pub(crate) cue_point_seconds: AtomicF64,
     pub(crate) tempo: AtomicF64,
     pub(crate) speed: AtomicF64,
+    pub(crate) bpm: AtomicF64,
+    pub(crate) tempo_range: AtomicU8,
+    pub(crate) sync_mode: AtomicU8,
+    pub(crate) following: AtomicBool,
+    pub(crate) fader_waits_for_pickup: AtomicBool,
     pub(crate) touched: AtomicBool,
     pub(crate) vinyl_mode: AtomicBool,
     pub(crate) peak: AtomicU32,
@@ -93,6 +100,9 @@ impl SharedState {
             decks: std::array::from_fn(|_| {
                 let deck = DeckShared::default();
                 deck.tempo.store(1.0);
+                deck.bpm.store(f64::NAN);
+                deck.tempo_range
+                    .store(TempoRange::default().index(), Ordering::Relaxed);
                 deck.vinyl_mode.store(true, Ordering::Relaxed);
                 deck
             }),
@@ -257,6 +267,27 @@ pub struct DeckState {
     pub cue_point_seconds: f64,
     /// Playback speed, where 1.0 is the track's own tempo.
     pub tempo: f64,
+}
+
+/// A deck's tempo and sync, as the audio thread last published them.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TempoState {
+    /// The tempo as it plays, in beats per minute, without nudges or pitch bends. `None`
+    /// without a beat grid.
+    pub bpm: Option<f64>,
+    /// How far the tempo fader reaches.
+    pub tempo_range: TempoRange,
+    /// The SYNC setting. Nudging or scratching a following deck turns beat sync into tempo
+    /// sync.
+    pub sync: SyncMode,
+    /// The deck plays at the tempo master's tempo this moment: it is synced and another deck
+    /// leads.
+    pub following: bool,
+    /// The deck is the tempo master that synced decks follow.
+    pub is_master: bool,
+    /// The tempo fader no longer matches the tempo, after sync or a range change, and waits
+    /// to be moved through it before it takes over.
+    pub fader_waits_for_pickup: bool,
 }
 
 /// What a deck's jog wheel is doing, as the audio thread last published it.

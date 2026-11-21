@@ -7,6 +7,7 @@ mod collection;
 mod commands;
 mod controls;
 mod deck;
+mod effects;
 mod fonts;
 mod frame_stats;
 mod hardware;

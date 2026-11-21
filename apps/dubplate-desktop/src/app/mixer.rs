@@ -1,13 +1,13 @@
-//! The mixer between the decks: the master level and meter, a meter and a fader per channel,
-//! and the crossfader.
+//! The mixer between the decks: the master level and meter, each channel's trim, EQ and filter
+//! knobs, a meter and a fader per channel, and the crossfader.
 
-use dubplate_engine::DeckId;
+use dubplate_engine::{DeckId, EqBand};
 use gpui::prelude::*;
 use gpui::{Context, FontWeight, Pixels, div, px};
 
-use super::DubplateApp;
 use super::slider::{self, CROSSFADER_THUMB, FADER_THUMB, SMALL_THUMB};
-use crate::controls::Slider;
+use super::{DubplateApp, knob};
+use crate::controls::{Control, Slider};
 use crate::deck::deck_letter;
 use crate::fonts::MONO_FAMILY;
 use crate::meter::{HOT_FROM, PeakMeter, SEGMENTS};
@@ -45,6 +45,7 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
                 )
                 .child(slider::render(app, Slider::MasterLevel, SMALL_THUMB, None, cx).w_full()),
         )
+        .child(knobs(app, cx))
         .child(
             div()
                 .flex()
@@ -64,6 +65,35 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
                 .child(slider::render(app, Slider::Crossfader, CROSSFADER_THUMB, None, cx).flex_1())
                 .child(deck_label(DeckId::B)),
         )
+}
+
+/// A row of the knob grid: its name, and the knob it is on each deck.
+type KnobRow = (&'static str, fn(DeckId) -> Control);
+
+/// Trim, the three EQ bands and the filter, deck A on the left and deck B on the right.
+fn knobs(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoElement {
+    let rows: [KnobRow; 5] = [
+        ("Trim", Control::Trim),
+        ("High", |deck| Control::Eq(deck, EqBand::High)),
+        ("Mid", |deck| Control::Eq(deck, EqBand::Mid)),
+        ("Low", |deck| Control::Eq(deck, EqBand::Low)),
+        ("Filter", Control::Filter),
+    ];
+    let mut grid = div().flex().flex_col().gap(px(6.0));
+    for (name, control) in rows {
+        let mut row = div().flex().justify_between();
+        for deck in DeckId::ALL {
+            row = row.child(div().w(px(88.0)).child(knob::render(
+                app,
+                control(deck),
+                format!("{name} {}", deck_letter(deck)).into(),
+                theme::deck_colour(deck),
+                cx,
+            )));
+        }
+        grid = grid.child(row);
+    }
+    grid
 }
 
 fn channel(app: &DubplateApp, deck: DeckId, cx: &mut Context<'_, DubplateApp>) -> impl IntoElement {

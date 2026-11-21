@@ -9,6 +9,7 @@ mod ready;
 mod store;
 mod suggestion;
 mod track;
+mod warnings;
 
 pub use cue_proposal::{ProposalSource, ProposedCue, ProposedCues, propose_mix_cues};
 pub use euphoria_core::harmony::EnergyDirection;
@@ -19,3 +20,4 @@ pub use store::{
 };
 pub use suggestion::{Suggestion, suggest_next};
 pub use track::PrepTrack;
+pub use warnings::{SetTrack, SetWarning, WarningKind, WarningPosition, set_warnings};
