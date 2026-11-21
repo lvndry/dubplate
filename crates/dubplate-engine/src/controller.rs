@@ -14,7 +14,8 @@ use crate::jog::JogInput;
 use crate::mixer::{Command, Renderer, RetireQueue, Retired};
 use crate::processor::AudioProcessor;
 use crate::state::{
-    DeckState, EngineStats, Meters, PlatterState, SharedState, TempoState, take_peak,
+    DeckState, EngineStats, LoopState, Meters, PlatterState, SharedState, TempoState,
+    decode_loop_length, take_peak,
 };
 use crate::sync::SyncMode;
 use crate::tempo::{MasterTempo, TempoRange};
@@ -25,6 +26,7 @@ const COMMAND_CAPACITY: usize = 1024;
 const RETIRE_CAPACITY: usize = COMMAND_CAPACITY * 4;
 const MAX_TEMPO: f64 = 4.0;
 const MAX_GAIN: f32 = 16.0;
+const MAX_JUMP_BEATS: f64 = 1_024.0;
 
 /// Creates an engine whose audio side is driven by hand instead of a sound card.
 ///
@@ -42,6 +44,7 @@ pub fn offline_engine(sample_rate: u32) -> (Controller, Renderer) {
         beat_grids: std::array::from_fn(|_| None),
         effect_units: EffectUnitId::ALL.map(EffectSettings::initial),
         channels: [ChannelSettings::default(); DECK_COUNT],
+        quantize: true,
     };
     let renderer = Renderer::new(
         sample_rate,
@@ -64,6 +67,7 @@ pub struct Controller {
     beat_grids: [Option<BeatGrid>; DECK_COUNT],
     effect_units: [EffectSettings; EFFECT_UNIT_COUNT],
     channels: [ChannelSettings; DECK_COUNT],
+    quantize: bool,
 }
 
 impl Controller {
@@ -344,6 +348,84 @@ impl Controller {
             following: shared.following.load(Ordering::Relaxed),
             is_master: self.tempo_master_deck() == Some(deck),
             fader_waits_for_pickup: shared.fader_waits_for_pickup.load(Ordering::Relaxed),
+        }
+    }
+
+    /// Switches quantize for both decks, on by default. With quantize and a beat grid, the cue
+    /// button, loop in and loop out set their points on the nearest beat, beat loops start on
+    /// the beat just passed, and hot cues and reloop jump in rhythm.
+    pub fn set_quantize(&mut self, enabled: bool) -> Result<(), EngineError> {
+        self.send(Command::SetQuantize(enabled))?;
+        self.quantize = enabled;
+        Ok(())
+    }
+
+    /// Whether quantize is on.
+    pub fn quantize(&self) -> bool {
+        self.quantize
+    }
+
+    /// A hot cue at `seconds`: while playing, the deck jumps there in rhythm with quantize, as
+    /// far past it as the playhead was past its last beat, so the music carries on in time; on
+    /// a stopped deck it jumps there and plays.
+    pub fn hot_cue(&mut self, deck: DeckId, seconds: f64) -> Result<(), EngineError> {
+        check_range("hot cue", seconds, 0.0, MAX_TRACK_SECONDS as f64)?;
+        self.send(Command::HotCue { deck, seconds })
+    }
+
+    /// Jumps by `beats` beats on the beat grid, forwards when positive, keeping the place in
+    /// the beat. With a loop on, the loop moves with the playhead. Without a grid, beats count
+    /// at 120 BPM.
+    pub fn beat_jump(&mut self, deck: DeckId, beats: f64) -> Result<(), EngineError> {
+        check_range("beat jump", beats, -MAX_JUMP_BEATS, MAX_JUMP_BEATS)?;
+        self.send(Command::BeatJump { deck, beats })
+    }
+
+    /// LOOP IN: marks where a loop starts, on the nearest beat with quantize.
+    pub fn loop_in(&mut self, deck: DeckId) -> Result<(), EngineError> {
+        self.send(Command::LoopIn(deck))
+    }
+
+    /// LOOP OUT: ends the loop where the deck is, on the nearest beat with quantize, and turns
+    /// it on. Without a loop in point it moves the end of the current loop.
+    pub fn loop_out(&mut self, deck: DeckId) -> Result<(), EngineError> {
+        self.send(Command::LoopOut(deck))
+    }
+
+    /// A beat loop of `length`, from a sixteenth of a beat to thirty-two beats. It starts on
+    /// the beat just passed with quantize, so the music never jumps; with a loop already on,
+    /// it changes that loop's length from its start.
+    pub fn beat_loop(&mut self, deck: DeckId, length: BeatLength) -> Result<(), EngineError> {
+        self.send(Command::BeatLoop { deck, length })
+    }
+
+    /// Halves the loop from its start, down to a sixteenth of a beat. A playhead past the new
+    /// end goes back inside it in rhythm.
+    pub fn halve_loop(&mut self, deck: DeckId) -> Result<(), EngineError> {
+        self.send(Command::HalveLoop(deck))
+    }
+
+    /// Doubles the loop from its start, up to thirty-two beats.
+    pub fn double_loop(&mut self, deck: DeckId) -> Result<(), EngineError> {
+        self.send(Command::DoubleLoop(deck))
+    }
+
+    /// RELOOP/EXIT: leaves the loop that is on and plays on, or turns the last loop back on
+    /// and jumps to its start, in rhythm with quantize.
+    pub fn reloop_or_exit(&mut self, deck: DeckId) -> Result<(), EngineError> {
+        self.send(Command::ReloopOrExit(deck))
+    }
+
+    /// A deck's loop, as the audio thread last published it.
+    pub fn loop_state(&self, deck: DeckId) -> LoopState {
+        let shared = &self.shared.decks[deck.index()];
+        let seconds = |value: f64| value.is_finite().then_some(value);
+        LoopState {
+            start_seconds: seconds(shared.loop_start_seconds.load()),
+            end_seconds: seconds(shared.loop_end_seconds.load()),
+            active: shared.loop_active.load(Ordering::Relaxed),
+            length: decode_loop_length(shared.loop_length.load(Ordering::Relaxed)),
+            pending_start_seconds: seconds(shared.pending_loop_start_seconds.load()),
         }
     }
 

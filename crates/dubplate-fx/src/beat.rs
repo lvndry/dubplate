@@ -105,6 +105,30 @@ impl BeatLength {
             .unwrap_or(self)
     }
 
+    /// Half this length, or `None` below a sixteenth of a beat.
+    pub fn halved(self) -> Option<Self> {
+        if self.numerator.is_multiple_of(2) {
+            Self::new(self.numerator / 2, self.denominator)
+        } else {
+            Self::new(self.numerator, self.denominator.checked_mul(2)?)
+        }
+    }
+
+    /// Twice this length, or `None` past thirty-two beats.
+    pub fn doubled(self) -> Option<Self> {
+        if self.denominator.is_multiple_of(2) {
+            Self::new(self.numerator, self.denominator / 2)
+        } else {
+            Self::new(self.numerator.checked_mul(2)?, self.denominator)
+        }
+    }
+
+    /// The numerator and denominator of the length in beats, in lowest terms for the standard
+    /// lengths.
+    pub fn fraction_parts(self) -> (u16, u16) {
+        (self.numerator, self.denominator)
+    }
+
     pub(crate) fn clamped(self, shortest: Self, longest: Self) -> Self {
         if self.beats() < shortest.beats() {
             shortest
@@ -165,6 +189,21 @@ impl FromStr for BeatLength {
 #[cfg(test)]
 mod tests {
     use super::BeatLength;
+
+    #[test]
+    fn halving_and_doubling_stay_exact_between_a_sixteenth_and_thirty_two_beats() {
+        assert_eq!(BeatLength::FOUR.halved(), Some(BeatLength::TWO));
+        assert_eq!(BeatLength::ONE.halved(), Some(BeatLength::HALF));
+        assert_eq!(BeatLength::EIGHTH.halved(), Some(BeatLength::SIXTEENTH));
+        assert_eq!(BeatLength::SIXTEENTH.halved(), None);
+        assert_eq!(BeatLength::HALF.doubled(), Some(BeatLength::ONE));
+        assert_eq!(BeatLength::SIXTEEN.doubled(), Some(BeatLength::THIRTY_TWO));
+        assert_eq!(BeatLength::THIRTY_TWO.doubled(), None);
+        assert_eq!(
+            BeatLength::THREE_QUARTERS.doubled().map(BeatLength::beats),
+            Some(1.5)
+        );
+    }
 
     #[test]
     fn parses_and_prints_fractions_and_whole_beats() {

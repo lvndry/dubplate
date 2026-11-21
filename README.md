@@ -70,7 +70,7 @@ The audio engine plays tracks on two decks with a crossfader. To hear it:
 cargo run --release -p dubplate-engine --example play -- <file-a> [file-b] [--buffer 256]
 ```
 
-It prints the buffer size, the output latency and the dropout counters every second. In a terminal, space plays or pauses the selected deck, tab selects the other deck, c is the cue button, up and down change the tempo, left and right move the crossfader, x throws the crossfader to the other side and q quits. On the selected deck, k kills or brings back the low, h the high, j and l turn the filter knob, , and . nudge the jog back and forward, n and m search back and forward, s switches beat sync, p makes the deck the tempo master and r steps through the tempo ranges.
+It prints the buffer size, the output latency and the dropout counters every second. In a terminal, space plays or pauses the selected deck, tab selects the other deck, c is the cue button, up and down change the tempo, left and right move the crossfader, x throws the crossfader to the other side and q quits. On the selected deck, k kills or brings back the low, h the high, j and l turn the filter knob, , and . nudge the jog back and forward, n and m search back and forward, s switches beat sync, p makes the deck the tempo master and r steps through the tempo ranges. For loops, 4 sets a 4-beat loop, i and o are loop in and loop out, 9 and 0 halve and double the loop, u is reloop/exit, and ; and ' jump 4 beats back and forward.
 
 ## Mix with the EQ, the filter and the jogs
 
@@ -103,6 +103,12 @@ Each deck's tempo fader has a range like a CDJ's TEMPO RANGE button: ±6%, ±10%
 SYNC follows the tempo master, the deck chosen with the MASTER button or, by default, the louder playing deck. Tempo sync matches the master's BPM. Beat sync also puts the deck's beats on the master's: it jumps to the nearest beat at once, then holds the lock with bends too small to hear. Synced decks follow every move of the master's tempo fader, and a track at half or double the master's tempo locks to every other beat. Nudging, scratching or bending a following deck drops it to tempo sync, as on a CDJ-3000, so it can still be ridden by hand. When sync goes off, or a synced deck becomes the master, the tempo holds and the fader takes over again once it is moved through the playing tempo.
 
 Beat grids can change tempo: built from every beat rekordbox stores, with its BPM, a grid follows a live drummer, and sync and effects follow it beat by beat.
+
+## Loops, beat jump and quantize
+
+Beat loops run from a sixteenth of a beat to 32 beats on the beat grid, so a loop on a track whose tempo changes still holds whole beats. LOOP IN and LOOP OUT set a loop by hand, halving and doubling work from the loop's start, and RELOOP/EXIT leaves the loop or goes back to it. Beat jump moves any number of beats either way and takes a loop that is on along with it. Every jump and every turn of a loop crossfades over 5 ms, so none of them clicks.
+
+Quantize is on by default, as in rekordbox. With a beat grid, the cue button, LOOP IN and LOOP OUT set their points on the nearest beat, a beat loop starts on the beat just passed so the music never jumps, and hot cues and reloop land in rhythm, as far past their point as the playhead was past its last beat. A hot cue on a stopped deck jumps there and plays.
 
 ## Effects while you mix
 
