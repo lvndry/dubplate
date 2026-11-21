@@ -14,6 +14,10 @@
 //!   out, while the dry signal comes back to full level.
 //! - Beat lengths follow the tempo of every block, so a tempo change moves echoes and sweeps
 //!   with the music. Small tempo moves glide, a new beat length crossfades to the new time.
+//! - Echo, ping-pong and reverb add to the music without pushing it into clipping. Their
+//!   trails sound about as loud whatever the feedback or decay, never build up past the music
+//!   that feeds them, and are held under the room the music leaves below -0.3 dBFS. The music
+//!   itself is never turned down.
 //! - Feedback paths saturate gently and flush denormals, and the output is checked for NaN and
 //!   infinity, so nothing a DJ does can blow up the output or the CPU.
 //!
@@ -40,7 +44,7 @@ mod unit;
 
 pub use beat::{BeatLength, ParseBeatLengthError};
 pub use config::EffectConfig;
-pub use context::ProcessContext;
+pub use context::{MAX_TEMPO_BPM, MIN_TEMPO_BPM, ProcessContext};
 pub use effect::{Effect, EffectKind, ParseEffectKindError, create};
 pub use effects::backspin::Backspin;
 pub use effects::brake::Brake;

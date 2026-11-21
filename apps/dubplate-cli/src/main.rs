@@ -7,6 +7,7 @@ use clap::{Parser, Subcommand};
 use dubplate_rekordbox::{DatabaseKey, Library, Playlist, PlaylistKind, Track, default_master_db};
 
 mod analysis;
+mod midi;
 
 #[derive(Parser)]
 #[command(
@@ -24,6 +25,9 @@ enum Command {
     /// Work with a rekordbox library.
     #[command(subcommand)]
     Rekordbox(RekordboxCommand),
+    /// Work with MIDI controllers.
+    #[command(subcommand)]
+    Midi(midi::MidiCommand),
 }
 
 #[derive(Subcommand)]
@@ -66,6 +70,7 @@ fn main() -> Result<()> {
             library,
             json,
         }) => analysis(&master_db_or_default(library)?, &track, json),
+        Command::Midi(command) => midi::run(command),
     }
 }
 

@@ -6,12 +6,14 @@ use rtrb::{Consumer, Producer, RingBuffer};
 
 use crate::deck::DeckId;
 use crate::decode::decode_file;
-use crate::error::EngineError;
+use crate::effects::{EffectChange, EffectSettings, EffectTarget, EffectUnitId, EffectUnitState};
+use crate::error::{EngineError, check_range};
 use crate::mixer::{Command, Renderer, RetireQueue, Retired};
 use crate::processor::AudioProcessor;
 use crate::state::{DeckState, EngineStats, Meters, SharedState, take_peak};
+use crate::tempo::{BeatGrid, MasterTempo};
 use crate::track::{MAX_TRACK_SECONDS, Track};
-use crate::{DECK_COUNT, INSERT_SLOTS};
+use crate::{BeatLength, DECK_COUNT, EFFECT_UNIT_COUNT, EffectKind, INSERT_SLOTS};
 
 const COMMAND_CAPACITY: usize = 1024;
 const RETIRE_CAPACITY: usize = COMMAND_CAPACITY * 4;
@@ -31,6 +33,8 @@ pub fn offline_engine(sample_rate: u32) -> (Controller, Renderer) {
         retired: retire_consumer,
         shared: Arc::clone(&shared),
         tracks: std::array::from_fn(|_| None),
+        beat_grids: [None; DECK_COUNT],
+        effect_units: EffectUnitId::ALL.map(EffectSettings::initial),
     };
     let renderer = Renderer::new(
         sample_rate,
@@ -50,6 +54,8 @@ pub struct Controller {
     retired: Consumer<Retired>,
     shared: Arc<SharedState>,
     tracks: [Option<Track>; DECK_COUNT],
+    beat_grids: [Option<BeatGrid>; DECK_COUNT],
+    effect_units: [EffectSettings; EFFECT_UNIT_COUNT],
 }
 
 impl Controller {
@@ -189,6 +195,91 @@ impl Controller {
         self.send(Command::SetMasterInsert { slot, processor })
     }
 
+    /// Sets the beat grid of the track on a deck, so effects on it follow its tempo and beats.
+    /// Loading a track clears the grid: set it after [`Controller::load_track`]. Commands
+    /// sent one after the other take effect in the same callback, so no audio plays in between.
+    pub fn set_beat_grid(
+        &mut self,
+        deck: DeckId,
+        beat_grid: Option<BeatGrid>,
+    ) -> Result<(), EngineError> {
+        self.send(Command::SetBeatGrid { deck, beat_grid })?;
+        self.beat_grids[deck.index()] = beat_grid;
+        Ok(())
+    }
+
+    /// The beat grid last set on a deck.
+    pub fn beat_grid(&self, deck: DeckId) -> Option<BeatGrid> {
+        self.beat_grids[deck.index()]
+    }
+
+    /// Chooses which deck's tempo effects on the master follow.
+    pub fn set_master_tempo(&mut self, source: MasterTempo) -> Result<(), EngineError> {
+        self.send(Command::SetMasterTempo(source))
+    }
+
+    /// The deck whose tempo effects on the master follow, as the audio thread last chose it.
+    pub fn tempo_master_deck(&self) -> Option<DeckId> {
+        self.shared.tempo_master.load()
+    }
+
+    /// Selects an effect unit's effect. When the unit is on, the old effect fades out, or rings
+    /// out its trail, while the new one fades in.
+    pub fn set_effect_kind(
+        &mut self,
+        unit: EffectUnitId,
+        kind: EffectKind,
+    ) -> Result<(), EngineError> {
+        self.change_effect(unit, EffectChange::Kind(kind))
+    }
+
+    /// Moves an effect unit to a deck or the master, like a mixer's channel select switch. When
+    /// the unit is on, the effect fades out, or rings out its trail, where it was.
+    pub fn set_effect_target(
+        &mut self,
+        unit: EffectUnitId,
+        target: EffectTarget,
+    ) -> Result<(), EngineError> {
+        self.change_effect(unit, EffectChange::Target(target))
+    }
+
+    /// Sets an effect unit's beat length, like a mixer's beat buttons. Step through the
+    /// buttons' lengths with [`BeatLength::longer`] and [`BeatLength::shorter`].
+    pub fn set_effect_beat(
+        &mut self,
+        unit: EffectUnitId,
+        beat: BeatLength,
+    ) -> Result<(), EngineError> {
+        self.change_effect(unit, EffectChange::Beat(beat))
+    }
+
+    /// Turns an effect unit's level and depth knob, from 0 to 1.
+    pub fn set_effect_depth(&mut self, unit: EffectUnitId, depth: f32) -> Result<(), EngineError> {
+        check_range("effect depth", f64::from(depth), 0.0, 1.0)?;
+        self.change_effect(unit, EffectChange::Depth(depth))
+    }
+
+    /// Switches an effect unit on or off. Echo, ping-pong and reverb ring out when switched off.
+    pub fn set_effect_enabled(
+        &mut self,
+        unit: EffectUnitId,
+        enabled: bool,
+    ) -> Result<(), EngineError> {
+        self.change_effect(unit, EffectChange::Enabled(enabled))
+    }
+
+    /// The effect on button: switches a unit on when it is off and off when it is on.
+    pub fn toggle_effect(&mut self, unit: EffectUnitId) -> Result<(), EngineError> {
+        let enabled = self.effect_units[unit.index()].is_enabled();
+        self.set_effect_enabled(unit, !enabled)
+    }
+
+    /// An effect unit's settings, and whether the audio thread last found it sounding.
+    pub fn effect_unit(&self, unit: EffectUnitId) -> EffectUnitState {
+        let sounding = self.shared.effect_sounding[unit.index()].load(Ordering::Relaxed);
+        self.effect_units[unit.index()].with_sounding(sounding)
+    }
+
     /// What a deck is doing, as the audio thread last published it.
     pub fn deck_state(&self, deck: DeckId) -> DeckState {
         let shared = &self.shared.decks[deck.index()];
@@ -233,21 +324,19 @@ impl Controller {
             .map_err(|_| EngineError::CommandQueueFull)
     }
 
+    fn change_effect(
+        &mut self,
+        unit: EffectUnitId,
+        change: EffectChange,
+    ) -> Result<(), EngineError> {
+        self.send(Command::ChangeEffect { unit, change })?;
+        self.effect_units[unit.index()].apply(change);
+        Ok(())
+    }
+
     fn replace_track(&mut self, deck: DeckId, track: Option<Track>) {
         self.tracks[deck.index()] = track;
-    }
-}
-
-fn check_range(
-    name: &'static str,
-    value: f64,
-    minimum: f64,
-    maximum: f64,
-) -> Result<(), EngineError> {
-    if value.is_finite() && value >= minimum && value <= maximum {
-        Ok(())
-    } else {
-        Err(EngineError::InvalidParameter { name, value })
+        self.beat_grids[deck.index()] = None;
     }
 }
 

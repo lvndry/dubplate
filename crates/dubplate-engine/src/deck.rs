@@ -4,6 +4,7 @@ use crate::INSERT_SLOTS;
 use crate::curves::Ramp;
 use crate::mixer::RetireQueue;
 use crate::processor::{AudioProcessor, ProcessContext, StereoBlock};
+use crate::tempo::{BeatClock, BeatGrid};
 use crate::track::{FrameRead, MAX_TRACK_SECONDS, TrackBuffer};
 
 /// One of the decks.
@@ -63,6 +64,7 @@ pub(crate) struct Deck {
     transport: Ramp,
     tails: [Option<Tail>; MAX_TAILS],
     cue_point: f64,
+    beat_grid: Option<BeatGrid>,
     trim: Ramp,
     channel_gain: Ramp,
     fader_position: f32,
@@ -83,6 +85,7 @@ impl Deck {
             transport: Ramp::new(0.0, declick_frames),
             tails: std::array::from_fn(|_| None),
             cue_point: 0.0,
+            beat_grid: None,
             trim: Ramp::new(1.0, declick_frames),
             channel_gain: Ramp::new(1.0, declick_frames),
             fader_position: 1.0,
@@ -107,6 +110,31 @@ impl Deck {
 
     pub(crate) fn fader_position(&self) -> f32 {
         self.fader_position
+    }
+
+    pub(crate) fn has_beat_grid(&self) -> bool {
+        self.beat_grid.is_some()
+    }
+
+    pub(crate) fn set_beat_grid(&mut self, beat_grid: Option<BeatGrid>) {
+        self.beat_grid = beat_grid;
+    }
+
+    /// The tempo and beat position at the next frame the deck plays, when it has a beat grid.
+    pub(crate) fn beat_clock(&self) -> Option<BeatClock> {
+        self.beat_grid.map(|grid| BeatClock {
+            bpm: grid.bpm() * self.tempo,
+            beat_position: grid.beat_at(self.position_seconds()),
+        })
+    }
+
+    /// The deck's gain to the master while it plays, 0 when it is stopped.
+    pub(crate) fn level(&self) -> f32 {
+        if self.playing {
+            self.trim.target() * self.channel_gain.target()
+        } else {
+            0.0
+        }
     }
 
     fn source_rate(&self) -> f64 {
@@ -175,6 +203,7 @@ impl Deck {
         self.playing = false;
         self.position = 0.0;
         self.cue_point = 0.0;
+        self.beat_grid = None;
         self.update_rate();
     }
 
@@ -328,18 +357,29 @@ impl Deck {
         result
     }
 
-    /// Adds the deck's block, through its channel gain, into the master block.
-    pub(crate) fn mix_into(&mut self, master: &mut StereoBlock) -> f32 {
-        let mut peak = 0.0_f32;
-        let (master_left, master_right) = master.channels_mut();
-        let (deck_left, deck_right) = (self.block.left(), self.block.right());
-        for frame in 0..master_left.len().min(deck_left.len()) {
+    /// Applies the channel fader and crossfader gain to the deck's block.
+    pub(crate) fn apply_channel_gain(&mut self) {
+        let (left_channel, right_channel) = self.block.channels_mut();
+        for (left, right) in left_channel.iter_mut().zip(right_channel.iter_mut()) {
             let gain = self.channel_gain.next_value();
-            let left = deck_left[frame] * gain;
-            let right = deck_right[frame] * gain;
+            *left *= gain;
+            *right *= gain;
+        }
+    }
+
+    /// Adds the deck's block into the master block and returns its peak.
+    pub(crate) fn mix_into(&self, master: &mut StereoBlock) -> f32 {
+        let (master_left, master_right) = master.channels_mut();
+        let deck_frames = self.block.left().iter().zip(self.block.right());
+        let mut peak = 0.0_f32;
+        for ((master_left, master_right), (left, right)) in master_left
+            .iter_mut()
+            .zip(master_right.iter_mut())
+            .zip(deck_frames)
+        {
             peak = peak.max(left.abs()).max(right.abs());
-            master_left[frame] += left;
-            master_right[frame] += right;
+            *master_left += left;
+            *master_right += right;
         }
         peak
     }
