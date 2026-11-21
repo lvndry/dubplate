@@ -3,10 +3,16 @@
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use dubplate_engine::{DecodeStatus, Renderer, Track};
+use dubplate_engine::{Controller, DecodeStatus, Renderer, Track};
 
 pub const SAMPLE_RATE: u32 = 48_000;
 pub const DECLICK_FRAMES: usize = 240;
+
+/// Frames the channel EQ delays every deck by, as the engine reports it.
+pub fn mixer_latency_frames(controller: &Controller) -> usize {
+    let stats = controller.stats();
+    (stats.mixer_latency_ms * f64::from(stats.sample_rate) / 1_000.0).round() as usize
+}
 
 /// Writes a 16-bit PCM WAV file with interleaved samples from -1.0 to 1.0.
 pub fn write_wav(path: &Path, samples: &[f32], channel_count: u16, sample_rate: u32) {

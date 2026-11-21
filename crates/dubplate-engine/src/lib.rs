@@ -21,12 +21,14 @@
 //! [`AudioOutput::start`] runs the engine on the default sound card; [`offline_engine`] gives
 //! the same engine without one, for tests and offline rendering.
 
+mod channel;
 mod controller;
 mod curves;
 mod deck;
 mod decode;
 mod effects;
 mod error;
+mod jog;
 mod mixer;
 mod output;
 mod processor;
@@ -34,18 +36,22 @@ mod state;
 mod tempo;
 mod track;
 
+pub use channel::ChannelSettings;
 pub use controller::{Controller, offline_engine};
 pub use cpal;
-pub use curves::{channel_fader_gain, crossfader_gains, decibels_to_gain, gain_to_decibels};
+pub use curves::{
+    channel_fader_gain, crossfader_gains, decibels_to_gain, eq_gain, gain_to_decibels,
+};
 pub use deck::DeckId;
 pub use decode::decode_file;
-pub use dubplate_fx::{BeatLength, EffectKind};
+pub use dubplate_fx::{BeatLength, EffectKind, EqBand};
 pub use effects::{EffectTarget, EffectUnitId, EffectUnitState};
 pub use error::EngineError;
+pub use jog::DEFAULT_JOG_TICKS_PER_REVOLUTION;
 pub use mixer::Renderer;
 pub use output::{AudioOutput, OutputConfig};
 pub use processor::{AudioProcessor, ProcessContext, StereoBlock};
-pub use state::{DeckState, EngineStats, Meters};
+pub use state::{DeckState, EngineStats, Meters, PlatterState};
 pub use tempo::{BeatClock, BeatGrid, MasterTempo};
 pub use track::{DecodeStatus, MAX_SAMPLE_RATE, MAX_TRACK_SECONDS, MIN_SAMPLE_RATE, Track};
 

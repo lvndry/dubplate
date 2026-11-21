@@ -4,16 +4,18 @@ use std::sync::atomic::Ordering;
 
 use rtrb::{Consumer, Producer, RingBuffer};
 
+use crate::channel::ChannelSettings;
 use crate::deck::DeckId;
 use crate::decode::decode_file;
 use crate::effects::{EffectChange, EffectSettings, EffectTarget, EffectUnitId, EffectUnitState};
 use crate::error::{EngineError, check_range};
+use crate::jog::JogInput;
 use crate::mixer::{Command, Renderer, RetireQueue, Retired};
 use crate::processor::AudioProcessor;
-use crate::state::{DeckState, EngineStats, Meters, SharedState, take_peak};
+use crate::state::{DeckState, EngineStats, Meters, PlatterState, SharedState, take_peak};
 use crate::tempo::{BeatGrid, MasterTempo};
 use crate::track::{MAX_TRACK_SECONDS, Track};
-use crate::{BeatLength, DECK_COUNT, EFFECT_UNIT_COUNT, EffectKind, INSERT_SLOTS};
+use crate::{BeatLength, DECK_COUNT, EFFECT_UNIT_COUNT, EffectKind, EqBand, INSERT_SLOTS};
 
 const COMMAND_CAPACITY: usize = 1024;
 const RETIRE_CAPACITY: usize = COMMAND_CAPACITY * 4;
@@ -35,6 +37,7 @@ pub fn offline_engine(sample_rate: u32) -> (Controller, Renderer) {
         tracks: std::array::from_fn(|_| None),
         beat_grids: [None; DECK_COUNT],
         effect_units: EffectUnitId::ALL.map(EffectSettings::initial),
+        channels: [ChannelSettings::default(); DECK_COUNT],
     };
     let renderer = Renderer::new(
         sample_rate,
@@ -56,6 +59,7 @@ pub struct Controller {
     tracks: [Option<Track>; DECK_COUNT],
     beat_grids: [Option<BeatGrid>; DECK_COUNT],
     effect_units: [EffectSettings; EFFECT_UNIT_COUNT],
+    channels: [ChannelSettings; DECK_COUNT],
 }
 
 impl Controller {
@@ -166,6 +170,97 @@ impl Controller {
     pub fn set_master_gain(&mut self, gain: f32) -> Result<(), EngineError> {
         check_range("master gain", f64::from(gain), 0.0, f64::from(MAX_GAIN))?;
         self.send(Command::SetMasterGain(gain))
+    }
+
+    /// Turns one of a channel's EQ knobs, from 0.0 (band killed) through 0.5 (unity) to 1.0
+    /// (+6 dB). See [`crate::eq_gain`] for the curve.
+    pub fn set_eq(&mut self, deck: DeckId, band: EqBand, position: f32) -> Result<(), EngineError> {
+        check_range("EQ knob", f64::from(position), 0.0, 1.0)?;
+        self.send(Command::SetEq {
+            deck,
+            band,
+            position,
+        })?;
+        self.channels[deck.index()].eq[band.index()] = position;
+        Ok(())
+    }
+
+    /// Turns a channel's filter knob, the DDJ-FLX4's CFX: from 0.0 (low-pass fully closed)
+    /// through 0.5 (flat) to 1.0 (high-pass fully closed).
+    pub fn set_filter(&mut self, deck: DeckId, position: f32) -> Result<(), EngineError> {
+        check_range("filter knob", f64::from(position), 0.0, 1.0)?;
+        self.send(Command::SetFilter { deck, position })?;
+        self.channels[deck.index()].filter = position;
+        Ok(())
+    }
+
+    /// Sets how much a channel's filter sings at its cutoff, from 0.0 to 1.0. The resonance
+    /// grows as the knob leaves the centre, so small moves stay clean.
+    pub fn set_filter_resonance(
+        &mut self,
+        deck: DeckId,
+        resonance: f32,
+    ) -> Result<(), EngineError> {
+        check_range("filter resonance", f64::from(resonance), 0.0, 1.0)?;
+        self.send(Command::SetFilterResonance { deck, resonance })?;
+        self.channels[deck.index()].filter_resonance = resonance;
+        Ok(())
+    }
+
+    /// A channel's EQ and filter knobs, as last set.
+    pub fn channel(&self, deck: DeckId) -> ChannelSettings {
+        self.channels[deck.index()]
+    }
+
+    /// The platter top was touched or let go. In vinyl mode a touch holds the record, like a
+    /// hand on a turntable: the music stops under the hand and follows the platter
+    /// ([`Controller::jog_scratch`]); letting go returns to the deck's tempo, or to a stop when
+    /// the deck is paused. Out of vinyl mode a touch does nothing.
+    pub fn set_jog_touch(&mut self, deck: DeckId, touched: bool) -> Result<(), EngineError> {
+        self.jog(deck, JogInput::Touch(touched))
+    }
+
+    /// The platter turned by `ticks` while touched, positive clockwise: the record moves with
+    /// it, one revolution for 1.8 seconds of the track, as a record at 33⅓ RPM. Without a hand
+    /// on the platter it nudges instead.
+    pub fn jog_scratch(&mut self, deck: DeckId, ticks: i32) -> Result<(), EngineError> {
+        self.jog(deck, JogInput::Scratch(ticks))
+    }
+
+    /// The jog's edge turned by `ticks`, positive clockwise. On a playing deck it bends the
+    /// tempo with the wheel's speed to line up beats, and the bend fades out smoothly when the
+    /// wheel stops; every revolution moves the music 0.3 seconds. On a stopped deck it moves
+    /// the playhead like a hand on the record, to find a beat by ear.
+    pub fn jog_nudge(&mut self, deck: DeckId, ticks: i32) -> Result<(), EngineError> {
+        self.jog(deck, JogInput::Nudge(ticks))
+    }
+
+    /// The jog turned by `ticks` with SHIFT held: moves quickly through the track, 15 seconds
+    /// per revolution, playing or not.
+    pub fn jog_search(&mut self, deck: DeckId, ticks: i32) -> Result<(), EngineError> {
+        self.jog(deck, JogInput::Search(ticks))
+    }
+
+    /// Sets how many ticks the controller reports per revolution of the platter. The
+    /// DDJ-FLX4 reports [`crate::DEFAULT_JOG_TICKS_PER_REVOLUTION`].
+    pub fn set_jog_ticks_per_revolution(&mut self, ticks: u32) -> Result<(), EngineError> {
+        if ticks == 0 {
+            return Err(EngineError::InvalidParameter {
+                name: "jog ticks per revolution",
+                value: 0.0,
+            });
+        }
+        self.send(Command::SetJogTicksPerRevolution(ticks))
+    }
+
+    /// Switches a deck's vinyl mode, on by default: on, touching the platter top holds the
+    /// record for scratching; off, the platter only nudges, like a CDJ in CDJ mode.
+    pub fn set_vinyl_mode(&mut self, deck: DeckId, enabled: bool) -> Result<(), EngineError> {
+        self.send(Command::SetVinylMode { deck, enabled })
+    }
+
+    fn jog(&mut self, deck: DeckId, input: JogInput) -> Result<(), EngineError> {
+        self.send(Command::Jog { deck, input })
     }
 
     /// Puts a processor in one of a deck's insert slots, or empties the slot with `None`. Deck
@@ -289,6 +384,16 @@ impl Controller {
             position_seconds: shared.position_seconds.load(),
             cue_point_seconds: shared.cue_point_seconds.load(),
             tempo: shared.tempo.load(),
+        }
+    }
+
+    /// What a deck's jog wheel is doing, as the audio thread last published it.
+    pub fn platter_state(&self, deck: DeckId) -> PlatterState {
+        let shared = &self.shared.decks[deck.index()];
+        PlatterState {
+            speed: shared.speed.load(),
+            touched: shared.touched.load(Ordering::Relaxed),
+            vinyl_mode: shared.vinyl_mode.load(Ordering::Relaxed),
         }
     }
 
