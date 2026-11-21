@@ -11,8 +11,8 @@ use super::DubplateApp;
 use crate::assets::LOGO_PATH;
 use crate::browser::{LibraryStatus, search_field};
 use crate::collection::CrateIndex;
+use crate::commands::Command;
 use crate::fonts::MONO_FAMILY;
-use crate::shortcuts::Command;
 use crate::theme;
 
 /// Room for the window's close, minimise and zoom buttons, which sit over the header.
@@ -123,6 +123,19 @@ fn status(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoElem
         Err(_) => (theme::ALERT, "No audio output".into()),
     };
     let dropouts = app.dropouts();
+    let controllers = app.controller_names();
+    let (controller_colour, controller_text): (Rgba, SharedString) = if controllers.is_empty() {
+        (theme::MUTED, "No controller".into())
+    } else {
+        let others = controllers.len() - 1;
+        let name = controllers.first().copied().unwrap_or_default();
+        let text = if others == 0 {
+            name.to_owned()
+        } else {
+            format!("{name} +{others}")
+        };
+        (theme::OK, text.into())
+    };
     div()
         .flex()
         .flex_none()
@@ -137,6 +150,15 @@ fn status(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoElem
                 .gap(px(6.0))
                 .child(dot(library_colour))
                 .child(library_text),
+        )
+        .child(
+            div()
+                .id("controller-status")
+                .flex()
+                .items_center()
+                .gap(px(6.0))
+                .child(dot(controller_colour))
+                .child(controller_text),
         )
         .child(
             div()
@@ -175,8 +197,7 @@ fn status(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoElem
                 .hover(|button| button.bg(theme::RAISED))
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                    this.lock_playing_deck = !this.lock_playing_deck;
-                    cx.notify();
+                    this.toggle_lock_playing_deck(cx);
                 }))
                 .child(dot(if app.lock_playing_deck {
                     theme::OK

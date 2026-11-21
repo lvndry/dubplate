@@ -257,9 +257,12 @@ impl CollectionTrack {
         }
     }
 
-    /// The hot cue on `pad`, if one is set.
-    pub fn hot_cue(&self, pad: HotCuePad) -> Option<&HotCue> {
-        self.hot_cues.iter().find(|cue| cue.pad == pad)
+    /// What tells this track apart from every other: its rekordbox id, or its file's path.
+    pub fn identity(&self) -> String {
+        match (self.origin, &self.track.file_path) {
+            (TrackOrigin::File, Some(path)) => path.display().to_string(),
+            _ => self.track.id.clone(),
+        }
     }
 }
 
@@ -392,7 +395,12 @@ mod tests {
         assert_eq!(entry.row.time.as_ref(), "6:48");
         let pads: Vec<char> = entry.hot_cues.iter().map(|cue| cue.pad.letter()).collect();
         assert_eq!(pads, ['A', 'B']);
-        assert!((entry.hot_cue(HotCuePad::B).unwrap().seconds - 45.0).abs() < 1e-9);
+        let pad_b = entry
+            .hot_cues
+            .iter()
+            .find(|cue| cue.pad == HotCuePad::B)
+            .unwrap();
+        assert!((pad_b.seconds - 45.0).abs() < 1e-9);
     }
 
     #[test]

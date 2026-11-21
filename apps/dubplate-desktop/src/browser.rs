@@ -14,10 +14,10 @@ use gpui::{
 
 use crate::assets::SEARCH_ICON_PATH;
 use crate::collection::{Collection, CrateIndex, CrateKind, TrackIndex};
+use crate::commands::Direction;
 use crate::deck::deck_letter;
 use crate::fonts::MONO_FAMILY;
 use crate::search::{SearchQuery, filter_tracks};
-use crate::shortcuts::Direction;
 use crate::theme;
 
 const ROW_HEIGHT: Pixels = px(32.0);
@@ -53,6 +53,17 @@ pub enum BrowserEvent {
     LoadOnFreeDeck(TrackIndex),
 }
 
+/// Which side of the browser a controller's browse knob moves through, as rekordbox's tree view
+/// and track list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BrowserPane {
+    /// The crates on the left.
+    Crates,
+    /// The tracks of the chosen crate.
+    #[default]
+    Tracks,
+}
+
 /// A track being dragged from the browser to a deck.
 #[derive(Debug, Clone)]
 pub struct DraggedTrack {
@@ -84,6 +95,7 @@ pub struct Browser {
     query: SearchQuery,
     rows: Vec<TrackIndex>,
     selected: Option<TrackIndex>,
+    pane: BrowserPane,
     search_input: Entity<InputState>,
     table_focus: FocusHandle,
     scroll: UniformListScrollHandle,
@@ -115,6 +127,7 @@ impl Browser {
             query: SearchQuery::default(),
             rows: Vec::new(),
             selected: None,
+            pane: BrowserPane::default(),
             search_input,
             table_focus: cx.focus_handle(),
             scroll: UniformListScrollHandle::new(),
@@ -162,19 +175,56 @@ impl Browser {
 
     /// Selects the row above or below the selected one.
     pub fn move_selection(&mut self, direction: Direction, cx: &mut Context<'_, Self>) {
+        self.pane = BrowserPane::Tracks;
+        let steps = match direction {
+            Direction::Up => -1,
+            Direction::Down => 1,
+        };
+        self.move_track_cursor(steps, cx);
+    }
+
+    /// Moves the cursor `steps` rows down, or up when negative, in the pane that has it: the
+    /// crates, choosing each one passed, or the tracks.
+    pub fn browse(&mut self, steps: i32, cx: &mut Context<'_, Self>) {
+        match self.pane {
+            BrowserPane::Crates => self.move_crate_cursor(steps, cx),
+            BrowserPane::Tracks => self.move_track_cursor(steps, cx),
+        }
+    }
+
+    /// Moves the browse cursor between the crates and the tracks.
+    pub fn switch_pane(&mut self, cx: &mut Context<'_, Self>) {
+        self.pane = match self.pane {
+            BrowserPane::Crates => BrowserPane::Tracks,
+            BrowserPane::Tracks => BrowserPane::Crates,
+        };
+        cx.notify();
+    }
+
+    fn move_track_cursor(&mut self, steps: i32, cx: &mut Context<'_, Self>) {
         let current = self
             .selected
             .and_then(|track| self.rows.iter().position(|row| *row == track));
-        let next = match (current, direction) {
-            (None, _) => 0,
-            (Some(position), Direction::Up) => position.saturating_sub(1),
-            (Some(position), Direction::Down) => {
-                (position + 1).min(self.rows.len().saturating_sub(1))
-            }
+        let next = match current {
+            None => Some(0),
+            Some(position) => offset(position, steps, self.rows.len()),
         };
-        if let Some(track) = self.rows.get(next).copied() {
+        if let Some((next, track)) = next.and_then(|next| Some((next, *self.rows.get(next)?))) {
             self.select(Some(track), cx);
             self.scroll.scroll_to_item(next, ScrollStrategy::Nearest);
+        }
+    }
+
+    fn move_crate_cursor(&mut self, steps: i32, cx: &mut Context<'_, Self>) {
+        let LibraryStatus::Ready(collection) = &self.library else {
+            return;
+        };
+        let count = collection.indexed_crates().count();
+        let next = offset(self.crate_index.position(), steps, count)
+            .and_then(|next| collection.indexed_crates().nth(next))
+            .map(|(crate_index, _)| crate_index);
+        if let Some(crate_index) = next {
+            self.choose_crate(crate_index, cx);
         }
     }
 
@@ -254,7 +304,14 @@ impl Browser {
                         row.bg(theme::RAISED).font_weight(gpui::FontWeight::MEDIUM)
                     })
                     .hover(|row| row.text_color(theme::TEXT))
+                    .border_1()
+                    .border_color(if chosen && self.pane == BrowserPane::Crates {
+                        theme::MUTED
+                    } else {
+                        theme::faded(theme::MUTED, 0.0)
+                    })
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        this.pane = BrowserPane::Crates;
                         this.choose_crate(crate_index, cx);
                     }))
                     .child(div().truncate().child(entry.name.clone()))
@@ -351,6 +408,7 @@ impl Browser {
                 MouseButton::Left,
                 cx.listener(move |this, event: &MouseDownEvent, window, cx| {
                     window.focus(&this.table_focus, cx);
+                    this.pane = BrowserPane::Tracks;
                     this.select(Some(track), cx);
                     if event.click_count == 2 {
                         cx.emit(BrowserEvent::LoadOnFreeDeck(track));
@@ -396,6 +454,13 @@ impl Browser {
                     .children(DeckId::ALL.map(|deck| load_button(position, track, deck, cx))),
             )
     }
+}
+
+/// `position` moved by `steps` and kept inside `count` rows, or `None` when there are none.
+fn offset(position: usize, steps: i32, count: usize) -> Option<usize> {
+    let last = count.checked_sub(1)?;
+    let moved = i64::try_from(position).ok()? + i64::from(steps);
+    Some(usize::try_from(moved.max(0)).ok()?.min(last))
 }
 
 fn header_row() -> impl IntoElement {
@@ -556,4 +621,17 @@ fn message_panel(title: SharedString, detail: Option<SharedString>) -> impl Into
                 .text_color(theme::MUTED)
                 .child(detail)
         }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::offset;
+
+    #[test]
+    fn the_cursor_stops_at_the_first_and_last_rows() {
+        assert_eq!(offset(3, 2, 10), Some(5));
+        assert_eq!(offset(3, -5, 10), Some(0));
+        assert_eq!(offset(8, 4, 10), Some(9));
+        assert_eq!(offset(0, 1, 0), None);
+    }
 }

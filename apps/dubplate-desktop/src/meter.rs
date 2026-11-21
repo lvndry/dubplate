@@ -49,6 +49,11 @@ impl PeakMeter {
             .count()
     }
 
+    /// The level shown, in dBFS.
+    pub fn decibels(&self) -> f32 {
+        self.shown_db
+    }
+
     /// Whether the meter shows anything, so the window keeps redrawing while it falls.
     pub fn is_moving(&self) -> bool {
         self.shown_db > SEGMENT_THRESHOLDS_DB[0]

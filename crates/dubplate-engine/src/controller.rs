@@ -363,9 +363,9 @@ impl Controller {
         Ok(())
     }
 
-    /// The beat grid last set on a deck.
-    pub fn beat_grid(&self, deck: DeckId) -> Option<&BeatGrid> {
-        self.beat_grids[deck.index()].as_ref()
+    /// The beat grid last set on a deck. Cloning a grid shares its beats.
+    pub fn beat_grid(&self, deck: DeckId) -> Option<BeatGrid> {
+        self.beat_grids[deck.index()].clone()
     }
 
     /// Chooses the tempo master: the deck synced decks follow and whose tempo effects on the

@@ -341,7 +341,7 @@ fn loading_a_track_clears_the_deck_beat_grid() {
     controller
         .set_beat_grid(DeckId::A, Some(grid.clone()))
         .unwrap();
-    assert_eq!(controller.beat_grid(DeckId::A), Some(&grid));
+    assert_eq!(controller.beat_grid(DeckId::A), Some(grid));
     controller
         .load_track(DeckId::A, constant_track(0.1, 0.1, 1.0, SAMPLE_RATE))
         .unwrap();

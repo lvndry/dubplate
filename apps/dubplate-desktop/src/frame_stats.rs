@@ -1,5 +1,5 @@
-//! Frame timing, printed once a second when `DUBPLATE_FRAME_STATS` is set, to check that the
-//! window keeps up with the screen while tracks play.
+//! Frame timing and controller latency, printed once a second when `DUBPLATE_FRAME_STATS` is
+//! set, to check that the window keeps up with the screen and the controller while tracks play.
 
 use std::time::{Duration, Instant};
 
@@ -39,6 +39,7 @@ pub struct FrameStats {
     intervals: Timing,
     renders: Timing,
     lane_paints: Timing,
+    controls: Timing,
 }
 
 impl FrameStats {
@@ -51,6 +52,7 @@ impl FrameStats {
             intervals: Timing::default(),
             renders: Timing::default(),
             lane_paints: Timing::default(),
+            controls: Timing::default(),
         })
     }
 
@@ -63,17 +65,26 @@ impl FrameStats {
         self.renders.record(duration);
         if now - self.report_started >= REPORT_EVERY {
             eprintln!(
-                "{} frames | interval {} | render {} | waveform paint {}",
+                "{} frames | interval {} | render {} | waveform paint {} | {} controls, arrival to command {}",
                 self.intervals.count,
                 self.intervals.describe(),
                 self.renders.describe(),
-                self.lane_paints.describe()
+                self.lane_paints.describe(),
+                self.controls.count,
+                self.controls.describe()
             );
             self.report_started = now;
             self.intervals = Timing::default();
             self.renders = Timing::default();
             self.lane_paints = Timing::default();
+            self.controls = Timing::default();
         }
+    }
+
+    /// Records a controller message that took `duration` from reaching Dubplate to being
+    /// carried out.
+    pub fn record_control(&mut self, duration: Duration) {
+        self.controls.record(duration);
     }
 
     /// Records the painting of the zoomed waveforms, which took `duration`.

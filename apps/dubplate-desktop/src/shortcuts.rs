@@ -5,53 +5,11 @@ use dubplate_engine::DeckId;
 use dubplate_rekordbox::HotCuePad;
 use gpui::{Action, KeyBinding};
 
+use crate::commands::{Command, Direction, Press};
+
 /// The key context of the window. Keys that type text only count outside the search field.
 pub const WINDOW_CONTEXT: &str = "Dubplate";
 const OUTSIDE_TEXT_CONTEXT: &str = "Dubplate && !Input";
-
-/// Which way a control moves.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Direction {
-    /// Down, or towards deck A.
-    Down,
-    /// Up, or towards deck B.
-    Up,
-}
-
-impl Direction {
-    /// -1.0 for down and 1.0 for up.
-    pub fn sign(self) -> f64 {
-        match self {
-            Self::Down => -1.0,
-            Self::Up => 1.0,
-        }
-    }
-}
-
-/// Something the DJ asks for from the keyboard.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Command {
-    /// Play or pause a deck.
-    TogglePlay(DeckId),
-    /// The CDJ cue button of a deck.
-    Cue(DeckId),
-    /// Jump to a hot cue.
-    HotCue(DeckId, HotCuePad),
-    /// Load the selected track.
-    LoadSelected(DeckId),
-    /// Change a deck's tempo by one step.
-    NudgeTempo(DeckId, Direction),
-    /// Move the crossfader one step towards deck A ([`Direction::Down`]) or deck B.
-    MoveCrossfader(Direction),
-    /// Select the row above or below in the browser.
-    MoveSelection(Direction),
-    /// Put the cursor in the search field.
-    FocusSearch,
-    /// Show or hide the list of shortcuts.
-    ToggleHelp,
-    /// Close the help or leave the search field.
-    Dismiss,
-}
 
 /// The action every shortcut sends: one [`Command`].
 #[derive(Debug, Clone, PartialEq, Action)]
@@ -68,7 +26,7 @@ pub enum Scope {
 }
 
 /// A key and what it does.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Shortcut {
     /// The keystroke in GPUI's notation, such as `shift-space`.
     pub keystroke: &'static str,
@@ -95,15 +53,15 @@ const fn anywhere(keystroke: &'static str, command: Command) -> Shortcut {
 }
 
 const fn pad(keystroke: &'static str, deck: DeckId, pad: HotCuePad) -> Shortcut {
-    outside_text(keystroke, Command::HotCue(deck, pad))
+    outside_text(keystroke, Command::HotCue(deck, pad, Press::Tap))
 }
 
 /// Every keyboard shortcut.
 pub const SHORTCUTS: [Shortcut; 35] = [
     outside_text("space", Command::TogglePlay(DeckId::A)),
     outside_text("shift-space", Command::TogglePlay(DeckId::B)),
-    outside_text("c", Command::Cue(DeckId::A)),
-    outside_text("shift-c", Command::Cue(DeckId::B)),
+    outside_text("c", Command::Cue(DeckId::A, Press::Tap)),
+    outside_text("shift-c", Command::Cue(DeckId::B, Press::Tap)),
     pad("1", DeckId::A, HotCuePad::A),
     pad("2", DeckId::A, HotCuePad::B),
     pad("3", DeckId::A, HotCuePad::C),
@@ -203,7 +161,7 @@ pub fn help_lines() -> Vec<HelpLine> {
         line(&["c", "shift-c"], "Cue deck A / deck B"),
         line(
             &["1", "shift-1"],
-            "Hot cues A to H with 1 to 8, deck A / deck B",
+            "Hot cues A to H with 1 to 8 (sets an empty one), deck A / deck B",
         ),
         line(&["-", "="], "Tempo down / up, deck A"),
         line(&["shift--", "shift-="], "Tempo down / up, deck B"),
@@ -264,8 +222,8 @@ mod tests {
         for shortcut in SHORTCUTS {
             let twin_command = match shortcut.command {
                 Command::TogglePlay(DeckId::A) => Command::TogglePlay(DeckId::B),
-                Command::Cue(DeckId::A) => Command::Cue(DeckId::B),
-                Command::HotCue(DeckId::A, pad) => Command::HotCue(DeckId::B, pad),
+                Command::Cue(DeckId::A, press) => Command::Cue(DeckId::B, press),
+                Command::HotCue(DeckId::A, pad, press) => Command::HotCue(DeckId::B, pad, press),
                 Command::NudgeTempo(DeckId::A, direction) => {
                     Command::NudgeTempo(DeckId::B, direction)
                 }
@@ -286,7 +244,7 @@ mod tests {
         let deck_a_pads: Vec<(&str, char)> = SHORTCUTS
             .iter()
             .filter_map(|shortcut| match shortcut.command {
-                Command::HotCue(DeckId::A, pad) => Some((shortcut.keystroke, pad.letter())),
+                Command::HotCue(DeckId::A, pad, _) => Some((shortcut.keystroke, pad.letter())),
                 _ => None,
             })
             .collect();
