@@ -113,6 +113,7 @@ pub fn prepare_track(
         (TrackOrigin::File, _, _) => {
             Err("Not in your rekordbox collection: no beat grid, cues or waveform".to_owned())
         }
+        (TrackOrigin::Folder, _, _) => Err("Not analysed yet: no beat grid or waveform".to_owned()),
         (TrackOrigin::Rekordbox, Some(analysis_path), Some(share_directory)) => {
             TrackAnalysis::read(share_directory, analysis_path).map_err(|error| error.to_string())
         }

@@ -7,12 +7,14 @@ mod drop_target;
 mod header;
 mod help;
 mod lanes;
+mod library;
+mod library_panel;
 mod mixer;
 mod slider;
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -25,7 +27,7 @@ use dubplate_rekordbox::HotCuePad;
 use gpui::prelude::*;
 use gpui::{
     Bounds, Context, Entity, FocusHandle, MouseButton, MouseMoveEvent, MouseUpEvent, Pixels, Point,
-    SharedString, StyleRefinement, Subscription, Window, div, px,
+    SharedString, StyleRefinement, Subscription, Task, Window, div, px,
 };
 
 use crate::browser::{Browser, BrowserEvent, LibraryStatus};
@@ -43,6 +45,7 @@ use crate::frame_stats::FrameStats;
 use crate::hardware::{
     DeckLights, Hardware, Lights, LinkEvent, PAD_COUNT, Surface, controller_deck, meter_level,
 };
+use crate::library::LibrarySources;
 use crate::loading::{LoadRefusal, LoadSource, check_deck_free, check_file};
 use crate::meter::PeakMeter;
 use crate::settings::Settings;
@@ -103,6 +106,10 @@ struct DeckFrame {
 pub struct DubplateApp {
     engine: Result<Engine, SharedString>,
     library: LibraryStatus,
+    sources: LibrarySources,
+    library_generation: u64,
+    library_open: bool,
+    settings_saving: Option<Task<()>>,
     decks: [Deck; DECK_COUNT],
     deck_meters: [PeakMeter; DECK_COUNT],
     master_meter: PeakMeter,
@@ -127,7 +134,7 @@ pub struct DubplateApp {
 }
 
 impl DubplateApp {
-    /// Starts the audio engine, opens the browser and reads the rekordbox library in the
+    /// Starts the audio engine, opens the browser and opens the library the DJ chose in the
     /// background.
     pub fn new(window: &mut Window, cx: &mut Context<'_, Self>) -> Self {
         let browser = cx.new(|cx| Browser::new(window, cx));
@@ -140,6 +147,8 @@ impl DubplateApp {
                     Some(deck) => this.load(deck, LoadSource::Collection(track), cx),
                     None => this.show_notice(NoticePlace::Window, "Both decks are playing.", cx),
                 },
+                BrowserEvent::AddMusicFolders => this.add_music_folders(cx),
+                BrowserEvent::ImportRekordbox => this.set_rekordbox_import(true, cx),
             });
         let mixer = MixerPositions::default();
         let engine = start_engine(&mixer);
@@ -169,9 +178,15 @@ impl DubplateApp {
             }
         };
         keep_lights_moving(cx);
+        let sources =
+            LibrarySources::new(settings.music_folders.clone(), settings.import_rekordbox);
         let mut app = Self {
             engine,
             library: LibraryStatus::Reading,
+            sources,
+            library_generation: 0,
+            library_open: false,
+            settings_saving: None,
             decks: Default::default(),
             deck_meters: [PeakMeter::default(); DECK_COUNT],
             master_meter: PeakMeter::default(),
@@ -194,7 +209,7 @@ impl DubplateApp {
             frame_stats: FrameStats::from_environment().map(|stats| Rc::new(RefCell::new(stats))),
             _subscriptions: vec![subscription],
         };
-        app.read_library(cx);
+        app.start_library(cx);
         if let Some(problem) = problems.into_iter().next() {
             app.show_notice(NoticePlace::Window, problem, cx);
         }
@@ -209,13 +224,18 @@ impl DubplateApp {
         cx.notify();
     }
 
-    /// Writes the settings on a background thread.
-    fn save_settings(&self, cx: &mut Context<'_, Self>) {
+    /// Writes the settings on a background thread, after any earlier write, so the last
+    /// settings always win.
+    fn save_settings(&mut self, cx: &mut Context<'_, Self>) {
         let Some(path) = self.settings_path.clone() else {
             return;
         };
         let settings = self.settings.clone();
-        cx.spawn(async move |this, cx| {
+        let previous = self.settings_saving.take();
+        self.settings_saving = Some(cx.spawn(async move |this, cx| {
+            if let Some(previous) = previous {
+                previous.await;
+            }
             let saved = cx
                 .background_executor()
                 .spawn(async move { settings.save(&path) })
@@ -230,35 +250,13 @@ impl DubplateApp {
                 })
                 .ok();
             }
-        })
-        .detach();
-    }
-
-    fn read_library(&self, cx: &mut Context<'_, Self>) {
-        cx.spawn(async move |this, cx| {
-            let result = cx
-                .background_executor()
-                .spawn(async move { Collection::load_default() })
-                .await;
-            this.update(cx, |this, cx| {
-                this.library = match result {
-                    Ok(collection) => LibraryStatus::Ready(Arc::new(collection)),
-                    Err(error) => LibraryStatus::Failed(error_chain(&error).into()),
-                };
-                let library = this.library.clone();
-                this.browser
-                    .update(cx, |browser, cx| browser.set_library(library, cx));
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
+        }));
     }
 
     fn collection(&self) -> Option<&Arc<Collection>> {
         match &self.library {
             LibraryStatus::Ready(collection) => Some(collection),
-            LibraryStatus::Reading | LibraryStatus::Failed(_) => None,
+            LibraryStatus::Reading | LibraryStatus::Unchosen => None,
         }
     }
 
@@ -304,7 +302,7 @@ impl DubplateApp {
         cx.notify();
         let share_directory = self
             .collection()
-            .map(|collection| collection.share_directory().to_path_buf());
+            .and_then(|collection| collection.share_directory().map(Path::to_path_buf));
         cx.spawn(async move |this, cx| {
             let prepared = cx
                 .background_executor()
@@ -444,10 +442,19 @@ impl DubplateApp {
             Command::FocusSearch => self
                 .browser
                 .update(cx, |browser, cx| browser.focus_search(window, cx)),
-            Command::ToggleHelp => self.help_open = !self.help_open,
+            Command::ToggleHelp => {
+                self.help_open = !self.help_open;
+                self.library_open = false;
+            }
+            Command::ToggleLibrary => {
+                self.library_open = !self.library_open;
+                self.help_open = false;
+            }
+            Command::AddMusicFolders => self.add_music_folders(cx),
             Command::Dismiss => {
-                if self.help_open {
+                if self.help_open || self.library_open {
                     self.help_open = false;
+                    self.library_open = false;
                 } else if self.browser.read(cx).search_has_focus(window, cx) {
                     self.browser
                         .update(cx, |browser, cx| browser.focus_table(window, cx));
@@ -1012,7 +1019,10 @@ impl Render for DubplateApp {
                     .filter(|notice| notice.place == NoticePlace::Window)
                     .map(|notice| notice_toast(notice.text.clone())),
             )
-            .when(self.help_open, |root| root.child(help::render(cx)));
+            .when(self.help_open, |root| root.child(help::render(cx)))
+            .when(self.library_open, |root| {
+                root.child(library_panel::render(self, cx))
+            });
         if let Some(stats) = &self.frame_stats {
             stats.borrow_mut().record_render(render_started.elapsed());
         }

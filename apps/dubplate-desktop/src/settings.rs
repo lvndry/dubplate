@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 const FILE_NAME: &str = "settings.toml";
+const LIBRARY_CACHE_NAME: &str = "library-cache.json";
 
 /// Why the settings could not be read or written.
 #[derive(Debug, thiserror::Error)]
@@ -43,6 +44,10 @@ pub struct Settings {
     pub lock_playing_deck: bool,
     /// The sound card last used, by name.
     pub audio_device: Option<String>,
+    /// The music folders that make up the library, in the order they were added.
+    pub music_folders: Vec<PathBuf>,
+    /// Whether rekordbox's collection is part of the library.
+    pub import_rekordbox: bool,
 }
 
 impl Default for Settings {
@@ -50,6 +55,8 @@ impl Default for Settings {
         Self {
             lock_playing_deck: true,
             audio_device: None,
+            music_folders: Vec::new(),
+            import_rekordbox: false,
         }
     }
 }
@@ -57,8 +64,12 @@ impl Default for Settings {
 impl Settings {
     /// Where the settings live for this user.
     pub fn default_path() -> Result<PathBuf, SettingsError> {
-        let config = dirs::config_dir().ok_or(SettingsError::NoConfigurationDirectory)?;
-        Ok(config.join("dubplate").join(FILE_NAME))
+        Ok(configuration_directory()?.join(FILE_NAME))
+    }
+
+    /// Where the scans of the music folders are kept between launches.
+    pub fn library_cache_path() -> Result<PathBuf, SettingsError> {
+        Ok(configuration_directory()?.join(LIBRARY_CACHE_NAME))
     }
 
     /// Reads the settings at `path`. A missing file gives the defaults.
@@ -98,6 +109,12 @@ impl Settings {
     }
 }
 
+/// Dubplate's own folder in the user's configuration, never one of rekordbox's.
+fn configuration_directory() -> Result<PathBuf, SettingsError> {
+    let config = dirs::config_dir().ok_or(SettingsError::NoConfigurationDirectory)?;
+    Ok(config.join("dubplate"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -109,6 +126,11 @@ mod tests {
         let settings = Settings {
             lock_playing_deck: false,
             audio_device: Some("Studio Speakers".to_owned()),
+            music_folders: vec![
+                PathBuf::from("/Music/House"),
+                PathBuf::from("/Music/Amapiano"),
+            ],
+            import_rekordbox: true,
         };
         settings.save(&path).unwrap();
         assert_eq!(Settings::load(&path).unwrap(), settings);
@@ -124,6 +146,11 @@ mod tests {
         let settings = Settings::load(&path).unwrap();
         assert!(settings.lock_playing_deck);
         assert_eq!(settings.audio_device.as_deref(), Some("Headphones"));
+        assert!(settings.music_folders.is_empty());
+        assert!(
+            !settings.import_rekordbox,
+            "rekordbox is only read when the DJ asks"
+        );
     }
 
     #[test]
