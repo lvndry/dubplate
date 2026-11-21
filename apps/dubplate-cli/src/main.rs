@@ -2,13 +2,11 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use dubplate_rekordbox::{DatabaseKey, Library, Playlist, PlaylistKind, Track};
+use dubplate_rekordbox::{DatabaseKey, Library, Playlist, PlaylistKind, Track, default_master_db};
 
 mod analysis;
-
-const KEY_ENVIRONMENT_VARIABLE: &str = "DUBPLATE_REKORDBOX_KEY";
 
 #[derive(Parser)]
 #[command(
@@ -74,12 +72,12 @@ fn main() -> Result<()> {
 fn master_db_or_default(library: Option<PathBuf>) -> Result<PathBuf> {
     match library {
         Some(path) => Ok(path),
-        None => default_master_db(),
+        None => Ok(default_master_db()?),
     }
 }
 
 fn inspect(master_db: &Path, json: bool, limit: usize) -> Result<()> {
-    let key = load_key()?;
+    let key = DatabaseKey::from_user_configuration()?;
     let library = Library::open_copy(master_db, &key)
         .with_context(|| format!("reading {}", master_db.display()))?;
     let summary = library.summary()?;
@@ -126,7 +124,7 @@ fn inspect(master_db: &Path, json: bool, limit: usize) -> Result<()> {
 }
 
 fn analysis(master_db: &Path, track: &str, json: bool) -> Result<()> {
-    let key = load_key()?;
+    let key = DatabaseKey::from_user_configuration()?;
     let library = Library::open_copy(master_db, &key)
         .with_context(|| format!("reading {}", master_db.display()))?;
     analysis::show(&library, track, json)
@@ -173,39 +171,4 @@ fn truncate(text: &str, width: usize) -> String {
     let mut shortened: String = text.chars().take(width.saturating_sub(1)).collect();
     shortened.push('…');
     shortened
-}
-
-fn key_file() -> Result<PathBuf> {
-    let config = dirs::config_dir().context("this system has no configuration directory")?;
-    Ok(config.join("dubplate").join("rekordbox.key"))
-}
-
-fn load_key() -> Result<DatabaseKey> {
-    if let Ok(key) = std::env::var(KEY_ENVIRONMENT_VARIABLE)
-        && !key.trim().is_empty()
-    {
-        return Ok(DatabaseKey::new(key));
-    }
-    let path = key_file()?;
-    match std::fs::read_to_string(&path) {
-        Ok(key) if !key.trim().is_empty() => Ok(DatabaseKey::new(key)),
-        Ok(_) => bail!("{} is empty", path.display()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => bail!(
-            "no rekordbox key found. Put it in {} or in the {KEY_ENVIRONMENT_VARIABLE} \
-             environment variable",
-            path.display()
-        ),
-        Err(error) => Err(error).with_context(|| format!("reading {}", path.display())),
-    }
-}
-
-fn default_master_db() -> Result<PathBuf> {
-    let base = if cfg!(target_os = "macos") {
-        dirs::home_dir()
-            .context("no home directory")?
-            .join("Library")
-    } else {
-        dirs::config_dir().context("no configuration directory")?
-    };
-    Ok(base.join("Pioneer").join("rekordbox").join("master.db"))
 }
