@@ -70,22 +70,25 @@ impl ColorDetailColumn {
     }
 }
 
-/// A column of a 3-band waveform (`PWV6`, `PWV7`): the level of the mids, highs and lows.
+/// A column of a 3-band waveform (`PWV6`, `PWV7`): the level of the lows, mids and highs.
 ///
-/// It serializes as `[mid, high, low]`, the order rekordbox stores.
+/// rekordbox stores the lows first: in a four-on-the-floor track the first byte follows the
+/// kick on every beat and matches the red (low) channel of the colour waveform, while the
+/// second and third follow the green (mid) and blue (high) channels. It serializes as
+/// `[low, mid, high]`, the order rekordbox stores.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ThreeBandColumn {
+    /// The low-frequency level.
+    pub low: u8,
     /// The mid-range level.
     pub mid: u8,
     /// The high-frequency level.
     pub high: u8,
-    /// The low-frequency level.
-    pub low: u8,
 }
 
 impl Serialize for ThreeBandColumn {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        [self.mid, self.high, self.low].serialize(serializer)
+        [self.low, self.mid, self.high].serialize(serializer)
     }
 }
 
@@ -179,8 +182,8 @@ pub(crate) fn parse_three_band_detail(
 
 fn three_band(bytes: &[u8]) -> ThreeBandColumn {
     ThreeBandColumn {
-        mid: bytes[0],
-        high: bytes[1],
-        low: bytes[2],
+        low: bytes[0],
+        mid: bytes[1],
+        high: bytes[2],
     }
 }
