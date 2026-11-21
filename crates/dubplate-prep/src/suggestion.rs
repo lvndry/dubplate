@@ -42,7 +42,7 @@ pub fn suggest_next<'candidates>(
 ) -> Vec<Suggestion<'candidates>> {
     let pool = candidates
         .iter()
-        .filter(|candidate| candidate.rekordbox_id != reference.rekordbox_id)
+        .filter(|candidate| candidate.track_path != reference.track_path)
         .filter(|candidate| !is_in_set(candidate));
     next_tracks(reference, pool, &MixOptions::default(), direction)
         .into_iter()
