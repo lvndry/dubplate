@@ -56,6 +56,10 @@ pub enum EngineError {
     #[error("no audio output device is available")]
     NoOutputDevice,
 
+    /// No output device has the name asked for.
+    #[error("no audio output device is called {0}")]
+    OutputDeviceNotFound(String),
+
     /// The audio output could not be configured or started.
     #[error("audio output error: {0}")]
     Output(String),

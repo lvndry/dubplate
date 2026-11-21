@@ -8,6 +8,7 @@ use crate::curves::{Ramp, channel_fader_gain, crossfader_gains};
 use crate::deck::{Deck, DeckId};
 use crate::effects::{EffectChange, EffectRack, EffectTarget, EffectUnitId};
 use crate::grid::BeatGrid;
+use crate::headphones::Headphones;
 use crate::jog::JogInput;
 use crate::processor::{AudioProcessor, ProcessContext, StereoBlock};
 use crate::state::{GapDetector, SharedState, encode_loop_length, raise_peak};
@@ -126,6 +127,13 @@ pub(crate) enum Command {
     HalveLoop(DeckId),
     DoubleLoop(DeckId),
     ReloopOrExit(DeckId),
+    SetHeadphoneCue {
+        deck: DeckId,
+        enabled: bool,
+    },
+    SetMasterCue(bool),
+    SetHeadphoneMix(f32),
+    SetHeadphoneLevel(f32),
 }
 
 /// Something the audio thread no longer needs. It goes back to the control side to be dropped,
@@ -178,6 +186,7 @@ pub struct Renderer {
     tempo_master: TempoMaster,
     master_block: StereoBlock,
     master_gain: Ramp,
+    headphones: Headphones,
     crossfader: f32,
     sync_half_and_double: bool,
     commands: Consumer<Command>,
@@ -204,6 +213,7 @@ impl Renderer {
             tempo_master: TempoMaster::default(),
             master_block: StereoBlock::with_capacity(MAX_BLOCK_FRAMES),
             master_gain: Ramp::new(1.0, declick_frames),
+            headphones: Headphones::new(MAX_BLOCK_FRAMES, declick_frames),
             crossfader: 0.5,
             sync_half_and_double: true,
             commands,
@@ -233,8 +243,9 @@ impl Renderer {
     }
 
     /// Fills `output`, interleaved with `channel_count` channels, with the next frames of the
-    /// mix. Deck A and B's mix goes to the first two channels; any further channels are silent
-    /// and a mono output gets the sum of both sides at half level.
+    /// mix. The master goes to the first two channels and, with four or more channels, the
+    /// headphones to the third and fourth; any further channels are silent and a mono output
+    /// gets the sum of both sides at half level.
     pub fn render(&mut self, output: &mut [f32], channel_count: usize) {
         let callback = self.begin_callback();
         let starved = self.render_frames(output, channel_count);
@@ -256,7 +267,12 @@ impl Renderer {
         for chunk in output.chunks_mut(MAX_BLOCK_FRAMES * channel_count) {
             let block_frames = chunk.len() / channel_count;
             starved |= self.render_block(block_frames);
-            write_interleaved(&self.master_block, chunk, channel_count);
+            write_interleaved(
+                &self.master_block,
+                &self.headphones.block,
+                chunk,
+                channel_count,
+            );
         }
         output[frame_count * channel_count..].fill(0.0);
         starved
@@ -291,6 +307,7 @@ impl Renderer {
     fn render_block(&mut self, frame_count: usize) -> bool {
         self.master_block.set_frame_count(frame_count);
         self.master_block.silence();
+        self.headphones.begin_block(frame_count);
         let tempo_master = self.choose_tempo_master();
         self.follow_tempo_master(tempo_master);
         let deck_contexts = self.decks.each_ref().map(|deck| ProcessContext {
@@ -304,6 +321,9 @@ impl Renderer {
             .zip(self.decks.iter_mut().zip(&deck_contexts))
         {
             starved |= deck.render(frame_count, context, &mut self.retire).starved;
+            let shared = &self.shared.decks[deck_id.index()];
+            raise_peak(&shared.pre_fader_peak, deck.block.peak());
+            self.headphones.listen(deck_id, &deck.block);
             deck.apply_channel_gain();
             self.effects
                 .process(EffectTarget::Deck(deck_id), &mut deck.block, context);
@@ -323,6 +343,8 @@ impl Renderer {
             &mut self.master_block,
             &master_context,
         );
+        let headphone_peak = self.headphones.finish(&self.master_block);
+        raise_peak(&self.shared.headphone_peak, headphone_peak);
         let (left_channel, right_channel) = self.master_block.channels_mut();
         let mut peak = 0.0_f32;
         for (left, right) in left_channel.iter_mut().zip(right_channel.iter_mut()) {
@@ -451,6 +473,10 @@ impl Renderer {
             Command::ReloopOrExit(deck) => {
                 self.decks[deck.index()].reloop_or_exit(&mut self.retire);
             }
+            Command::SetHeadphoneCue { deck, enabled } => self.headphones.set_cue(deck, enabled),
+            Command::SetMasterCue(enabled) => self.headphones.set_master_cue(enabled),
+            Command::SetHeadphoneMix(mix) => self.headphones.set_mix(mix),
+            Command::SetHeadphoneLevel(level) => self.headphones.set_level(level),
             Command::SetMasterTempo(source) => self.tempo_master.set_source(source),
             Command::ChangeEffect { unit, change } => self.effects.change(unit, change),
             Command::SetEq {
@@ -561,14 +587,37 @@ fn replace_insert(
     }
 }
 
-fn write_interleaved(block: &StereoBlock, output: &mut [f32], channel_count: usize) {
+/// Writes the master to the first two channels and, on a device with four or more, the
+/// headphones to the third and fourth, as a DJ controller's sound card wires them. A mono device
+/// gets the master summed at half level; any further channels are silent.
+fn write_interleaved(
+    master: &StereoBlock,
+    headphones: &StereoBlock,
+    output: &mut [f32],
+    channel_count: usize,
+) {
     let frames = output.chunks_exact_mut(channel_count);
-    for ((frame, left), right) in frames.zip(block.left()).zip(block.right()) {
+    let master_frames = master.left().iter().zip(master.right());
+    let headphone_frames = headphones.left().iter().zip(headphones.right());
+    for (frame, ((left, right), (phones_left, phones_right))) in
+        frames.zip(master_frames.zip(headphone_frames))
+    {
         match frame {
             [mono] => *mono = (left + right) * 0.5,
-            [first, second, rest @ ..] => {
+            [first, second] => {
                 *first = *left;
                 *second = *right;
+            }
+            [first, second, third] => {
+                *first = *left;
+                *second = *right;
+                *third = 0.0;
+            }
+            [first, second, third, fourth, rest @ ..] => {
+                *first = *left;
+                *second = *right;
+                *third = *phones_left;
+                *fourth = *phones_right;
                 rest.fill(0.0);
             }
             [] => {}

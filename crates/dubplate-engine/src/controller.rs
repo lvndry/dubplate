@@ -10,6 +10,7 @@ use crate::decode::decode_file;
 use crate::effects::{EffectChange, EffectSettings, EffectTarget, EffectUnitId, EffectUnitState};
 use crate::error::{EngineError, check_range};
 use crate::grid::BeatGrid;
+use crate::headphones::HeadphoneSettings;
 use crate::jog::JogInput;
 use crate::mixer::{Command, Renderer, RetireQueue, Retired};
 use crate::processor::AudioProcessor;
@@ -45,6 +46,7 @@ pub fn offline_engine(sample_rate: u32) -> (Controller, Renderer) {
         effect_units: EffectUnitId::ALL.map(EffectSettings::initial),
         channels: [ChannelSettings::default(); DECK_COUNT],
         quantize: true,
+        headphones: HeadphoneSettings::default(),
     };
     let renderer = Renderer::new(
         sample_rate,
@@ -68,6 +70,7 @@ pub struct Controller {
     effect_units: [EffectSettings; EFFECT_UNIT_COUNT],
     channels: [ChannelSettings; DECK_COUNT],
     quantize: bool,
+    headphones: HeadphoneSettings,
 }
 
 impl Controller {
@@ -351,6 +354,44 @@ impl Controller {
         }
     }
 
+    /// A channel's CUE button: sends the channel's sound before its fader, after its EQ and
+    /// filter, to the headphones.
+    pub fn set_headphone_cue(&mut self, deck: DeckId, enabled: bool) -> Result<(), EngineError> {
+        self.send(Command::SetHeadphoneCue { deck, enabled })?;
+        self.headphones.cue[deck.index()] = enabled;
+        Ok(())
+    }
+
+    /// The MASTER CUE button: sends the master mix to the headphones' cue side too.
+    pub fn set_master_cue(&mut self, enabled: bool) -> Result<(), EngineError> {
+        self.send(Command::SetMasterCue(enabled))?;
+        self.headphones.master_cue = enabled;
+        Ok(())
+    }
+
+    /// The headphone MIXING knob, from 0.0 (the cued channels only) to 1.0 (the master only),
+    /// with both at -3 dB in the middle.
+    pub fn set_headphone_mix(&mut self, mix: f32) -> Result<(), EngineError> {
+        check_range("headphone mix", f64::from(mix), 0.0, 1.0)?;
+        self.send(Command::SetHeadphoneMix(mix))?;
+        self.headphones.mix = mix;
+        Ok(())
+    }
+
+    /// The headphone LEVEL knob, from 0.0 (silent) to 1.0 (full), on the channel fader's curve.
+    pub fn set_headphone_level(&mut self, level: f32) -> Result<(), EngineError> {
+        check_range("headphone level", f64::from(level), 0.0, 1.0)?;
+        self.send(Command::SetHeadphoneLevel(level))?;
+        self.headphones.level = level;
+        Ok(())
+    }
+
+    /// The headphone section's buttons and knobs, as last set. The headphones play on outputs
+    /// 3 and 4 of a device with four or more channels, such as a DDJ-FLX4.
+    pub fn headphones(&self) -> HeadphoneSettings {
+        self.headphones
+    }
+
     /// Switches quantize for both decks, on by default. With quantize and a beat grid, the cue
     /// button, loop in and loop out set their points on the nearest beat, beat loops start on
     /// the beat just passed, and hot cues and reloop jump in rhythm.
@@ -544,7 +585,11 @@ impl Controller {
     pub fn take_meters(&self) -> Meters {
         Meters {
             deck_peaks: std::array::from_fn(|index| take_peak(&self.shared.decks[index].peak)),
+            channel_peaks: std::array::from_fn(|index| {
+                take_peak(&self.shared.decks[index].pre_fader_peak)
+            }),
             master_peak: take_peak(&self.shared.master_peak),
+            headphone_peak: take_peak(&self.shared.headphone_peak),
         }
     }
 
