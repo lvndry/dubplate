@@ -63,6 +63,14 @@ impl CueKind {
             None => Self::Unknown { kind },
         }
     }
+
+    /// The pad of a hot cue, or `None` for a memory cue or an unknown kind.
+    pub fn pad(self) -> Option<HotCuePad> {
+        match self {
+            Self::Hot { pad } => Some(pad),
+            Self::Memory | Self::Unknown { .. } => None,
+        }
+    }
 }
 
 /// A hot cue pad.
