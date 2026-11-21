@@ -18,6 +18,10 @@ impl DatabaseKey {
     pub fn new(key: impl Into<String>) -> Self {
         Self(key.into().trim().to_owned())
     }
+
+    pub(crate) fn secret(&self) -> &str {
+        &self.0
+    }
 }
 
 impl fmt::Debug for DatabaseKey {
@@ -70,7 +74,7 @@ impl Library {
         }
 
         let connection = Connection::open(&copy_path)?;
-        connection.pragma_update(None, "key", &key.0)?;
+        connection.pragma_update(None, "key", key.secret())?;
         match connection.query_row("SELECT count(*) FROM sqlite_master", [], |row| {
             row.get::<_, i64>(0)
         }) {
