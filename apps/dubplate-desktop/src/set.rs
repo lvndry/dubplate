@@ -195,12 +195,14 @@ impl SetEditor {
 
     /// Adds `track` to the backups, or takes it off when it is there.
     pub fn toggle_backup(&mut self, track: String) {
-        self.edit(|set| match set.backups.iter().position(|backup| *backup == track) {
-            Some(position) => {
-                set.backups.remove(position);
-            }
-            None => set.backups.push(track),
-        });
+        self.edit(
+            |set| match set.backups.iter().position(|backup| *backup == track) {
+                Some(position) => {
+                    set.backups.remove(position);
+                }
+                None => set.backups.push(track),
+            },
+        );
     }
 
     /// Goes back one edit. Returns whether there was one.
@@ -215,7 +217,10 @@ impl SetEditor {
 
     /// Where `track` is in the set.
     pub fn position(&self, track: &str) -> Option<usize> {
-        self.set.entries.iter().position(|entry| entry.track == track)
+        self.set
+            .entries
+            .iter()
+            .position(|entry| entry.track == track)
     }
 
     fn edit(&mut self, change: impl FnOnce(&mut DjSet)) {
@@ -301,7 +306,10 @@ mod tests {
         let mut editor = editor();
         editor.add("a".to_owned());
         editor.toggle_free(0);
-        assert!(!editor.set().entries[0].free_into_next, "the last track has no seam");
+        assert!(
+            !editor.set().entries[0].free_into_next,
+            "the last track has no seam"
+        );
         editor.add("b".to_owned());
         editor.toggle_free(0);
         assert!(editor.set().entries[0].free_into_next);

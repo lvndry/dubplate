@@ -188,11 +188,23 @@ pub fn help_lines() -> Vec<HelpLine> {
         line(&["up", "down"], "Select the previous / next track"),
         line(&["/", "cmd-f"], "Search titles and artists"),
         line(&["cmd-1", "cmd-2"], "Prepare / Perform"),
-        line(&["enter", "cmd-enter"], "Add to the set / insert after the selected set track"),
-        line(&["alt-up", "alt-down"], "Move the selected set track up / down"),
+        line(
+            &["enter", "cmd-enter"],
+            "Add to the set / insert after the selected set track",
+        ),
+        line(
+            &["alt-up", "alt-down"],
+            "Move the selected set track up / down",
+        ),
         line(&["backspace", "cmd-z"], "Take out of the set / undo"),
-        line(&["f", "y"], "Seam planned or free / accept the proposed cues"),
-        line(&["b", "tab"], "Keep as a backup / move between library and set"),
+        line(
+            &["f", "y"],
+            "Seam planned or free / accept the proposed cues",
+        ),
+        line(
+            &["b", "tab"],
+            "Keep as a backup / move between library and set",
+        ),
         line(&["cmd-l"], "Load the set's first two tracks on the decks"),
         line(&["cmd-o"], "Add music folders to the library"),
         line(&["cmd-,"], "Library: music folders and rekordbox"),

@@ -45,11 +45,7 @@ pub struct TrackCheck {
 /// Looks at a track's file and rekordbox's analysis of it. Disk work: run it off the interface
 /// thread.
 pub fn check_track(entry: &CollectionTrack, share_directory: Option<&Path>) -> TrackCheck {
-    let file_found = entry
-        .track
-        .file_path
-        .as_deref()
-        .is_some_and(Path::is_file);
+    let file_found = entry.track.file_path.as_deref().is_some_and(Path::is_file);
     let analysis = match (
         entry.origin,
         entry.track.analysis_path.as_deref(),
@@ -96,9 +92,7 @@ pub fn readiness(track: &PrepTrack, check: Option<&TrackCheck>, cues: MixCues) -
 /// The cues a proposal would set, keeping any the DJ already set.
 pub fn accept_proposal(current: MixCues, proposal: ProposedCues) -> MixCues {
     MixCues {
-        mix_in_ms: current
-            .mix_in_ms
-            .or(proposal.mix_in.map(|cue| cue.time_ms)),
+        mix_in_ms: current.mix_in_ms.or(proposal.mix_in.map(|cue| cue.time_ms)),
         mix_out_ms: current
             .mix_out_ms
             .or(proposal.mix_out.map(|cue| cue.time_ms)),
@@ -121,7 +115,9 @@ impl SeamSummary {
     /// The seam between `outgoing` and `incoming`.
     pub fn between(outgoing: &PrepTrack, incoming: &PrepTrack) -> Self {
         let relation = match (outgoing.key, incoming.key) {
-            (Some(outgoing_key), Some(incoming_key)) => Some(outgoing_key.relation_to(&incoming_key)),
+            (Some(outgoing_key), Some(incoming_key)) => {
+                Some(outgoing_key.relation_to(&incoming_key))
+            }
             _ => None,
         };
         let tempo_step_percent = match (outgoing.bpm, incoming.bpm) {
@@ -137,17 +133,24 @@ impl SeamSummary {
         }
     }
 
-    /// One line for the seam row, such as "One step on the wheel · +1.6%".
-    pub fn line(&self) -> String {
+    /// One line for the seam row, such as "One step on the wheel · +1.6%", leaving out the key
+    /// or the tempo when a warning beside it already says so.
+    pub fn line(&self, key_warned: bool, tempo_warned: bool) -> String {
         let key = match (self.key_move, self.key_clash) {
-            (Some(key_move), _) => key_move.to_owned(),
-            (None, true) => "Keys clash".to_owned(),
-            (None, false) => "Key unknown".to_owned(),
+            (Some(key_move), _) => Some(key_move.to_owned()),
+            (None, true) if key_warned => None,
+            (None, true) => Some("Keys clash".to_owned()),
+            (None, false) => Some("Key unknown".to_owned()),
         };
-        match self.tempo_step_percent {
-            Some(step) => format!("{key} \u{b7} {step:+.1}%"),
-            None => key,
-        }
+        let tempo = self
+            .tempo_step_percent
+            .filter(|_| !tempo_warned)
+            .map(|step| format!("{step:+.1}%"));
+        [key, tempo]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" \u{b7} ")
     }
 }
 
@@ -170,15 +173,23 @@ mod tests {
 
     #[test]
     fn a_seam_names_the_key_move_and_the_tempo_step() {
-        let seam = SeamSummary::between(&track(Some("8A"), Some(120.0)), &track(Some("9A"), Some(122.0)));
+        let seam = SeamSummary::between(
+            &track(Some("8A"), Some(120.0)),
+            &track(Some("9A"), Some(122.0)),
+        );
         assert!(!seam.key_clash);
         assert!(seam.key_move.is_some());
-        assert!(seam.line().ends_with("+1.7%"), "{}", seam.line());
+        assert!(
+            seam.line(false, false).ends_with("+1.7%"),
+            "{}",
+            seam.line(false, false)
+        );
         let clash = SeamSummary::between(&track(Some("8A"), Some(120.0)), &track(Some("3B"), None));
         assert!(clash.key_clash);
-        assert_eq!(clash.line(), "Keys clash");
-        let unknown = SeamSummary::between(&track(None, Some(120.0)), &track(Some("8A"), Some(120.0)));
-        assert_eq!(unknown.line(), "Key unknown \u{b7} +0.0%");
+        assert_eq!(clash.line(false, false), "Keys clash");
+        let unknown =
+            SeamSummary::between(&track(None, Some(120.0)), &track(Some("8A"), Some(120.0)));
+        assert_eq!(unknown.line(false, false), "Key unknown \u{b7} +0.0%");
     }
 
     #[test]
@@ -205,7 +216,10 @@ mod tests {
             file_found: false,
             ..check
         };
-        assert_eq!(readiness(&known, Some(&missing), cues).badge(), "File missing");
+        assert_eq!(
+            readiness(&known, Some(&missing), cues).badge(),
+            "File missing"
+        );
         assert_eq!(
             readiness(&track(None, None), None, cues).badge(),
             "Grid unconfirmed +1"
