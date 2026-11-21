@@ -4,10 +4,14 @@
 //! direction) so a DJ can pick and order the tracks of a set. Dubplate never builds a set on
 //! its own: it suggests and checks, the DJ decides.
 
+mod store;
 mod suggestion;
 mod track;
 
 pub use euphoria_core::harmony::EnergyDirection;
 pub use euphoria_core::key::Key;
+pub use store::{
+    CueSource, EqIntent, Seam, SeamStatus, Set, SetEntry, SetId, SetStore, StoreError,
+};
 pub use suggestion::{Suggestion, suggest_next};
 pub use track::PrepTrack;
