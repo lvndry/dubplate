@@ -39,11 +39,16 @@ impl Decoder {
     pub fn decode(&mut self, bytes: &[u8]) -> Option<ControlEvent> {
         // A message whose first byte is a data byte is missing its status byte: the controller
         // left it out under MIDI running status, so the last channel status the decoder saw
-        // stands in for it. System messages never change the stored status.
+        // stands in for it. As MIDI 1.0 specifies, system exclusive and system common messages
+        // cancel running status, and real-time messages leave it alone.
         let message = match bytes {
-            [status, ..] if *status >= 0x80 && *status < 0xF0 => {
+            [status, ..] if (0x80..0xF0).contains(status) => {
                 self.running_status = Some(*status);
                 ChannelMessage::parse(bytes)?
+            }
+            [status, ..] if (0xF0..0xF8).contains(status) => {
+                self.running_status = None;
+                return None;
             }
             [first, second] if *first < 0x80 => {
                 let status = self.running_status?;
@@ -140,29 +145,25 @@ mod tests {
     }
 
     #[test]
-    fn a_system_message_keeps_the_stored_channel_status() {
+    fn system_exclusive_cancels_running_status_and_real_time_keeps_it() {
         let mut decoder = decoder(r#"buttons = [{ button = { cue = "a" }, message = "90 0C" }]"#);
+        let cue = |state| {
+            Some(ControlEvent {
+                action: Action::Button {
+                    button: Button::Cue(Deck::A),
+                    state,
+                },
+                layer: Layer::Normal,
+            })
+        };
         assert_eq!(
             decoder.decode(&[0x90, 0x0C, 0x7F]),
-            Some(ControlEvent {
-                action: Action::Button {
-                    button: Button::Cue(Deck::A),
-                    state: ButtonState::Pressed
-                },
-                layer: Layer::Normal,
-            })
+            cue(ButtonState::Pressed)
         );
+        assert_eq!(decoder.decode(&[0xF8]), None);
+        assert_eq!(decoder.decode(&[0x0C, 0x00]), cue(ButtonState::Released));
         assert_eq!(decoder.decode(&[0xF0, 0x00, 0x40, 0x05, 0xF7]), None);
-        assert_eq!(
-            decoder.decode(&[0x0C, 0x00]),
-            Some(ControlEvent {
-                action: Action::Button {
-                    button: Button::Cue(Deck::A),
-                    state: ButtonState::Released
-                },
-                layer: Layer::Normal,
-            })
-        );
+        assert_eq!(decoder.decode(&[0x0C, 0x7F]), None);
     }
 
     #[test]
