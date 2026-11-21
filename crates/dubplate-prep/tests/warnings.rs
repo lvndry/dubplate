@@ -1,5 +1,7 @@
 //! Set warnings: what the set does not like, on its seams and its tracks.
 
+use std::path::PathBuf;
+
 use dubplate_prep::{
     Key, PrepTrack, SetTrack, SetWarning, WarningKind, WarningPosition, set_warnings,
 };
@@ -17,7 +19,8 @@ fn track_with_facts(
     energy: Option<f32>,
 ) -> PrepTrack {
     PrepTrack {
-        rekordbox_id: rekordbox_id.to_owned(),
+        track_path: PathBuf::from(format!("/music/{rekordbox_id}.mp3")),
+        rekordbox_id: Some(rekordbox_id.to_owned()),
         title: title.to_owned(),
         artist: artist.to_owned(),
         key: key.and_then(Key::parse_file_key),
