@@ -1,10 +1,8 @@
 //! The mixer and tempo sliders: their positions, and how a pointer on a slider becomes a value.
 
-use dubplate_engine::{DeckId, EqBand, decibels_to_gain};
+use dubplate_engine::{DeckId, EqBand, TempoRange, decibels_to_gain};
 use gpui::{Bounds, Pixels, Point};
 
-/// How far the tempo slider reaches each way: ±8%, a CDJ's default range.
-pub const TEMPO_RANGE: f64 = 0.08;
 /// How much one tempo key press changes the tempo: 0.1%.
 pub const TEMPO_STEP: f64 = 0.001;
 /// How far one crossfader key press moves the crossfader.
@@ -132,20 +130,20 @@ pub fn fraction_at(
     fraction.clamp(0.0, 1.0)
 }
 
-/// The tempo at a tempo slider position, where the middle is the track's own tempo.
-pub fn tempo_at(fraction: f32) -> f64 {
-    1.0 + (f64::from(fraction) * 2.0 - 1.0) * TEMPO_RANGE
+/// The engine's tempo fader position, -1.0 to 1.0, for a tempo slider at `fraction`.
+pub fn tempo_fader(fraction: f32) -> f64 {
+    f64::from(fraction.clamp(0.0, 1.0)) * 2.0 - 1.0
 }
 
-/// The tempo slider position for a tempo.
-pub fn tempo_fraction(tempo: f64) -> f32 {
-    (((tempo - 1.0) / TEMPO_RANGE + 1.0) / 2.0).clamp(0.0, 1.0) as f32
+/// The tempo slider one key press away, a tenth of a percent of tempo in `range`.
+pub fn nudged_tempo_slider(fraction: f32, sign: f64, range: TempoRange) -> f32 {
+    let step = TEMPO_STEP / range.span() / 2.0;
+    (f64::from(fraction) + sign * step).clamp(0.0, 1.0) as f32
 }
 
-/// The tempo one key press away, kept inside the slider's range.
-pub fn nudged_tempo(tempo: f64, sign: f64) -> f64 {
-    let steps = ((tempo - 1.0) / TEMPO_STEP).round() + sign;
-    (1.0 + steps * TEMPO_STEP).clamp(1.0 - TEMPO_RANGE, 1.0 + TEMPO_RANGE)
+/// How the tempo range reads beside the slider, such as `±10%`.
+pub fn tempo_range_label(range: TempoRange) -> String {
+    format!("\u{b1}{:.0}%", range.span() * 100.0)
 }
 
 /// The master gain at a master level slider position.
@@ -174,8 +172,9 @@ pub fn trim_gain_at(fraction: f32) -> f32 {
 /// back from the engine, so quick key presses each count before the engine has caught up.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MixerPositions {
-    /// Each deck's tempo, where 1.0 is the track's own tempo.
-    pub tempos: [f64; 2],
+    /// Each deck's tempo slider, from 0.0 (slowest) through 0.5 (the track's own tempo) to 1.0
+    /// (fastest) across the deck's tempo range.
+    pub tempo_sliders: [f32; 2],
     /// Each deck's channel fader, from 0.0 to 1.0.
     pub channel_faders: [f32; 2],
     /// The crossfader, from 0.0 (deck A) to 1.0 (deck B).
@@ -196,7 +195,7 @@ impl MixerPositions {
         match control {
             Control::ChannelFader(deck) => self.channel_faders[deck.index()],
             Control::Crossfader => self.crossfader,
-            Control::Tempo(deck) => tempo_fraction(self.tempos[deck.index()]),
+            Control::Tempo(deck) => self.tempo_sliders[deck.index()],
             Control::MasterLevel => self.master_level,
             Control::Trim(deck) => self.trims[deck.index()],
             Control::Eq(deck, band) => self.eqs[deck.index()][band.index()],
@@ -208,7 +207,7 @@ impl MixerPositions {
 impl Default for MixerPositions {
     fn default() -> Self {
         Self {
-            tempos: [1.0, 1.0],
+            tempo_sliders: [0.5, 0.5],
             channel_faders: [1.0, 1.0],
             crossfader: 0.5,
             master_level: 1.0,
@@ -250,20 +249,18 @@ mod tests {
     }
 
     #[test]
-    fn the_tempo_slider_spans_eight_percent_each_way() {
-        assert!((tempo_at(0.5) - 1.0).abs() < 1e-9);
-        assert!((tempo_at(1.0) - 1.08).abs() < 1e-9);
-        assert!((tempo_at(0.0) - 0.92).abs() < 1e-9);
-        assert!((tempo_fraction(1.04) - 0.75).abs() < 1e-6);
-        assert_eq!(tempo_fraction(2.0), 1.0);
-    }
-
-    #[test]
-    fn tempo_keys_step_by_a_tenth_of_a_percent_within_the_range() {
-        assert!((nudged_tempo(1.0, 1.0) - 1.001).abs() < 1e-9);
-        assert!((nudged_tempo(1.0123, -1.0) - 1.011).abs() < 1e-9);
-        assert!((nudged_tempo(1.08, 1.0) - 1.08).abs() < 1e-9);
-        assert!((nudged_tempo(0.92, -1.0) - 0.92).abs() < 1e-9);
+    fn the_tempo_slider_drives_the_engines_fader_and_keys_step_a_tenth_of_a_percent() {
+        assert_eq!(tempo_fader(0.5), 0.0);
+        assert_eq!(tempo_fader(0.0), -1.0);
+        assert_eq!(tempo_fader(1.0), 1.0);
+        let step = nudged_tempo_slider(0.5, 1.0, TempoRange::TenPercent) - 0.5;
+        assert!(
+            (f64::from(step) * 2.0 * 0.10 - 0.001).abs() < 1e-6,
+            "{step}"
+        );
+        assert_eq!(nudged_tempo_slider(1.0, 1.0, TempoRange::SixPercent), 1.0);
+        assert_eq!(tempo_range_label(TempoRange::SixteenPercent), "\u{b1}16%");
+        assert_eq!(tempo_range_label(TempoRange::Wide), "\u{b1}100%");
     }
 
     #[test]
