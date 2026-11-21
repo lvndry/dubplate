@@ -8,6 +8,7 @@ mod cue_proposal;
 mod ready;
 mod suggestion;
 mod track;
+mod warnings;
 
 pub use cue_proposal::{ProposalSource, ProposedCue, ProposedCues, propose_mix_cues};
 pub use euphoria_core::harmony::EnergyDirection;
@@ -15,3 +16,4 @@ pub use euphoria_core::key::Key;
 pub use ready::{ReadyProblem, ReadyReport, Severity, TrackReadiness, ready_report};
 pub use suggestion::{Suggestion, suggest_next};
 pub use track::PrepTrack;
+pub use warnings::{SetTrack, SetWarning, WarningKind, WarningPosition, set_warnings};
