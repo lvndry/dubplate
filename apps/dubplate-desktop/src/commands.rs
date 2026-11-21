@@ -3,7 +3,7 @@
 //! one place.
 
 use dubplate_engine::{DeckId, EffectKind, EffectTarget, EffectUnitId};
-use dubplate_rekordbox::HotCuePad;
+use dubplate_midi::PadMode;
 
 use crate::controls::Control;
 
@@ -36,6 +36,67 @@ pub enum Press {
     Up,
     /// The button went down and up.
     Tap,
+}
+
+/// The two screens: preparing a set, and playing it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    /// The library beside the set being prepared.
+    Prepare,
+    /// The decks and the mixer.
+    Perform,
+}
+
+/// A change to the set being prepared.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SetEdit {
+    /// Add the track selected in the library at the end of the set.
+    Add,
+    /// Put the track selected in the library right after the selected set track.
+    InsertAfterSelection,
+    /// Move the selected set track up or down.
+    Move(Direction),
+    /// Take the selected set track out of the set.
+    Remove,
+    /// Switch the seam after the selected set track between planned and free.
+    TogglePlanned,
+    /// Accept the mix cues Dubplate proposes for the selected set track.
+    AcceptProposedCues,
+    /// Keep the track selected in the library as a backup, or stop keeping it.
+    ToggleBackup,
+    /// Undo the last change to the set.
+    Undo,
+}
+
+/// A press on one of a deck's performance pads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PadPress {
+    /// The deck.
+    pub deck: DeckId,
+    /// The pad, 0 for pad 1.
+    pub pad: usize,
+    /// The mode the controller sent it in, or `None` for the deck's current mode, as from the
+    /// keys and the screen.
+    pub mode: Option<PadMode>,
+    /// Down, up or both.
+    pub press: Press,
+    /// Whether SHIFT was held.
+    pub shift: bool,
+}
+
+/// A loop button.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoopAction {
+    /// LOOP IN: where the loop starts.
+    In,
+    /// LOOP OUT: where it ends, turning it on.
+    Out,
+    /// 4 BEAT/EXIT: a four-beat loop, or leave the loop that is on.
+    FourBeatOrExit,
+    /// Halve the loop that is on.
+    Halve,
+    /// Double the loop that is on.
+    Double,
 }
 
 /// What turning a jog wheel does to the track.
@@ -75,10 +136,14 @@ pub enum Command {
     Cue(DeckId, Press),
     /// Go back to the start of the track, as SHIFT + CUE does.
     JumpToStart(DeckId),
-    /// A hot cue pad: jumps to its cue, or sets one where the deck is when the pad is empty.
-    HotCue(DeckId, HotCuePad, Press),
-    /// Delete a hot cue.
-    DeleteHotCue(DeckId, HotCuePad),
+    /// A performance pad, doing what its pad mode says.
+    Pad(PadPress),
+    /// Put a deck's pads in a pad mode.
+    SetPadMode(DeckId, PadMode),
+    /// Put a deck's pads in the next pad mode.
+    CyclePadMode(DeckId),
+    /// A loop button.
+    Loop(DeckId, LoopAction),
     /// Load the track selected in the browser.
     LoadSelected(DeckId),
     /// Load the track playing on the other deck at the same place, as pressing LOAD twice does.
@@ -107,6 +172,14 @@ pub enum Command {
     /// Choose which effect unit the controller's BEAT FX section drives, a number of units
     /// along; negative goes back.
     FocusEffectUnit(i32),
+    /// Show the Prepare or the Perform screen.
+    SwitchMode(Mode),
+    /// Change the set.
+    EditSet(SetEdit),
+    /// Move the keyboard between the library and the set in Prepare.
+    SwitchPrepareFocus,
+    /// Load the set's first track on deck A and its second on deck B, each at its mix-in.
+    LoadSet,
     /// Show or hide the list of shortcuts.
     ToggleHelp,
     /// Show or hide the library's settings: the music folders and rekordbox.

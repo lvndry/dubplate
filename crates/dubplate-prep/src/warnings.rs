@@ -39,13 +39,13 @@ pub enum WarningKind {
         /// How much lower the incoming energy is, positive.
         by: f32,
     },
-    /// This track's rekordbox id already appears earlier in the set.
+    /// This track's file already appears earlier in the set.
     Duplicate {
-        /// The 0-based index of the earlier entry with the same rekordbox id.
+        /// The 0-based index of the earlier entry with the same file.
         first_position: usize,
     },
     /// An earlier track is another version of this one: same artist and base
-    /// title, a different rekordbox id.
+    /// title, a different file.
     SimilarVersion {
         /// The 0-based index of the earliest earlier entry that is another version.
         first_position: usize,
@@ -175,10 +175,10 @@ pub fn set_warnings(entries: &[SetTrack<'_>]) -> Vec<SetWarning> {
     warnings
 }
 
-/// The earliest earlier entry with the same rekordbox id, if any.
+/// The earliest earlier entry with the same file, if any.
 fn duplicate_position(entries: &[SetTrack<'_>], later_index: usize) -> Option<usize> {
     (0..later_index).find(|earlier_index| {
-        entries[*earlier_index].track.rekordbox_id == entries[later_index].track.rekordbox_id
+        entries[*earlier_index].track.track_path == entries[later_index].track.track_path
     })
 }
 
@@ -189,11 +189,11 @@ fn similar_version_position(entries: &[SetTrack<'_>], later_index: usize) -> Opt
     })
 }
 
-/// Whether two tracks are versions of the same song: a different rekordbox id,
+/// Whether two tracks are versions of the same song: a different file,
 /// the same artist and the same base title, compared case-insensitively after
 /// trimming. Empty base titles never match.
 fn is_similar_version(earlier: &PrepTrack, later: &PrepTrack) -> bool {
-    if earlier.rekordbox_id == later.rekordbox_id {
+    if earlier.track_path == later.track_path {
         return false;
     }
     let earlier_base_title = base_title(&earlier.title).trim().to_lowercase();

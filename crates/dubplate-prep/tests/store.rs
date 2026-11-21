@@ -439,3 +439,31 @@ fn updated_at_grows_after_removal_and_seam_edits() {
     let after_seam = store.load_set(set_id).unwrap().updated_at;
     assert!(after_seam > after_removal);
 }
+
+#[test]
+fn inserting_and_moving_in_the_middle_shift_the_neighbours() {
+    let base = tempfile::tempdir().unwrap();
+    let (_directory, _path, mut store) = open_store(base.path());
+    let set = store.create_set("Middle", 120).unwrap();
+    for (position, track_path) in ["/a.mp3", "/b.mp3", "/c.mp3"].into_iter().enumerate() {
+        store
+            .insert_entry(set, SetList::Main, position, entry(track_path, false))
+            .unwrap();
+    }
+    store
+        .insert_entry(set, SetList::Main, 1, entry("/z.mp3", false))
+        .unwrap();
+    store.move_entry(set, SetList::Main, 3, 0).unwrap();
+    store.move_entry(set, SetList::Main, 1, 3).unwrap();
+    let order: Vec<PathBuf> = store
+        .load_set(set)
+        .unwrap()
+        .main_entries()
+        .map(|candidate| candidate.track_path.clone())
+        .collect();
+    let expected: Vec<PathBuf> = ["/c.mp3", "/z.mp3", "/b.mp3", "/a.mp3"]
+        .into_iter()
+        .map(PathBuf::from)
+        .collect();
+    assert_eq!(order, expected);
+}

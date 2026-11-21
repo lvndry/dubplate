@@ -57,21 +57,6 @@ pub fn jump(controller: &mut Controller, deck: DeckId, seconds: f64) -> Result<(
     controller.seek(deck, seconds)
 }
 
-/// Calls a hot cue as rekordbox does: the deck plays from it, whether it was playing or not.
-pub fn call_hot_cue(
-    controller: &mut Controller,
-    deck: DeckId,
-    seconds: f64,
-) -> Result<(), EngineError> {
-    let playing = controller.deck_state(deck).playing;
-    controller.seek(deck, seconds)?;
-    if playing {
-        Ok(())
-    } else {
-        controller.play(deck)
-    }
-}
-
 /// Puts the track of `source` on `target` at the same place and cue point, playing if
 /// `source` plays: rekordbox's instant doubles. Returns `false` when `source` has no track.
 pub fn double(
@@ -192,24 +177,6 @@ mod tests {
             CueDown::Preview,
             "{:?}",
             controller.deck_state(DeckId::A)
-        );
-    }
-
-    #[test]
-    fn a_hot_cue_plays_from_its_point_even_from_pause() {
-        let (mut controller, mut renderer) = engine();
-        render(&mut renderer);
-        call_hot_cue(&mut controller, DeckId::A, 4.0).unwrap();
-        render(&mut renderer);
-        let state = controller.deck_state(DeckId::A);
-        assert!(state.playing);
-        assert!(
-            (state.position_seconds - 4.0).abs() <= block_seconds() + 1e-6,
-            "{state:?}"
-        );
-        assert_eq!(
-            state.cue_point_seconds, 0.0,
-            "calling a hot cue keeps the cue point"
         );
     }
 

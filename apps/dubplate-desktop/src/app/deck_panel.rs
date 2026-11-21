@@ -4,7 +4,6 @@
 use std::rc::Rc;
 
 use dubplate_engine::DeckId;
-use dubplate_rekordbox::HotCuePad;
 use gpui::prelude::*;
 use gpui::{
     ClickEvent, Context, FontWeight, MouseButton, MouseDownEvent, Pixels, SharedString, canvas,
@@ -13,7 +12,7 @@ use gpui::{
 
 use super::drop_target::accept_drops;
 use super::slider::{self, SMALL_THUMB};
-use super::{DeckFrame, DubplateApp, HitAreas};
+use super::{DeckFrame, DubplateApp, HitAreas, pad_grid};
 use crate::assets::{PAUSE_ICON_PATH, PLAY_ICON_PATH};
 use crate::collection::{CollectionTrack, TrackOrigin, clock};
 use crate::commands::{Command, Press};
@@ -27,7 +26,6 @@ const OVERVIEW_HEIGHT: Pixels = px(22.0);
 const OVERVIEW_BAR_SPACING: f32 = 3.0;
 const OVERVIEW_BAR_WIDTH: f32 = 2.0;
 const BUTTON_HEIGHT: Pixels = px(34.0);
-const PAD_HEIGHT: Pixels = px(38.0);
 
 pub(super) fn render(
     app: &DubplateApp,
@@ -49,7 +47,7 @@ pub(super) fn render(
         .child(title_row(app, deck, frame, entry))
         .child(overview(app, deck, frame, entry, cx))
         .child(transport(app, deck, frame, cx))
-        .child(pads(app, deck, cx));
+        .child(pad_grid::render(app, deck, cx));
     accept_drops(panel, deck, cx)
 }
 
@@ -354,81 +352,4 @@ fn button(id: (&'static str, usize)) -> gpui::Stateful<gpui::Div> {
         .rounded(theme::CONTROL_RADIUS)
         .cursor_pointer()
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-}
-
-fn pads(app: &DubplateApp, deck: DeckId, cx: &mut Context<'_, DubplateApp>) -> impl IntoElement {
-    let side = app.deck(deck);
-    let loaded = side.visuals().is_some();
-    let hot_cues = side.hot_cues;
-    div()
-        .flex()
-        .gap(px(4.0))
-        .children(
-            HotCuePad::ALL
-                .into_iter()
-                .enumerate()
-                .map(|(pad_index, pad)| {
-                    let cue = hot_cues.get(pad).filter(|_| loaded);
-                    let tint = theme::HOT_CUE_TINTS[pad_index];
-                    div()
-                        .id(("pad", deck.index() * HotCuePad::ALL.len() + pad_index))
-                        .flex()
-                        .flex_col()
-                        .justify_center()
-                        .flex_1()
-                        .min_w_0()
-                        .gap(px(1.0))
-                        .h(PAD_HEIGHT)
-                        .px(px(8.0))
-                        .rounded(theme::SMALL_RADIUS)
-                        .border_1()
-                        .border_color(theme::LINE)
-                        .text_size(theme::SMALL_TEXT_SIZE)
-                        .overflow_hidden()
-                        .map(|pad_button| match cue {
-                            Some(_) => pad_button
-                                .bg(theme::RAISED)
-                                .hover(|pad_button| pad_button.border_color(tint)),
-                            None => pad_button.border_dashed().text_color(theme::MUTED),
-                        })
-                        .when(loaded, |pad_button| {
-                            pad_button
-                                .cursor_pointer()
-                                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                                .on_click(cx.listener(
-                                    move |this, event: &ClickEvent, window, cx| {
-                                        let command = if event.modifiers().shift {
-                                            Command::DeleteHotCue(deck, pad)
-                                        } else {
-                                            Command::HotCue(deck, pad, Press::Tap)
-                                        };
-                                        this.perform(command, window, cx);
-                                    },
-                                ))
-                        })
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap(px(5.0))
-                                .child(
-                                    div()
-                                        .size(px(6.0))
-                                        .rounded(px(2.0))
-                                        .when(cue.is_some(), |dot| dot.bg(tint))
-                                        .when(cue.is_none(), |dot| {
-                                            dot.border_1().border_color(theme::LINE)
-                                        }),
-                                )
-                                .child(pad.letter().to_string()),
-                        )
-                        .child(
-                            div()
-                                .font_family(MONO_FAMILY)
-                                .text_size(theme::TINY_TEXT_SIZE)
-                                .text_color(theme::MUTED)
-                                .child(cue.map(clock).unwrap_or_default()),
-                        )
-                }),
-        )
 }

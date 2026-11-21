@@ -17,6 +17,7 @@ dirs = "7.0.0"
 dubplate-engine = { version = "0.1.0", path = "../../crates/dubplate-engine" }
 dubplate-library = { version = "0.1.0", path = "../../crates/dubplate-library" }
 dubplate-midi = { version = "0.1.0", path = "../../crates/dubplate-midi" }
+dubplate-prep = { version = "0.1.0", path = "../../crates/dubplate-prep" }
 dubplate-rekordbox = { version = "0.1.0", path = "../../crates/dubplate-rekordbox" }
 gpui = { version = "=0.9.1", package = "gpui-kit" }
 serde = { version = "1.0.229", features = ["derive"] }
