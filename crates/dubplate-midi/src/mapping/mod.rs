@@ -456,4 +456,48 @@ mod tests {
         };
         assert_eq!(mapping.encode(light), None);
     }
+
+    #[test]
+    fn a_bad_address_names_the_entry_that_wrote_it() {
+        for (body, expected) in [
+            (
+                r#"buttons = [
+                { button = { play = "a" }, message = "90 0B" },
+                { button = { cue = "a" }, message = "ZZ 0C" },
+            ]"#,
+                "button 1: \"ZZ 0C\"",
+            ),
+            (
+                r#"continuous = [{ control = "crossfader", message = "G6 1F", lsb = "B6 3F" }]"#,
+                "continuous 0: \"G6 1F\", lsb \"B6 3F\"",
+            ),
+            (
+                r#"pad_modes = [{ mode = "hot-cue", first_pad = 0x00 }]
+               pad_banks = [{ deck = "b", status = 0xE7, pads = 8 }]"#,
+                "pad bank 0 (deck B): status = 0xE7, pads = 8",
+            ),
+        ] {
+            let error = mapping(body).unwrap_err();
+            let text = error.to_string();
+            assert!(
+                text.contains(expected),
+                "the error {text} should name {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_continuous_control_cannot_share_a_message_with_its_own_lsb() {
+        let error = mapping(
+            r#"continuous = [{ control = "crossfader", message = "B6 1F", lsb = "B6 1F" }]"#,
+        )
+        .unwrap_err();
+        let text = error.to_string();
+        assert!(
+            matches!(error, MappingError::Invalid { .. })
+                && text.contains("continuous 0")
+                && text.contains("also its own lsb"),
+            "the error {text} should say continuous 0 is also its own lsb"
+        );
+    }
 }

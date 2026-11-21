@@ -54,7 +54,7 @@ struct KeepaliveEntry {
 #[serde(deny_unknown_fields)]
 struct ButtonEntry {
     button: Button,
-    message: Address,
+    message: String,
     #[serde(default)]
     layer: Layer,
     #[serde(default)]
@@ -65,22 +65,23 @@ struct ButtonEntry {
 #[serde(deny_unknown_fields)]
 struct SwitchEntry {
     switch: Switch,
-    message: Address,
+    message: String,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ContinuousEntry {
     control: Continuous,
-    message: Address,
-    lsb: Option<Address>,
+    message: String,
+    #[serde(default)]
+    lsb: Option<String>,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct EncoderEntry {
     encoder: Encoder,
-    message: Address,
+    message: String,
     encoding: RelativeEncoding,
     #[serde(default)]
     layer: Layer,
@@ -109,7 +110,29 @@ struct PadBankEntry {
 #[serde(deny_unknown_fields)]
 struct OutputEntry {
     output: OutputTarget,
-    message: Address,
+    message: String,
+}
+
+/// Which file entry an error came from, named in the error so it can be found.
+struct EntryRef {
+    kind: &'static str,
+    index: usize,
+    as_written: String,
+    deck: Option<Deck>,
+}
+
+impl EntryRef {
+    /// `button 1: "90 0B"`, `pad bank 0 (deck a): status = 0x97, pads = 8`.
+    fn describe(&self) -> String {
+        let mut description = format!("{} {}", self.kind, self.index);
+        if let Some(deck) = self.deck {
+            description.push_str(&format!(" ({deck})"));
+        }
+        if !self.as_written.is_empty() {
+            description.push_str(&format!(": {}", self.as_written));
+        }
+        description
+    }
 }
 
 struct MappingBuilder {
@@ -147,24 +170,30 @@ impl MappingBuilder {
             })
             .transpose()?;
 
-        for entry in file.buttons {
-            self.add_button(entry.button, entry.layer, entry.message, entry.light)?;
+        for (index, entry) in file.buttons.into_iter().enumerate() {
+            self.add_button(index, entry)?;
         }
-        for entry in file.switches {
-            self.add_input(entry.message, Input::Switch(entry.switch), Layer::Normal)?;
+        for (index, entry) in file.switches.into_iter().enumerate() {
+            self.add_switch(index, entry)?;
         }
-        for entry in file.continuous {
-            self.add_continuous(entry)?;
+        for (index, entry) in file.continuous.into_iter().enumerate() {
+            self.add_continuous(index, entry)?;
         }
-        for entry in file.encoders {
-            let input = Input::Encoder(entry.encoder, entry.encoding);
-            self.add_input(entry.message, input, entry.layer)?;
+        for (index, entry) in file.encoders.into_iter().enumerate() {
+            self.add_encoder(index, entry)?;
         }
-        for bank in &file.pad_banks {
-            self.add_pad_bank(bank, &file.pad_modes)?;
+        for (index, bank) in file.pad_banks.iter().enumerate() {
+            self.add_pad_bank(index, bank, &file.pad_modes)?;
         }
-        for entry in file.outputs {
-            self.add_output(Output::Target(entry.output), entry.message)?;
+        for (index, entry) in file.outputs.into_iter().enumerate() {
+            let entry_ref = EntryRef {
+                kind: "output",
+                index,
+                as_written: format!("\"{}\"", entry.message),
+                deck: None,
+            };
+            let address = self.parse_address(&entry_ref, &entry.message)?;
+            self.add_output(Output::Target(entry.output), address)?;
         }
 
         Ok(Mapping {
@@ -179,101 +208,208 @@ impl MappingBuilder {
         })
     }
 
-    fn add_button(
-        &mut self,
-        button: Button,
-        layer: Layer,
-        address: Address,
-        light: bool,
-    ) -> Result<(), MappingError> {
-        self.add_input(address, Input::Button(button), layer)?;
-        if light {
-            self.add_output(Output::Light(button, layer), address)?;
+    fn add_button(&mut self, index: usize, entry: ButtonEntry) -> Result<(), MappingError> {
+        let button = entry.button;
+        let entry_ref = EntryRef {
+            kind: "button",
+            index,
+            as_written: format!("\"{}\"", entry.message),
+            deck: None,
+        };
+        let address = self.parse_address(&entry_ref, &entry.message)?;
+        self.add_input(&entry_ref, address, Input::Button(button), entry.layer)?;
+        if entry.light {
+            self.add_output(Output::Light(button, entry.layer), address)?;
         }
         Ok(())
     }
 
-    fn add_continuous(&mut self, entry: ContinuousEntry) -> Result<(), MappingError> {
-        let Some(least_significant) = entry.lsb else {
+    fn add_switch(&mut self, index: usize, entry: SwitchEntry) -> Result<(), MappingError> {
+        let switch = entry.switch;
+        let entry_ref = EntryRef {
+            kind: "switch",
+            index,
+            as_written: format!("\"{}\"", entry.message),
+            deck: None,
+        };
+        let address = self.parse_address(&entry_ref, &entry.message)?;
+        self.add_input(&entry_ref, address, Input::Switch(switch), Layer::Normal)
+    }
+
+    fn add_continuous(&mut self, index: usize, entry: ContinuousEntry) -> Result<(), MappingError> {
+        let (entry_ref, lsb_ref) = match &entry.lsb {
+            Some(least_significant) => (
+                EntryRef {
+                    kind: "continuous",
+                    index,
+                    as_written: format!("\"{}\", lsb \"{}\"", entry.message, least_significant),
+                    deck: None,
+                },
+                EntryRef {
+                    kind: "continuous",
+                    index,
+                    as_written: format!("lsb \"{}\"", least_significant),
+                    deck: None,
+                },
+            ),
+            None => (
+                EntryRef {
+                    kind: "continuous",
+                    index,
+                    as_written: format!("\"{}\"", entry.message),
+                    deck: None,
+                },
+                EntryRef {
+                    kind: "continuous",
+                    index,
+                    as_written: String::new(),
+                    deck: None,
+                },
+            ),
+        };
+        let address = self.parse_address(&entry_ref, &entry.message)?;
+        let Some(least_significant_text) = entry.lsb else {
             return self.add_input(
-                entry.message,
+                &entry_ref,
+                address,
                 Input::Continuous(entry.control),
                 Layer::Normal,
             );
         };
-        if !entry.message.same_channel(least_significant) {
+        let least_significant = self.parse_address(&lsb_ref, &least_significant_text)?;
+        if address == least_significant {
             return Err(self.invalid(format!(
-                "{} sends its halves on different channels ({} and {least_significant})",
-                entry.control, entry.message
+                "{}: {} is also its own lsb; the two halves need two different control change \
+                 numbers",
+                entry.control,
+                entry_ref.describe()
             )));
         }
+        if !address.same_channel(least_significant) {
+            return Err(self.invalid(format!(
+                "{}: {} sends its halves on different channels ({} and {least_significant})",
+                entry.control,
+                entry_ref.describe(),
+                address
+            )));
+        }
+        // Reserve the pair only once both halves are known to be free, so a rejected control
+        // does not shift the pair indexes of the ones after it.
         let pair = self.fourteen_bit_controls;
         self.fourteen_bit_controls += 1;
-        self.add_input(
-            entry.message,
-            Input::MostSignificant { pair },
-            Layer::Normal,
-        )?;
-        let input = Input::LeastSignificant {
+        let most_significant = Input::MostSignificant { pair };
+        self.add_input(&entry_ref, address, most_significant, Layer::Normal)?;
+        let least_significant_input = Input::LeastSignificant {
             control: entry.control,
             pair,
         };
-        self.add_input(least_significant, input, Layer::Normal)
+        self.add_input(
+            &lsb_ref,
+            least_significant,
+            least_significant_input,
+            Layer::Normal,
+        )
+    }
+
+    fn add_encoder(&mut self, index: usize, entry: EncoderEntry) -> Result<(), MappingError> {
+        let encoder = entry.encoder;
+        let entry_ref = EntryRef {
+            kind: "encoder",
+            index,
+            as_written: format!("\"{}\"", entry.message),
+            deck: None,
+        };
+        let address = self.parse_address(&entry_ref, &entry.message)?;
+        self.add_input(
+            &entry_ref,
+            address,
+            Input::Encoder(encoder, entry.encoding),
+            entry.layer,
+        )
     }
 
     fn add_pad_bank(
         &mut self,
+        index: usize,
         bank: &PadBankEntry,
         modes: &[PadModeEntry],
     ) -> Result<(), MappingError> {
+        let bank_ref = || EntryRef {
+            kind: "pad bank",
+            index,
+            as_written: format!("status = 0x{:02X}, pads = {}", bank.status, bank.pads),
+            deck: Some(bank.deck),
+        };
         if modes.is_empty() {
-            return Err(self
-                .invalid("pad banks need pad_modes to say which notes each mode uses".to_owned()));
+            return Err(self.invalid(format!(
+                "{}: pad banks need pad_modes to say which notes each mode uses",
+                bank_ref().describe()
+            )));
         }
         let pads = (1..=bank.pads)
             .map(PadIndex::new)
             .collect::<Option<Vec<PadIndex>>>()
             .ok_or_else(|| {
                 self.invalid(format!(
-                    "a pad bank has {} pads; it can have 1 to {}",
+                    "{}: a pad bank has {} pads; it can have 1 to {}",
+                    bank_ref().describe(),
                     bank.pads,
                     PadIndex::MAX_PADS
                 ))
             })?;
         for mode in modes {
             for pad in &pads {
-                let number = U7::new(mode.first_pad.saturating_add(pad.number() - 1))
-                    .ok_or_else(|| self.invalid(format!("{} pads run past note 127", mode.mode)))?;
-                let address = Address::from_status(bank.status, number)
-                    .map_err(|reason| self.invalid(reason))?;
+                let number =
+                    U7::new(mode.first_pad.saturating_add(pad.number() - 1)).ok_or_else(|| {
+                        self.invalid(format!(
+                            "{}: pad {} of mode {} pads run past note 127",
+                            bank_ref().describe(),
+                            pad.number(),
+                            mode.mode
+                        ))
+                    })?;
+                let address = Address::from_status(bank.status, number).map_err(|reason| {
+                    self.invalid(format!("{}: {reason}", bank_ref().describe()))
+                })?;
                 let button = Button::Pad {
                     deck: bank.deck,
                     mode: mode.mode,
                     pad: *pad,
                 };
-                self.add_button(button, bank.layer, address, bank.light)?;
+                self.add_input(&bank_ref(), address, Input::Button(button), bank.layer)?;
+                if bank.light {
+                    self.add_output(Output::Light(button, bank.layer), address)?;
+                }
             }
         }
         Ok(())
     }
 
+    fn parse_address(&self, entry: &EntryRef, text: &str) -> Result<Address, MappingError> {
+        text.parse()
+            .map_err(|reason| self.invalid(format!("{}: {reason}", entry.describe())))
+    }
+
     fn add_input(
         &mut self,
+        entry: &EntryRef,
         address: Address,
         input: Input,
         layer: Layer,
     ) -> Result<(), MappingError> {
-        let slot = self
-            .inputs
-            .get_mut(address.index())
-            .ok_or_else(|| MappingError::Invalid {
-                mapping: self.name.clone(),
-                reason: format!("message {address} is out of range"),
-            })?;
+        let Some(slot) = self.inputs.get_mut(address.index()) else {
+            return Err(self.invalid(format!(
+                "{}: message {address} is out of range",
+                entry.describe()
+            )));
+        };
         if slot.is_some() {
             return Err(MappingError::DuplicateMessage {
                 mapping: self.name.clone(),
-                address: address.to_string(),
+                address: format!(
+                    "{} is already mapped to message {address}",
+                    entry.describe()
+                ),
             });
         }
         *slot = Some(Slot { input, layer });

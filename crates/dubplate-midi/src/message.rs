@@ -116,11 +116,16 @@ impl ChannelMessage {
     /// Reads a note on, note off or control change. A note off reads as value 0, like the note
     /// on with velocity 0 most controllers send for a release.
     pub(crate) fn parse(bytes: &[u8]) -> Option<ChannelMessage> {
-        let [status, number, data] = *bytes else {
-            return None;
+        // Normalise a note off to a note on with velocity 0: a mapping address can only be a
+        // 9n or Bn status, so without this a pad released with a real note off would match
+        // nothing.
+        let bytes = match *bytes {
+            [status, number, _] if status >> 4 == NOTE_OFF => [status | 0x10, number, 0],
+            [status, number, data] => [status, number, data],
+            _ => return None,
         };
+        let [status, number, data] = bytes;
         let (kind, value) = match status >> 4 {
-            NOTE_OFF => (Kind::Note, 0),
             NOTE_ON => (Kind::Note, data),
             CONTROL_CHANGE => (Kind::ControlChange, data),
             _ => return None,

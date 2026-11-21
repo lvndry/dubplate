@@ -447,6 +447,16 @@ fn the_mapping_holds_exactly_the_listed_messages() {
             );
         }
     }
+    // A note off reads as a release of the note on at the same note number.
+    for status in 0x80..=0x8F {
+        for number in 0..=0x7F {
+            assert_eq!(
+                mapping.recognizes(&[status, number, 0x40]),
+                listed.contains(&(status | 0x10, number)),
+                "{status:02X} {number:02X}"
+            );
+        }
+    }
 }
 
 #[test]
@@ -570,4 +580,32 @@ fn the_flx4_is_found_by_its_port_name_only() {
     );
     assert_eq!(mapping().name(), "Pioneer DDJ-FLX4");
     assert_eq!(mapping().jog_ticks_per_revolution(), Some(720));
+}
+
+#[test]
+fn a_pad_released_with_a_real_note_off_decodes_like_its_note_on_release() {
+    let mut decoder = decoder();
+    let pad = Button::Pad {
+        deck: Deck::A,
+        mode: PadMode::HotCue,
+        pad: PadIndex::new(5).unwrap(),
+    };
+    assert_decodes(
+        &mut decoder,
+        [0x97, 0x04, 0x7F],
+        Action::Button {
+            button: pad,
+            state: ButtonState::Pressed,
+        },
+        NORMAL,
+    );
+    assert_decodes(
+        &mut decoder,
+        [0x87, 0x04, 0x40],
+        Action::Button {
+            button: pad,
+            state: ButtonState::Released,
+        },
+        NORMAL,
+    );
 }
