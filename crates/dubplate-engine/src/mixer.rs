@@ -7,10 +7,12 @@ use rtrb::{Consumer, Producer};
 use crate::curves::{Ramp, channel_fader_gain, crossfader_gains};
 use crate::deck::{Deck, DeckId};
 use crate::effects::{EffectChange, EffectRack, EffectTarget, EffectUnitId};
+use crate::grid::BeatGrid;
 use crate::jog::JogInput;
 use crate::processor::{AudioProcessor, ProcessContext, StereoBlock};
 use crate::state::{GapDetector, SharedState, raise_peak};
-use crate::tempo::{BeatGrid, DeckLevel, MasterTempo, TempoMaster};
+use crate::sync::SyncMode;
+use crate::tempo::{DeckLevel, MasterTempo, TempoMaster, TempoRange};
 use crate::track::TrackBuffer;
 use crate::{DECK_COUNT, INSERT_SLOTS, MAX_BLOCK_FRAMES};
 use dubplate_fx::EqBand;
@@ -89,6 +91,23 @@ pub(crate) enum Command {
         enabled: bool,
     },
     SetJogTicksPerRevolution(u32),
+    SetTempoFader {
+        deck: DeckId,
+        position: f64,
+    },
+    SetTempoRange {
+        deck: DeckId,
+        range: TempoRange,
+    },
+    SetPitchBend {
+        deck: DeckId,
+        bend: f64,
+    },
+    SetSync {
+        deck: DeckId,
+        mode: SyncMode,
+    },
+    SetSyncHalfAndDouble(bool),
 }
 
 /// Something the audio thread no longer needs. It goes back to the control side to be dropped,
@@ -96,6 +115,7 @@ pub(crate) enum Command {
 pub(crate) enum Retired {
     Track(#[allow(dead_code)] Arc<TrackBuffer>),
     Processor(#[allow(dead_code)] Box<dyn AudioProcessor>),
+    BeatGrid(#[allow(dead_code)] BeatGrid),
 }
 
 /// The audio thread's end of the queue of retired objects.
@@ -110,6 +130,10 @@ impl RetireQueue {
 
     pub(crate) fn track(&mut self, track: Arc<TrackBuffer>) {
         self.retire(Retired::Track(track));
+    }
+
+    pub(crate) fn beat_grid(&mut self, beat_grid: BeatGrid) {
+        self.retire(Retired::BeatGrid(beat_grid));
     }
 
     fn processor(&mut self, processor: Box<dyn AudioProcessor>) {
@@ -137,6 +161,7 @@ pub struct Renderer {
     master_block: StereoBlock,
     master_gain: Ramp,
     crossfader: f32,
+    sync_half_and_double: bool,
     commands: Consumer<Command>,
     retire: RetireQueue,
     shared: Arc<SharedState>,
@@ -162,6 +187,7 @@ impl Renderer {
             master_block: StereoBlock::with_capacity(MAX_BLOCK_FRAMES),
             master_gain: Ramp::new(1.0, declick_frames),
             crossfader: 0.5,
+            sync_half_and_double: true,
             commands,
             retire,
             shared,
@@ -247,12 +273,13 @@ impl Renderer {
     fn render_block(&mut self, frame_count: usize) -> bool {
         self.master_block.set_frame_count(frame_count);
         self.master_block.silence();
+        let tempo_master = self.choose_tempo_master();
+        self.follow_tempo_master(tempo_master);
         let deck_contexts = self.decks.each_ref().map(|deck| ProcessContext {
             sample_rate: self.sample_rate,
             tempo: deck.tempo(),
             beat_clock: deck.beat_clock(),
         });
-        let tempo_master = self.choose_tempo_master();
         let mut starved = false;
         for (deck_id, (deck, context)) in DeckId::ALL
             .into_iter()
@@ -303,6 +330,21 @@ impl Renderer {
             }
         });
         self.tempo_master.update(&levels)
+    }
+
+    /// Brings every synced deck other than the tempo master to the master's tempo, and with
+    /// beat sync to its beats, for the next block.
+    fn follow_tempo_master(&mut self, master: Option<DeckId>) {
+        let master_beat = master.and_then(|deck| self.decks[deck.index()].master_beat(deck));
+        for deck_id in DeckId::ALL {
+            let deck = &mut self.decks[deck_id.index()];
+            match master_beat {
+                Some(beat) if beat.deck != deck_id && deck.sync_mode() != SyncMode::Off => {
+                    deck.follow(beat, self.sync_half_and_double, &mut self.retire);
+                }
+                _ => deck.stop_following(),
+            }
+        }
     }
 
     fn apply_commands(&mut self) {
@@ -357,8 +399,19 @@ impl Renderer {
                 );
             }
             Command::SetBeatGrid { deck, beat_grid } => {
-                self.decks[deck.index()].set_beat_grid(beat_grid);
+                self.decks[deck.index()].set_beat_grid(beat_grid, &mut self.retire);
             }
+            Command::SetTempoFader { deck, position } => {
+                self.decks[deck.index()].set_tempo_fader(position);
+            }
+            Command::SetTempoRange { deck, range } => {
+                self.decks[deck.index()].set_tempo_range(range);
+            }
+            Command::SetPitchBend { deck, bend } => {
+                self.decks[deck.index()].set_pitch_bend(bend);
+            }
+            Command::SetSync { deck, mode } => self.decks[deck.index()].set_sync(mode),
+            Command::SetSyncHalfAndDouble(allowed) => self.sync_half_and_double = allowed,
             Command::SetMasterTempo(source) => self.tempo_master.set_source(source),
             Command::ChangeEffect { unit, change } => self.effects.change(unit, change),
             Command::SetEq {
@@ -402,6 +455,19 @@ impl Renderer {
             shared.cue_point_seconds.store(deck.cue_point_seconds());
             shared.tempo.store(deck.tempo());
             shared.speed.store(deck.speed());
+            shared.bpm.store(deck.bpm().unwrap_or(f64::NAN));
+            shared
+                .tempo_range
+                .store(deck.tempo_range().index(), Ordering::Relaxed);
+            shared
+                .sync_mode
+                .store(deck.sync_mode().index(), Ordering::Relaxed);
+            shared
+                .following
+                .store(deck.is_following(), Ordering::Relaxed);
+            shared
+                .fader_waits_for_pickup
+                .store(deck.fader_waits_for_pickup(), Ordering::Relaxed);
             shared.touched.store(deck.is_touched(), Ordering::Relaxed);
             shared
                 .vinyl_mode
