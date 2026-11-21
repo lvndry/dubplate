@@ -18,13 +18,6 @@ use crate::search::SearchText;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TrackIndex(usize);
 
-impl TrackIndex {
-    /// Its position in the collection.
-    pub fn position(self) -> usize {
-        self.0
-    }
-}
-
 /// The position of a crate in the sidebar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct CrateIndex(usize);
@@ -170,6 +163,7 @@ pub struct Collection {
     crates: Vec<Crate>,
     share_directory: Option<PathBuf>,
     by_identity: HashMap<String, TrackIndex>,
+    by_path: HashMap<PathBuf, TrackIndex>,
 }
 
 impl Collection {
@@ -245,11 +239,19 @@ impl Collection {
             .enumerate()
             .map(|(position, track)| (track.identity(), TrackIndex(position)))
             .collect();
+        let by_path = tracks
+            .iter()
+            .enumerate()
+            .filter_map(|(position, track)| {
+                Some((track.track.file_path.clone()?, TrackIndex(position)))
+            })
+            .collect();
         Self {
             tracks,
             crates,
             share_directory: rekordbox.map(|rekordbox| rekordbox.share_directory.clone()),
             by_identity,
+            by_path,
         }
     }
 
@@ -262,6 +264,11 @@ impl Collection {
     /// it.
     pub fn find(&self, identity: &str) -> Option<TrackIndex> {
         self.by_identity.get(identity).copied()
+    }
+
+    /// The track whose audio file is `path`, if the collection holds it.
+    pub fn find_path(&self, path: &Path) -> Option<TrackIndex> {
+        self.by_path.get(path).copied()
     }
 
     /// Every track with its position, in the collection's order.

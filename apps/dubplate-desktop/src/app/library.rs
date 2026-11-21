@@ -232,7 +232,7 @@ impl DubplateApp {
                 .background_executor()
                 .spawn(async move {
                     let collection = Collection::build(rekordbox.as_deref(), &scans);
-                    let catalogue = prep::catalogue(&collection);
+                    let catalogue = prep::Catalogue::build(&collection);
                     (collection, catalogue)
                 })
                 .await;

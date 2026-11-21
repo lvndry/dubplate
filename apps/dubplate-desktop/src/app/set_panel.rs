@@ -86,13 +86,8 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
         .border_color(theme::LINE)
         .bg(theme::PANEL)
         .on_drop(cx.listener(|this, dragged: &DraggedTrack, _, cx| {
-            if let Some(identity) = this
-                .collection()
-                .map(|collection| collection.track(dragged.track).identity())
-            {
-                let last = this.set_editor.set().entries.len().checked_sub(1);
-                this.drop_library_track(identity, last, cx);
-            }
+            let last = this.set_track_count().checked_sub(1);
+            this.insert_into_set(dragged.track, last, cx);
         }))
         .child(summary(app, &rows))
         .child(list)
@@ -101,7 +96,11 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
 }
 
 fn summary(app: &DubplateApp, rows: &[SetRow]) -> impl IntoElement {
-    let set = app.set_editor.set();
+    let (name, target) = app
+        .set_editor
+        .as_ref()
+        .map(|editor| (editor.set().name.clone(), editor.target()))
+        .unwrap_or_default();
     let total: Duration = rows.iter().filter_map(|row| row.duration).sum();
     let bpms: Vec<f32> = rows
         .iter()
@@ -115,7 +114,7 @@ fn summary(app: &DubplateApp, rows: &[SetRow]) -> impl IntoElement {
         _ => "No tempo yet".to_owned(),
     };
     let ready = rows.iter().filter(|row| row.ready.is_ready()).count();
-    let over = total > set.target;
+    let over = !target.is_zero() && total > target;
     div()
         .flex()
         .flex_col()
@@ -133,7 +132,7 @@ fn summary(app: &DubplateApp, rows: &[SetRow]) -> impl IntoElement {
                     div()
                         .text_size(px(15.0))
                         .font_weight(FontWeight::MEDIUM)
-                        .child(set.name.clone()),
+                        .child(name),
                 )
                 .child(
                     div()
@@ -143,7 +142,7 @@ fn summary(app: &DubplateApp, rows: &[SetRow]) -> impl IntoElement {
                         .child(format!(
                             "{} / {}",
                             running_time(total),
-                            running_time(set.target)
+                            running_time(target)
                         )),
                 ),
         )
@@ -215,12 +214,7 @@ fn track_row(
             cx.stop_propagation();
         }))
         .on_drop(cx.listener(move |this, dragged: &DraggedTrack, _, cx| {
-            if let Some(identity) = this
-                .collection()
-                .map(|collection| collection.track(dragged.track).identity())
-            {
-                this.drop_library_track(identity, Some(position), cx);
-            }
+            this.insert_into_set(dragged.track, Some(position), cx);
             cx.stop_propagation();
         }))
         .child(
@@ -300,7 +294,7 @@ fn seam_row(
     seam: Option<&SeamSummary>,
     warnings: &[SetWarning],
 ) -> impl IntoElement + use<> {
-    let free = row.entry.free_into_next;
+    let free = row.free_into_next;
     let shown: Vec<&SetWarning> = warnings
         .iter()
         .filter(|warning| {
@@ -350,21 +344,7 @@ fn seam_row(
 }
 
 fn backups(app: &DubplateApp) -> impl IntoElement {
-    let set = app.set_editor.set();
-    let titles: Vec<String> = set
-        .backups
-        .iter()
-        .filter_map(|identity| {
-            let collection = app.collection()?;
-            Some(
-                collection
-                    .track(collection.find(identity)?)
-                    .row
-                    .title
-                    .to_string(),
-            )
-        })
-        .collect();
+    let titles = app.backup_titles();
     div().when(!titles.is_empty(), |section| {
         section
             .flex()
@@ -431,7 +411,7 @@ fn next_panel(
         );
     }
     for (rank, suggestion) in next.into_iter().enumerate() {
-        let identity = suggestion.identity.clone();
+        let path = suggestion.path.clone();
         panel = panel.child(
             div()
                 .id(("next-track", rank))
@@ -444,7 +424,7 @@ fn next_panel(
                 .hover(|row| row.bg(theme::RAISED))
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    this.insert_suggestion(identity.clone(), cx);
+                    this.insert_suggestion(&path, cx);
                 }))
                 .child(
                     div()

@@ -1,34 +1,59 @@
 //! What set preparation knows about each track: its key, tempo and energy for suggestions and
 //! seams, and what its file and rekordbox's analysis say about whether it is ready to mix.
 
-use std::path::Path;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 use dubplate_prep::{
-    Key, PrepTrack, ProposedCues, ReadyReport, TrackReadiness, propose_mix_cues, ready_report,
+    Key, PrepTrack, ProposedCues, ReadyReport, SetEntry, TrackReadiness, propose_mix_cues,
+    ready_report,
 };
 use dubplate_rekordbox::TrackAnalysis;
 
 use crate::collection::{Collection, CollectionTrack, TrackOrigin};
-use crate::set::MixCues;
 
-/// The suggestion engine's view of every track, in the collection's order. A track is named by
-/// its identity, so tracks from music folders, which have no rekordbox id, stay apart.
-pub fn catalogue(collection: &Collection) -> Vec<PrepTrack> {
-    collection
-        .indexed_tracks()
-        .map(|(_, track)| prep_track(track))
-        .collect()
+/// The suggestion engine's view of every track that has an audio file, found by its file.
+#[derive(Debug, Default)]
+pub struct Catalogue {
+    /// The tracks, in the collection's order.
+    pub tracks: Vec<PrepTrack>,
+    by_path: HashMap<PathBuf, usize>,
 }
 
-fn prep_track(entry: &CollectionTrack) -> PrepTrack {
-    PrepTrack {
-        rekordbox_id: entry.identity(),
+impl Catalogue {
+    /// The catalogue of `collection`. Disk-free, but it touches every track: build it off the
+    /// interface thread with the collection.
+    pub fn build(collection: &Collection) -> Self {
+        let tracks: Vec<PrepTrack> = collection
+            .indexed_tracks()
+            .filter_map(|(_, track)| prep_track(track))
+            .collect();
+        let by_path = tracks
+            .iter()
+            .enumerate()
+            .map(|(position, track)| (track.track_path.clone(), position))
+            .collect();
+        Self { tracks, by_path }
+    }
+
+    /// The track whose audio file is `path`.
+    pub fn get(&self, path: &Path) -> Option<&PrepTrack> {
+        self.tracks.get(*self.by_path.get(path)?)
+    }
+}
+
+/// A library track as the suggestion engine sees it, from what rekordbox or the file's tags
+/// say. Tracks without an audio file have nothing to mix and are left out.
+fn prep_track(entry: &CollectionTrack) -> Option<PrepTrack> {
+    Some(PrepTrack {
+        track_path: entry.track.file_path.clone()?,
+        rekordbox_id: (entry.origin == TrackOrigin::Rekordbox).then(|| entry.track.id.clone()),
         title: entry.row.title.to_string(),
         artist: entry.row.artist.to_string(),
         key: entry.track.key.as_deref().and_then(Key::parse_file_key),
         bpm: entry.track.bpm.map(|bpm| bpm as f32),
         energy: None,
-    }
+    })
 }
 
 /// What reading a set track's file and analysis found.
@@ -40,6 +65,20 @@ pub struct TrackCheck {
     pub has_grid: bool,
     /// The mix-in and mix-out Dubplate proposes from the grid and phrases.
     pub proposal: ProposedCues,
+}
+
+impl TrackCheck {
+    /// A set track whose file the library no longer lists: only whether the file is there.
+    pub fn not_in_library(path: &Path) -> Self {
+        Self {
+            file_found: path.is_file(),
+            has_grid: false,
+            proposal: ProposedCues {
+                mix_in: None,
+                mix_out: None,
+            },
+        }
+    }
 }
 
 /// Looks at a track's file and rekordbox's analysis of it. Disk work: run it off the interface
@@ -79,24 +118,22 @@ pub fn check_track(entry: &CollectionTrack, share_directory: Option<&Path>) -> T
 /// Whether a set track is ready to mix. Until the DJ can confirm a grid by ear, a grid
 /// rekordbox analysed counts as confirmed. A track not checked yet is reported by what is known
 /// without the disk.
-pub fn readiness(track: &PrepTrack, check: Option<&TrackCheck>, cues: MixCues) -> ReadyReport {
+pub fn readiness(track: &PrepTrack, check: Option<&TrackCheck>, entry: &SetEntry) -> ReadyReport {
     ready_report(&TrackReadiness {
         file_found: check.is_none_or(|check| check.file_found),
-        grid_confirmed: check.is_some_and(|check| check.has_grid),
-        has_mix_in_cue: cues.mix_in_ms.is_some(),
-        has_mix_out_cue: cues.mix_out_ms.is_some(),
+        grid_confirmed: entry.grid_confirmed || check.is_some_and(|check| check.has_grid),
+        has_mix_in_cue: entry.mix_in_ms.is_some(),
+        has_mix_out_cue: entry.mix_out_ms.is_some(),
         key_known: track.key.is_some(),
     })
 }
 
-/// The cues a proposal would set, keeping any the DJ already set.
-pub fn accept_proposal(current: MixCues, proposal: ProposedCues) -> MixCues {
-    MixCues {
-        mix_in_ms: current.mix_in_ms.or(proposal.mix_in.map(|cue| cue.time_ms)),
-        mix_out_ms: current
-            .mix_out_ms
-            .or(proposal.mix_out.map(|cue| cue.time_ms)),
-    }
+/// The mix-in and mix-out a proposal would leave the entry with, keeping any cue already set.
+pub fn accept_proposal(entry: &SetEntry, proposal: ProposedCues) -> (Option<u32>, Option<u32>) {
+    (
+        entry.mix_in_ms.or(proposal.mix_in.map(|cue| cue.time_ms)),
+        entry.mix_out_ms.or(proposal.mix_out.map(|cue| cue.time_ms)),
+    )
 }
 
 /// How one track hands over to the next, in words: the key move as Euphoria names it, and the
@@ -162,7 +199,8 @@ mod tests {
 
     fn track(key: Option<&str>, bpm: Option<f32>) -> PrepTrack {
         PrepTrack {
-            rekordbox_id: "id".to_owned(),
+            track_path: PathBuf::from("/Music/Track.mp3"),
+            rekordbox_id: None,
             title: "Title".to_owned(),
             artist: "Artist".to_owned(),
             key: key.and_then(Key::parse_file_key),
@@ -203,13 +241,14 @@ mod tests {
                 mix_out: None,
             },
         };
-        let cues = MixCues {
+        let cues = SetEntry {
             mix_in_ms: Some(1),
             mix_out_ms: Some(2),
+            ..SetEntry::default()
         };
-        assert!(readiness(&known, Some(&check), cues).is_ready());
+        assert!(readiness(&known, Some(&check), &cues).is_ready());
         assert_eq!(
-            readiness(&known, Some(&check), MixCues::default()).badge(),
+            readiness(&known, Some(&check), &SetEntry::default()).badge(),
             "No mix-in cue +1"
         );
         let missing = TrackCheck {
@@ -217,11 +256,11 @@ mod tests {
             ..check
         };
         assert_eq!(
-            readiness(&known, Some(&missing), cues).badge(),
+            readiness(&known, Some(&missing), &cues).badge(),
             "File missing"
         );
         assert_eq!(
-            readiness(&track(None, None), None, cues).badge(),
+            readiness(&track(None, None), None, &cues).badge(),
             "Grid unconfirmed +1"
         );
     }
@@ -236,16 +275,13 @@ mod tests {
             mix_in: Some(cue(16_000)),
             mix_out: Some(cue(300_000)),
         };
-        let kept = MixCues {
+        let kept = SetEntry {
             mix_in_ms: Some(8_000),
-            mix_out_ms: None,
+            ..SetEntry::default()
         };
         assert_eq!(
-            accept_proposal(kept, proposal),
-            MixCues {
-                mix_in_ms: Some(8_000),
-                mix_out_ms: Some(300_000)
-            }
+            accept_proposal(&kept, proposal),
+            (Some(8_000), Some(300_000))
         );
     }
 }

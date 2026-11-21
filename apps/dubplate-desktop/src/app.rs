@@ -55,14 +55,13 @@ use crate::hardware::{
 use crate::library::LibrarySources;
 use crate::loading::{LoadRefusal, LoadSource, check_deck_free, check_file};
 use crate::meter::PeakMeter;
-use crate::prep::TrackCheck;
-use crate::set::{SessionStorage, SetEditor};
+use crate::prep::{Catalogue, TrackCheck};
+use crate::set::SetEditor;
 use crate::settings::Settings;
 use crate::shortcuts::{Perform, WINDOW_CONTEXT};
 use crate::theme;
 use crate::transport::{self, CueDown, is_at_cue, other_deck};
 use crate::waveform::Zoom;
-use dubplate_prep::PrepTrack;
 use prepare::PrepareFocus;
 
 /// Frames per device buffer: about 5 ms at 48 kHz.
@@ -156,12 +155,12 @@ pub struct DubplateApp {
     lights_settling: bool,
     effect_focus: EffectUnitId,
     mode: Mode,
-    set_editor: SetEditor,
+    set_editor: Option<SetEditor>,
     set_selection: Option<usize>,
     prepare_focus: PrepareFocus,
-    track_checks: HashMap<String, TrackCheck>,
-    checks_pending: HashSet<String>,
-    catalogue: Arc<Vec<PrepTrack>>,
+    track_checks: HashMap<PathBuf, TrackCheck>,
+    checks_pending: HashSet<PathBuf>,
+    catalogue: Arc<Catalogue>,
     effect_menu: Option<EffectUnitId>,
     refocus_window: bool,
     effect_search: Entity<InputState>,
@@ -241,6 +240,11 @@ impl DubplateApp {
             }
         };
         keep_lights_moving(cx);
+        let set_editor = Settings::sets_path()
+            .map_err(|error| error.to_string())
+            .and_then(|path| SetEditor::open(&path).map_err(|error| error.to_string()))
+            .map_err(|problem| problems.push(format!("Sets cannot be kept: {problem}")))
+            .ok();
         let sources =
             LibrarySources::new(settings.music_folders.clone(), settings.import_rekordbox);
         let mut app = Self {
@@ -264,7 +268,7 @@ impl DubplateApp {
             lights_settling: false,
             effect_focus: EffectUnitId::ALL[0],
             mode: Mode::Perform,
-            set_editor: SetEditor::open(Box::new(SessionStorage::default())),
+            set_editor,
             set_selection: None,
             prepare_focus: PrepareFocus::Library,
             track_checks: HashMap::new(),

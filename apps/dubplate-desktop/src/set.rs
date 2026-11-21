@@ -1,245 +1,277 @@
-//! The set being prepared: its tracks in order, the backups beside it, and the plan of each
-//! seam. Tracks are named by their identity (a rekordbox id or a file path), so the set does not
-//! depend on where the library happens to list them. Every edit can be undone for the session.
+//! The set being prepared, kept in Dubplate's own set database: its tracks in order, the
+//! backups beside it, and the plan of each seam. Tracks are named by their file, so a set holds
+//! tracks from music folders and from rekordbox alike. Every edit saves at once and can be
+//! undone for the session.
 
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-/// How long a set aims to run unless the DJ says otherwise.
-pub const DEFAULT_TARGET: Duration = Duration::from_secs(2 * 60 * 60);
+use dubplate_prep::{
+    CueSource, EqIntent, Seam, SeamStatus, Set, SetEntry, SetId, SetList, SetStore, StoreError,
+};
+
+/// The name of the set made on first launch.
+const FIRST_SET_NAME: &str = "Set";
+/// How long the first set aims to run, in minutes.
+const FIRST_SET_MINUTES: u32 = 120;
+/// How long a new seam overlaps, in bars, until the seam strip lets the DJ say.
+const DEFAULT_OVERLAP_BARS: u32 = 16;
 /// How many edits undo goes back.
 const UNDO_DEPTH: usize = 200;
 
-/// A mix cue the DJ accepted, in milliseconds from the start of the track.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct MixCues {
-    /// Where the track comes in under the one before.
-    pub mix_in_ms: Option<u32>,
-    /// Where it starts handing over to the next.
-    pub mix_out_ms: Option<u32>,
-}
-
-/// One track of the set.
+/// A track to put in a set: its file and, when it comes from rekordbox, its id there.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SetEntry {
-    /// The track's identity in the library.
-    pub track: String,
-    /// The mix cues the DJ accepted for it.
-    pub cues: MixCues,
-    /// Whether the seam into the next track is left to the moment: it never warns.
-    pub free_into_next: bool,
+pub struct SetTrackRef {
+    /// The audio file.
+    pub path: PathBuf,
+    /// rekordbox's id for it, if rekordbox holds it.
+    pub rekordbox_id: Option<String>,
 }
 
-impl SetEntry {
-    fn new(track: String) -> Self {
-        Self {
-            track,
-            cues: MixCues::default(),
-            free_into_next: false,
-        }
-    }
-}
-
-/// The set and its backups.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DjSet {
-    /// The set's name.
-    pub name: String,
-    /// How long the set should run.
-    pub target: Duration,
-    /// The tracks, in playing order.
-    pub entries: Vec<SetEntry>,
-    /// Tracks kept aside in case the room asks for something else.
-    pub backups: Vec<String>,
-}
-
-impl Default for DjSet {
-    fn default() -> Self {
-        Self {
-            name: "Set".to_owned(),
-            target: DEFAULT_TARGET,
-            entries: Vec::new(),
-            backups: Vec::new(),
-        }
-    }
-}
-
-impl DjSet {
-    /// Whether the track is in the set.
-    pub fn contains(&self, track: &str) -> bool {
-        self.entries.iter().any(|entry| entry.track == track)
-    }
-}
-
-/// Where a set is kept between launches. The app holds sets in memory until the set store
-/// lands; the store only has to read and write whole sets.
-pub trait SetStorage {
-    /// The set saved last, if any.
-    fn load(&self) -> Option<DjSet>;
-    /// Keeps `set`.
-    fn save(&mut self, set: &DjSet);
-}
-
-/// Keeps the set for the session only.
-#[derive(Debug, Default)]
-pub struct SessionStorage {
-    saved: Option<DjSet>,
-}
-
-impl SetStorage for SessionStorage {
-    fn load(&self) -> Option<DjSet> {
-        self.saved.clone()
-    }
-
-    fn save(&mut self, set: &DjSet) {
-        self.saved = Some(set.clone());
-    }
-}
-
-/// The set being edited, with undo, saving after every edit.
+/// The set being edited.
 pub struct SetEditor {
-    set: DjSet,
-    undo: Vec<DjSet>,
-    storage: Box<dyn SetStorage>,
+    store: SetStore,
+    id: SetId,
+    set: Set,
+    undo: Vec<Set>,
 }
 
 impl SetEditor {
-    /// Opens the set `storage` keeps, or an empty one.
-    pub fn open(storage: Box<dyn SetStorage>) -> Self {
-        Self {
-            set: storage.load().unwrap_or_default(),
+    /// Opens the set database at `path` on its first set, making one when there is none.
+    pub fn open(path: &Path) -> Result<Self, StoreError> {
+        let mut store = SetStore::open(path)?;
+        let id = match store.list_sets()?.first() {
+            Some((id, _, _)) => *id,
+            None => store.create_set(FIRST_SET_NAME, FIRST_SET_MINUTES)?,
+        };
+        let set = store.load_set(id)?;
+        Ok(Self {
+            store,
+            id,
+            set,
             undo: Vec::new(),
-            storage,
-        }
+        })
     }
 
     /// The set as it stands.
-    pub fn set(&self) -> &DjSet {
+    pub fn set(&self) -> &Set {
         &self.set
     }
 
-    /// Adds `track` at the end, unless it is in the set already. Returns where it is.
-    pub fn add(&mut self, track: String) -> usize {
-        if let Some(position) = self.position(&track) {
-            return position;
-        }
-        self.edit(|set| set.entries.push(SetEntry::new(track)));
-        self.set.entries.len() - 1
+    /// How long the set aims to run.
+    pub fn target(&self) -> Duration {
+        Duration::from_secs(u64::from(self.set.target_minutes) * 60)
     }
 
-    /// Puts `track` right after `position`, or first when the set is empty, moving it there if
-    /// it is in the set already. Returns where it is.
-    pub fn insert_after(&mut self, position: Option<usize>, track: String) -> usize {
-        let mut target = position.map_or(0, |position| position + 1);
-        self.edit(|set| {
-            let entry = match set.entries.iter().position(|entry| entry.track == track) {
-                Some(existing) => {
-                    if existing < target {
-                        target -= 1;
-                    }
-                    set.entries.remove(existing)
-                }
-                None => SetEntry::new(track),
-            };
-            target = target.min(set.entries.len());
-            set.entries.insert(target, entry);
-        });
-        target
+    /// The set's tracks, in playing order.
+    pub fn tracks(&self) -> Vec<&SetEntry> {
+        self.set.main_entries().collect()
     }
 
-    /// Moves the track at `from` to `to`. Returns where it is now.
-    pub fn move_track(&mut self, from: usize, to: usize) -> usize {
-        let count = self.set.entries.len();
-        if from >= count {
-            return from;
-        }
-        let to = to.min(count - 1);
-        if from != to {
-            self.edit(|set| {
-                let entry = set.entries.remove(from);
-                set.entries.insert(to, entry);
-            });
-        }
-        to
-    }
-
-    /// Takes the track at `position` out of the set.
-    pub fn remove(&mut self, position: usize) {
-        if position < self.set.entries.len() {
-            self.edit(|set| {
-                set.entries.remove(position);
-            });
-        }
-    }
-
-    /// Switches the seam after `position` between planned and free.
-    pub fn toggle_free(&mut self, position: usize) {
-        if position + 1 < self.set.entries.len() {
-            self.edit(|set| {
-                let entry = &mut set.entries[position];
-                entry.free_into_next = !entry.free_into_next;
-            });
-        }
-    }
-
-    /// Keeps the mix cues `cues` for the track at `position`.
-    pub fn set_cues(&mut self, position: usize, cues: MixCues) {
-        if self
-            .set
-            .entries
-            .get(position)
-            .is_some_and(|entry| entry.cues != cues)
-        {
-            self.edit(|set| set.entries[position].cues = cues);
-        }
-    }
-
-    /// Adds `track` to the backups, or takes it off when it is there.
-    pub fn toggle_backup(&mut self, track: String) {
-        self.edit(
-            |set| match set.backups.iter().position(|backup| *backup == track) {
-                Some(position) => {
-                    set.backups.remove(position);
-                }
-                None => set.backups.push(track),
-            },
-        );
-    }
-
-    /// Goes back one edit. Returns whether there was one.
-    pub fn undo(&mut self) -> bool {
-        let Some(previous) = self.undo.pop() else {
-            return false;
-        };
-        self.set = previous;
-        self.storage.save(&self.set);
-        true
-    }
-
-    /// Where `track` is in the set.
-    pub fn position(&self, track: &str) -> Option<usize> {
+    /// The backups, in the order they were kept.
+    pub fn backups(&self) -> Vec<&SetEntry> {
         self.set
             .entries
             .iter()
-            .position(|entry| entry.track == track)
+            .filter(|entry| entry.is_backup)
+            .collect()
     }
 
-    fn edit(&mut self, change: impl FnOnce(&mut DjSet)) {
-        let before = self.set.clone();
-        change(&mut self.set);
-        if self.set != before {
-            if self.undo.len() == UNDO_DEPTH {
-                self.undo.remove(0);
-            }
-            self.undo.push(before);
-            self.storage.save(&self.set);
+    /// Where the track with this file is in the set.
+    pub fn position(&self, path: &Path) -> Option<usize> {
+        self.set
+            .main_entries()
+            .position(|entry| entry.track_path == path)
+    }
+
+    /// Whether the seam after `position` is left to the moment, so it never warns.
+    pub fn is_free_after(&self, position: usize) -> bool {
+        self.set
+            .seam_after(position)
+            .is_some_and(|seam| seam.status == SeamStatus::Free)
+    }
+
+    /// Adds a track at the end, unless it is in the set already. Returns where it is.
+    pub fn add(&mut self, track: SetTrackRef) -> Result<usize, StoreError> {
+        if let Some(position) = self.position(&track.path) {
+            return Ok(position);
         }
+        let position = self.tracks().len();
+        self.edit(|store, id| store.insert_entry(id, SetList::Main, position, entry(track)))?;
+        Ok(position)
+    }
+
+    /// Puts a track right after `after`, or first, moving it there if it is in the set
+    /// already. Returns where it is.
+    pub fn insert_after(
+        &mut self,
+        after: Option<usize>,
+        track: SetTrackRef,
+    ) -> Result<usize, StoreError> {
+        let mut target = after.map_or(0, |position| position + 1);
+        match self.position(&track.path) {
+            Some(existing) => {
+                if existing < target {
+                    target -= 1;
+                }
+                let target = target.min(self.tracks().len().saturating_sub(1));
+                self.move_track(existing, target)
+            }
+            None => {
+                let target = target.min(self.tracks().len());
+                self.edit(|store, id| store.insert_entry(id, SetList::Main, target, entry(track)))?;
+                Ok(target)
+            }
+        }
+    }
+
+    /// Moves the track at `from` to `to`. Returns where it is now.
+    pub fn move_track(&mut self, from: usize, to: usize) -> Result<usize, StoreError> {
+        let count = self.tracks().len();
+        if from >= count {
+            return Ok(from);
+        }
+        let to = to.min(count - 1);
+        if from != to {
+            self.edit(|store, id| store.move_entry(id, SetList::Main, from, to))?;
+        }
+        Ok(to)
+    }
+
+    /// Takes the track at `position` out of the set.
+    pub fn remove(&mut self, position: usize) -> Result<(), StoreError> {
+        if position < self.tracks().len() {
+            self.edit(|store, id| store.remove_entry(id, SetList::Main, position))?;
+        }
+        Ok(())
+    }
+
+    /// Switches the seam after `position` between planned and free.
+    pub fn toggle_free(&mut self, position: usize) -> Result<(), StoreError> {
+        let tracks = self.tracks();
+        let (Some(from), Some(to)) = (tracks.get(position), tracks.get(position + 1)) else {
+            return Ok(());
+        };
+        let mut seam = self.set.seam_after(position).cloned().unwrap_or(Seam {
+            from_track_path: from.track_path.clone(),
+            to_track_path: to.track_path.clone(),
+            overlap_bars: DEFAULT_OVERLAP_BARS,
+            eq_intent: EqIntent::None,
+            status: SeamStatus::Planned,
+            note: String::new(),
+        });
+        seam.status = match seam.status {
+            SeamStatus::Planned => SeamStatus::Free,
+            SeamStatus::Free => SeamStatus::Planned,
+        };
+        self.edit(|store, id| store.set_seam(id, seam))
+    }
+
+    /// Keeps mix cues Dubplate proposed for the track at `position`.
+    pub fn set_proposed_cues(
+        &mut self,
+        position: usize,
+        mix_in_ms: Option<u32>,
+        mix_out_ms: Option<u32>,
+    ) -> Result<(), StoreError> {
+        let Some(current) = self.tracks().get(position).map(|entry| (*entry).clone()) else {
+            return Ok(());
+        };
+        let updated = SetEntry {
+            mix_in_ms,
+            mix_out_ms,
+            cue_source: Some(CueSource::Euphoria),
+            ..current.clone()
+        };
+        if updated != current {
+            self.edit(|store, id| store.update_entry(id, SetList::Main, position, updated))?;
+        }
+        Ok(())
+    }
+
+    /// Keeps a track as a backup, or stops keeping it.
+    pub fn toggle_backup(&mut self, track: SetTrackRef) -> Result<(), StoreError> {
+        let backups = self.backups();
+        match backups
+            .iter()
+            .position(|entry| entry.track_path == track.path)
+        {
+            Some(position) => {
+                self.edit(|store, id| store.remove_entry(id, SetList::Backups, position))
+            }
+            None => {
+                let position = backups.len();
+                self.edit(|store, id| {
+                    store.insert_entry(id, SetList::Backups, position, entry(track))
+                })
+            }
+        }
+    }
+
+    /// Goes back one edit, writing the set as it was. Returns whether there was one.
+    pub fn undo(&mut self) -> Result<bool, StoreError> {
+        let Some(previous) = self.undo.pop() else {
+            return Ok(false);
+        };
+        let id = self.id;
+        for list in [SetList::Main, SetList::Backups] {
+            let count = self
+                .set
+                .entries
+                .iter()
+                .filter(|entry| entry.is_backup == list.is_backup())
+                .count();
+            for _ in 0..count {
+                self.store.remove_entry(id, list, 0)?;
+            }
+        }
+        for list in [SetList::Main, SetList::Backups] {
+            let entries = previous
+                .entries
+                .iter()
+                .filter(|entry| entry.is_backup == list.is_backup());
+            for (position, entry) in entries.enumerate() {
+                self.store.insert_entry(id, list, position, entry.clone())?;
+            }
+        }
+        for seam in &previous.seams {
+            self.store.set_seam(id, seam.clone())?;
+        }
+        self.set = self.store.load_set(id)?;
+        Ok(true)
+    }
+
+    /// Carries out one change on the store, then reads the set back, keeping what it was for
+    /// undo.
+    fn edit(
+        &mut self,
+        change: impl FnOnce(&mut SetStore, SetId) -> Result<(), StoreError>,
+    ) -> Result<(), StoreError> {
+        let before = self.set.clone();
+        change(&mut self.store, self.id)?;
+        self.set = self.store.load_set(self.id)?;
+        if self.undo.len() == UNDO_DEPTH {
+            self.undo.remove(0);
+        }
+        self.undo.push(before);
+        Ok(())
+    }
+}
+
+fn entry(track: SetTrackRef) -> SetEntry {
+    SetEntry {
+        track_path: track.path,
+        rekordbox_id: track.rekordbox_id,
+        ..SetEntry::default()
     }
 }
 
 /// `duration` as `h:mm:ss`, or `m:ss` under an hour.
 pub fn running_time(duration: Duration) -> String {
     let seconds = duration.as_secs();
-    let (hours, minutes, rest) = (seconds / 3600, seconds / 60 % 60, seconds % 60);
+    let hours = seconds / 3600;
+    let minutes = seconds / 60 % 60;
+    let rest = seconds % 60;
     if hours > 0 {
         format!("{hours}:{minutes:02}:{rest:02}")
     } else {
@@ -249,101 +281,112 @@ pub fn running_time(duration: Duration) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::cell::RefCell;
-    use std::rc::Rc;
-
     use super::*;
 
-    fn tracks(editor: &SetEditor) -> Vec<&str> {
+    fn track(name: &str) -> SetTrackRef {
+        SetTrackRef {
+            path: PathBuf::from(format!("/Music/{name}.mp3")),
+            rekordbox_id: None,
+        }
+    }
+
+    fn names(editor: &SetEditor) -> Vec<String> {
         editor
-            .set()
-            .entries
+            .tracks()
             .iter()
-            .map(|entry| entry.track.as_str())
+            .map(|entry| {
+                entry
+                    .track_path
+                    .file_stem()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            })
             .collect()
     }
 
-    fn editor() -> SetEditor {
-        SetEditor::open(Box::new(SessionStorage::default()))
+    fn editor(directory: &tempfile::TempDir) -> SetEditor {
+        SetEditor::open(&directory.path().join("sets.sqlite")).unwrap()
     }
 
     #[test]
     fn tracks_are_added_once_and_inserted_after_the_selection() {
-        let mut editor = editor();
-        assert_eq!(editor.add("a".to_owned()), 0);
-        assert_eq!(editor.add("c".to_owned()), 1);
-        assert_eq!(editor.add("a".to_owned()), 0, "a track is in a set once");
-        assert_eq!(editor.insert_after(Some(0), "b".to_owned()), 1);
-        assert_eq!(tracks(&editor), ["a", "b", "c"]);
-        assert_eq!(editor.insert_after(Some(2), "a".to_owned()), 2);
-        assert_eq!(tracks(&editor), ["b", "c", "a"]);
-        assert_eq!(editor.insert_after(None, "z".to_owned()), 0);
-        assert_eq!(tracks(&editor), ["z", "b", "c", "a"]);
+        let directory = tempfile::tempdir().unwrap();
+        let mut editor = editor(&directory);
+        assert_eq!(editor.add(track("a")).unwrap(), 0);
+        assert_eq!(editor.add(track("c")).unwrap(), 1);
+        assert_eq!(editor.add(track("a")).unwrap(), 0, "a track is in a set once");
+        assert_eq!(editor.insert_after(Some(0), track("b")).unwrap(), 1);
+        assert_eq!(names(&editor), ["a", "b", "c"]);
+        assert_eq!(editor.insert_after(Some(2), track("a")).unwrap(), 2);
+        assert_eq!(names(&editor), ["b", "c", "a"]);
+        assert_eq!(editor.insert_after(None, track("z")).unwrap(), 0);
+        assert_eq!(names(&editor), ["z", "b", "c", "a"]);
     }
 
     #[test]
     fn tracks_move_and_leave_and_every_edit_undoes() {
-        let mut editor = editor();
-        for track in ["a", "b", "c"] {
-            editor.add(track.to_owned());
+        let directory = tempfile::tempdir().unwrap();
+        let mut editor = editor(&directory);
+        for name in ["a", "b", "c"] {
+            editor.add(track(name)).unwrap();
         }
-        assert_eq!(editor.move_track(2, 0), 0);
-        assert_eq!(tracks(&editor), ["c", "a", "b"]);
-        assert_eq!(editor.move_track(0, 9), 2);
-        assert_eq!(tracks(&editor), ["a", "b", "c"]);
-        editor.remove(1);
-        assert_eq!(tracks(&editor), ["a", "c"]);
-        assert!(editor.undo());
-        assert_eq!(tracks(&editor), ["a", "b", "c"]);
-        assert!(editor.undo() && editor.undo());
-        assert_eq!(tracks(&editor), ["a", "b", "c"]);
-        while editor.undo() {}
-        assert!(editor.set().entries.is_empty());
+        assert_eq!(editor.move_track(2, 0).unwrap(), 0);
+        assert_eq!(names(&editor), ["c", "a", "b"]);
+        assert_eq!(editor.move_track(0, 9).unwrap(), 2);
+        assert_eq!(names(&editor), ["a", "b", "c"]);
+        editor.remove(1).unwrap();
+        assert_eq!(names(&editor), ["a", "c"]);
+        assert!(editor.undo().unwrap());
+        assert_eq!(names(&editor), ["a", "b", "c"]);
+        while editor.undo().unwrap() {}
+        assert!(editor.tracks().is_empty());
     }
 
     #[test]
-    fn seams_are_planned_or_free_and_cues_are_kept() {
-        let mut editor = editor();
-        editor.add("a".to_owned());
-        editor.toggle_free(0);
-        assert!(
-            !editor.set().entries[0].free_into_next,
-            "the last track has no seam"
-        );
-        editor.add("b".to_owned());
-        editor.toggle_free(0);
-        assert!(editor.set().entries[0].free_into_next);
-        let cues = MixCues {
-            mix_in_ms: Some(32_000),
-            mix_out_ms: Some(300_000),
-        };
-        editor.set_cues(1, cues);
-        assert_eq!(editor.set().entries[1].cues, cues);
-        editor.toggle_backup("x".to_owned());
-        editor.toggle_backup("y".to_owned());
-        editor.toggle_backup("x".to_owned());
-        assert_eq!(editor.set().backups, ["y"]);
+    fn seams_are_planned_or_free_and_follow_the_pair() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut editor = editor(&directory);
+        editor.add(track("a")).unwrap();
+        editor.toggle_free(0).unwrap();
+        assert!(!editor.is_free_after(0), "the last track has no seam");
+        editor.add(track("b")).unwrap();
+        editor.toggle_free(0).unwrap();
+        assert!(editor.is_free_after(0));
+        editor.insert_after(None, track("z")).unwrap();
+        assert!(!editor.is_free_after(0), "z into a was never marked");
+        assert!(editor.is_free_after(1), "a into b is still free");
+        editor.undo().unwrap();
+        editor.toggle_free(0).unwrap();
+        assert!(!editor.is_free_after(0));
     }
 
     #[test]
-    fn every_edit_is_saved_at_once() {
-        #[derive(Default)]
-        struct Recorder(Rc<RefCell<Vec<usize>>>);
-        impl SetStorage for Recorder {
-            fn load(&self) -> Option<DjSet> {
-                None
-            }
-            fn save(&mut self, set: &DjSet) {
-                self.0.borrow_mut().push(set.entries.len());
-            }
+    fn cues_and_backups_are_kept_and_the_set_survives_a_restart() {
+        let directory = tempfile::tempdir().unwrap();
+        {
+            let mut editor = editor(&directory);
+            editor.add(track("a")).unwrap();
+            editor
+                .set_proposed_cues(0, Some(32_000), Some(300_000))
+                .unwrap();
+            editor.toggle_backup(track("x")).unwrap();
+            editor.toggle_backup(track("y")).unwrap();
+            editor.toggle_backup(track("x")).unwrap();
         }
-        let saves = Rc::new(RefCell::new(Vec::new()));
-        let mut editor = SetEditor::open(Box::new(Recorder(Rc::clone(&saves))));
-        editor.add("a".to_owned());
-        editor.add("a".to_owned());
-        editor.add("b".to_owned());
-        editor.undo();
-        assert_eq!(*saves.borrow(), [1, 2, 1]);
+        let reopened = editor(&directory);
+        assert_eq!(names(&reopened), ["a"]);
+        let first = reopened.tracks()[0].clone();
+        assert_eq!(first.mix_in_ms, Some(32_000));
+        assert_eq!(first.mix_out_ms, Some(300_000));
+        assert_eq!(first.cue_source, Some(CueSource::Euphoria));
+        let backups: Vec<PathBuf> = reopened
+            .backups()
+            .iter()
+            .map(|entry| entry.track_path.clone())
+            .collect();
+        assert_eq!(backups, [PathBuf::from("/Music/y.mp3")]);
+        assert_eq!(reopened.target(), Duration::from_secs(2 * 60 * 60));
     }
 
     #[test]
