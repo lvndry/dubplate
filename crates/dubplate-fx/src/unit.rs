@@ -1,5 +1,6 @@
 use crate::beat::BeatLength;
 use crate::context::{BlockTiming, ProcessContext};
+use crate::dsp::loudness::Headroom;
 use crate::dsp::shaping::{sanitize_input, sanitize_output};
 use crate::dsp::smoothing::Smoothed;
 use crate::effect::EffectKind;
@@ -17,7 +18,8 @@ pub(crate) enum MixLaw {
     /// modulation, gate, crusher).
     Crossfade,
     /// Both at full level in the middle; past it the dry signal fades out. Echo and reverb
-    /// add to the music up to half way and replace it beyond.
+    /// add to the music up to half way and replace it beyond. Because the effect adds to the
+    /// music, its level is held under the room the dry signal leaves below full scale.
     Blend,
 }
 
@@ -60,6 +62,7 @@ pub(crate) trait Kernel: Send {
 /// The switching, mixing and safety shared by every effect.
 pub(crate) struct Unit<K> {
     pub(crate) kernel: K,
+    headroom: Headroom,
     enabled: bool,
     mix: Smoothed,
     presence: Smoothed,
@@ -72,6 +75,7 @@ impl<K: Kernel> Unit<K> {
     pub(crate) fn new(kernel: K, mix: f32) -> Self {
         Self {
             kernel,
+            headroom: Headroom::new(),
             enabled: false,
             mix: Smoothed::new(mix.clamp(0.0, 1.0), MIX_SMOOTHING_SECONDS),
             presence: Smoothed::new(0.0, SWITCH_SMOOTHING_SECONDS),
@@ -100,6 +104,7 @@ impl<K: Kernel> Unit<K> {
         if enabled {
             if self.idle {
                 self.mix.snap_to_target();
+                self.headroom.reset();
                 if !K::TRAILS && !K::LISTENS_WHEN_OFF {
                     self.kernel.reset();
                 }
@@ -120,6 +125,7 @@ impl<K: Kernel> Unit<K> {
 
     pub(crate) fn reset(&mut self) {
         self.kernel.reset();
+        self.headroom.reset();
         self.mix.snap_to_target();
         self.presence.snap_to_target();
         self.quiet_samples = 0;
@@ -137,6 +143,7 @@ impl<K: Kernel> Unit<K> {
             self.sample_rate = timing.sample_rate;
             self.mix.prepare(timing.sample_rate);
             self.presence.prepare(timing.sample_rate);
+            self.headroom.prepare(timing.sample_rate);
         }
         self.kernel.begin_block(&timing);
 
@@ -154,7 +161,7 @@ impl<K: Kernel> Unit<K> {
             let presence = self.presence.next();
             let (dry_mix, wet_mix) = K::MIX_LAW.gains(self.mix.next());
             let dry_gain = presence * dry_mix + (1.0 - presence);
-            let (send_gain, wet_gain) = if K::TRAILS {
+            let (send_gain, wanted_wet_gain) = if K::TRAILS {
                 (presence, wet_mix)
             } else {
                 (1.0, presence * wet_mix)
@@ -168,13 +175,18 @@ impl<K: Kernel> Unit<K> {
                 poisoned = true;
             }
 
+            let wet_gain = match K::MIX_LAW {
+                MixLaw::Crossfade => wanted_wet_gain,
+                MixLaw::Blend => self.headroom.wet_gain(dry, dry_gain, wet, wanted_wet_gain),
+            };
+
             *left_sample = sanitize_output(dry[0] * dry_gain + wet[0] * wet_gain);
             *right_sample = sanitize_output(dry[1] * dry_gain + wet[1] * wet_gain);
             beat_position += timing.beats_per_sample;
 
             if !self.enabled && self.presence.is_settled() {
-                let quiet = (wet[0] * wet_gain).abs() < QUIET_LEVEL
-                    && (wet[1] * wet_gain).abs() < QUIET_LEVEL;
+                let quiet = (wet[0] * wanted_wet_gain).abs() < QUIET_LEVEL
+                    && (wet[1] * wanted_wet_gain).abs() < QUIET_LEVEL;
                 self.quiet_samples = if quiet { self.quiet_samples + 1 } else { 0 };
             }
         }
