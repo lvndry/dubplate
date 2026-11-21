@@ -48,6 +48,23 @@ pub enum CueKind {
     },
 }
 
+impl CueKind {
+    /// The pad letter of a hot cue, from `A` to `H`. In `master.db` pads A to C are numbers
+    /// 1 to 3 and pads D to H are 5 to 9.
+    pub fn pad(self) -> Option<char> {
+        let index = match self {
+            Self::Hot {
+                number: number @ 1..=3,
+            } => number - 1,
+            Self::Hot {
+                number: number @ 5..=9,
+            } => number - 2,
+            _ => return None,
+        };
+        Some(char::from(b'A' + u8::try_from(index).ok()?))
+    }
+}
+
 /// A cue point or saved loop, from `djmdCue`.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Cue {

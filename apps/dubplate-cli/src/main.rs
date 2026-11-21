@@ -6,6 +6,8 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use dubplate_rekordbox::{DatabaseKey, Library, Playlist, PlaylistKind, Track};
 
+mod analysis;
+
 const KEY_ENVIRONMENT_VARIABLE: &str = "DUBPLATE_REKORDBOX_KEY";
 
 #[derive(Parser)]
@@ -40,6 +42,18 @@ enum RekordboxCommand {
         #[arg(long, default_value_t = 20)]
         limit: usize,
     },
+    /// Show a track's beat grid, cues, phrases and waveforms from rekordbox's analysis files.
+    /// The files are only read.
+    Analysis {
+        /// The track's rekordbox ID or its exact title.
+        track: String,
+        /// The library's master.db. Defaults to rekordbox's usual location for this user.
+        #[arg(long)]
+        library: Option<PathBuf>,
+        /// Print the whole analysis, waveforms included, as JSON.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -48,13 +62,19 @@ fn main() -> Result<()> {
             library,
             json,
             limit,
-        }) => {
-            let master_db = match library {
-                Some(path) => path,
-                None => default_master_db()?,
-            };
-            inspect(&master_db, json, limit)
-        }
+        }) => inspect(&master_db_or_default(library)?, json, limit),
+        Command::Rekordbox(RekordboxCommand::Analysis {
+            track,
+            library,
+            json,
+        }) => analysis(&master_db_or_default(library)?, &track, json),
+    }
+}
+
+fn master_db_or_default(library: Option<PathBuf>) -> Result<PathBuf> {
+    match library {
+        Some(path) => Ok(path),
+        None => default_master_db(),
     }
 }
 
@@ -103,6 +123,13 @@ fn inspect(master_db: &Path, json: bool, limit: usize) -> Result<()> {
         );
     }
     Ok(())
+}
+
+fn analysis(master_db: &Path, track: &str, json: bool) -> Result<()> {
+    let key = load_key()?;
+    let library = Library::open_copy(master_db, &key)
+        .with_context(|| format!("reading {}", master_db.display()))?;
+    analysis::show(&library, track, json)
 }
 
 fn print_playlist_tree(playlists: &[Playlist], parent_id: Option<&str>, depth: usize) {

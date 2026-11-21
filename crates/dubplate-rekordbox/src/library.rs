@@ -5,6 +5,7 @@ use rusqlite::{Connection, ErrorCode, OptionalExtension, Row};
 use serde::Serialize;
 use tempfile::TempDir;
 
+use crate::analysis::TrackAnalysis;
 use crate::error::Error;
 use crate::model::{Cue, CueKind, Playlist, PlaylistKind, Track};
 
@@ -43,6 +44,7 @@ pub struct LibrarySummary {
 /// The copy lives in a temporary directory that is removed when the `Library` is dropped.
 pub struct Library {
     connection: Connection,
+    share_directory: PathBuf,
     _copy_directory: TempDir,
 }
 
@@ -80,10 +82,33 @@ impl Library {
             }
             Err(other) => return Err(other.into()),
         }
+        let share_directory = master_db
+            .parent()
+            .unwrap_or_else(|| Path::new(""))
+            .join("share");
         Ok(Self {
             connection,
+            share_directory,
             _copy_directory: copy_directory,
         })
+    }
+
+    /// rekordbox's `share` directory, next to `master.db`, which holds the analysis files.
+    pub fn share_directory(&self) -> &Path {
+        &self.share_directory
+    }
+
+    /// Reads the beat grid, cues, phrases and waveforms of `track` from its analysis files.
+    ///
+    /// The files are opened read-only, in place: nothing under rekordbox's directories is
+    /// copied, written or locked.
+    pub fn analysis(&self, track: &Track) -> Result<TrackAnalysis, Error> {
+        let analysis_path = track
+            .analysis_path
+            .as_deref()
+            .filter(|path| !path.is_empty())
+            .ok_or_else(|| Error::NoAnalysis(track.id.clone()))?;
+        TrackAnalysis::read(&self.share_directory, analysis_path)
     }
 
     /// Counts the tracks, playlists and cues, and reads the schema version.

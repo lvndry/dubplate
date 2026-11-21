@@ -1,71 +1,11 @@
 //! Reads an encrypted library built from the rekordbox 7.2.19 schema.
 
-use std::path::{Path, PathBuf};
+mod common;
 
+use std::path::Path;
+
+use common::{TEST_KEY, build_library, open_fixture};
 use dubplate_rekordbox::{CueKind, DatabaseKey, Error, Library, PlaylistKind};
-use rusqlite::Connection;
-
-const TEST_KEY: &str = "dubplate-test-key";
-const SCHEMA: &str = include_str!("../schema/rekordbox-7.2.19.sql");
-const STAMP: &str = "2026-11-21 20:00:00.000 +00:00";
-
-fn build_library(directory: &Path) -> PathBuf {
-    let path = directory.join("master.db");
-    let connection = Connection::open(&path).expect("create fixture");
-    connection
-        .pragma_update(None, "key", TEST_KEY)
-        .expect("set key");
-    connection
-        .execute_batch(SCHEMA)
-        .expect("create rekordbox 7.2.19 tables");
-    let rows = format!(
-        "INSERT INTO djmdProperty (DBID, DBVersion, created_at, updated_at)
-             VALUES ('1', '6000', '{STAMP}', '{STAMP}');
-         INSERT INTO djmdArtist (ID, Name, created_at, updated_at) VALUES
-             ('a1', 'Mara Okonjo', '{STAMP}', '{STAMP}'),
-             ('a2', 'Teodor Ruse', '{STAMP}', '{STAMP}');
-         INSERT INTO djmdKey (ID, ScaleName, created_at, updated_at) VALUES
-             ('k1', '8A', '{STAMP}', '{STAMP}'),
-             ('k2', '9A', '{STAMP}', '{STAMP}');
-         INSERT INTO djmdContent
-             (ID, Title, ArtistID, KeyID, BPM, Length, FolderPath, Rating, rb_local_deleted,
-              created_at, updated_at) VALUES
-             ('t1', 'Saltwater Hymn', 'a1', 'k1', 12400, 408, '/Music/saltwater.flac', 4, 0,
-              '{STAMP}', '{STAMP}'),
-             ('t2', 'Low Orbit', 'a2', 'k2', 12550, 424, '/Music/low-orbit.mp3', 0, 0,
-              '{STAMP}', '{STAMP}'),
-             ('t3', 'Deleted Track', 'a1', 'k1', 12000, 300, '/Music/gone.wav', 0, 1,
-              '{STAMP}', '{STAMP}');
-         INSERT INTO djmdCue
-             (ID, ContentID, Kind, InMsec, OutMsec, Color, Comment, rb_local_deleted,
-              created_at, updated_at) VALUES
-             ('c1', 't1', 0, 1000, -1, NULL, NULL, 0, '{STAMP}', '{STAMP}'),
-             ('c2', 't1', 1, 45000, -1, 255, 'Drop', 0, '{STAMP}', '{STAMP}'),
-             ('c3', 't2', 2, 30000, 60000, NULL, NULL, 0, '{STAMP}', '{STAMP}'),
-             ('c4', 't1', 3, 90000, -1, NULL, NULL, 1, '{STAMP}', '{STAMP}');
-         INSERT INTO djmdPlaylist (ID, ParentID, Name, Attribute, Seq, created_at, updated_at)
-             VALUES
-             ('f1', 'root', 'Sets', 1, 1, '{STAMP}', '{STAMP}'),
-             ('p1', 'f1', 'Warm-up', 0, 1, '{STAMP}', '{STAMP}'),
-             ('s1', 'root', 'Peak time', 4, 2, '{STAMP}', '{STAMP}');
-         INSERT INTO djmdSongPlaylist (ID, PlaylistID, ContentID, TrackNo, created_at, updated_at)
-             VALUES
-             ('e1', 'p1', 't2', 1, '{STAMP}', '{STAMP}'),
-             ('e2', 'p1', 't1', 2, '{STAMP}', '{STAMP}'),
-             ('e3', 'p1', 't3', 3, '{STAMP}', '{STAMP}');"
-    );
-    connection
-        .execute_batch(&rows)
-        .expect("insert fixture rows");
-    path
-}
-
-fn open_fixture() -> (tempfile::TempDir, Library) {
-    let directory = tempfile::tempdir().expect("temporary directory");
-    let path = build_library(directory.path());
-    let library = Library::open_copy(&path, &DatabaseKey::new(TEST_KEY)).expect("open fixture");
-    (directory, library)
-}
 
 #[test]
 fn reads_tracks_with_their_names_key_and_tempo() {
@@ -105,6 +45,31 @@ fn reads_memory_cues_hot_cues_and_loops_but_not_deleted_cues() {
     assert_eq!(cues[1].comment.as_deref(), Some("Drop"));
     assert_eq!(cues[2].kind, CueKind::Hot { number: 2 });
     assert_eq!(cues[2].loop_end_ms, Some(60_000));
+}
+
+#[test]
+fn names_hot_cue_pads_from_master_db_kinds() {
+    let pads: Vec<_> = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        .into_iter()
+        .map(|number| CueKind::Hot { number }.pad())
+        .collect();
+
+    assert_eq!(
+        pads,
+        [
+            Some('A'),
+            Some('B'),
+            Some('C'),
+            None,
+            Some('D'),
+            Some('E'),
+            Some('F'),
+            Some('G'),
+            Some('H'),
+            None
+        ]
+    );
+    assert_eq!(CueKind::Memory.pad(), None);
 }
 
 #[test]

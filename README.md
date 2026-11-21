@@ -13,6 +13,8 @@ Dubplate reads and writes the rekordbox library directly, so tracks, cues, beat 
 
 The first piece is a reader for the rekordbox 6 and 7 library. It copies `master.db` to a temporary directory, unlocks the copy and reads tracks, cues, saved loops and the playlist tree. rekordbox's own file is never opened or changed.
 
+It also reads each track's analysis files (`ANLZ0000.DAT`, `.EXT` and `.2EX` under rekordbox's `share` directory): the beat grid, hot cues and memory cues with their colours and names, the phrases, and every waveform, including the 3-band ones. These files are opened read-only, in place.
+
 ## Try it
 
 Dubplate needs the key of the rekordbox library. It is not stored in this repository. Put it in one of these:
@@ -26,11 +28,15 @@ Then:
 cargo run -p dubplate -- rekordbox inspect
 cargo run -p dubplate -- rekordbox inspect --json > library.json
 cargo run -p dubplate -- rekordbox inspect --library /path/to/master.db
+cargo run -p dubplate -- rekordbox analysis "Track Title"
+cargo run -p dubplate -- rekordbox analysis <track id> --json > analysis.json
 ```
+
+`analysis` takes a track's rekordbox ID or its exact title.
 
 ## Layout
 
-- `crates/dubplate-rekordbox`: reads the rekordbox library. `schema/rekordbox-7.2.19.sql` holds the tables of rekordbox 7.2.19, with no data, and the tests build an encrypted library from it.
+- `crates/dubplate-rekordbox`: reads the rekordbox library and, in `src/analysis`, the per-track analysis files. `schema/rekordbox-7.2.19.sql` holds the tables of rekordbox 7.2.19, with no data, and the tests build an encrypted library from it.
 - `apps/dubplate-cli`: the `dubplate` command.
 
 ## Development
