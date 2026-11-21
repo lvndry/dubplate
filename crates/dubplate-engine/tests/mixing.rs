@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use common::{
     DECLICK_FRAMES, SAMPLE_RATE, assert_close, constant_track, largest_step, left_channel,
-    ramp_track, render_frames, right_channel,
+    mixer_latency_frames, ramp_track, render_frames, right_channel,
 };
 use dubplate_engine::{
     AudioProcessor, DeckId, EngineError, MAX_BLOCK_FRAMES, ProcessContext, StereoBlock,
@@ -52,9 +52,10 @@ fn tempo_scales_the_position_and_resamples_other_rates() {
 
     let source_frames_per_output_frame = 1.08 * f64::from(track_rate) / f64::from(SAMPLE_RATE);
     let left = left_channel(&output);
-    for output_frame in [DECLICK_FRAMES, 10_000, 47_999] {
+    let latency = mixer_latency_frames(&controller);
+    for output_frame in [DECLICK_FRAMES, 10_000, 47_000] {
         let expected = output_frame as f64 * source_frames_per_output_frame * f64::from(slope);
-        assert_close(f64::from(left[output_frame]), expected, 1e-5);
+        assert_close(f64::from(left[output_frame + latency]), expected, 1e-5);
     }
 }
 
@@ -171,18 +172,23 @@ fn seeking_while_playing_crossfades_instead_of_jumping() {
     controller.play(DeckId::A).unwrap();
     render_frames(&mut renderer, SAMPLE_RATE as usize, BLOCK);
     controller.seek(DeckId::A, 9.0).unwrap();
-    let output = left_channel(&render_frames(&mut renderer, BLOCK, BLOCK));
+    let latency = mixer_latency_frames(&controller);
+    let output = left_channel(&render_frames(&mut renderer, BLOCK + latency, BLOCK));
 
     let jump = 8.0 * SAMPLE_RATE as f32 * slope;
-    assert!(largest_step(&output) <= jump / DECLICK_FRAMES as f32 + 2.0 * slope);
+    let step = largest_step(&output);
+    assert!(
+        step <= jump / DECLICK_FRAMES as f32 + 2.0 * slope,
+        "step {step}"
+    );
     assert_close(
-        f64::from(output[BLOCK - 1]),
+        f64::from(output[BLOCK - 1 + latency]),
         0.9 + f64::from((BLOCK - 1) as f32 * slope),
         1e-4,
     );
     assert_close(
         controller.deck_state(DeckId::A).position_seconds,
-        9.0 + BLOCK as f64 / f64::from(SAMPLE_RATE),
+        9.0 + (BLOCK + latency) as f64 / f64::from(SAMPLE_RATE),
         1e-9,
     );
 }
@@ -215,7 +221,10 @@ fn pause_fades_out_and_keeps_the_position() {
     controller.pause(DeckId::A).unwrap();
     let output = left_channel(&render_frames(&mut renderer, BLOCK, BLOCK));
     assert!(largest_step(&output) <= 1.0 / DECLICK_FRAMES as f32 + 1e-6);
-    assert_eq!(output[DECLICK_FRAMES], 0.0);
+    assert_eq!(
+        output[DECLICK_FRAMES + mixer_latency_frames(&controller)],
+        0.0
+    );
     let state = controller.deck_state(DeckId::A);
     assert!(!state.playing);
     assert_close(

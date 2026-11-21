@@ -12,7 +12,8 @@ use common::{SAMPLE_RATE, constant_track, wait_until_decoded, write_wav};
 use dubplate_engine::cpal::{OutputCallbackInfo, OutputStreamTimestamp, StreamInstant};
 use dubplate_engine::{
     AudioProcessor, BeatGrid, BeatLength, Controller, DeckId, EffectKind, EffectTarget,
-    EffectUnitId, EngineError, MasterTempo, ProcessContext, Renderer, StereoBlock, offline_engine,
+    EffectUnitId, EngineError, EqBand, MasterTempo, ProcessContext, Renderer, StereoBlock,
+    offline_engine,
 };
 
 struct CountingAllocator;
@@ -170,7 +171,20 @@ fn run_session(
     controller.set_beat_grid(DeckId::A, None)?;
     render_armed(renderer, &mut output[..4800], 2);
 
-    let steps: [Step; 12] = [
+    let steps: [Step; 25] = [
+        |controller| controller.set_eq(DeckId::A, EqBand::Low, 0.0),
+        |controller| controller.set_eq(DeckId::B, EqBand::High, 1.0),
+        |controller| controller.set_filter(DeckId::A, 0.1),
+        |controller| controller.set_filter(DeckId::B, 0.85),
+        |controller| controller.set_filter_resonance(DeckId::B, 1.0),
+        |controller| controller.jog_nudge(DeckId::A, 12),
+        |controller| controller.set_jog_touch(DeckId::B, true),
+        |controller| controller.jog_scratch(DeckId::B, -30),
+        |controller| controller.jog_scratch(DeckId::B, 45),
+        |controller| controller.set_jog_touch(DeckId::B, false),
+        |controller| controller.jog_search(DeckId::A, 200),
+        |controller| controller.set_vinyl_mode(DeckId::A, false),
+        |controller| controller.set_jog_ticks_per_revolution(1_024),
         |controller| controller.set_tempo(DeckId::A, 1.06),
         |controller| controller.set_tempo(DeckId::B, 0.92),
         |controller| controller.set_crossfader(0.1),

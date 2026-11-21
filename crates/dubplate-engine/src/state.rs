@@ -24,6 +24,9 @@ pub(crate) struct DeckShared {
     pub(crate) position_seconds: AtomicF64,
     pub(crate) cue_point_seconds: AtomicF64,
     pub(crate) tempo: AtomicF64,
+    pub(crate) speed: AtomicF64,
+    pub(crate) touched: AtomicBool,
+    pub(crate) vinyl_mode: AtomicBool,
     pub(crate) peak: AtomicU32,
 }
 
@@ -38,6 +41,7 @@ pub(crate) struct SharedStats {
     pub(crate) max_callback_frames: AtomicU32,
     pub(crate) max_load_micro: AtomicU64,
     pub(crate) output_latency_nanos: AtomicU64,
+    pub(crate) mixer_latency_frames: AtomicU32,
 }
 
 /// An `f64` stored as bits in an `AtomicU64`.
@@ -89,6 +93,7 @@ impl SharedState {
             decks: std::array::from_fn(|_| {
                 let deck = DeckShared::default();
                 deck.tempo.store(1.0);
+                deck.vinyl_mode.store(true, Ordering::Relaxed);
                 deck
             }),
             master_peak: AtomicU32::new(0),
@@ -105,6 +110,7 @@ impl SharedState {
                 max_callback_frames: AtomicU32::new(0),
                 max_load_micro: AtomicU64::new(0),
                 output_latency_nanos: AtomicU64::new(NO_LATENCY),
+                mixer_latency_frames: AtomicU32::new(0),
             },
         }
     }
@@ -153,6 +159,8 @@ impl SharedStats {
             buffer_frames,
             max_buffer_frames: self.max_callback_frames.load(Ordering::Relaxed),
             buffer_latency_ms: f64::from(buffer_frames) * milliseconds_per_frame,
+            mixer_latency_ms: f64::from(self.mixer_latency_frames.load(Ordering::Relaxed))
+                * milliseconds_per_frame,
             output_latency_ms: (latency_nanos != NO_LATENCY)
                 .then(|| latency_nanos as f64 / 1_000_000.0),
             callbacks: self.callbacks.load(Ordering::Relaxed),
@@ -208,6 +216,9 @@ pub struct EngineStats {
     pub max_buffer_frames: u32,
     /// Duration of one buffer in milliseconds: the latency the buffer adds.
     pub buffer_latency_ms: f64,
+    /// Time the mixer's channel EQ delays every deck by, so its bands stay in phase. Add it to
+    /// the output latency to line a waveform up with what is heard.
+    pub mixer_latency_ms: f64,
     /// Time from the callback to the moment its first sample reaches the speakers, as the
     /// device reports it. Includes the buffer and the device's own latency.
     pub output_latency_ms: Option<f64>,
@@ -244,8 +255,15 @@ pub struct DeckState {
     pub position_seconds: f64,
     /// Cue point in seconds from the start of the track.
     pub cue_point_seconds: f64,
-    /// Playback speed, where 1.0 is the track's own tempo.
+    /// The tempo the deck plays at, where 1.0 is the track's own tempo.
     pub tempo: f64,
+    /// The speed the record actually turns at, where 1.0 is the track's own tempo: the tempo,
+    /// bent while the jog nudges, or the hand's speed while scratching. Negative backwards.
+    pub speed: f64,
+    /// A hand is on the platter top, holding the record.
+    pub platter_touched: bool,
+    /// Touching the platter top holds the record, as in a CDJ's vinyl mode.
+    pub vinyl_mode: bool,
 }
 
 /// Peak levels since the previous reading, as linear sample values where 1.0 is full scale.

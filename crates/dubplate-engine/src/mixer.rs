@@ -7,11 +7,13 @@ use rtrb::{Consumer, Producer};
 use crate::curves::{Ramp, channel_fader_gain, crossfader_gains};
 use crate::deck::{Deck, DeckId};
 use crate::effects::{EffectChange, EffectRack, EffectTarget, EffectUnitId};
+use crate::jog::JogInput;
 use crate::processor::{AudioProcessor, ProcessContext, StereoBlock};
 use crate::state::{GapDetector, SharedState, raise_peak};
 use crate::tempo::{BeatGrid, DeckLevel, MasterTempo, TempoMaster};
 use crate::track::TrackBuffer;
 use crate::{DECK_COUNT, INSERT_SLOTS, MAX_BLOCK_FRAMES};
+use dubplate_fx::EqBand;
 
 const DECLICK_SECONDS: f64 = 0.005;
 const MAX_COMMANDS_PER_CALLBACK: usize = 256;
@@ -65,6 +67,28 @@ pub(crate) enum Command {
         unit: EffectUnitId,
         change: EffectChange,
     },
+    SetEq {
+        deck: DeckId,
+        band: EqBand,
+        position: f32,
+    },
+    SetFilter {
+        deck: DeckId,
+        position: f32,
+    },
+    SetFilterResonance {
+        deck: DeckId,
+        resonance: f32,
+    },
+    Jog {
+        deck: DeckId,
+        input: JogInput,
+    },
+    SetVinylMode {
+        deck: DeckId,
+        enabled: bool,
+    },
+    SetJogTicksPerRevolution(u32),
 }
 
 /// Something the audio thread no longer needs. It goes back to the control side to be dropped,
@@ -150,6 +174,11 @@ impl Renderer {
         for deck in &mut renderer.decks {
             deck.settle_gains();
         }
+        let mixer_latency = renderer.decks[0].mixer_latency_frames();
+        renderer.shared.stats.mixer_latency_frames.store(
+            u32::try_from(mixer_latency).unwrap_or(u32::MAX),
+            Ordering::Relaxed,
+        );
         renderer.publish_state();
         renderer
     }
@@ -329,6 +358,26 @@ impl Renderer {
             }
             Command::SetMasterTempo(source) => self.tempo_master.set_source(source),
             Command::ChangeEffect { unit, change } => self.effects.change(unit, change),
+            Command::SetEq {
+                deck,
+                band,
+                position,
+            } => self.decks[deck.index()].set_eq(band, position),
+            Command::SetFilter { deck, position } => {
+                self.decks[deck.index()].set_filter(position);
+            }
+            Command::SetFilterResonance { deck, resonance } => {
+                self.decks[deck.index()].set_filter_resonance(resonance);
+            }
+            Command::Jog { deck, input } => self.decks[deck.index()].jog(input),
+            Command::SetVinylMode { deck, enabled } => {
+                self.decks[deck.index()].set_vinyl_mode(enabled);
+            }
+            Command::SetJogTicksPerRevolution(ticks) => {
+                for deck in &mut self.decks {
+                    deck.set_jog_ticks_per_revolution(ticks);
+                }
+            }
         }
     }
 
@@ -349,6 +398,11 @@ impl Renderer {
             shared.position_seconds.store(deck.position_seconds());
             shared.cue_point_seconds.store(deck.cue_point_seconds());
             shared.tempo.store(deck.tempo());
+            shared.speed.store(deck.speed());
+            shared.touched.store(deck.is_touched(), Ordering::Relaxed);
+            shared
+                .vinyl_mode
+                .store(deck.vinyl_mode(), Ordering::Relaxed);
         }
         for (sounding, shared) in self
             .effects
