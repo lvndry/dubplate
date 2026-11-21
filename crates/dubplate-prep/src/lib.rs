@@ -15,7 +15,7 @@ pub use euphoria_core::harmony::EnergyDirection;
 pub use euphoria_core::key::Key;
 pub use ready::{ReadyProblem, ReadyReport, Severity, TrackReadiness, ready_report};
 pub use store::{
-    CueSource, EqIntent, Seam, SeamStatus, Set, SetEntry, SetId, SetStore, StoreError,
+    CueSource, EqIntent, Seam, SeamStatus, Set, SetEntry, SetId, SetList, SetStore, StoreError,
 };
 pub use suggestion::{Suggestion, suggest_next};
 pub use track::PrepTrack;

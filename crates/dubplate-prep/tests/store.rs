@@ -4,7 +4,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use dubplate_prep::{CueSource, EqIntent, Seam, SeamStatus, Set, SetEntry, SetStore, StoreError};
+use dubplate_prep::{
+    CueSource, EqIntent, Seam, SeamStatus, Set, SetEntry, SetList, SetStore, StoreError,
+};
 use rusqlite::Connection;
 use tempfile::TempDir;
 
@@ -17,11 +19,22 @@ fn open_store(directory: &Path) -> (TempDir, PathBuf, SetStore) {
     (directory_holder, path, store)
 }
 
-fn entry(rekordbox_id: &str, is_backup: bool) -> SetEntry {
+fn entry(track_path: &str, is_backup: bool) -> SetEntry {
     SetEntry {
-        rekordbox_id: rekordbox_id.to_owned(),
+        track_path: PathBuf::from(track_path),
         is_backup,
         ..Default::default()
+    }
+}
+
+fn seam(from_path: &str, to_path: &str, eq_intent: EqIntent) -> Seam {
+    Seam {
+        from_track_path: PathBuf::from(from_path),
+        to_track_path: PathBuf::from(to_path),
+        overlap_bars: 8,
+        eq_intent,
+        status: SeamStatus::Planned,
+        note: String::new(),
     }
 }
 
@@ -42,32 +55,23 @@ fn survives_close_and_reopen_with_moves_and_removals() {
 
     let set_id = store.create_set("Friday peak", 120).unwrap();
     store
-        .insert_entry(set_id, 0, entry("track-a", false))
+        .insert_entry(set_id, SetList::Main, 0, entry("track-a", false))
         .unwrap();
     store
-        .insert_entry(set_id, 1, entry("track-b", false))
+        .insert_entry(set_id, SetList::Main, 1, entry("track-b", false))
         .unwrap();
     store
-        .insert_entry(set_id, 2, entry("track-c", false))
+        .insert_entry(set_id, SetList::Main, 2, entry("track-c", false))
         .unwrap();
     store
-        .insert_entry(set_id, 3, entry("backup-x", true))
+        .insert_entry(set_id, SetList::Backups, 0, entry("backup-x", true))
         .unwrap();
     store
-        .set_seam(
-            set_id,
-            Seam {
-                from_position: 0,
-                overlap_bars: 8,
-                eq_intent: EqIntent::BassSwap,
-                status: SeamStatus::Planned,
-                note: String::new(),
-            },
-        )
+        .set_seam(set_id, seam("track-a", "track-b", EqIntent::BassSwap))
         .unwrap();
 
-    store.move_entry(set_id, 0, 2).unwrap();
-    store.remove_entry(set_id, 2).unwrap();
+    store.move_entry(set_id, SetList::Main, 0, 2).unwrap();
+    store.remove_entry(set_id, SetList::Main, 2).unwrap();
     drop(store);
 
     let reopened = SetStore::open(&database_path).unwrap();
@@ -78,13 +82,16 @@ fn survives_close_and_reopen_with_moves_and_removals() {
         loaded
             .entries
             .iter()
-            .map(|entry| entry.rekordbox_id.as_str())
+            .map(|candidate| candidate.track_path.to_string_lossy().into_owned())
             .collect::<Vec<_>>(),
         ["track-b", "track-c", "backup-x"]
     );
     assert!(loaded.entries[2].is_backup);
     assert_eq!(loaded.seams.len(), 1);
+    assert_eq!(loaded.seams[0].from_track_path, PathBuf::from("track-a"));
+    assert_eq!(loaded.seams[0].to_track_path, PathBuf::from("track-b"));
     assert_eq!(loaded.seams[0].eq_intent, EqIntent::BassSwap);
+    assert!(loaded.seam_after(0).is_none());
 
     let listed = reopened.list_sets().unwrap();
     assert_eq!(listed, vec![(set_id, "Friday peak".to_owned(), 3)]);
@@ -129,7 +136,7 @@ fn a_migration_on_an_existing_file_leaves_a_backup() {
     let mut store = SetStore::open(&database_path).unwrap();
     let set_id = store.create_set("After the upgrade", 90).unwrap();
     store
-        .insert_entry(set_id, 0, entry("track-a", false))
+        .insert_entry(set_id, SetList::Main, 0, entry("track-a", false))
         .unwrap();
     drop(store);
 
@@ -163,16 +170,17 @@ fn deleting_a_set_removes_its_entries_and_seams() {
 
     let set_id = store.create_set("Short set", 30).unwrap();
     store
-        .insert_entry(set_id, 0, entry("track-a", false))
+        .insert_entry(set_id, SetList::Main, 0, entry("track-a", false))
         .unwrap();
     store
-        .insert_entry(set_id, 1, entry("track-b", false))
+        .insert_entry(set_id, SetList::Main, 1, entry("track-b", false))
         .unwrap();
     store
         .set_seam(
             set_id,
             Seam {
-                from_position: 0,
+                from_track_path: PathBuf::from("track-a"),
+                to_track_path: PathBuf::from("track-b"),
                 overlap_bars: 4,
                 eq_intent: EqIntent::HighPassIncoming,
                 status: SeamStatus::Free,
@@ -181,7 +189,15 @@ fn deleting_a_set_removes_its_entries_and_seams() {
         )
         .unwrap();
     store.snapshot(set_id, "lock").unwrap();
-    store.record_play(set_id, "track-a", "A", false).unwrap();
+    store
+        .record_play(
+            set_id,
+            Path::new("track-a"),
+            Some("rekordbox-a"),
+            "A",
+            false,
+        )
+        .unwrap();
     store.delete_set(set_id).unwrap();
 
     assert_eq!(row_count(&database_path, "set_entry"), 0);
@@ -203,9 +219,11 @@ fn a_snapshot_round_trips_through_json() {
     store
         .insert_entry(
             set_id,
+            SetList::Main,
             0,
             SetEntry {
-                rekordbox_id: "track-a".to_owned(),
+                track_path: PathBuf::from("track-a"),
+                rekordbox_id: Some("rekordbox-a".to_owned()),
                 mix_in_ms: Some(32_000),
                 mix_out_ms: Some(200_000),
                 cue_source: Some(CueSource::Euphoria),
@@ -237,11 +255,187 @@ fn a_snapshot_round_trips_through_json() {
     assert_eq!(reopened.load_set(set_id).unwrap().name, "Snapshot set v2");
     assert_eq!(from_snapshot.id, set_id);
     assert_eq!(from_snapshot.entries.len(), 1);
-    assert_eq!(from_snapshot.entries[0].rekordbox_id, "track-a");
+    assert_eq!(
+        from_snapshot.entries[0].track_path,
+        PathBuf::from("track-a")
+    );
     assert_eq!(from_snapshot.entries[0].mix_in_ms, Some(32_000));
     assert_eq!(
         from_snapshot.entries[0].cue_source,
         Some(CueSource::Euphoria)
     );
     assert!(from_snapshot.entries[0].grid_confirmed);
+}
+
+#[test]
+fn moving_a_track_keeps_each_seam_plan_on_its_pair() {
+    let root = tempfile::tempdir().unwrap();
+    let (_directory_holder, _database_path, mut store) = open_store(root.path());
+
+    let set_id = store.create_set("Seam follow", 60).unwrap();
+    store
+        .insert_entry(set_id, SetList::Main, 0, entry("track-a", false))
+        .unwrap();
+    store
+        .insert_entry(set_id, SetList::Main, 1, entry("track-b", false))
+        .unwrap();
+    store
+        .insert_entry(set_id, SetList::Main, 2, entry("track-c", false))
+        .unwrap();
+    store
+        .set_seam(set_id, seam("track-a", "track-b", EqIntent::BassSwap))
+        .unwrap();
+
+    let loaded = store.load_set(set_id).unwrap();
+    assert_eq!(loaded.seam_after(0).unwrap().eq_intent, EqIntent::BassSwap);
+
+    store.move_entry(set_id, SetList::Main, 1, 2).unwrap();
+    let reordered = store.load_set(set_id).unwrap();
+    assert!(reordered.seam_after(0).is_none());
+    let stored_plan = &reordered.seams[0];
+    assert_eq!(stored_plan.from_track_path, PathBuf::from("track-a"));
+    assert_eq!(stored_plan.to_track_path, PathBuf::from("track-b"));
+    assert_eq!(stored_plan.eq_intent, EqIntent::BassSwap);
+
+    store.move_entry(set_id, SetList::Main, 2, 1).unwrap();
+    let restored = store.load_set(set_id).unwrap();
+    assert_eq!(
+        restored.seam_after(0).unwrap().eq_intent,
+        EqIntent::BassSwap
+    );
+}
+
+#[test]
+fn a_folder_track_without_a_rekordbox_id_round_trips() {
+    let root = tempfile::tempdir().unwrap();
+    let (_directory_holder, database_path, mut store) = open_store(root.path());
+
+    let set_id = store.create_set("Folder set", 60).unwrap();
+    let folder_path = PathBuf::from("/home/dj/Music/afro house/bandcamp-release/a-side.mp3");
+    store
+        .insert_entry(
+            set_id,
+            SetList::Main,
+            0,
+            entry(folder_path.to_str().unwrap(), false),
+        )
+        .unwrap();
+    store
+        .insert_entry(set_id, SetList::Main, 1, entry("track-b", false))
+        .unwrap();
+    store
+        .set_seam(
+            set_id,
+            seam(folder_path.to_str().unwrap(), "track-b", EqIntent::None),
+        )
+        .unwrap();
+    store
+        .record_play(set_id, &folder_path, None, "B", false)
+        .unwrap();
+    drop(store);
+
+    let reopened = SetStore::open(&database_path).unwrap();
+    let loaded = reopened.load_set(set_id).unwrap();
+    assert_eq!(loaded.entries[0].track_path, folder_path);
+    assert_eq!(loaded.entries[0].rekordbox_id, None);
+    assert_eq!(loaded.seam_after(0).unwrap().from_track_path, folder_path);
+
+    let play_history = Connection::open(&database_path).unwrap();
+    let (stored_path, stored_id): (String, Option<String>) = play_history
+        .query_row(
+            "SELECT track_path, rekordbox_id FROM play_history",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(PathBuf::from(stored_path), folder_path);
+    assert_eq!(stored_id, None);
+}
+
+#[test]
+fn main_and_backups_keep_separate_positions() {
+    let root = tempfile::tempdir().unwrap();
+    let (_directory_holder, _database_path, mut store) = open_store(root.path());
+
+    let set_id = store.create_set("Two lists", 60).unwrap();
+    store
+        .insert_entry(set_id, SetList::Main, 0, entry("track-a", false))
+        .unwrap();
+    store
+        .insert_entry(set_id, SetList::Main, 1, entry("track-b", false))
+        .unwrap();
+
+    store
+        .insert_entry(set_id, SetList::Backups, 0, entry("backup-x", true))
+        .unwrap();
+    store
+        .insert_entry(set_id, SetList::Backups, 1, entry("backup-y", true))
+        .unwrap();
+    let after_insert = store.load_set(set_id).unwrap();
+    assert_eq!(
+        after_insert
+            .main_entries()
+            .map(|candidate| candidate.track_path.to_string_lossy().into_owned())
+            .collect::<Vec<_>>(),
+        ["track-a", "track-b"]
+    );
+
+    store.remove_entry(set_id, SetList::Backups, 0).unwrap();
+    store
+        .insert_entry(set_id, SetList::Backups, 1, entry("backup-z", true))
+        .unwrap();
+    let after_backup_edits = store.load_set(set_id).unwrap();
+    assert_eq!(
+        after_backup_edits
+            .main_entries()
+            .map(|candidate| candidate.track_path.to_string_lossy().into_owned())
+            .collect::<Vec<_>>(),
+        ["track-a", "track-b"]
+    );
+
+    store.remove_entry(set_id, SetList::Main, 0).unwrap();
+    store.move_entry(set_id, SetList::Main, 0, 1).unwrap();
+    let after_main_edits = store.load_set(set_id).unwrap();
+    assert_eq!(
+        after_main_edits
+            .entries
+            .iter()
+            .filter(|candidate| candidate.is_backup)
+            .map(|candidate| candidate.track_path.to_string_lossy().into_owned())
+            .collect::<Vec<_>>(),
+        ["backup-y", "backup-z"]
+    );
+}
+
+#[test]
+fn updated_at_grows_after_removal_and_seam_edits() {
+    let root = tempfile::tempdir().unwrap();
+    let (_directory_holder, _database_path, mut store) = open_store(root.path());
+
+    let set_id = store.create_set("Touching set", 60).unwrap();
+    store
+        .insert_entry(set_id, SetList::Main, 0, entry("track-a", false))
+        .unwrap();
+    store
+        .insert_entry(set_id, SetList::Main, 1, entry("track-b", false))
+        .unwrap();
+    store
+        .insert_entry(set_id, SetList::Main, 2, entry("track-c", false))
+        .unwrap();
+
+    let before_removal = store.load_set(set_id).unwrap().updated_at;
+    std::thread::sleep(std::time::Duration::from_millis(2));
+    store.remove_entry(set_id, SetList::Main, 0).unwrap();
+    let after_removal = store.load_set(set_id).unwrap().updated_at;
+    assert!(after_removal > before_removal);
+
+    std::thread::sleep(std::time::Duration::from_millis(2));
+    store
+        .set_seam(
+            set_id,
+            seam("track-b", "track-c", EqIntent::HighPassIncoming),
+        )
+        .unwrap();
+    let after_seam = store.load_set(set_id).unwrap().updated_at;
+    assert!(after_seam > after_removal);
 }

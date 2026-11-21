@@ -14,7 +14,7 @@ use thiserror::Error;
 
 mod types;
 
-pub use types::{CueSource, EqIntent, Seam, SeamStatus, Set, SetEntry, SetId};
+pub use types::{CueSource, EqIntent, Seam, SeamStatus, Set, SetEntry, SetId, SetList};
 
 /// The highest schema version `MIGRATIONS` can bring a database to.
 const SCHEMA_VERSION: u32 = 1;
@@ -32,7 +32,8 @@ CREATE TABLE sets (
 CREATE TABLE set_entry (
     set_id INTEGER NOT NULL REFERENCES sets(id) ON DELETE CASCADE,
     position INTEGER NOT NULL,
-    rekordbox_id TEXT NOT NULL,
+    track_path TEXT NOT NULL,
+    rekordbox_id TEXT,
     mix_in_ms INTEGER,
     mix_out_ms INTEGER,
     cue_source TEXT,
@@ -42,17 +43,18 @@ CREATE TABLE set_entry (
     vocal_out_ms INTEGER,
     note TEXT NOT NULL DEFAULT '',
     is_backup INTEGER NOT NULL DEFAULT 0,
-    PRIMARY KEY (set_id, position, is_backup)
+    PRIMARY KEY (set_id, is_backup, position)
 );
 
 CREATE TABLE seam (
     set_id INTEGER NOT NULL REFERENCES sets(id) ON DELETE CASCADE,
-    from_position INTEGER NOT NULL,
+    from_track_path TEXT NOT NULL,
+    to_track_path TEXT NOT NULL,
     overlap_bars INTEGER NOT NULL,
     eq_intent TEXT NOT NULL,
     status TEXT NOT NULL,
     note TEXT NOT NULL DEFAULT '',
-    PRIMARY KEY (set_id, from_position)
+    PRIMARY KEY (set_id, from_track_path, to_track_path)
 );
 
 CREATE TABLE set_revision (
@@ -65,7 +67,8 @@ CREATE TABLE set_revision (
 
 CREATE TABLE play_history (
     set_id INTEGER NOT NULL REFERENCES sets(id) ON DELETE CASCADE,
-    rekordbox_id TEXT NOT NULL,
+    track_path TEXT NOT NULL,
+    rekordbox_id TEXT,
     played_at INTEGER NOT NULL,
     deck TEXT NOT NULL,
     off_plan INTEGER NOT NULL DEFAULT 0
@@ -214,7 +217,7 @@ impl SetStore {
         let timestamp = now_unix_millis();
         transaction.execute(
             "INSERT INTO sets (name, target_minutes, created_at, updated_at) VALUES (?1, ?2, ?3, ?3)",
-                        (name, target_minutes as i64, timestamp),
+            (name, target_minutes as i64, timestamp),
         )?;
         let id = transaction.last_insert_rowid();
         transaction.commit()?;
@@ -260,7 +263,7 @@ impl SetStore {
         Ok(rows)
     }
 
-    /// Loads a whole set: its metadata, ordered entries and seams.
+    /// Loads a whole set: its metadata, ordered entries and every stored seam.
     pub fn load_set(&self, set: SetId) -> Result<Set, StoreError> {
         let (name, target_minutes, created_at, updated_at) = self
             .connection
@@ -281,7 +284,7 @@ impl SetStore {
         let target_minutes = u32::try_from(target_minutes).unwrap_or(0);
 
         let mut entries_statement = self.connection.prepare(
-            "SELECT rekordbox_id, mix_in_ms, mix_out_ms, cue_source, grid_confirmed,
+            "SELECT track_path, rekordbox_id, mix_in_ms, mix_out_ms, cue_source, grid_confirmed,
                 energy_override, vocal_in_ms, vocal_out_ms, note, is_backup
              FROM set_entry WHERE set_id = ?1
              ORDER BY is_backup, position",
@@ -290,9 +293,9 @@ impl SetStore {
             .query_map((set.as_i64(),), entry_from_row)?
             .collect::<Result<Vec<_>, _>>()?;
         let mut seams_statement = self.connection.prepare(
-            "SELECT from_position, overlap_bars, eq_intent, status, note
+            "SELECT from_track_path, to_track_path, overlap_bars, eq_intent, status, note
              FROM seam WHERE set_id = ?1
-             ORDER BY from_position",
+             ORDER BY from_track_path, to_track_path",
         )?;
         let seams = seams_statement
             .query_map((set.as_i64(),), seam_from_row)?
@@ -309,82 +312,100 @@ impl SetStore {
         })
     }
 
-    /// Inserts an entry at `position`, shifting every later position up by one.
+    /// Inserts an entry into the list's order at `position`, shifting every
+    /// later position of that list up by one.
     pub fn insert_entry(
         &mut self,
         set: SetId,
+        list: SetList,
         position: usize,
         entry: SetEntry,
     ) -> Result<(), StoreError> {
         let mut transaction = self.transaction()?;
         touch_set(&mut transaction, set)?;
-        shift_entry_positions(&mut transaction, set, position, usize::MAX, 1)?;
-        insert_entry_row(&mut transaction, set, position, &entry)?;
+        shift_entry_positions(&mut transaction, set, list, position, usize::MAX, 1)?;
+        insert_entry_row(&mut transaction, set, list, position, &entry)?;
         transaction.commit()?;
         Ok(())
     }
 
-    /// Moves the entry at `from` to `to`, shifting the positions in between.
-    pub fn move_entry(&mut self, set: SetId, from: usize, to: usize) -> Result<(), StoreError> {
+    /// Moves the entry at `from` to `to` within its list, shifting the
+    /// positions in between of that list.
+    pub fn move_entry(
+        &mut self,
+        set: SetId,
+        list: SetList,
+        from: usize,
+        to: usize,
+    ) -> Result<(), StoreError> {
         let mut transaction = self.transaction()?;
-        if entry_at(&transaction, set, from)? == 0 {
+        if entry_at(&transaction, set, list, from)? == 0 {
             return Err(StoreError::PositionNotFound(from));
         }
         touch_set(&mut transaction, set)?;
 
         transaction.execute(
-            "UPDATE set_entry SET position = ?3 WHERE set_id = ?1 AND position = ?2",
-            (set.as_i64(), from as i64, MOVE_SENTINEL_POSITION),
+            "UPDATE set_entry SET position = ?4 WHERE set_id = ?1 AND is_backup = ?3 AND position = ?2",
+            (set.as_i64(), from as i64, list.is_backup(), MOVE_SENTINEL_POSITION),
         )?;
         if from < to {
-            shift_entry_positions(&mut transaction, set, from + 1, to + 1, -1)?;
+            shift_entry_positions(&mut transaction, set, list, from + 1, to + 1, -1)?;
         } else {
-            shift_entry_positions(&mut transaction, set, to, from, 1)?;
+            shift_entry_positions(&mut transaction, set, list, to, from, 1)?;
         }
         transaction.execute(
-            "UPDATE set_entry SET position = ?3 WHERE set_id = ?1 AND position = ?2",
-            (set.as_i64(), MOVE_SENTINEL_POSITION, to as i64),
+            "UPDATE set_entry SET position = ?4 WHERE set_id = ?1 AND is_backup = ?3 AND position = ?2",
+            (set.as_i64(), MOVE_SENTINEL_POSITION, list.is_backup(), to as i64),
         )?;
-        touch_set(&mut transaction, set)?;
         transaction.commit()?;
         Ok(())
     }
 
-    /// Removes the entry at `position`, shifting every later position down by one.
-    pub fn remove_entry(&mut self, set: SetId, position: usize) -> Result<(), StoreError> {
+    /// Removes the entry at `position` in the list, shifting every later
+    /// position of that list down by one.
+    pub fn remove_entry(
+        &mut self,
+        set: SetId,
+        list: SetList,
+        position: usize,
+    ) -> Result<(), StoreError> {
         let mut transaction = self.transaction()?;
-        if entry_at(&transaction, set, position)? == 0 {
+        if entry_at(&transaction, set, list, position)? == 0 {
             return Err(StoreError::PositionNotFound(position));
         }
+        touch_set(&mut transaction, set)?;
         transaction.execute(
-            "DELETE FROM set_entry WHERE set_id = ?1 AND position = ?2",
-            (set.as_i64(), position as i64),
+            "DELETE FROM set_entry WHERE set_id = ?1 AND is_backup = ?2 AND position = ?3",
+            (set.as_i64(), list.is_backup(), position as i64),
         )?;
-        shift_entry_positions(&mut transaction, set, position + 1, usize::MAX, -1)?;
+        shift_entry_positions(&mut transaction, set, list, position + 1, usize::MAX, -1)?;
         transaction.commit()?;
         Ok(())
     }
 
-    /// Replaces the entry at `position` with a new one.
+    /// Replaces the entry at `position` in the list with a new one.
     pub fn update_entry(
         &mut self,
         set: SetId,
+        list: SetList,
         position: usize,
         entry: SetEntry,
     ) -> Result<(), StoreError> {
-        let transaction = self.transaction()?;
-        if entry_at(&transaction, set, position)? == 0 {
+        let mut transaction = self.transaction()?;
+        if entry_at(&transaction, set, list, position)? == 0 {
             return Err(StoreError::PositionNotFound(position));
         }
+        touch_set(&mut transaction, set)?;
         transaction.execute(
             "UPDATE set_entry
-             SET rekordbox_id = ?3, mix_in_ms = ?4, mix_out_ms = ?5, cue_source = ?6,
-                 grid_confirmed = ?7, energy_override = ?8, vocal_in_ms = ?9,
-                 vocal_out_ms = ?10, note = ?11
-             WHERE set_id = ?1 AND position = ?2",
+             SET track_path = ?3, rekordbox_id = ?4, mix_in_ms = ?5, mix_out_ms = ?6, cue_source = ?7,
+                 grid_confirmed = ?8, energy_override = ?9, vocal_in_ms = ?10,
+                 vocal_out_ms = ?11, note = ?12
+             WHERE set_id = ?1 AND is_backup = ?2 AND position = ?13",
             (
                 set.as_i64(),
-                position as i64,
+                list.is_backup(),
+                &entry.track_path.to_string_lossy(),
                 &entry.rekordbox_id,
                 entry.mix_in_ms,
                 entry.mix_out_ms,
@@ -396,27 +417,30 @@ impl SetStore {
                 entry.vocal_in_ms,
                 entry.vocal_out_ms,
                 &entry.note,
+                position as i64,
             ),
         )?;
         transaction.commit()?;
         Ok(())
     }
 
-    /// Creates or replaces the seam after the track at `Seam::from_position`.
+    /// Creates or replaces the seam plan between `Seam::from_track_path` and
+    /// `Seam::to_track_path`.
     pub fn set_seam(&mut self, set: SetId, seam: Seam) -> Result<(), StoreError> {
         let mut transaction = self.transaction()?;
         touch_set(&mut transaction, set)?;
         transaction.execute(
-            "INSERT INTO seam (set_id, from_position, overlap_bars, eq_intent, status, note)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-             ON CONFLICT (set_id, from_position) DO UPDATE SET
+            "INSERT INTO seam (set_id, from_track_path, to_track_path, overlap_bars, eq_intent, status, note)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             ON CONFLICT (set_id, from_track_path, to_track_path) DO UPDATE SET
                  overlap_bars = excluded.overlap_bars,
                  eq_intent = excluded.eq_intent,
                  status = excluded.status,
                  note = excluded.note",
             (
                 set.as_i64(),
-                seam.from_position as i64,
+                &seam.from_track_path.to_string_lossy(),
+                &seam.to_track_path.to_string_lossy(),
                 seam.overlap_bars,
                 serde_json::to_string(&seam.eq_intent).unwrap_or_default(),
                 serde_json::to_string(&seam.status).unwrap_or_default(),
@@ -446,17 +470,19 @@ impl SetStore {
     pub fn record_play(
         &mut self,
         set: SetId,
-        rekordbox_id: &str,
+        track_path: &Path,
+        rekordbox_id: Option<&str>,
         deck_label: &str,
         off_plan: bool,
     ) -> Result<(), StoreError> {
         let mut transaction = self.transaction()?;
         touch_set(&mut transaction, set)?;
         transaction.execute(
-            "INSERT INTO play_history (set_id, rekordbox_id, played_at, deck, off_plan)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO play_history (set_id, track_path, rekordbox_id, played_at, deck, off_plan)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             (
                 set.as_i64(),
+                &track_path.to_string_lossy(),
                 rekordbox_id,
                 now_unix_millis(),
                 deck_label,
@@ -528,52 +554,63 @@ fn update_set_name(
     Ok(())
 }
 
-/// Whether a set has an entry at a position.
-/// Whether a set has an entry at a position.
+/// Whether a set's list has an entry at a position.
 fn entry_at(
     transaction: &Transaction<'_>,
     set: SetId,
+    list: SetList,
     position: usize,
 ) -> Result<usize, StoreError> {
     let count: i64 = transaction.query_row(
-        "SELECT COUNT(*) FROM set_entry WHERE set_id = ?1 AND position = ?2",
-        (set.as_i64(), position as i64),
+        "SELECT COUNT(*) FROM set_entry
+         WHERE set_id = ?1 AND is_backup = ?2 AND position = ?3",
+        (set.as_i64(), list.is_backup(), position as i64),
         |row| row.get(0),
     )?;
     Ok(usize::try_from(count).unwrap_or(0))
 }
 
-/// Shifts every entry position in `[start, end)` by `delta`, where
+/// Shifts every entry position in `[start, end)` of the list by `delta`, where
 /// `delta` is positive for making room and negative for closing a gap.
 fn shift_entry_positions(
     transaction: &mut Transaction<'_>,
     set: SetId,
+    list: SetList,
     start: usize,
     end: usize,
     delta: i64,
 ) -> Result<(), StoreError> {
+    // An open end is bound with a value no real position can hold.
+    let end = match end {
+        usize::MAX => i64::MAX,
+        bounded => i64::try_from(bounded).unwrap_or(i64::MAX),
+    };
     transaction.execute(
-        "UPDATE set_entry SET position = position + ?4
-         WHERE set_id = ?1 AND position >= ?2 AND position < ?3",
-        (set.as_i64(), start as i64, end as i64, delta),
+        "UPDATE set_entry SET position = position + ?5
+         WHERE set_id = ?1 AND is_backup = ?2 AND position >= ?3 AND position < ?4",
+        (set.as_i64(), list.is_backup(), start as i64, end, delta),
     )?;
     Ok(())
 }
-/// Inserts one entry row at a position.
+
+/// Inserts one entry row into the list at a position, taking its backup flag
+/// from the list.
 fn insert_entry_row(
     transaction: &mut Transaction<'_>,
     set: SetId,
+    list: SetList,
     position: usize,
     entry: &SetEntry,
 ) -> Result<(), StoreError> {
     transaction.execute(
         "INSERT INTO set_entry
-            (set_id, position, rekordbox_id, mix_in_ms, mix_out_ms, cue_source,
+            (set_id, position, track_path, rekordbox_id, mix_in_ms, mix_out_ms, cue_source,
              grid_confirmed, energy_override, vocal_in_ms, vocal_out_ms, note, is_backup)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
         (
             set.as_i64(),
             position as i64,
+            &entry.track_path.to_string_lossy(),
             &entry.rekordbox_id,
             entry.mix_in_ms,
             entry.mix_out_ms,
@@ -585,7 +622,7 @@ fn insert_entry_row(
             entry.vocal_in_ms,
             entry.vocal_out_ms,
             &entry.note,
-            entry.is_backup,
+            list.is_backup(),
         ),
     )?;
     Ok(())
@@ -593,41 +630,43 @@ fn insert_entry_row(
 
 /// Reads a set_entry row into its type.
 fn entry_from_row(row: &rusqlite::Row<'_>) -> Result<SetEntry, rusqlite::Error> {
-    let grid_confirmed: i64 = row.get(4)?;
-    let is_backup: i64 = row.get(9)?;
+    let grid_confirmed: i64 = row.get(5)?;
+    let is_backup: i64 = row.get(10)?;
     Ok(SetEntry {
-        rekordbox_id: row.get(0)?,
+        track_path: PathBuf::from(row.get::<_, String>(0)?),
+        rekordbox_id: row.get(1)?,
         mix_in_ms: row
-            .get::<_, Option<i64>>(1)?
-            .and_then(|value| u32::try_from(value).ok()),
-        mix_out_ms: row
             .get::<_, Option<i64>>(2)?
             .and_then(|value| u32::try_from(value).ok()),
+        mix_out_ms: row
+            .get::<_, Option<i64>>(3)?
+            .and_then(|value| u32::try_from(value).ok()),
         cue_source: row
-            .get::<_, Option<String>>(3)?
+            .get::<_, Option<String>>(4)?
             .and_then(|raw| serde_json::from_str(&raw).ok()),
         grid_confirmed: grid_confirmed != 0,
-        energy_override: row.get(5)?,
+        energy_override: row.get(6)?,
         vocal_in_ms: row
-            .get::<_, Option<i64>>(6)?
-            .and_then(|value| u32::try_from(value).ok()),
-        vocal_out_ms: row
             .get::<_, Option<i64>>(7)?
             .and_then(|value| u32::try_from(value).ok()),
-        note: row.get(8)?,
+        vocal_out_ms: row
+            .get::<_, Option<i64>>(8)?
+            .and_then(|value| u32::try_from(value).ok()),
+        note: row.get(9)?,
         is_backup: is_backup != 0,
     })
 }
 
 /// Reads a seam row into its type.
 fn seam_from_row(row: &rusqlite::Row<'_>) -> Result<Seam, rusqlite::Error> {
-    let overlap_bars: i64 = row.get(1)?;
+    let overlap_bars: i64 = row.get(2)?;
     Ok(Seam {
-        from_position: usize::try_from(row.get::<_, i64>(0)?).unwrap_or(0),
+        from_track_path: PathBuf::from(row.get::<_, String>(0)?),
+        to_track_path: PathBuf::from(row.get::<_, String>(1)?),
         overlap_bars: u32::try_from(overlap_bars).unwrap_or(0),
-        eq_intent: serde_json::from_str(&row.get::<_, String>(2)?).unwrap_or(EqIntent::None),
-        status: serde_json::from_str(&row.get::<_, String>(3)?).unwrap_or(SeamStatus::Planned),
-        note: row.get(4)?,
+        eq_intent: serde_json::from_str(&row.get::<_, String>(3)?).unwrap_or(EqIntent::None),
+        status: serde_json::from_str(&row.get::<_, String>(4)?).unwrap_or(SeamStatus::Planned),
+        note: row.get(5)?,
     })
 }
 #[cfg(test)]
