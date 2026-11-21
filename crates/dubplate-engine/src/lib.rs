@@ -9,9 +9,14 @@
 //!   in a [`Track`], much faster than real time. The audio thread reads any frame already
 //!   decoded without waiting, so cue, seek and hot cues are instant.
 //! - The **control side** ([`Controller`]) sends commands (load, play, cue, seek, tempo, gain,
-//!   faders, inserts) over a lock-free queue and reads deck state, meters and dropout counters
+//!   faders, inserts, effect units) over a lock-free queue and reads deck state, meters and dropout counters
 //!   back through atomics. Objects the audio thread lets go of, such as a replaced track or
 //!   effect, come back to the control side to be freed.
+//!
+//! Effect units work like the beat effects of a DJ mixer: each one holds one of the effects of
+//! [`dubplate_fx`], sits on a deck or on the master and follows that music's tempo and beat
+//! grid. Every effect of every unit is built when the engine starts, so switching the effect or
+//! the target on the audio thread only fades one instance out and another in.
 //!
 //! [`AudioOutput::start`] runs the engine on the default sound card; [`offline_engine`] gives
 //! the same engine without one, for tests and offline rendering.
@@ -20,11 +25,13 @@ mod controller;
 mod curves;
 mod deck;
 mod decode;
+mod effects;
 mod error;
 mod mixer;
 mod output;
 mod processor;
 mod state;
+mod tempo;
 mod track;
 
 pub use controller::{Controller, offline_engine};
@@ -32,15 +39,21 @@ pub use cpal;
 pub use curves::{channel_fader_gain, crossfader_gains, decibels_to_gain, gain_to_decibels};
 pub use deck::DeckId;
 pub use decode::decode_file;
+pub use dubplate_fx::{BeatLength, EffectKind};
+pub use effects::{EffectTarget, EffectUnitId, EffectUnitState};
 pub use error::EngineError;
 pub use mixer::Renderer;
 pub use output::{AudioOutput, OutputConfig};
 pub use processor::{AudioProcessor, ProcessContext, StereoBlock};
 pub use state::{DeckState, EngineStats, Meters};
+pub use tempo::{BeatClock, BeatGrid, MasterTempo};
 pub use track::{DecodeStatus, MAX_SAMPLE_RATE, MAX_TRACK_SECONDS, MIN_SAMPLE_RATE, Track};
 
 /// Number of decks.
 pub const DECK_COUNT: usize = 2;
+
+/// Number of effect units.
+pub const EFFECT_UNIT_COUNT: usize = 3;
 
 /// Number of insert slots on each deck and on the master bus.
 pub const INSERT_SLOTS: usize = 4;

@@ -356,6 +356,7 @@ version = "0.1.0"
 dependencies = [
  "cpal",
  "crossterm",
+ "dubplate-fx",
  "rtrb",
  "symphonia",
  "tempfile",

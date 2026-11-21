@@ -43,6 +43,15 @@ pub enum EngineError {
         slot_count: usize,
     },
 
+    /// An effect unit number past the last unit.
+    #[error("effect unit {unit} does not exist; there are {unit_count} units")]
+    InvalidEffectUnit {
+        /// Unit that was requested, counted from 0.
+        unit: usize,
+        /// Number of effect units.
+        unit_count: usize,
+    },
+
     /// No audio output device is available.
     #[error("no audio output device is available")]
     NoOutputDevice,
@@ -50,4 +59,18 @@ pub enum EngineError {
     /// The audio output could not be configured or started.
     #[error("audio output error: {0}")]
     Output(String),
+}
+
+/// Accepts a finite `value` from `minimum` to `maximum`, both included.
+pub(crate) fn check_range(
+    name: &'static str,
+    value: f64,
+    minimum: f64,
+    maximum: f64,
+) -> Result<(), EngineError> {
+    if value.is_finite() && value >= minimum && value <= maximum {
+        Ok(())
+    } else {
+        Err(EngineError::InvalidParameter { name, value })
+    }
 }
