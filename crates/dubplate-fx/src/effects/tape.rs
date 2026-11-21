@@ -77,10 +77,11 @@ pub(crate) fn read_taps(line: &DelayLine, taps: &DelayTaps) -> f32 {
 /// The feedback and output level of a trail of repeats.
 ///
 /// The output is scaled by the feedback so a trail sounds about as loud at any feedback: more
-/// feedback makes it last longer, not louder. The tape tone takes a little off every pass, so
-/// even full feedback leaves a finite trail to scale by. At full mix the trail plays about 3 dB
-/// under the music that feeds it. The feedback itself is governed so the repeats never build up
-/// past the music that went in.
+/// feedback makes it last longer, not louder. The scaling matches the trail's power, not its
+/// peak, and the Headroom stage is the peak safety net. The tape tone takes a little off every
+/// pass, so even full feedback leaves a finite trail to scale by. At full mix the trail plays
+/// about 3 dB under the music that feeds it. The feedback itself is governed so the repeats
+/// never build up past the music that went in.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct TrailLevel {
     governor: FeedbackGovernor,
@@ -126,6 +127,8 @@ impl TrailLevel {
     ) -> TrailGains {
         TrailGains {
             feedback: feedback * self.governor.next(input_magnitude, trail_magnitude),
+            // The knob's feedback, not the governed one: the buildup to compensate depends on the
+            // intended loop gain.
             output: TRAIL_LEVEL * loop_loudness_gain(feedback * LOUDNESS_KEPT_PER_PASS),
         }
     }

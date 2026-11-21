@@ -192,9 +192,10 @@ impl Headroom {
     }
 
     /// Returns `wanted_gain`, lowered as far as needed for `dry * dry_gain + wet * gain` to stay
-    /// under the ceiling on both channels.
+    /// under the ceiling on both channels. It updates the peak followers and returns the clamped
+    /// gain for the wet signal.
     #[inline]
-    pub(crate) fn wet_gain(
+    pub(crate) fn limit_wet_gain(
         &mut self,
         dry: [f32; 2],
         dry_gain: f32,
@@ -265,11 +266,17 @@ mod tests {
     fn headroom_keeps_the_sum_under_the_ceiling() {
         let mut headroom = Headroom::new();
         headroom.prepare(SAMPLE_RATE);
-        let gain = headroom.wet_gain([0.9, -0.2], 1.0, [0.5, 0.1], 1.0);
+        let gain = headroom.limit_wet_gain([0.9, -0.2], 1.0, [0.5, 0.1], 1.0);
         assert!(0.9 + 0.5 * gain <= HEADROOM_CEILING + 1e-6);
         let mut headroom = Headroom::new();
         headroom.prepare(SAMPLE_RATE);
-        assert_eq!(headroom.wet_gain([0.2, 0.2], 1.0, [0.3, 0.3], 1.0), 1.0);
-        assert_eq!(headroom.wet_gain([1.0, 0.0], 1.0, [0.3, 0.3], 1.0), 0.0);
+        assert_eq!(
+            headroom.limit_wet_gain([0.2, 0.2], 1.0, [0.3, 0.3], 1.0),
+            1.0
+        );
+        assert_eq!(
+            headroom.limit_wet_gain([1.0, 0.0], 1.0, [0.3, 0.3], 1.0),
+            0.0
+        );
     }
 }
