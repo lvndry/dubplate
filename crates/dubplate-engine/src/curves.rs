@@ -1,5 +1,10 @@
 use std::f32::consts::FRAC_PI_2;
 
+use crate::channel::KNOB_CENTRE;
+
+const KNOB_DEAD_ZONE: f32 = 0.01;
+const EQ_BOOST_DECIBELS: f32 = 6.0;
+
 /// Gains of the left (deck A) and right (deck B) sides for a crossfader position.
 ///
 /// Position 0.0 is fully left and 1.0 fully right. The law is constant power: the two gains
@@ -23,6 +28,27 @@ pub fn crossfader_gains(position: f32) -> (f32, f32) {
 pub fn channel_fader_gain(position: f32) -> f32 {
     let position = position.clamp(0.0, 1.0);
     position * position
+}
+
+/// The gain of an EQ knob at a position from 0.0 to 1.0, like a DJM's isolator: the centre is
+/// unity, fully left kills the band and fully right boosts it by 6 dB.
+///
+/// The left half follows the square of the travel, the same audio taper as the channel fader:
+/// half way down is about -12 dB, so most of the knob shapes the cut and only its last few
+/// degrees fall into the kill. The right half rises evenly in decibels. A small dead zone around
+/// the centre keeps a knob resting on its detent exactly at unity.
+pub fn eq_gain(position: f32) -> f32 {
+    let offset = position.clamp(0.0, 1.0) - KNOB_CENTRE;
+    if offset.abs() <= KNOB_DEAD_ZONE {
+        return 1.0;
+    }
+    let travel = (offset.abs() - KNOB_DEAD_ZONE) / (KNOB_CENTRE - KNOB_DEAD_ZONE);
+    if offset < 0.0 {
+        let remaining = 1.0 - travel;
+        remaining * remaining
+    } else {
+        decibels_to_gain(EQ_BOOST_DECIBELS * travel)
+    }
 }
 
 /// Converts decibels to a linear gain factor.
@@ -98,6 +124,21 @@ mod tests {
         ramp.set_target(1.0);
         let values: Vec<f32> = (0..6).map(|_| ramp.next_value()).collect();
         assert_eq!(values, vec![0.25, 0.5, 0.75, 1.0, 1.0, 1.0]);
+    }
+
+    #[test]
+    fn the_eq_knob_kills_at_the_left_is_unity_at_the_centre_and_boosts_six_decibels() {
+        assert_eq!(eq_gain(0.0), 0.0);
+        assert_eq!(eq_gain(0.5), 1.0);
+        assert_eq!(eq_gain(0.505), 1.0);
+        assert!((gain_to_decibels(eq_gain(1.0)) - 6.0).abs() < 1e-4);
+        assert!((gain_to_decibels(eq_gain(0.245)) + 12.0).abs() < 0.3);
+        let positions: Vec<f32> = (0..=100).map(|step| step as f32 / 100.0).collect();
+        assert!(
+            positions
+                .windows(2)
+                .all(|pair| eq_gain(pair[0]) <= eq_gain(pair[1]))
+        );
     }
 
     #[test]

@@ -4,8 +4,9 @@ use gpui::prelude::*;
 use gpui::{ClickEvent, Context, FontWeight, MouseButton, div, px};
 
 use super::DubplateApp;
+use crate::commands::Command;
 use crate::fonts::MONO_FAMILY;
-use crate::shortcuts::{Command, help_lines};
+use crate::shortcuts::help_lines;
 use crate::theme;
 
 pub(super) fn render(cx: &mut Context<'_, DubplateApp>) -> impl IntoElement {

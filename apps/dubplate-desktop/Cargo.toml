@@ -12,10 +12,16 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1.0.104"
+async-channel = "2.5.0"
+dirs = "7.0.0"
 dubplate-engine = { version = "0.1.0", path = "../../crates/dubplate-engine" }
+dubplate-library = { version = "0.1.0", path = "../../crates/dubplate-library" }
+dubplate-midi = { version = "0.1.0", path = "../../crates/dubplate-midi" }
 dubplate-rekordbox = { version = "0.1.0", path = "../../crates/dubplate-rekordbox" }
 gpui = { version = "=0.9.1", package = "gpui-kit" }
+serde = { version = "1.0.229", features = ["derive"] }
 thiserror = "2.0.21"
+toml = "1.2.2"
 
 [lints]
 workspace = true
@@ -23,7 +29,10 @@ workspace = true
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6.5"
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSApplication", "NSImage", "NSResponder"] }
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSData", "NSString", "NSBundle", "NSDictionary", "NSObject"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSData", "NSString", "NSBundle", "NSDictionary", "NSObject", "NSProcessInfo"] }
 
 [build-dependencies]
 resvg = "0.50.0"
+
+[dev-dependencies]
+tempfile = "3.27.0"

@@ -9,10 +9,12 @@
 //!
 //! In a terminal: space plays or pauses the selected deck, tab selects the other deck, c is
 //! the cue button, up and down change the tempo by 1%, left and right move the crossfader,
-//! x throws the crossfader to the other side, and q quits. For the effects: 1, 2 and 3 switch
-//! effect units 1 to 3 on and off, e selects the next effect on unit 1, t moves unit 1 to the
-//! next target (deck A, deck B, master), [ and ] shorten and lengthen its beat, and - and =
-//! turn its depth down and up.
+//! x throws the crossfader to the other side, and q quits. On the selected deck's channel, k
+//! kills or restores the low, h the high, and j and l turn the filter knob left and right. The
+//! jog: , and . nudge the selected deck back and forward, n and m search back and forward. For
+//! the effects: 1, 2 and 3 switch effect units 1 to 3 on and off, e selects the next effect on
+//! unit 1, t moves unit 1 to the next target (deck A, deck B, master), [ and ] shorten and
+//! lengthen its beat, and - and = turn its depth down and up.
 
 use std::io::{IsTerminal, Write};
 use std::path::PathBuf;
@@ -21,13 +23,16 @@ use std::time::{Duration, Instant};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use dubplate_engine::{
     AudioOutput, BeatGrid, Controller, DeckId, DecodeStatus, EffectKind, EffectTarget,
-    EffectUnitId, EngineError, EngineStats, OutputConfig, Track, decibels_to_gain,
+    EffectUnitId, EngineError, EngineStats, EqBand, OutputConfig, Track, decibels_to_gain,
     gain_to_decibels,
 };
 
 const USAGE: &str =
     "usage: play <file-a> [file-b] [--bpm BPM]... [--buffer FRAMES] [--seconds N] [--volume DB]";
 const DEPTH_STEP: f32 = 0.1;
+const FILTER_STEP: f32 = 0.05;
+const NUDGE_TICKS: i32 = 30;
+const SEARCH_TICKS: i32 = 60;
 
 struct Options {
     files: Vec<PathBuf>,
@@ -116,6 +121,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if interactive {
         println!(
             "space play/pause, tab switch deck, c cue, up/down tempo, left/right crossfader, x throw crossfader, q quit\r\n\
+             k/h kill low/high, j/l filter, ,/. nudge, n/m search\r\n\
              1/2/3 effect units on/off, e next effect, t next target, [/] beat, -/= depth (unit 1)"
         );
         crossterm::terminal::enable_raw_mode()?;
@@ -192,6 +198,9 @@ fn run_interactive(controller: &mut Controller, deck_count: usize) -> std::io::R
                     };
                     controller.set_crossfader(crossfader)
                 }
+                KeyCode::Char(key @ ('k' | 'h' | 'j' | 'l' | ',' | '.' | 'n' | 'm')) => {
+                    control_channel(controller, selected, key)
+                }
                 KeyCode::Char(key) => control_effects(controller, key),
                 _ => Ok(()),
             };
@@ -204,6 +213,27 @@ fn run_interactive(controller: &mut Controller, deck_count: usize) -> std::io::R
             std::io::stdout().flush()?;
             next_print += Duration::from_secs(1);
         }
+    }
+}
+
+/// Plays the channel and jog keys on the selected deck.
+fn control_channel(
+    controller: &mut Controller,
+    deck: DeckId,
+    key: char,
+) -> Result<(), EngineError> {
+    let channel = controller.channel(deck);
+    let toggle_kill = |position: f32| if position > 0.0 { 0.0 } else { 0.5 };
+    match key {
+        'k' => controller.set_eq(deck, EqBand::Low, toggle_kill(channel.eq(EqBand::Low))),
+        'h' => controller.set_eq(deck, EqBand::High, toggle_kill(channel.eq(EqBand::High))),
+        'j' => controller.set_filter(deck, (channel.filter - FILTER_STEP).max(0.0)),
+        'l' => controller.set_filter(deck, (channel.filter + FILTER_STEP).min(1.0)),
+        ',' => controller.jog_nudge(deck, -NUDGE_TICKS),
+        '.' => controller.jog_nudge(deck, NUDGE_TICKS),
+        'n' => controller.jog_search(deck, -SEARCH_TICKS),
+        'm' => controller.jog_search(deck, SEARCH_TICKS),
+        _ => Ok(()),
     }
 }
 
@@ -241,13 +271,18 @@ fn status_line(controller: &Controller, selected: Option<DeckId>) -> String {
         .filter(|deck| controller.deck_state(**deck).loaded)
         .map(|deck| {
             let state = controller.deck_state(*deck);
+            let channel = controller.channel(*deck);
             format!(
-                "{}{:?} {} {} {:+.1}%",
+                "{}{:?} {} {} {:+.1}% eq {:.2}/{:.2}/{:.2} filter {:.2}",
                 if selected == Some(*deck) { ">" } else { " " },
                 deck,
                 if state.playing { "play" } else { "stop" },
                 clock(state.position_seconds),
-                (state.tempo - 1.0) * 100.0
+                (state.tempo - 1.0) * 100.0,
+                channel.eq(EqBand::High),
+                channel.eq(EqBand::Mid),
+                channel.eq(EqBand::Low),
+                channel.filter
             )
         })
         .collect();

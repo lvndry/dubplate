@@ -7,7 +7,7 @@ use gpui::prelude::*;
 use gpui::{Context, MouseButton, MouseDownEvent, Pixels, Rgba, canvas, div, px, relative};
 
 use super::{DubplateApp, HitAreas};
-use crate::controls::{Orientation, Slider};
+use crate::controls::{Control, Orientation, Slider};
 use crate::theme;
 
 const TRACK_THICKNESS: Pixels = px(3.0);
@@ -45,7 +45,7 @@ pub(super) fn render(
     fill: Option<(f32, Rgba)>,
     cx: &mut Context<'_, DubplateApp>,
 ) -> gpui::Stateful<gpui::Div> {
-    let fraction = app.slider_fraction(slider);
+    let fraction = app.control_fraction(Control::from(slider));
     let orientation = slider.orientation();
     let hit_areas: Rc<HitAreas> = Rc::clone(&app.hit_areas);
     let recorder = canvas(

@@ -61,6 +61,7 @@ mod tests {
     use dubplate_rekordbox::Track;
 
     use super::*;
+    use crate::collection::RekordboxLibrary;
 
     fn track(id: &str, title: &str, artist: &str) -> Track {
         Track {
@@ -82,15 +83,18 @@ mod tests {
     }
 
     fn collection() -> Collection {
-        Collection::new(
-            vec![
-                track("1", "2 Step", "Shimza, Kabza De Small"),
-                track("2", "3rd Eye", "Hyenah, Mr. V"),
-                track("3", "Abalele", "Kabza De Small, DJ Maphorisa"),
-            ],
+        Collection::build(
+            Some(&RekordboxLibrary::new(
+                vec![
+                    track("1", "2 Step", "Shimza, Kabza De Small"),
+                    track("2", "3rd Eye", "Hyenah, Mr. V"),
+                    track("3", "Abalele", "Kabza De Small, DJ Maphorisa"),
+                ],
+                Vec::new(),
+                Vec::new(),
+                Path::new("/share"),
+            )),
             &[],
-            &[],
-            Path::new("/share"),
         )
     }
 

@@ -98,7 +98,8 @@ pub enum HotCuePad {
 }
 
 impl HotCuePad {
-    const ALL: [Self; 8] = [
+    /// Every pad, A to H.
+    pub const ALL: [Self; 8] = [
         Self::A,
         Self::B,
         Self::C,

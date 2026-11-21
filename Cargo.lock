@@ -1631,14 +1631,21 @@ name = "dubplate-desktop"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-channel",
+ "dirs 7.0.0",
  "dubplate-engine",
+ "dubplate-library",
+ "dubplate-midi",
  "dubplate-rekordbox",
  "gpui-kit",
  "objc2 0.6.5",
  "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",
  "resvg 0.50.0",
+ "serde",
+ "tempfile",
  "thiserror 2.0.21",
+ "toml 1.2.2+spec-1.1.0",
 ]
 
 [[package]]
@@ -1661,6 +1668,17 @@ dependencies = [
  "dubplate-engine",
  "hound",
  "tempfile",
+]
+
+[[package]]
+name = "dubplate-library"
+version = "0.1.0"
+dependencies = [
+ "lofty",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

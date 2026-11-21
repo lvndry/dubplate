@@ -323,6 +323,18 @@ impl BeatMarks {
         let end = self.marks.partition_point(|mark| mark.seconds <= range.end);
         &self.marks[start..end.max(start)]
     }
+
+    /// The beat nearest to `seconds`, or `None` when the grid is empty. Quantize snaps cues to it.
+    pub fn nearest(&self, seconds: f64) -> Option<f64> {
+        let after = self.marks.partition_point(|mark| mark.seconds < seconds);
+        let candidates = [after.checked_sub(1), Some(after)];
+        candidates
+            .into_iter()
+            .flatten()
+            .filter_map(|index| self.marks.get(index))
+            .map(|mark| mark.seconds)
+            .min_by(|first, second| (first - seconds).abs().total_cmp(&(second - seconds).abs()))
+    }
 }
 
 #[cfg(test)]
@@ -333,6 +345,23 @@ mod tests {
 
     fn three_band(low: u8, mid: u8, high: u8) -> ThreeBandColumn {
         ThreeBandColumn { low, mid, high }
+    }
+
+    #[test]
+    fn quantize_snaps_to_the_nearest_beat() {
+        let marks = BeatMarks {
+            marks: [0.5, 1.0, 1.5]
+                .map(|seconds| BeatMark {
+                    seconds,
+                    downbeat: false,
+                })
+                .to_vec(),
+        };
+        assert_eq!(marks.nearest(0.0), Some(0.5));
+        assert_eq!(marks.nearest(1.2), Some(1.0));
+        assert_eq!(marks.nearest(1.3), Some(1.5));
+        assert_eq!(marks.nearest(99.0), Some(1.5));
+        assert_eq!(BeatMarks::default().nearest(1.0), None);
     }
 
     #[test]

@@ -1,10 +1,12 @@
-//! The rekordbox collection as the browser and the decks use it: every track with the text the
-//! table shows, its hot cues from `master.db`, and the crates.
+//! The library as the browser and the decks use it: every track from the DJ's music folders and,
+//! when they chose to import it, the rekordbox collection, with the text the table shows, its
+//! hot cues from `master.db`, and the crates.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use dubplate_library::{FolderScan, LibraryTrack};
 use dubplate_rekordbox::{
     Cue, DatabaseKey, HotCuePad, Library, Playlist, PlaylistKind, Track, default_master_db,
 };
@@ -59,6 +61,8 @@ pub struct CollectionTrack {
 pub enum TrackOrigin {
     /// The rekordbox collection, with its analysis and cues.
     Rekordbox,
+    /// One of the DJ's music folders.
+    Folder,
     /// An audio file loaded on its own.
     File,
 }
@@ -76,6 +80,8 @@ pub struct RowText {
     pub key: SharedString,
     /// The length as minutes and seconds.
     pub time: SharedString,
+    /// Where the track comes from: its music folder's name, or rekordbox.
+    pub source: SharedString,
 }
 
 /// What a crate in the sidebar is.
@@ -89,6 +95,8 @@ pub enum CrateKind {
     Folder,
     /// A rekordbox smart playlist, whose rules Dubplate does not run yet.
     Smart,
+    /// One of the DJ's music folders, with every track in it and its subfolders.
+    MusicFolder,
 }
 
 /// An entry of the sidebar.
@@ -104,15 +112,16 @@ pub struct Crate {
     pub tracks: Vec<TrackIndex>,
 }
 
-/// The collection read from a copy of rekordbox's library.
+/// rekordbox's library, read from a copy of `master.db`.
 #[derive(Debug, Clone)]
-pub struct Collection {
-    tracks: Vec<Arc<CollectionTrack>>,
-    crates: Vec<Crate>,
+pub struct RekordboxLibrary {
+    tracks: Vec<Track>,
+    cues: Vec<Cue>,
+    playlists: Vec<Playlist>,
     share_directory: PathBuf,
 }
 
-impl Collection {
+impl RekordboxLibrary {
     /// Reads the library at rekordbox's usual place with the key from the user's configuration.
     /// It copies `master.db` and reads the copy, so this belongs on a background thread.
     pub fn load_default() -> Result<Self, dubplate_rekordbox::Error> {
@@ -120,54 +129,128 @@ impl Collection {
         let library = Library::open_copy(&default_master_db()?, &key)?;
         Ok(Self::new(
             library.tracks()?,
-            &library.cues()?,
-            &library.playlists()?,
+            library.cues()?,
+            library.playlists()?,
             library.share_directory(),
         ))
     }
 
-    /// Builds the collection from what the library holds.
+    /// A library holding these tracks, cues and playlists.
     pub fn new(
         tracks: Vec<Track>,
-        cues: &[Cue],
-        playlists: &[Playlist],
+        cues: Vec<Cue>,
+        playlists: Vec<Playlist>,
         share_directory: &Path,
     ) -> Self {
-        let mut cues_by_track: HashMap<&str, Vec<&Cue>> = HashMap::new();
-        for cue in cues {
-            cues_by_track.entry(&cue.track_id).or_default().push(cue);
+        Self {
+            tracks,
+            cues,
+            playlists,
+            share_directory: share_directory.to_path_buf(),
         }
-        let tracks: Vec<Arc<CollectionTrack>> = tracks
-            .into_iter()
-            .map(|track| {
-                let track_cues = cues_by_track
-                    .get(track.id.as_str())
-                    .map(Vec::as_slice)
-                    .unwrap_or_default();
-                Arc::new(CollectionTrack::new(
-                    track,
-                    track_cues,
-                    TrackOrigin::Rekordbox,
-                ))
-            })
-            .collect();
-        let index_by_id: HashMap<&str, TrackIndex> = tracks
-            .iter()
-            .enumerate()
-            .map(|(position, entry)| (entry.track.id.as_str(), TrackIndex(position)))
-            .collect();
+    }
+
+    /// How many tracks rekordbox holds.
+    pub fn track_count(&self) -> usize {
+        self.tracks.len()
+    }
+}
+
+/// Every track Dubplate knows, from the DJ's music folders and rekordbox.
+#[derive(Debug, Clone)]
+pub struct Collection {
+    tracks: Vec<Arc<CollectionTrack>>,
+    crates: Vec<Crate>,
+    share_directory: Option<PathBuf>,
+}
+
+impl Collection {
+    /// Builds the collection from rekordbox, when imported, and the scans of the music folders,
+    /// in the order the DJ added them. A file in rekordbox and in a folder is listed once, as
+    /// rekordbox's track with its cues and analysis; a file in two folders is listed once too.
+    pub fn build(rekordbox: Option<&RekordboxLibrary>, folders: &[FolderScan]) -> Self {
+        let mut tracks: Vec<Arc<CollectionTrack>> = Vec::new();
         let mut crates = vec![Crate {
             name: "Collection".into(),
             depth: 0,
             kind: CrateKind::Collection,
-            tracks: (0..tracks.len()).map(TrackIndex).collect(),
+            tracks: Vec::new(),
         }];
-        add_playlist_crates(playlists, None, 0, &index_by_id, &mut crates);
+        let mut index_by_path: HashMap<PathBuf, TrackIndex> = HashMap::new();
+        let mut playlist_crates = Vec::new();
+        if let Some(rekordbox) = rekordbox {
+            let mut cues_by_track: HashMap<&str, Vec<&Cue>> = HashMap::new();
+            for cue in &rekordbox.cues {
+                cues_by_track.entry(&cue.track_id).or_default().push(cue);
+            }
+            for track in &rekordbox.tracks {
+                let track_cues = cues_by_track
+                    .get(track.id.as_str())
+                    .map(Vec::as_slice)
+                    .unwrap_or_default();
+                let index = TrackIndex(tracks.len());
+                if let Some(path) = &track.file_path {
+                    index_by_path.insert(canonical(path), index);
+                }
+                tracks.push(Arc::new(CollectionTrack::new(
+                    track.clone(),
+                    track_cues,
+                    TrackOrigin::Rekordbox,
+                    "rekordbox",
+                )));
+            }
+            let index_by_id: HashMap<&str, TrackIndex> = tracks
+                .iter()
+                .enumerate()
+                .map(|(position, entry)| (entry.track.id.as_str(), TrackIndex(position)))
+                .collect();
+            add_playlist_crates(
+                &rekordbox.playlists,
+                None,
+                0,
+                &index_by_id,
+                &mut playlist_crates,
+            );
+        }
+        for scan in folders {
+            let name = folder_name(&scan.folder);
+            let mut folder_tracks = Vec::with_capacity(scan.tracks.len());
+            for found in &scan.tracks {
+                let index = *index_by_path.entry(found.path.clone()).or_insert_with(|| {
+                    let index = TrackIndex(tracks.len());
+                    tracks.push(Arc::new(CollectionTrack::from_folder(found, &name)));
+                    index
+                });
+                folder_tracks.push(index);
+            }
+            crates.push(Crate {
+                name: name.into(),
+                depth: 0,
+                kind: CrateKind::MusicFolder,
+                tracks: folder_tracks,
+            });
+        }
+        crates[0].tracks = (0..tracks.len()).map(TrackIndex).collect();
+        crates.extend(playlist_crates);
         Self {
             tracks,
             crates,
-            share_directory: share_directory.to_path_buf(),
+            share_directory: rekordbox.map(|rekordbox| rekordbox.share_directory.clone()),
         }
+    }
+
+    /// How many tracks the collection holds.
+    pub fn track_count(&self) -> usize {
+        self.tracks.len()
+    }
+
+    /// The track that is the file or rekordbox entry `identity` names, if the collection holds
+    /// it.
+    pub fn find(&self, identity: &str) -> Option<TrackIndex> {
+        self.tracks
+            .iter()
+            .position(|track| track.identity() == identity)
+            .map(TrackIndex)
     }
 
     /// The track at `index`.
@@ -188,9 +271,10 @@ impl Collection {
             .map(|(position, entry)| (CrateIndex(position), entry))
     }
 
-    /// rekordbox's `share` directory, which holds the analysis files.
-    pub fn share_directory(&self) -> &Path {
-        &self.share_directory
+    /// rekordbox's `share` directory, which holds the analysis files, when rekordbox is
+    /// imported.
+    pub fn share_directory(&self) -> Option<&Path> {
+        self.share_directory.as_deref()
     }
 }
 
@@ -214,10 +298,33 @@ impl CollectionTrack {
             analysis_path: None,
             date_added: None,
         };
-        Self::new(track, &[], TrackOrigin::File)
+        Self::new(track, &[], TrackOrigin::File, "")
     }
 
-    fn new(track: Track, cues: &[&Cue], origin: TrackOrigin) -> Self {
+    /// A track found in the music folder called `folder`.
+    fn from_folder(found: &LibraryTrack, folder: &str) -> Self {
+        let track = Track {
+            id: String::new(),
+            title: found.title.clone(),
+            artist: found.artist.clone(),
+            album: found.album.clone(),
+            genre: None,
+            label: None,
+            key: found.key.clone(),
+            bpm: found.bpm.map(f64::from),
+            length_seconds: found
+                .duration_seconds
+                .map(|seconds| seconds.round().max(0.0) as u32),
+            file_path: Some(found.path.clone()),
+            rating: None,
+            comment: None,
+            analysis_path: None,
+            date_added: None,
+        };
+        Self::new(track, &[], TrackOrigin::Folder, folder)
+    }
+
+    fn new(track: Track, cues: &[&Cue], origin: TrackOrigin, source: &str) -> Self {
         let mut hot_cues: Vec<HotCue> = cues
             .iter()
             .filter_map(|cue| {
@@ -247,6 +354,7 @@ impl CollectionTrack {
                 .map(|seconds| clock(f64::from(seconds)))
                 .unwrap_or_default()
                 .into(),
+            source: SharedString::from(source.to_owned()),
         };
         Self {
             track,
@@ -257,9 +365,12 @@ impl CollectionTrack {
         }
     }
 
-    /// The hot cue on `pad`, if one is set.
-    pub fn hot_cue(&self, pad: HotCuePad) -> Option<&HotCue> {
-        self.hot_cues.iter().find(|cue| cue.pad == pad)
+    /// What tells this track apart from every other: its rekordbox id, or its file's path.
+    pub fn identity(&self) -> String {
+        match (self.origin, &self.track.file_path) {
+            (TrackOrigin::Folder | TrackOrigin::File, Some(path)) => path.display().to_string(),
+            _ => self.track.id.clone(),
+        }
     }
 }
 
@@ -302,6 +413,20 @@ fn add_playlist_crates(
             );
         }
     }
+}
+
+/// The name a music folder shows in the sidebar: its last component.
+pub fn folder_name(folder: &Path) -> String {
+    folder
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| folder.display().to_string())
+}
+
+/// `path` with symbolic links resolved when the file is there, so the same file is recognised
+/// whichever way it was reached.
+fn canonical(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }
 
 fn file_name(track: &Track) -> String {
@@ -381,31 +506,42 @@ mod tests {
 
     #[test]
     fn rows_are_formatted_once_with_cues_by_pad() {
-        let collection = Collection::new(
-            vec![track("1", "Saltwater Hymn")],
-            &[cue("1", 2, 45_000), cue("1", 1, 41), cue("1", 0, 90_500)],
+        let collection = Collection::build(
+            Some(&RekordboxLibrary::new(
+                vec![track("1", "Saltwater Hymn")],
+                vec![cue("1", 2, 45_000), cue("1", 1, 41), cue("1", 0, 90_500)],
+                Vec::new(),
+                Path::new("/share"),
+            )),
             &[],
-            Path::new("/share"),
         );
         let entry = collection.track(TrackIndex(0));
         assert_eq!(entry.row.bpm.as_ref(), "124.00");
         assert_eq!(entry.row.time.as_ref(), "6:48");
         let pads: Vec<char> = entry.hot_cues.iter().map(|cue| cue.pad.letter()).collect();
         assert_eq!(pads, ['A', 'B']);
-        assert!((entry.hot_cue(HotCuePad::B).unwrap().seconds - 45.0).abs() < 1e-9);
+        let pad_b = entry
+            .hot_cues
+            .iter()
+            .find(|cue| cue.pad == HotCuePad::B)
+            .unwrap();
+        assert!((pad_b.seconds - 45.0).abs() < 1e-9);
     }
 
     #[test]
     fn crates_follow_the_folder_tree_after_the_collection() {
-        let collection = Collection::new(
-            vec![track("1", "One"), track("2", "Two")],
+        let collection = Collection::build(
+            Some(&RekordboxLibrary::new(
+                vec![track("1", "One"), track("2", "Two")],
+                Vec::new(),
+                vec![
+                    playlist("Sets", None, PlaylistKind::Folder, &[]),
+                    playlist("Peak", Some("Sets"), PlaylistKind::Playlist, &["2", "gone"]),
+                    playlist("New", None, PlaylistKind::Smart, &[]),
+                ],
+                Path::new("/share"),
+            )),
             &[],
-            &[
-                playlist("Sets", None, PlaylistKind::Folder, &[]),
-                playlist("Peak", Some("Sets"), PlaylistKind::Playlist, &["2", "gone"]),
-                playlist("New", None, PlaylistKind::Smart, &[]),
-            ],
-            Path::new("/share"),
         );
         let crates: Vec<(&str, usize, usize)> = collection
             .indexed_crates()
@@ -430,6 +566,86 @@ mod tests {
         assert_eq!(entry.origin, TrackOrigin::File);
         assert!(entry.hot_cues.is_empty());
         assert_eq!(entry.row.bpm.as_ref(), "");
+    }
+
+    fn found(path: &str, title: Option<&str>) -> LibraryTrack {
+        LibraryTrack {
+            path: PathBuf::from(path),
+            title: title.map(str::to_owned),
+            artist: Some("Artist".to_owned()),
+            album: None,
+            bpm: Some(122.0),
+            key: Some("9A".to_owned()),
+            duration_seconds: Some(300.4),
+            size: 1,
+            modified_ms: 1,
+        }
+    }
+
+    fn folder(path: &str, tracks: Vec<LibraryTrack>) -> FolderScan {
+        FolderScan {
+            folder: PathBuf::from(path),
+            tracks,
+            problems: Vec::new(),
+            scanned_at_ms: 0,
+        }
+    }
+
+    #[test]
+    fn music_folders_become_crates_and_a_file_is_listed_once() {
+        let mut in_rekordbox = track("1", "From rekordbox");
+        in_rekordbox.file_path = Some(PathBuf::from("/Music/House/Shared.mp3"));
+        let rekordbox = RekordboxLibrary::new(
+            vec![in_rekordbox],
+            Vec::new(),
+            Vec::new(),
+            Path::new("/share"),
+        );
+        let folders = [
+            folder(
+                "/Music/House",
+                vec![
+                    found("/Music/House/Shared.mp3", Some("Tagged differently")),
+                    found("/Music/House/Deep/Only Here.flac", None),
+                ],
+            ),
+            folder(
+                "/Music/House/Deep",
+                vec![found("/Music/House/Deep/Only Here.flac", None)],
+            ),
+        ];
+        let collection = Collection::build(Some(&rekordbox), &folders);
+        assert_eq!(collection.track_count(), 2);
+        let crates: Vec<(&str, CrateKind, usize)> = collection
+            .indexed_crates()
+            .map(|(_, entry)| (entry.name.as_ref(), entry.kind, entry.tracks.len()))
+            .collect();
+        assert_eq!(
+            crates,
+            [
+                ("Collection", CrateKind::Collection, 2),
+                ("House", CrateKind::MusicFolder, 2),
+                ("Deep", CrateKind::MusicFolder, 1),
+            ]
+        );
+        let shared = collection.track(TrackIndex(0));
+        assert_eq!(shared.origin, TrackOrigin::Rekordbox);
+        assert_eq!(shared.row.source.as_ref(), "rekordbox");
+        let only_here = collection.track(TrackIndex(1));
+        assert_eq!(only_here.origin, TrackOrigin::Folder);
+        assert_eq!(only_here.row.title.as_ref(), "Only Here");
+        assert_eq!(only_here.row.source.as_ref(), "House");
+        assert_eq!(only_here.row.bpm.as_ref(), "122.00");
+        assert_eq!(only_here.row.time.as_ref(), "5:00");
+        assert_eq!(collection.find(&only_here.identity()), Some(TrackIndex(1)));
+        assert!(collection.share_directory().is_some());
+    }
+
+    #[test]
+    fn without_rekordbox_there_is_no_analysis_folder() {
+        let collection = Collection::build(None, &[folder("/Music", Vec::new())]);
+        assert_eq!(collection.track_count(), 0);
+        assert!(collection.share_directory().is_none());
     }
 
     #[test]

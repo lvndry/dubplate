@@ -14,29 +14,31 @@ use gpui::{
 
 use crate::assets::SEARCH_ICON_PATH;
 use crate::collection::{Collection, CrateIndex, CrateKind, TrackIndex};
+use crate::commands::Direction;
 use crate::deck::deck_letter;
 use crate::fonts::MONO_FAMILY;
 use crate::search::{SearchQuery, filter_tracks};
-use crate::shortcuts::Direction;
 use crate::theme;
+use crate::widgets::{Emphasis, button};
 
 const ROW_HEIGHT: Pixels = px(32.0);
 const SIDEBAR_WIDTH: Pixels = px(200.0);
 const BPM_WIDTH: Pixels = px(72.0);
 const KEY_WIDTH: Pixels = px(56.0);
 const TIME_WIDTH: Pixels = px(64.0);
+const SOURCE_WIDTH: Pixels = px(120.0);
 const LOAD_WIDTH: Pixels = px(84.0);
 const ROW_GROUP: &str = "track-row";
 
-/// Where the rekordbox library stands.
+/// Where the library stands.
 #[derive(Clone)]
 pub enum LibraryStatus {
-    /// Being copied and read.
+    /// Being opened.
     Reading,
-    /// Read.
+    /// Open, with every track from the sources the DJ chose.
     Ready(Arc<Collection>),
-    /// Could not be read, and why.
-    Failed(SharedString),
+    /// The DJ has not chosen any music folder nor rekordbox yet.
+    Unchosen,
 }
 
 /// What the browser asks the window to do.
@@ -51,6 +53,21 @@ pub enum BrowserEvent {
     },
     /// Load a track on whichever deck is free.
     LoadOnFreeDeck(TrackIndex),
+    /// Ask for music folders to add to the library.
+    AddMusicFolders,
+    /// Make rekordbox's collection part of the library.
+    ImportRekordbox,
+}
+
+/// Which side of the browser a controller's browse knob moves through, as rekordbox's tree view
+/// and track list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BrowserPane {
+    /// The crates on the left.
+    Crates,
+    /// The tracks of the chosen crate.
+    #[default]
+    Tracks,
 }
 
 /// A track being dragged from the browser to a deck.
@@ -84,6 +101,7 @@ pub struct Browser {
     query: SearchQuery,
     rows: Vec<TrackIndex>,
     selected: Option<TrackIndex>,
+    pane: BrowserPane,
     search_input: Entity<InputState>,
     table_focus: FocusHandle,
     scroll: UniformListScrollHandle,
@@ -115,6 +133,7 @@ impl Browser {
             query: SearchQuery::default(),
             rows: Vec::new(),
             selected: None,
+            pane: BrowserPane::default(),
             search_input,
             table_focus: cx.focus_handle(),
             scroll: UniformListScrollHandle::new(),
@@ -123,7 +142,24 @@ impl Browser {
     }
 
     /// Shows the library as it now stands.
+    /// The selected track stays selected when it is still in the library.
     pub fn set_library(&mut self, library: LibraryStatus, cx: &mut Context<'_, Self>) {
+        let selected_identity = match (&self.library, self.selected) {
+            (LibraryStatus::Ready(collection), Some(track)) => {
+                Some(collection.track(track).identity())
+            }
+            _ => None,
+        };
+        if let LibraryStatus::Ready(collection) = &library {
+            self.selected = selected_identity.and_then(|identity| collection.find(&identity));
+            if collection
+                .indexed_crates()
+                .nth(self.crate_index.position())
+                .is_none()
+            {
+                self.crate_index = CrateIndex::COLLECTION;
+            }
+        }
         self.library = library;
         self.refilter(cx);
     }
@@ -162,19 +198,56 @@ impl Browser {
 
     /// Selects the row above or below the selected one.
     pub fn move_selection(&mut self, direction: Direction, cx: &mut Context<'_, Self>) {
+        self.pane = BrowserPane::Tracks;
+        let steps = match direction {
+            Direction::Up => -1,
+            Direction::Down => 1,
+        };
+        self.move_track_cursor(steps, cx);
+    }
+
+    /// Moves the cursor `steps` rows down, or up when negative, in the pane that has it: the
+    /// crates, choosing each one passed, or the tracks.
+    pub fn browse(&mut self, steps: i32, cx: &mut Context<'_, Self>) {
+        match self.pane {
+            BrowserPane::Crates => self.move_crate_cursor(steps, cx),
+            BrowserPane::Tracks => self.move_track_cursor(steps, cx),
+        }
+    }
+
+    /// Moves the browse cursor between the crates and the tracks.
+    pub fn switch_pane(&mut self, cx: &mut Context<'_, Self>) {
+        self.pane = match self.pane {
+            BrowserPane::Crates => BrowserPane::Tracks,
+            BrowserPane::Tracks => BrowserPane::Crates,
+        };
+        cx.notify();
+    }
+
+    fn move_track_cursor(&mut self, steps: i32, cx: &mut Context<'_, Self>) {
         let current = self
             .selected
             .and_then(|track| self.rows.iter().position(|row| *row == track));
-        let next = match (current, direction) {
-            (None, _) => 0,
-            (Some(position), Direction::Up) => position.saturating_sub(1),
-            (Some(position), Direction::Down) => {
-                (position + 1).min(self.rows.len().saturating_sub(1))
-            }
+        let next = match current {
+            None => Some(0),
+            Some(position) => offset(position, steps, self.rows.len()),
         };
-        if let Some(track) = self.rows.get(next).copied() {
+        if let Some((next, track)) = next.and_then(|next| Some((next, *self.rows.get(next)?))) {
             self.select(Some(track), cx);
             self.scroll.scroll_to_item(next, ScrollStrategy::Nearest);
+        }
+    }
+
+    fn move_crate_cursor(&mut self, steps: i32, cx: &mut Context<'_, Self>) {
+        let LibraryStatus::Ready(collection) = &self.library else {
+            return;
+        };
+        let count = collection.indexed_crates().count();
+        let next = offset(self.crate_index.position(), steps, count)
+            .and_then(|next| collection.indexed_crates().nth(next))
+            .map(|(crate_index, _)| crate_index);
+        if let Some(crate_index) = next {
+            self.choose_crate(crate_index, cx);
         }
     }
 
@@ -200,7 +273,7 @@ impl Browser {
             LibraryStatus::Ready(collection) => {
                 filter_tracks(collection, self.crate_index, &self.query)
             }
-            LibraryStatus::Reading | LibraryStatus::Failed(_) => Vec::new(),
+            LibraryStatus::Reading | LibraryStatus::Unchosen => Vec::new(),
         };
         if self
             .selected
@@ -234,7 +307,7 @@ impl Browser {
                 let count: SharedString = match entry.kind {
                     CrateKind::Folder => "".into(),
                     CrateKind::Smart => "smart".into(),
-                    CrateKind::Collection | CrateKind::Playlist => {
+                    CrateKind::Collection | CrateKind::Playlist | CrateKind::MusicFolder => {
                         entry.tracks.len().to_string().into()
                     }
                 };
@@ -254,7 +327,14 @@ impl Browser {
                         row.bg(theme::RAISED).font_weight(gpui::FontWeight::MEDIUM)
                     })
                     .hover(|row| row.text_color(theme::TEXT))
+                    .border_1()
+                    .border_color(if chosen && self.pane == BrowserPane::Crates {
+                        theme::MUTED
+                    } else {
+                        theme::faded(theme::MUTED, 0.0)
+                    })
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        this.pane = BrowserPane::Crates;
                         this.choose_crate(crate_index, cx);
                     }))
                     .child(div().truncate().child(entry.name.clone()))
@@ -351,6 +431,7 @@ impl Browser {
                 MouseButton::Left,
                 cx.listener(move |this, event: &MouseDownEvent, window, cx| {
                     window.focus(&this.table_focus, cx);
+                    this.pane = BrowserPane::Tracks;
                     this.select(Some(track), cx);
                     if event.click_count == 2 {
                         cx.emit(BrowserEvent::LoadOnFreeDeck(track));
@@ -381,6 +462,14 @@ impl Browser {
                     .text_color(theme::MUTED),
             )
             .child(
+                text_cell(row.source.clone())
+                    .w(SOURCE_WIDTH)
+                    .flex_none()
+                    .px(px(8.0))
+                    .text_size(theme::SMALL_TEXT_SIZE)
+                    .text_color(theme::MUTED),
+            )
+            .child(
                 div()
                     .flex()
                     .flex_none()
@@ -396,6 +485,13 @@ impl Browser {
                     .children(DeckId::ALL.map(|deck| load_button(position, track, deck, cx))),
             )
     }
+}
+
+/// `position` moved by `steps` and kept inside `count` rows, or `None` when there are none.
+fn offset(position: usize, steps: i32, count: usize) -> Option<usize> {
+    let last = count.checked_sub(1)?;
+    let moved = i64::try_from(position).ok()? + i64::from(steps);
+    Some(usize::try_from(moved.max(0)).ok()?.min(last))
 }
 
 fn header_row() -> impl IntoElement {
@@ -432,6 +528,7 @@ fn header_row() -> impl IntoElement {
                 .px(px(8.0))
                 .justify_end(),
         )
+        .child(header("Source").w(SOURCE_WIDTH).flex_none().px(px(8.0)))
         .child(
             header("Load")
                 .w(LOAD_WIDTH)
@@ -531,16 +628,64 @@ impl Render for Browser {
             LibraryStatus::Ready(collection) => body
                 .child(self.render_sidebar(&collection, cx))
                 .child(self.render_table(collection, cx)),
-            LibraryStatus::Reading => body.child(message_panel(
-                "Reading your rekordbox library\u{2026}".into(),
-                None,
-            )),
-            LibraryStatus::Failed(problem) => body.child(message_panel(
-                "Dubplate could not read your rekordbox library.".into(),
-                Some(problem),
-            )),
+            LibraryStatus::Reading => {
+                body.child(message_panel("Opening your library\u{2026}".into(), None))
+            }
+            LibraryStatus::Unchosen => body.child(empty_library(cx)),
         }
     }
+}
+
+/// What the library shows before the DJ has chosen where their music is: a folder picker, and
+/// rekordbox as a separate choice.
+fn empty_library(cx: &mut Context<'_, Browser>) -> impl IntoElement {
+    div().flex().flex_1().items_center().justify_center().child(
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(10.0))
+            .w(px(420.0))
+            .child(
+                div()
+                    .text_size(px(15.0))
+                    .font_weight(gpui::FontWeight::MEDIUM)
+                    .child("Add your music"),
+            )
+            .child(div().text_color(theme::MUTED).child(
+                "Choose the folders that hold your tracks. Dubplate reads them, \
+                 and their subfolders, and never changes your files.",
+            ))
+            .child(
+                div()
+                    .flex()
+                    .gap(px(8.0))
+                    .pt(px(6.0))
+                    .child(
+                        button(
+                            "add-music-folders",
+                            "Add music folders\u{2026}",
+                            Emphasis::Primary,
+                        )
+                        .on_click(cx.listener(
+                            |_, _: &ClickEvent, _, cx| {
+                                cx.emit(BrowserEvent::AddMusicFolders);
+                            },
+                        )),
+                    )
+                    .child(
+                        button(
+                            "import-rekordbox",
+                            "Import rekordbox collection",
+                            Emphasis::Secondary,
+                        )
+                        .on_click(cx.listener(
+                            |_, _: &ClickEvent, _, cx| {
+                                cx.emit(BrowserEvent::ImportRekordbox);
+                            },
+                        )),
+                    ),
+            ),
+    )
 }
 
 fn message_panel(title: SharedString, detail: Option<SharedString>) -> impl IntoElement {
@@ -556,4 +701,17 @@ fn message_panel(title: SharedString, detail: Option<SharedString>) -> impl Into
                 .text_color(theme::MUTED)
                 .child(detail)
         }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::offset;
+
+    #[test]
+    fn the_cursor_stops_at_the_first_and_last_rows() {
+        assert_eq!(offset(3, 2, 10), Some(5));
+        assert_eq!(offset(3, -5, 10), Some(0));
+        assert_eq!(offset(8, 4, 10), Some(9));
+        assert_eq!(offset(0, 1, 0), None);
+    }
 }
