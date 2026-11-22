@@ -36,10 +36,10 @@ Cmd+1 opens Prepare: the library on the left, your set on the right.
 | Move a set track up or down | Alt+Up / Alt+Down |
 | Take a track out / undo | Backspace / Cmd+Z |
 | Keep a track as a backup | B |
-| Move between the library, the set and Next / back | Tab / Shift+Tab |
+| Move between the library, the set and Next / back | Ctrl+Tab / Ctrl+Shift+Tab |
 | Insert Next suggestion 1 to 5 after the selected set track | Option+1 to Option+5 |
 
-The **Next** panel suggests what to play after the selected set track, with the reason ("One step on the wheel · +1.6% · energy +2"), steered by the set's energy curve against its target. The target climbs from your library's calmer tracks to its most intense, so it fits how your music is rated. Each suggestion shows its Option key. Tab to the panel, choose with the arrows and press Enter to insert one: the suggestions then follow the track you just placed, so Enter, Enter, Enter builds a run.
+The **Next** panel suggests what to play after the selected set track, with the reason ("One step on the wheel · +1.6% · energy +2"), steered by the set's energy curve against its target. The target climbs from your library's calmer tracks to its most intense, so it fits how your music is rated. Each suggestion shows its Option key. Use Ctrl+Tab to reach Next, choose with the arrows and press Enter to insert one. When the refreshed suggestions arrive, they follow the track you just placed. Tab and Shift+Tab move through individual controls.
 
 Each set track has a **ready badge**: Ready, or what is missing (Grid unconfirmed, No mix-in cue, No mix-out cue, File missing, Key unknown). Each seam between two tracks shows the key move, the tempo step and any warning: key clash, a tempo gap over 6%, vocals meeting, an energy drop, or the same track twice.
 
