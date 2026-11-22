@@ -37,7 +37,7 @@ impl ShimmerReverb {
         };
         reverb.apply_parameter(ParameterValue::Percent(DEFAULT_SIZE_PERCENT));
         reverb.apply_depth(DEFAULT_DEPTH);
-        reverb.unit.reset();
+        reverb.unit.settle();
         reverb
     }
 }
@@ -151,6 +151,11 @@ impl Kernel for ShimmerKernel {
             tone.reset();
         }
         self.returning = [0.0; 2];
+        self.feedback.snap_to_target();
+    }
+
+    fn settle(&mut self) {
+        self.reverb.settle();
         self.feedback.snap_to_target();
     }
 

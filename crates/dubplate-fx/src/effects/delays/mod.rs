@@ -162,6 +162,10 @@ impl<V: Voicing> Kernel for EchoLoop<V> {
         self.feedback.snap_to_target();
     }
 
+    fn settle(&mut self) {
+        self.feedback.snap_to_target();
+    }
+
     fn switched_on(&mut self) {
         self.voicing.switched_on();
     }
@@ -182,7 +186,7 @@ impl<V: Voicing> EchoEffect<V> {
             unit: Unit::new(EchoLoop::new(config, voicing, beat), DEFAULT_DEPTH),
         };
         effect.apply_depth(DEFAULT_DEPTH);
-        effect.unit.reset();
+        effect.unit.settle();
         effect
     }
 }

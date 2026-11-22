@@ -33,7 +33,7 @@ impl Echo {
             ),
         };
         echo.apply_depth(DEFAULT_DEPTH);
-        echo.unit.reset();
+        echo.unit.settle();
         echo
     }
 

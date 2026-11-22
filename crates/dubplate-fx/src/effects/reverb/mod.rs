@@ -74,7 +74,7 @@ impl Reverb {
             size_percent: DEFAULT_SIZE_PERCENT,
         };
         reverb.apply_parameter(ParameterValue::Percent(DEFAULT_SIZE_PERCENT));
-        reverb.unit.reset();
+        reverb.unit.settle();
         reverb
     }
 
@@ -360,6 +360,17 @@ impl Kernel for ReverbKernel {
         }
 
         [output[0] * self.output_gain, output[1] * self.output_gain]
+    }
+
+    fn settle(&mut self) {
+        for smoothed in [
+            &mut self.decay_seconds,
+            &mut self.damping,
+            &mut self.size_scale,
+            &mut self.low_cut_octaves,
+        ] {
+            smoothed.snap_to_target();
+        }
     }
 
     fn reset(&mut self) {

@@ -59,6 +59,11 @@ pub(crate) trait Kernel: Send {
     /// Clears every internal state.
     fn reset(&mut self);
 
+    /// Moves every smoothed control straight to its target without touching the audio the
+    /// effect holds. Constructors call it, so a new effect starts at its settings without
+    /// writing through buffers that are already silent.
+    fn settle(&mut self) {}
+
     /// Called each time the effect is switched on.
     fn switched_on(&mut self) {}
 
@@ -131,6 +136,13 @@ impl<K: Kernel> Unit<K> {
 
     pub(crate) fn needs_input_when_off(&self) -> bool {
         K::LISTENS_WHEN_OFF
+    }
+
+    /// Moves the mix and every smoothed control of the effect straight to its target, for a
+    /// newly built effect.
+    pub(crate) fn settle(&mut self) {
+        self.kernel.settle();
+        self.mix.snap_to_target();
     }
 
     pub(crate) fn reset(&mut self) {
