@@ -14,6 +14,7 @@ use thiserror::Error;
 
 use crate::analysis::{AnalysedGrid, AudioAnalysis, analysis_version};
 use crate::energy::TrackEnergy;
+use crate::sql::{execute_cached, query_row_cached};
 use crate::store::is_inside_rekordbox;
 
 /// The highest schema version the cache can bring a database to.
@@ -41,8 +42,12 @@ PRAGMA user_version = 1;
 "#];
 
 /// The columns a cached analysis is read back from, in the order [`analysis_columns_of_row`] reads them.
-const ANALYSIS_COLUMNS: &str = "duration_seconds, bpm, grid_bpm, grid_first_downbeat_seconds, \
-                                camelot_key, energy_rating, energy_score, energy_curve_json";
+/// The cached analysis of a file, when it was made from the file as it is now by the analysis
+/// version in use.
+const SELECT_FRESH_ANALYSIS: &str = "SELECT duration_seconds, bpm, grid_bpm, \
+    grid_first_downbeat_seconds, camelot_key, energy_rating, energy_score, energy_curve_json
+    FROM analysis
+    WHERE track_path = ?1 AND file_size = ?2 AND modified_ms = ?3 AND analysis_version = ?4";
 
 /// Errors opening or using Dubplate's analysis cache.
 #[derive(Debug, Error)]
@@ -130,18 +135,13 @@ impl AnalysisCache {
         let Some((file_size, modified_ms)) = file_fingerprint(path)? else {
             return Ok(None);
         };
-        let row = self
-            .connection
-            .query_row(
-                &format!(
-                    "SELECT {ANALYSIS_COLUMNS} FROM analysis
-                     WHERE track_path = ?1 AND file_size = ?2 AND modified_ms = ?3
-                       AND analysis_version = ?4"
-                ),
-                params![path.to_string_lossy(), file_size, modified_ms, self.version],
-                analysis_columns_of_row,
-            )
-            .optional()?;
+        let row = query_row_cached(
+            &self.connection,
+            SELECT_FRESH_ANALYSIS,
+            params![path.to_string_lossy(), file_size, modified_ms, self.version],
+            analysis_columns_of_row,
+        )
+        .optional()?;
         row.map(analysis_of_columns).transpose()
     }
 
@@ -155,7 +155,8 @@ impl AnalysisCache {
         let curve_json = energy
             .map(|energy| serde_json::to_string(&energy.curve))
             .transpose()?;
-        self.connection.execute(
+        execute_cached(
+            &self.connection,
             "INSERT INTO analysis (track_path, file_size, modified_ms, analysis_version,
                  duration_seconds, bpm, grid_bpm, grid_first_downbeat_seconds, camelot_key,
                  energy_rating, energy_score, energy_curve_json, analysed_at)
@@ -194,7 +195,8 @@ impl AnalysisCache {
 
     /// Forgets the file at `path`, so it is analysed again next time it is asked.
     pub fn forget(&mut self, path: &Path) -> Result<(), AnalysisCacheError> {
-        self.connection.execute(
+        execute_cached(
+            &self.connection,
             "DELETE FROM analysis WHERE track_path = ?1",
             params![path.to_string_lossy()],
         )?;
