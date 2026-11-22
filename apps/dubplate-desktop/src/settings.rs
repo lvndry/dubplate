@@ -50,6 +50,8 @@ pub struct Settings {
     pub lock_playing_deck: bool,
     /// The sound card last used, by name.
     pub audio_device: Option<String>,
+    /// Frames per buffer of the sound card.
+    pub buffer_frames: Option<u32>,
     /// The music folders, whether rekordbox is in the library, and the relinked files.
     #[serde(flatten)]
     pub library: LibrarySettings,
@@ -209,6 +211,7 @@ impl Default for Settings {
         Self {
             lock_playing_deck: true,
             audio_device: None,
+            buffer_frames: None,
             library: LibrarySettings::default(),
             effect_units: Vec::new(),
             smart_cfx_preset: None,
@@ -313,6 +316,7 @@ mod tests {
         let settings = Settings {
             lock_playing_deck: false,
             audio_device: Some("Studio Speakers".to_owned()),
+            buffer_frames: Some(512),
             library: LibrarySettings {
                 music_folders: vec![
                     PathBuf::from("/Music/House"),

@@ -11,9 +11,9 @@ use dubplate_engine::{
 use gpui::{Context, SharedString};
 
 use super::notice::NoticePlace;
-use super::{BUFFER_FRAMES, DubplateApp, Engine, error_chain};
+use super::{DubplateApp, Engine, error_chain};
 use crate::controls::{MixerPositions, master_gain_at, tempo_fader, trim_gain_at};
-use crate::devices::DeviceAccess;
+use crate::devices::{BufferSize, DeviceAccess};
 
 /// Starts the engine on the sound card called `device`, or on the system's default one when
 /// none is chosen, or on the silent output when the devices are offline. Returns the engine,
@@ -21,12 +21,13 @@ use crate::devices::DeviceAccess;
 pub(super) fn start_engine(
     mixer: &MixerPositions,
     device: Option<&str>,
+    buffer: BufferSize,
     devices: &DeviceAccess,
 ) -> (Result<Engine, SharedString>, Option<String>) {
     let device = device.filter(|_| !devices.is_offline());
-    match (device, engine_on(mixer, device, devices)) {
+    match (device, engine_on(mixer, device, buffer, devices)) {
         (Some(name), Err(problem)) => (
-            engine_on(mixer, None, devices),
+            engine_on(mixer, None, buffer, devices),
             Some(format!(
                 "{name} is not available, so Dubplate plays on the default output: {problem}"
             )),
@@ -40,10 +41,11 @@ pub(super) fn start_engine(
 fn engine_on(
     mixer: &MixerPositions,
     device: Option<&str>,
+    buffer: BufferSize,
     devices: &DeviceAccess,
 ) -> Result<Engine, SharedString> {
     let config = OutputConfig {
-        buffer_frames: Some(BUFFER_FRAMES),
+        buffer_frames: Some(buffer.frames()),
     };
     let started = match (devices, device) {
         (DeviceAccess::Offline { .. }, _) => AudioOutput::start_silent(&config),
@@ -189,13 +191,56 @@ impl DubplateApp {
         if self.current_output() == Some(name.as_str()) {
             return;
         }
+        if self.restart_engine(Some(&name), self.buffer_size(), "the sound card", cx) {
+            self.settings.audio_device = Some(name);
+            self.save_settings(cx);
+        }
+    }
+
+    /// The buffer the sound card is fed in.
+    pub(super) fn buffer_size(&self) -> BufferSize {
+        BufferSize::from_setting(self.settings.buffer_frames)
+    }
+
+    /// Starts the sound card again with a buffer of `buffer` and remembers it. The decks must
+    /// be stopped, as for a change of sound card.
+    pub(super) fn choose_buffer_size(&mut self, buffer: BufferSize, cx: &mut Context<'_, Self>) {
+        if buffer == self.buffer_size() {
+            return;
+        }
+        let device = self.current_output().map(str::to_owned);
+        if self.restart_engine(device.as_deref(), buffer, "the buffer size", cx) {
+            self.settings.buffer_frames = Some(buffer.frames());
+            self.save_settings(cx);
+        }
+    }
+
+    /// The dropouts since launch: buffers the sound card asked for that were not ready in
+    /// time.
+    pub(super) fn dropouts(&self) -> u64 {
+        self.engine
+            .as_ref()
+            .map_or(0, |engine| engine.controller.stats().overruns())
+    }
+
+    /// Replaces the engine with one on `device` with `buffer`, carrying the decks, mixer and
+    /// effects over. Refused while recording or playing, since the change drops a moment of
+    /// audio; `change` names what the DJ is changing for the notice. Returns whether it
+    /// happened.
+    fn restart_engine(
+        &mut self,
+        device: Option<&str>,
+        buffer: BufferSize,
+        change: &str,
+        cx: &mut Context<'_, Self>,
+    ) -> bool {
         if self.is_recording() {
             self.show_notice(
                 NoticePlace::Window,
-                "Stop the recording to change the sound card.",
+                format!("Stop the recording to change {change}."),
                 cx,
             );
-            return;
+            return false;
         }
         if DeckId::ALL
             .into_iter()
@@ -203,12 +248,13 @@ impl DubplateApp {
         {
             self.show_notice(
                 NoticePlace::Window,
-                "Stop both decks to change the sound card.",
+                format!("Stop both decks to change {change}."),
                 cx,
             );
-            return;
+            return false;
         }
-        let mut engine = match engine_on(&self.mixer, Some(&name), &self.devices) {
+        let name = device.unwrap_or("the default output").to_owned();
+        let mut engine = match engine_on(&self.mixer, device, buffer, &self.devices) {
             Ok(engine) => engine,
             Err(problem) => {
                 self.show_notice(
@@ -216,7 +262,7 @@ impl DubplateApp {
                     format!("{name} could not be opened: {problem}"),
                     cx,
                 );
-                return;
+                return false;
             }
         };
         if let Ok(previous) = &self.engine
@@ -230,9 +276,8 @@ impl DubplateApp {
         }
         self.engine = Ok(engine);
         self.restore_sampler(cx);
-        self.settings.audio_device = Some(name);
-        self.save_settings(cx);
         cx.notify();
+        true
     }
 }
 

@@ -11,6 +11,8 @@ use gpui::{ClickEvent, Context, FontWeight, MouseButton, Rgba, SharedString, div
 use super::DubplateApp;
 use crate::collection::folder_name;
 use crate::commands::Command;
+use crate::devices::BufferSize;
+use crate::fonts::MONO_FAMILY;
 use crate::library::RekordboxSource;
 use crate::theme;
 use crate::widgets::InteractiveControl;
@@ -102,9 +104,97 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
                 ))
                 .child(section_title("rekordbox"))
                 .child(rekordbox_row(app, cx))
-                .child(section_title("Sound card"))
+                .child(section_title("Audio"))
                 .children(output_rows)
+                .child(buffer_row(app, cx))
                 .focus_trap("settings-focus-trap", &app.modal_focus),
+        )
+}
+
+/// The buffer size, each choice with how long it lasts, the dropouts since launch, and what
+/// the choice trades.
+fn buffer_row(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoElement + use<> {
+    let current = app.buffer_size();
+    let sample_rate = app
+        .engine
+        .as_ref()
+        .map_or(48_000, |engine| engine.output.sample_rate());
+    let dropouts = app.dropouts();
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(6.0))
+        .py(px(8.0))
+        .border_t_1()
+        .border_color(theme::ROW_LINE)
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .gap(px(12.0))
+                .child("Buffer size")
+                .child(
+                    div()
+                        .role(gpui::Role::RadioGroup)
+                        .aria_label("Buffer size")
+                        .flex()
+                        .gap(px(4.0))
+                        .children(BufferSize::ALL.map(|size| {
+                            let chosen = size == current;
+                            div()
+                                .id(("buffer-size", size.frames() as usize))
+                                .accessible_toggle(
+                                    format!(
+                                        "{} frames, {:.1} ms",
+                                        size.frames(),
+                                        size.milliseconds(sample_rate)
+                                    ),
+                                    chosen,
+                                )
+                                .flex()
+                                .flex_col()
+                                .items_center()
+                                .w(px(64.0))
+                                .py(px(4.0))
+                                .rounded(theme::SMALL_RADIUS)
+                                .border_1()
+                                .cursor_pointer()
+                                .map(|option| {
+                                    if chosen {
+                                        option.border_color(theme::LINE).bg(theme::RAISED)
+                                    } else {
+                                        option
+                                            .border_color(gpui::transparent_black())
+                                            .text_color(theme::MUTED)
+                                            .hover(|option| option.bg(theme::RAISED))
+                                    }
+                                })
+                                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                    this.choose_buffer_size(size, cx);
+                                }))
+                                .child(
+                                    div()
+                                        .font_family(MONO_FAMILY)
+                                        .text_size(theme::SMALL_TEXT_SIZE)
+                                        .child(size.frames().to_string()),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(theme::TINY_TEXT_SIZE)
+                                        .text_color(theme::MUTED)
+                                        .child(format!("{:.1} ms", size.milliseconds(sample_rate))),
+                                )
+                        })),
+                ),
+        )
+        .child(
+            div()
+                .text_size(theme::SMALL_TEXT_SIZE)
+                .text_color(theme::MUTED)
+                .child(format!(
+                    "A larger buffer gives the Mac more time and drops out less; a smaller one answers the controller sooner. Dropouts since launch: {dropouts}."
+                )),
         )
 }
 

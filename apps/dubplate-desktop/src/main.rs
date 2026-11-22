@@ -17,6 +17,7 @@ mod energy;
 mod folder_picker;
 mod fonts;
 mod frame_stats;
+mod glitches;
 mod hardware;
 mod library;
 mod library_view;
