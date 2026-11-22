@@ -88,7 +88,7 @@ use crate::fonts::UI_FAMILY;
 use crate::frame_stats::FrameStats;
 use crate::glitches::GlitchWatch;
 use crate::hardware::{
-    DeckLights, Hardware, Lights, LinkEvent, Surface, controller_deck, meter_level,
+    DeckLights, Hardware, HeldControl, Lights, LinkEvent, Surface, controller_deck, meter_level,
 };
 use crate::history::{PlayHistory, PlayWatch, SessionRecord};
 use crate::library::{LibrarySources, RekordboxSource};
@@ -115,7 +115,7 @@ use cues::new_cue_span;
 use notice::{NoticePlace, Notices};
 use overview::DeckOverview;
 use pad_fx_editor::PadFxEditing;
-use pads::HeldPad;
+use pads::{HeldPad, PadNote};
 use prepare::PrepareFocus;
 use relink::RelinkReview;
 
@@ -280,6 +280,8 @@ pub struct DubplateApp {
     focus_handle: FocusHandle,
     last_frame: Instant,
     frame_stats: Option<Rc<RefCell<FrameStats>>>,
+    /// What each deck's last pad press did, shown over its lane.
+    pad_notes: [Option<PadNote>; DECK_COUNT],
     /// The scrolling waveforms' zoom, shared by both lanes so they keep one time axis.
     lane_zoom: Zoom,
     /// How far a pinch on the lanes has gone since it last changed the zoom.
@@ -547,6 +549,7 @@ impl DubplateApp {
             focus_handle,
             last_frame: Instant::now(),
             frame_stats: FrameStats::from_environment().map(|stats| Rc::new(RefCell::new(stats))),
+            pad_notes: Default::default(),
             lane_zoom,
             pinch: 0.0,
             menu_state: None,
@@ -622,6 +625,14 @@ impl DubplateApp {
     /// keeps some rows.
     pub(super) fn short_window(&self) -> bool {
         self.window_size.height < SHORT_WINDOW_HEIGHT
+    }
+
+    /// Whether `control`'s twin on the controller is pressed, or was tapped a moment ago, so the
+    /// control on screen shows the press.
+    pub(super) fn shows_pressed(&self, control: HeldControl) -> bool {
+        self.hardware
+            .as_ref()
+            .is_some_and(|hardware| hardware.dispatcher.held.shows(control, Instant::now()))
     }
 
     /// Turns Lock playing deck on or off and remembers it.
@@ -2031,7 +2042,12 @@ impl DubplateApp {
         for (side, frame) in self.decks.iter_mut().zip(&frames) {
             notice_new_cue(side, frame.state.cue_point_seconds, now);
         }
-        let pulsing = self.decks.iter().any(|side| side.marker_pulse.is_some());
+        let pulsing = self.decks.iter().any(|side| side.marker_pulse.is_some())
+            || self
+                .hardware
+                .as_ref()
+                .is_some_and(|hardware| hardware.dispatcher.held.any_shown(now))
+            || self.pad_notes.iter().flatten().any(|note| note.shows(now));
         let moving = pulsing
             || frames.iter().any(|frame| frame.state.playing)
             || self.master_meter.is_moving()

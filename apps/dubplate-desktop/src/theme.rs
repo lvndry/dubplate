@@ -83,6 +83,8 @@ pub const METER_OFF: Rgba = white_alpha(0.07);
 pub const METER_HOT: Rgba = hex(0xF5B78E);
 /// Behind the selected browser row.
 pub const SELECTED_ROW: Rgba = white_alpha(0.05);
+/// The face of a control while it is pressed, by hand on the controller or with the pointer.
+pub const PRESSED: Rgba = white_alpha(0.16);
 /// Between browser rows.
 pub const ROW_LINE: Rgba = white_alpha(0.045);
 /// Behind the help overlay.

@@ -97,6 +97,8 @@ A track loaded from the library waits at its earliest memory or hot cue, or, whe
 
 On the keyboard, **Space** plays or pauses the deck you can hear: the one whose channel fader is up past 20% and that the crossfader lets through. With both up it acts on the tempo master, else the louder one, and with neither it is deck A. A small **Space** label beside a deck's letter shows which one it will be. Shift+Space is always deck B, and the FLX4's PLAY buttons always their own deck.
 
+Every press on the FLX4 shows on screen too: a pad, CUE, PLAY, BEAT SYNC, the loop buttons, the channel CUE, BEAT FX ON, SMART CFX and SMART FADER light on screen while held, and a quick tap flashes for a moment. A Beat Jump pad shows how far it jumped over the deck's lane ("−4 beats") with a mark where the deck jumped from, a Beat Loop pad the loop it set, and a Pad FX pad its effect while held.
+
 On the FLX4, everything works as in rekordbox's FLX4 layout:
 
 - PLAY, CUE (CDJ style), hot cue pads (a cue you set or delete is kept with the track, for the next time it loads and for the export; a pad pressed while a loop is on keeps that loop as a hot loop, which starts the loop when pressed again), TEMPO, BEAT SYNC (hold for tempo master, SHIFT for the tempo range), the jogs (touch to scratch, side to nudge, SHIFT to search).
