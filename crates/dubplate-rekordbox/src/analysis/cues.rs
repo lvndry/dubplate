@@ -275,6 +275,6 @@ fn hot_cue_color_from(code: u8, led: Option<Rgb>) -> Option<HotCueColor> {
     })
 }
 
-fn palette_color(code: u8) -> Option<Rgb> {
+pub(crate) fn palette_color(code: u8) -> Option<Rgb> {
     PaletteColor::from_index(i64::from(code)).map(PaletteColor::rgb)
 }

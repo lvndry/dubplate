@@ -3,14 +3,20 @@
 //!
 //! The files are big-endian and made of tagged sections, as documented by Deep Symmetry's
 //! analysis of the format.
+//!
+//! [`AnalysisFiles::write`] writes the three files of a track as a rekordbox USB export carries
+//! them, and [`derive_waveforms`] works out every waveform kind from a 3-band detail waveform
+//! for tracks rekordbox never analysed.
 
 mod beat_grid;
 mod cues;
+mod derive;
 mod error;
 mod file;
 mod reader;
 mod song_structure;
 mod waveform;
+mod write;
 
 use std::fmt;
 use std::path::{Component, Path, PathBuf};
@@ -21,13 +27,15 @@ pub use beat_grid::{Beat, BeatGrid, GridPosition};
 pub use cues::{
     AnalysisCue, CueList, CueListKind, HotCueColor, LoopLength, Rgb, hot_cue_pad, memory_color_name,
 };
+pub use derive::derive_waveforms;
 pub use error::{AnalysisError, FourCc};
-pub use file::{AnalysisFile, Section, SkippedSection};
+pub use file::{AnalysisFile, RawSection, Section, SkippedSection};
 pub use song_structure::{LightingBank, Mood, Phrase, PhraseKind, SongStructure};
 pub use waveform::{
     ColorDetailColumn, ColorPreviewColumn, DETAIL_COLUMNS_PER_SECOND, MonochromeColumn,
     ThreeBandColumn, TinyColumn, Waveforms,
 };
+pub use write::{AnalysisExport, AnalysisFiles, AnalysisWriteError, COPIED_SECTIONS};
 
 use crate::error::Error;
 

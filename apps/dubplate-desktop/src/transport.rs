@@ -1,5 +1,5 @@
-//! The deck buttons as a CDJ plays them, carried out on the engine: CUE, jumps, hot cues and
-//! instant doubles. Every input reaches the engine through these, so the keyboard, the screen
+//! The deck buttons as a CDJ plays them, carried out on the engine: CUE, jumps, hot cues,
+//! memory cue calls and instant doubles. Every input reaches the engine through these, so the keyboard, the screen
 //! and a controller behave the same.
 
 use dubplate_engine::{Controller, DeckId, DeckState, EngineError};
@@ -54,6 +54,18 @@ pub fn jump(controller: &mut Controller, deck: DeckId, seconds: f64) -> Result<(
     if !controller.deck_state(deck).playing {
         controller.set_cue_point(deck, seconds)?;
     }
+    controller.seek(deck, seconds)
+}
+
+/// Calls a memory cue at `seconds`, as CUE/LOOP CALL does on a CDJ and in rekordbox: the deck
+/// goes there paused, with its cue point there, whether it was playing or not.
+pub fn call_point(
+    controller: &mut Controller,
+    deck: DeckId,
+    seconds: f64,
+) -> Result<(), EngineError> {
+    controller.pause(deck)?;
+    controller.set_cue_point(deck, seconds)?;
     controller.seek(deck, seconds)
 }
 
@@ -198,6 +210,24 @@ mod tests {
             "{source:?} {copy:?}"
         );
         assert!((copy.cue_point_seconds - 1.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn calling_a_memory_cue_pauses_there_with_the_cue_point_on_it() {
+        for playing in [true, false] {
+            let (mut controller, mut renderer) = engine();
+            controller.seek(DeckId::A, 6.0).unwrap();
+            if playing {
+                controller.play(DeckId::A).unwrap();
+            }
+            render(&mut renderer);
+            call_point(&mut controller, DeckId::A, 2.5).unwrap();
+            render(&mut renderer);
+            let state = controller.deck_state(DeckId::A);
+            assert!(!state.playing, "{state:?}");
+            assert!((state.cue_point_seconds - 2.5).abs() < 1e-6, "{state:?}");
+            assert!(is_at_cue(&state), "{state:?}");
+        }
     }
 
     #[test]
