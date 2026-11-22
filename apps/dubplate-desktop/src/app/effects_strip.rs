@@ -31,8 +31,10 @@ const MENU_WIDTH: Pixels = px(372.0);
 const MENU_HEIGHT: Pixels = px(560.0);
 /// The picker never shrinks below this, so a few rows always show.
 const MENU_SMALLEST: Pixels = px(160.0);
-/// The gap the picker keeps from the window's edge.
+/// The gap the picker keeps from the window's bottom edge.
 const MENU_MARGIN: Pixels = px(8.0);
+/// The gap it keeps from the window's top, clear of the header and the window's buttons.
+const MENU_TOP_MARGIN: Pixels = px(52.0);
 const GROUP_WIDTH: Pixels = px(58.0);
 const PICK_WIDTH: Pixels = px(96.0);
 const PICK_HEIGHT: Pixels = px(24.0);
@@ -656,7 +658,7 @@ fn picker_room(app: &DubplateApp) -> PickerRoom {
         return PickerRoom::Below(MENU_HEIGHT);
     };
     let below = window_height - strip.bottom() - MENU_MARGIN;
-    let above = strip.top() - MENU_MARGIN;
+    let above = strip.top() - MENU_TOP_MARGIN;
     if below >= MENU_HEIGHT || below >= above {
         PickerRoom::Below(below.min(MENU_HEIGHT).max(MENU_SMALLEST))
     } else {
