@@ -6,8 +6,9 @@ use dubplate_midi::PadMode;
 use dubplate_rekordbox::HotCuePad;
 use gpui::Context;
 
+use super::DubplateApp;
+use super::notice::NoticePlace;
 use super::sampler::sampler_slot;
-use super::{DubplateApp, NoticePlace};
 use crate::commands::{LoopAction, PadPress, Press};
 use crate::deck::pad_position;
 use crate::pads::{
