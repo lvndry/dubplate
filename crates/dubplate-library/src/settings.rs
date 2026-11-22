@@ -11,6 +11,7 @@ const SETTINGS_NAME: &str = "settings.toml";
 const LIBRARY_CACHE_NAME: &str = "library-cache.json";
 const SETS_NAME: &str = "sets.sqlite";
 const ANALYSIS_CACHE_NAME: &str = "analysis.sqlite";
+const INSTANCE_LOCK_NAME: &str = "dubplate.lock";
 
 /// Dubplate's own folder in the user's configuration, never one of rekordbox's:
 /// `~/Library/Application Support/dubplate/` on macOS and `~/.config/dubplate/` on Linux.
@@ -50,6 +51,11 @@ impl DataFolder {
     /// between launches.
     pub fn analysis_cache(&self) -> PathBuf {
         self.root.join(ANALYSIS_CACHE_NAME)
+    }
+
+    /// The file the running Dubplate holds locked, so a second one knows it is not alone.
+    pub fn instance_lock(&self) -> PathBuf {
+        self.root.join(INSTANCE_LOCK_NAME)
     }
 }
 

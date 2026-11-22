@@ -272,7 +272,7 @@ impl SetStore {
 
     /// Lists the sets: their id, name and track count.
     pub fn list_sets(&self) -> Result<Vec<(SetId, String, usize)>, StoreError> {
-        let mut statement = self.connection.prepare(
+        let mut statement = self.connection.prepare_cached(
             "SELECT sets.id, sets.name,
                 (SELECT COUNT(*) FROM set_entry WHERE set_entry.set_id = sets.id)
              FROM sets
@@ -309,7 +309,7 @@ impl SetStore {
             .ok_or(StoreError::SetNotFound(set))?;
         let target_minutes = u32::try_from(target_minutes).unwrap_or(0);
 
-        let mut entries_statement = self.connection.prepare(
+        let mut entries_statement = self.connection.prepare_cached(
             "SELECT track_path, rekordbox_id, mix_in_ms, mix_out_ms, cue_source, grid_confirmed,
                 energy_override, vocal_in_ms, vocal_out_ms, note, is_backup, grid_offset_ms,
                 downbeat_shift
@@ -319,7 +319,7 @@ impl SetStore {
         let entries = entries_statement
             .query_map((set.as_i64(),), entry_from_row)?
             .collect::<Result<Vec<_>, _>>()?;
-        let mut seams_statement = self.connection.prepare(
+        let mut seams_statement = self.connection.prepare_cached(
             "SELECT from_track_path, to_track_path, overlap_bars, eq_intent, status, note
              FROM seam WHERE set_id = ?1
              ORDER BY from_track_path, to_track_path",
@@ -336,6 +336,58 @@ impl SetStore {
             updated_at,
             entries,
             seams,
+        })
+    }
+
+    /// Replaces a set's metadata, entries and seams atomically, returning the saved set.
+    ///
+    /// A failed write leaves the previous set intact. Revisions and play history remain
+    /// attached to the same set; its creation time does not change.
+    pub fn replace_set(&mut self, set: &Set) -> Result<Set, StoreError> {
+        let mut transaction = self.transaction()?;
+        let updated_at = now_unix_millis();
+        let changed = execute_cached(
+            &transaction,
+            "UPDATE sets SET name = ?2, target_minutes = ?3, updated_at = ?4 WHERE id = ?1",
+            (set.id.as_i64(), &set.name, set.target_minutes, updated_at),
+        )?;
+        if changed == 0 {
+            return Err(StoreError::SetNotFound(set.id));
+        }
+        execute_cached(
+            &transaction,
+            "DELETE FROM set_entry WHERE set_id = ?1",
+            (set.id.as_i64(),),
+        )?;
+        execute_cached(
+            &transaction,
+            "DELETE FROM seam WHERE set_id = ?1",
+            (set.id.as_i64(),),
+        )?;
+        for list in [SetList::Main, SetList::Backups] {
+            for (position, entry) in set
+                .entries
+                .iter()
+                .filter(|entry| entry.is_backup == list.is_backup())
+                .enumerate()
+            {
+                insert_entry_row(&mut transaction, set.id, list, position, entry)?;
+            }
+        }
+        for seam in &set.seams {
+            set_seam_row(&mut transaction, set.id, seam)?;
+        }
+        let created_at = query_row_cached(
+            &transaction,
+            "SELECT created_at FROM sets WHERE id = ?1",
+            (set.id.as_i64(),),
+            |row| row.get(0),
+        )?;
+        transaction.commit()?;
+        Ok(Set {
+            updated_at,
+            created_at,
+            ..set.clone()
         })
     }
 
@@ -472,25 +524,7 @@ impl SetStore {
     pub fn set_seam(&mut self, set: SetId, seam: Seam) -> Result<(), StoreError> {
         let mut transaction = self.transaction()?;
         touch_set(&mut transaction, set)?;
-        execute_cached(
-            &transaction,
-            "INSERT INTO seam (set_id, from_track_path, to_track_path, overlap_bars, eq_intent, status, note)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-             ON CONFLICT (set_id, from_track_path, to_track_path) DO UPDATE SET
-                 overlap_bars = excluded.overlap_bars,
-                 eq_intent = excluded.eq_intent,
-                 status = excluded.status,
-                 note = excluded.note",
-            (
-                set.as_i64(),
-                &seam.from_track_path.to_string_lossy(),
-                &seam.to_track_path.to_string_lossy(),
-                seam.overlap_bars,
-                serde_json::to_string(&seam.eq_intent).unwrap_or_default(),
-                serde_json::to_string(&seam.status).unwrap_or_default(),
-                seam.note,
-            ),
-        )?;
+        set_seam_row(&mut transaction, set, &seam)?;
         transaction.commit()?;
         Ok(())
     }
@@ -691,6 +725,34 @@ fn insert_entry_row(
     Ok(())
 }
 
+/// Inserts or updates a seam within the caller's transaction.
+fn set_seam_row(
+    transaction: &mut Transaction<'_>,
+    set: SetId,
+    seam: &Seam,
+) -> Result<(), StoreError> {
+    execute_cached(
+            transaction,
+        "INSERT INTO seam (set_id, from_track_path, to_track_path, overlap_bars, eq_intent, status, note)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+         ON CONFLICT (set_id, from_track_path, to_track_path) DO UPDATE SET
+             overlap_bars = excluded.overlap_bars,
+             eq_intent = excluded.eq_intent,
+             status = excluded.status,
+             note = excluded.note",
+        (
+            set.as_i64(),
+            &seam.from_track_path.to_string_lossy(),
+            &seam.to_track_path.to_string_lossy(),
+            seam.overlap_bars,
+            serde_json::to_string(&seam.eq_intent)?,
+            serde_json::to_string(&seam.status)?,
+            &seam.note,
+        ),
+    )?;
+    Ok(())
+}
+
 /// Reads a set_entry row into its type.
 fn entry_from_row(row: &rusqlite::Row<'_>) -> Result<SetEntry, rusqlite::Error> {
     let grid_confirmed: i64 = row.get(5)?;
@@ -737,6 +799,45 @@ fn seam_from_row(row: &rusqlite::Row<'_>) -> Result<Seam, rusqlite::Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn replacing_a_set_rolls_back_metadata_and_entries_when_a_seam_fails() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut store = SetStore::open(&directory.path().join("sets.sqlite")).unwrap();
+        let id = store.create_set("Original", 60).unwrap();
+        store
+            .insert_entry(
+                id,
+                SetList::Main,
+                0,
+                SetEntry {
+                    track_path: PathBuf::from("/Music/a.mp3"),
+                    ..SetEntry::default()
+                },
+            )
+            .unwrap();
+        let before = store.load_set(id).unwrap();
+        let mut replacement = before.clone();
+        replacement.name = "Replacement".to_owned();
+        replacement.entries.clear();
+        replacement.seams.push(Seam {
+            from_track_path: PathBuf::from("/Music/a.mp3"),
+            to_track_path: PathBuf::from("/Music/b.mp3"),
+            overlap_bars: 16,
+            eq_intent: EqIntent::None,
+            status: SeamStatus::Planned,
+            note: String::new(),
+        });
+        store
+            .connection
+            .execute_batch(
+                "CREATE TRIGGER fail_seam BEFORE INSERT ON seam BEGIN
+             SELECT RAISE(ABORT, 'injected seam failure'); END;",
+            )
+            .unwrap();
+        assert!(store.replace_set(&replacement).is_err());
+        assert_eq!(store.load_set(id).unwrap(), before);
+    }
 
     #[test]
     fn refuses_paths_inside_a_rekordbox_folder() {

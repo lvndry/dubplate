@@ -6,8 +6,10 @@ use std::path::{Path, PathBuf};
 use dubplate_library::{DataFolder, LibrarySettings};
 use serde::{Deserialize, Serialize};
 
+use crate::commands::Mode;
 use crate::controls::DEFAULT_SAMPLER_VOLUME;
 use crate::effects::EffectUnitSetting;
+use crate::library_view::SortSetting;
 
 /// Why the settings could not be read or written.
 #[derive(Debug, thiserror::Error)]
@@ -57,6 +59,37 @@ pub struct Settings {
     pub smart_cfx_preset: Option<String>,
     /// The sampler's volume and the sample in each slot.
     pub sampler: SamplerSetting,
+    /// How the library's tracks are sorted on each screen.
+    pub library_sort: LibrarySortSetting,
+}
+
+/// How the library's tracks are sorted on each screen, when the DJ sorted them. A screen
+/// without one shows each crate in its own order.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LibrarySortSetting {
+    /// In Prepare.
+    pub prepare: Option<SortSetting>,
+    /// In Perform.
+    pub perform: Option<SortSetting>,
+}
+
+impl LibrarySortSetting {
+    /// The sort of `screen`.
+    pub fn of(&self, screen: Mode) -> Option<&SortSetting> {
+        match screen {
+            Mode::Prepare => self.prepare.as_ref(),
+            Mode::Perform => self.perform.as_ref(),
+        }
+    }
+
+    /// Keeps `sort` for `screen`.
+    pub fn set(&mut self, screen: Mode, sort: Option<SortSetting>) {
+        match screen {
+            Mode::Prepare => self.prepare = sort,
+            Mode::Perform => self.perform = sort,
+        }
+    }
 }
 
 /// The sampler as the DJ left it.
@@ -109,6 +142,7 @@ impl Default for Settings {
             effect_units: Vec::new(),
             smart_cfx_preset: None,
             sampler: SamplerSetting::default(),
+            library_sort: LibrarySortSetting::default(),
         }
     }
 }
@@ -127,6 +161,11 @@ impl Settings {
     /// Where what Dubplate's analysis found in each track is kept between launches.
     pub fn analysis_cache_path() -> Result<PathBuf, SettingsError> {
         Ok(data_folder()?.analysis_cache())
+    }
+
+    /// The file that keeps a second Dubplate from starting beside this one.
+    pub fn instance_lock_path() -> Result<PathBuf, SettingsError> {
+        Ok(data_folder()?.instance_lock())
     }
 
     /// Where the scans of the music folders are kept between launches.
@@ -229,6 +268,13 @@ mod tests {
                     gate: true,
                     sync: false,
                 }],
+            },
+            library_sort: LibrarySortSetting {
+                prepare: Some(SortSetting {
+                    column: "bpm".to_owned(),
+                    descending: true,
+                }),
+                perform: None,
             },
         };
         settings.save(&path).unwrap();
