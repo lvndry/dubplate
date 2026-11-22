@@ -3,6 +3,7 @@
 //! anything moves.
 
 mod audio;
+mod audition;
 mod deck_panel;
 mod drop_target;
 mod effects_strip;
@@ -71,6 +72,7 @@ use crate::shortcuts::{Perform, WINDOW_CONTEXT};
 use crate::theme;
 use crate::transport::{self, CueDown, is_at_cue, other_deck};
 use crate::waveform::Zoom;
+use audition::Audition;
 use prepare::PrepareFocus;
 
 /// Frames per device buffer: about 5 ms at 48 kHz.
@@ -177,6 +179,8 @@ pub struct DubplateApp {
     detail_pending: Option<PathBuf>,
     check_cursor_seconds: f64,
     catalogue: Arc<Catalogue>,
+    audition: Option<Audition>,
+    audition_generation: u64,
     energy: EnergyRatings,
     energy_collecting: bool,
     effect_menu: Option<EffectUnitId>,
@@ -305,6 +309,8 @@ impl DubplateApp {
             detail_pending: None,
             check_cursor_seconds: 0.0,
             catalogue: Arc::default(),
+            audition: None,
+            audition_generation: 0,
             energy: EnergyRatings::new(
                 energy_queue.map(|queue| Box::new(queue) as Box<dyn EnergyAnalyser>),
             ),
@@ -561,6 +567,7 @@ impl DubplateApp {
                 self.engine_command(cx, |controller| controller.set_headphone_cue(deck, !cued));
             }
             Command::TapTempo(deck) => self.tap_tempo(deck, cx),
+            Command::AuditionSeam => self.toggle_seam_audition(cx),
             Command::ToggleMasterCue => {
                 let cued = self
                     .headphones()

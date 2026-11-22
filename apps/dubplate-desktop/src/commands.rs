@@ -161,6 +161,8 @@ pub enum Command {
     /// A tap on the beat, as SHIFT + a channel's CUE does: enough taps give a track without a
     /// beat grid its tempo and beats.
     TapTempo(DeckId),
+    /// Hear the seam after the selected set track in the headphones, or stop hearing it.
+    AuditionSeam,
     /// Load the track selected in the browser.
     LoadSelected(DeckId),
     /// Load the track playing on the other deck at the same place, as pressing LOAD twice does.
