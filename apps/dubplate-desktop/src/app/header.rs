@@ -136,7 +136,7 @@ fn status(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoElem
             }
             (None, LibraryStatus::Ready(collection)) => (
                 theme::active().ok,
-                match app.analysis_waiting() {
+                match app.analysis_awaited() {
                     0 => format!("{} tracks", collection.track_count()),
                     waiting => format!(
                         "{} tracks \u{b7} {waiting} to analyse",

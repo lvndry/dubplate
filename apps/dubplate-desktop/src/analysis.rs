@@ -89,6 +89,10 @@ pub struct TrackAnalyses {
     waiting: HashMap<PathBuf, AnalysisPriority>,
     failed: HashMap<PathBuf, String>,
     unconfirmed: HashSet<PathBuf>,
+    /// Tracks whose analysis only fills in: rekordbox analysed them, or their file is missing.
+    filling_in: HashSet<PathBuf>,
+    /// The waiting tracks with nothing to show until their analysis arrives.
+    awaited: HashSet<PathBuf>,
     revision: u64,
 }
 
@@ -105,6 +109,14 @@ impl TrackAnalyses {
         self.unconfirmed = self.found.keys().cloned().collect();
         self.failed.clear();
         self.waiting.clear();
+        self.awaited.clear();
+    }
+
+    /// Marks the tracks whose analysis only fills in what the library has already, so the
+    /// count of tracks to analyse leaves them out.
+    pub fn set_filling_in(&mut self, paths: HashSet<PathBuf>) {
+        self.awaited.retain(|path| !paths.contains(path));
+        self.filling_in = paths;
     }
 
     /// Every analysis that has arrived, including those a rescan has yet to confirm.
@@ -146,6 +158,12 @@ impl TrackAnalyses {
         self.waiting.len()
     }
 
+    /// How many waiting tracks have no tempo, key or grid to show until their analysis
+    /// arrives: the tracks the DJ waits on.
+    pub fn awaited(&self) -> usize {
+        self.awaited.len()
+    }
+
     /// Asks for each track, by its file, to be analysed at `priority`, leaving out the ones
     /// answered already or waiting at the same priority or an earlier one.
     pub fn request<'tracks>(
@@ -167,6 +185,9 @@ impl TrackAnalyses {
                 continue;
             }
             self.waiting.insert(path.to_path_buf(), priority);
+            if !self.found.contains_key(path) && !self.filling_in.contains(path) {
+                self.awaited.insert(path.to_path_buf());
+            }
             wanted.push(path.to_path_buf());
         }
         if wanted.is_empty() {
@@ -186,6 +207,7 @@ impl TrackAnalyses {
                 continue;
             }
             self.waiting.remove(&answer.path);
+            self.awaited.remove(&answer.path);
             self.unconfirmed.remove(&answer.path);
             let analysis = answer.outcome.map(Arc::new);
             match &analysis {
@@ -344,6 +366,37 @@ mod tests {
         );
         assert_eq!(analyses.waiting(), 1);
         assert_eq!(analyses.state(path), AnalysisState::Waiting);
+    }
+
+    #[test]
+    fn only_tracks_with_nothing_to_show_count_as_to_analyse() {
+        let analyser = Rc::new(Analyser::default());
+        let mut analyses = TrackAnalyses::new(Some(Box::new(Rc::clone(&analyser))));
+        let rekordbox_analysed = Path::new("/Music/rekordbox.mp3");
+        let missing = Path::new("/Music/gone.mp3");
+        let new_file = Path::new("/Music/new.mp3");
+        analyses.request([new_file, missing], AnalysisPriority::Library);
+        assert_eq!(analyses.awaited(), 2);
+        analyses.set_filling_in(HashSet::from([
+            rekordbox_analysed.to_path_buf(),
+            missing.to_path_buf(),
+        ]));
+        analyses.request([rekordbox_analysed], AnalysisPriority::Library);
+        assert_eq!(analyses.waiting(), 3);
+        assert_eq!(analyses.awaited(), 1, "only the new file");
+        analyser.answers.borrow_mut().push(answer(
+            "/Music/new.mp3",
+            Ok(analysis(Some(122.0), Some("8A"), None)),
+        ));
+        analyses.collect();
+        assert_eq!(analyses.awaited(), 0);
+        analyses.refresh();
+        analyses.request([new_file], AnalysisPriority::Library);
+        assert_eq!(
+            analyses.awaited(),
+            0,
+            "a rescan confirming an analysis already shown is not a track to analyse"
+        );
     }
 
     #[test]
