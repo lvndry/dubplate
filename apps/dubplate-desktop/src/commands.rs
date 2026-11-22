@@ -54,6 +54,8 @@ pub enum SetEdit {
     Add,
     /// Put the track selected in the library right after the selected set track.
     InsertAfterSelection,
+    /// Put a Next suggestion, 0 for the first, right after the selected set track.
+    InsertSuggestion(usize),
     /// Move the selected set track up or down.
     Move(Direction),
     /// Take the selected set track out of the set.
@@ -216,8 +218,9 @@ pub enum Command {
     SwitchMode(Mode),
     /// Change the set.
     EditSet(SetEdit),
-    /// Move the keyboard between the library and the set in Prepare.
-    SwitchPrepareFocus,
+    /// Move the keyboard to the next part of Prepare, the library, the set and the Next
+    /// suggestions in turn, or back with [`Direction::Up`].
+    SwitchPrepareFocus(Direction),
     /// Load the set's first track on deck A and its second on deck B, each at its mix-in.
     LoadSet,
     /// Save the set as a rekordbox XML file for rekordbox to import.
