@@ -406,6 +406,7 @@ impl DubplateApp {
         app.browser
             .update(cx, |browser, cx| browser.show_screen(mode, cx));
         app.restore_effect_units(cx);
+        app.restore_smart_cfx(cx);
         app.restore_sampler(cx);
         app.restore_library_sorts(cx);
         app.start_library(cx);
