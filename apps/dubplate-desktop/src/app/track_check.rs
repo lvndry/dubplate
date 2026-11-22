@@ -153,8 +153,8 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
         .px(theme::GUTTER)
         .py(px(10.0))
         .border_b_1()
-        .border_color(theme::LINE)
-        .bg(theme::PANEL);
+        .border_color(theme::active().line)
+        .bg(theme::active().panel);
     let Some((entry, detail)) = app.selected_detail() else {
         let hint = if app.set_selection.is_some() {
             "Reading the track\u{2026}"
@@ -170,7 +170,7 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
                 .h(content_height)
                 .flex()
                 .items_center()
-                .text_color(theme::MUTED)
+                .text_color(theme::active().muted)
                 .child(hint),
         );
     };
@@ -280,11 +280,15 @@ fn key_button(
         .px(px(6.0))
         .rounded(px(5.0))
         .border_1()
-        .border_color(theme::LINE)
+        .border_color(theme::active().line)
         .text_size(theme::SMALL_TEXT_SIZE)
-        .text_color(theme::MUTED)
+        .text_color(theme::active().muted)
         .cursor_pointer()
-        .hover(|button| button.text_color(theme::TEXT).bg(theme::RAISED))
+        .hover(|button| {
+            button
+                .text_color(theme::active().text)
+                .bg(theme::active().raised)
+        })
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
             this.perform(Command::EditSet(edit), window, cx);
@@ -311,7 +315,7 @@ fn lane(
         .h(LANE_HEIGHT)
         .rounded(px(4.0))
         .overflow_hidden()
-        .bg(theme::BACKGROUND)
+        .bg(theme::active().background)
         .child(
             canvas(
                 |_, _, _| {},
@@ -342,14 +346,14 @@ fn lane(
                                 bounds.origin + point(px(x - 1.0), px(0.0)),
                                 size(px(2.0), bounds.size.height),
                             );
-                            window.paint_quad(fill(line, theme::ATTENTION));
+                            window.paint_quad(fill(line, theme::active().attention));
                         }
                     }
                     let head = gpui::Bounds::new(
                         bounds.origin + point(px(centre - 1.0), px(0.0)),
                         size(px(2.0), bounds.size.height),
                     );
-                    window.paint_quad(fill(head, theme::PLAYHEAD));
+                    window.paint_quad(fill(head, theme::active().playhead));
                 },
             )
             .absolute()
@@ -420,12 +424,12 @@ fn overview(
                 .px(px(PHRASE_LABEL_PADDING))
                 .rounded(px(3.0))
                 .border_l(px(PHRASE_LABEL_EDGE))
-                .border_color(theme::TEXT)
-                .bg(theme::RAISED)
+                .border_color(theme::active().text)
+                .bg(theme::active().raised)
                 .font_family(MONO_FAMILY)
                 .text_size(px(PHRASE_LABEL_SIZE))
                 .line_height(px(PHRASE_LABEL_SIZE + 2.0))
-                .text_color(theme::TEXT)
+                .text_color(theme::active().text)
                 .whitespace_nowrap()
                 .child(label)
         }));
@@ -452,7 +456,7 @@ fn overview(
         .relative()
         .h(OVERVIEW_HEIGHT)
         .rounded(px(4.0))
-        .bg(theme::RAISED)
+        .bg(theme::active().raised)
         .cursor_pointer()
         .on_mouse_down(
             MouseButton::Left,
@@ -480,14 +484,14 @@ fn overview(
                                 bounds.origin + point(px(left), px((height - bar_height) / 2.0)),
                                 size(px(OVERVIEW_BAR_WIDTH), px(bar_height)),
                             );
-                            window.paint_quad(fill(bar, theme::faded(theme::MUTED, 0.6)));
+                            window.paint_quad(fill(bar, theme::faded(theme::active().muted, 0.6)));
                         }
                     }
                     for (index, seconds) in bars.iter().enumerate() {
                         let colour = if index % BARS_PER_PHRASE == 0 {
-                            theme::PHRASE_LINE
+                            theme::active().phrase_line
                         } else {
-                            theme::BAR_LINE
+                            theme::active().bar_line
                         };
                         let line = gpui::Bounds::new(
                             bounds.origin + point(px(x_of(*seconds)), px(0.0)),
@@ -500,20 +504,20 @@ fn overview(
                             bounds.origin + point(px(x_of(*seconds)), px(0.0)),
                             size(px(2.0), px(6.0)),
                         );
-                        window.paint_quad(fill(tick, theme::TEXT));
+                        window.paint_quad(fill(tick, theme::active().text));
                     }
                     for seconds in &cues {
                         let mark = gpui::Bounds::new(
                             bounds.origin + point(px(x_of(*seconds) - 1.0), px(0.0)),
                             size(px(2.0), bounds.size.height),
                         );
-                        window.paint_quad(fill(mark, theme::ATTENTION));
+                        window.paint_quad(fill(mark, theme::active().attention));
                     }
                     let head = gpui::Bounds::new(
                         bounds.origin + point(px(x_of(playhead_f32) - 1.0), px(0.0)),
                         size(px(2.0), bounds.size.height),
                     );
-                    window.paint_quad(fill(head, theme::TEXT));
+                    window.paint_quad(fill(head, theme::active().text));
                 },
             )
             .absolute()

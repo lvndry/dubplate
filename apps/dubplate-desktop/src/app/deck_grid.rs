@@ -155,7 +155,7 @@ pub(super) fn grid_bar(
         .into_any_element(),
         None => div()
             .text_size(theme::SMALL_TEXT_SIZE)
-            .text_color(theme::MUTED)
+            .text_color(theme::active().muted)
             .child("Load an analysed track to fix its beat grid.")
             .into_any_element(),
     };
@@ -169,7 +169,7 @@ pub(super) fn grid_bar(
             .h(px(32.0))
             .px(px(8.0))
             .rounded(theme::CONTROL_RADIUS)
-            .bg(theme::RAISED)
+            .bg(theme::active().raised)
             .child(content),
     )
 }

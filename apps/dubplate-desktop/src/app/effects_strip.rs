@@ -47,8 +47,8 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
         .h(STRIP_HEIGHT)
         .px(theme::GUTTER)
         .border_b_1()
-        .border_color(theme::LINE)
-        .bg(theme::BACKGROUND);
+        .border_color(theme::active().line)
+        .bg(theme::active().background);
     for unit in EffectUnitId::ALL {
         if let Some(state) = app.effect_unit(unit) {
             let lever = app.beat_fx_lever().filter(|_| app.effect_focus == unit);
@@ -91,8 +91,8 @@ fn unit_row(
         .pr(px(4.0))
         .rounded(px(8.0))
         .border_1()
-        .border_color(theme::LINE)
-        .bg(theme::PANEL)
+        .border_color(theme::active().line)
+        .bg(theme::active().panel)
         .child(unit_label(unit, focused))
         .child(effect_button(unit, &state, menu_open, cx))
         .child(parameter_stepper(unit, &state, cx))
@@ -119,9 +119,13 @@ fn unit_label(unit: EffectUnitId, focused: bool) -> impl IntoElement {
         .items_center()
         .gap(px(4.0))
         .text_size(theme::TINY_TEXT_SIZE)
-        .text_color(if focused { theme::TEXT } else { theme::MUTED })
+        .text_color(if focused {
+            theme::active().text
+        } else {
+            theme::active().muted
+        })
         .when(focused, |label| {
-            label.child(div().size(px(5.0)).rounded_full().bg(theme::OK))
+            label.child(div().size(px(5.0)).rounded_full().bg(theme::active().ok))
         })
         .child(unit.to_string())
 }
@@ -150,8 +154,8 @@ fn effect_button(
         .rounded(px(5.0))
         .font_weight(FontWeight::MEDIUM)
         .cursor_pointer()
-        .when(menu_open, |button| button.bg(theme::RAISED))
-        .hover(|button| button.bg(theme::RAISED))
+        .when(menu_open, |button| button.bg(theme::active().raised))
+        .hover(|button| button.bg(theme::active().raised))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
             this.toggle_effect_menu(unit, window, cx);
@@ -161,7 +165,7 @@ fn effect_button(
             svg()
                 .path(CHEVRON_DOWN_PATH)
                 .size(px(10.0))
-                .text_color(theme::MUTED),
+                .text_color(theme::active().muted),
         )
 }
 
@@ -189,9 +193,13 @@ fn parameter_stepper(
             .w(px(22.0))
             .h(px(26.0))
             .rounded(px(5.0))
-            .text_color(theme::MUTED)
+            .text_color(theme::active().muted)
             .cursor_pointer()
-            .hover(|button| button.bg(theme::RAISED).text_color(theme::TEXT))
+            .hover(|button| {
+                button
+                    .bg(theme::active().raised)
+                    .text_color(theme::active().text)
+            })
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                 this.perform(
@@ -231,7 +239,7 @@ fn targets(
             let checked = target == current;
             let underline = match target {
                 EffectTarget::Deck(deck) => theme::deck_colour(deck),
-                EffectTarget::BothDecks | EffectTarget::Master => theme::TEXT,
+                EffectTarget::BothDecks | EffectTarget::Master => theme::active().text,
             };
             div()
                 .id((
@@ -258,14 +266,14 @@ fn targets(
                 .map(|button| {
                     if checked {
                         button
-                            .bg(theme::RAISED)
-                            .text_color(theme::TEXT)
+                            .bg(theme::active().raised)
+                            .text_color(theme::active().text)
                             .border_color(underline)
                     } else {
                         button
-                            .text_color(theme::MUTED)
+                            .text_color(theme::active().muted)
                             .border_color(theme::faded(underline, 0.0))
-                            .hover(|button| button.text_color(theme::TEXT))
+                            .hover(|button| button.text_color(theme::active().text))
                     }
                 })
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
@@ -333,7 +341,7 @@ fn level_bar(
                 .w_full()
                 .h(px(3.0))
                 .rounded(px(2.0))
-                .bg(theme::TRACK)
+                .bg(theme::active().track)
                 .child(
                     div()
                         .absolute()
@@ -342,7 +350,7 @@ fn level_bar(
                         .bottom_0()
                         .w(relative(depth.clamp(0.0, 1.0)))
                         .rounded(px(2.0))
-                        .bg(theme::TEXT),
+                        .bg(theme::active().text),
                 ),
         )
 }
@@ -366,16 +374,18 @@ fn on_button(
         .cursor_pointer()
         .map(|button| {
             if enabled {
-                button.bg(accent).text_color(theme::ON_DECK)
+                button.bg(accent).text_color(theme::active().on_deck)
             } else {
-                button.bg(theme::RAISED).text_color(theme::MUTED)
+                button
+                    .bg(theme::active().raised)
+                    .text_color(theme::active().muted)
             }
         })
         .when(pressed, |button| {
             button
                 .border_1()
-                .border_color(theme::TEXT)
-                .text_color(theme::TEXT)
+                .border_color(theme::active().text)
+                .text_color(theme::active().text)
         })
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
@@ -404,11 +414,15 @@ fn release_button(
         .cursor_pointer()
         .map(|button| {
             if state.releasing {
-                button.bg(theme::ATTENTION).text_color(theme::ON_DECK)
-            } else {
                 button
-                    .text_color(theme::MUTED)
-                    .hover(|button| button.bg(theme::RAISED).text_color(theme::TEXT))
+                    .bg(theme::active().attention)
+                    .text_color(theme::active().on_deck)
+            } else {
+                button.text_color(theme::active().muted).hover(|button| {
+                    button
+                        .bg(theme::active().raised)
+                        .text_color(theme::active().text)
+                })
             }
         })
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
@@ -444,12 +458,12 @@ fn lever_reading(lever: Lever) -> impl IntoElement {
         .items_center()
         .gap(px(3.0))
         .text_size(theme::TINY_TEXT_SIZE)
-        .text_color(theme::MUTED)
+        .text_color(theme::active().muted)
         .child("lever")
         .child(
             div()
                 .font_family(MONO_FAMILY)
-                .text_color(theme::TEXT)
+                .text_color(theme::active().text)
                 .child(reading),
         )
 }
@@ -491,7 +505,7 @@ fn picker(
             div()
                 .px(px(2.0))
                 .text_size(theme::SMALL_TEXT_SIZE)
-                .text_color(theme::MUTED)
+                .text_color(theme::active().muted)
                 .child("No effect has that name."),
         );
     }
@@ -516,19 +530,30 @@ fn picker(
                     .px(px(6.0))
                     .rounded(px(4.0))
                     .border_1()
-                    .border_color(if lit { theme::TEXT } else { theme::PANEL })
+                    .border_color(if lit {
+                        theme::active().text
+                    } else {
+                        theme::active().panel
+                    })
                     .text_size(theme::SMALL_TEXT_SIZE)
                     .cursor_pointer()
                     .when(chosen, |button| {
-                        button.bg(theme::RAISED).font_weight(FontWeight::MEDIUM)
+                        button
+                            .bg(theme::active().raised)
+                            .font_weight(FontWeight::MEDIUM)
                     })
-                    .hover(|button| button.bg(theme::RAISED))
+                    .hover(|button| button.bg(theme::active().raised))
                     .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                         this.perform(Command::Effect(unit, EffectEdit::Kind(kind)), window, cx);
                         this.close_effect_menu(cx);
                     }))
                     .when(chosen, |button| {
-                        button.child(div().size(px(5.0)).rounded(px(3.0)).bg(theme::TEXT))
+                        button.child(
+                            div()
+                                .size(px(5.0))
+                                .rounded(px(3.0))
+                                .bg(theme::active().text),
+                        )
                     })
                     .child(effect_label(kind)),
             );
@@ -545,7 +570,7 @@ fn picker(
                         .px(px(2.0))
                         .text_size(theme::TINY_TEXT_SIZE)
                         .font_weight(FontWeight::MEDIUM)
-                        .text_color(theme::MUTED)
+                        .text_color(theme::active().muted)
                         .children(row.group),
                 )
                 .child(effects),
@@ -568,8 +593,8 @@ fn picker(
         .gap(px(6.0))
         .rounded(px(10.0))
         .border_1()
-        .border_color(theme::LINE)
-        .bg(theme::PANEL)
+        .border_color(theme::active().line)
+        .bg(theme::active().panel)
         .shadow_lg()
         .occlude()
         .on_mouse_down_out(cx.listener(|this, _, _, cx| this.close_effect_menu(cx)))
@@ -599,8 +624,8 @@ fn picker(
                         .items_center()
                         .rounded(px(6.0))
                         .border_1()
-                        .border_color(theme::LINE)
-                        .bg(theme::BACKGROUND)
+                        .border_color(theme::active().line)
+                        .bg(theme::active().background)
                         .child(Input::new(&app.effect_search).appearance(false)),
                 )
         })

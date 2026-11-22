@@ -102,10 +102,10 @@ fn pad_fx_layers(
             .cursor_pointer()
             .map(|chip| {
                 if on {
-                    chip.bg(theme::RAISED).text_color(colour)
+                    chip.bg(theme::active().raised).text_color(colour)
                 } else {
-                    chip.text_color(theme::MUTED)
-                        .hover(|chip| chip.text_color(theme::TEXT))
+                    chip.text_color(theme::active().muted)
+                        .hover(|chip| chip.text_color(theme::active().text))
                 }
             })
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
@@ -141,12 +141,12 @@ fn pad_fx_layers(
                 .items_center()
                 .rounded(px(4.0))
                 .border_1()
-                .border_color(theme::LINE)
+                .border_color(theme::active().line)
                 .font_family(MONO_FAMILY)
                 .text_size(theme::TINY_TEXT_SIZE)
-                .text_color(theme::MUTED)
+                .text_color(theme::active().muted)
                 .cursor_pointer()
-                .hover(|button| button.text_color(theme::TEXT))
+                .hover(|button| button.text_color(theme::active().text))
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                     this.perform(Command::PadFx(PadFxEdit::Toggle(shown)), window, cx);
@@ -195,12 +195,12 @@ fn mode_tabs(
                         .cursor_pointer()
                         .map(|tab| {
                             if selected {
-                                tab.bg(theme::RAISED)
-                                    .text_color(theme::TEXT)
+                                tab.bg(theme::active().raised)
+                                    .text_color(theme::active().text)
                                     .font_weight(FontWeight::MEDIUM)
                             } else {
-                                tab.text_color(theme::MUTED)
-                                    .hover(|tab| tab.text_color(theme::TEXT))
+                                tab.text_color(theme::active().muted)
+                                    .hover(|tab| tab.text_color(theme::active().text))
                             }
                         })
                         .aria_description(
@@ -255,17 +255,17 @@ fn sampler_controls(
             .border_1()
             .map(|button| {
                 if on {
-                    button.border_color(colour).text_color(theme::TEXT)
+                    button.border_color(colour).text_color(theme::active().text)
                 } else if enabled {
                     button
-                        .border_color(theme::LINE)
-                        .text_color(theme::MUTED)
-                        .hover(|button| button.text_color(theme::TEXT))
+                        .border_color(theme::active().line)
+                        .text_color(theme::active().muted)
+                        .hover(|button| button.text_color(theme::active().text))
                 } else {
                     button
                         .border_dashed()
-                        .border_color(theme::LINE)
-                        .text_color(theme::MUTED)
+                        .border_color(theme::active().line)
+                        .text_color(theme::active().muted)
                 }
             })
             .when(enabled, |button| button.cursor_pointer())
@@ -348,21 +348,21 @@ fn loop_buttons(
             .border_1()
             .map(|button| {
                 if looping {
-                    button.border_color(colour).text_color(theme::TEXT)
+                    button.border_color(colour).text_color(theme::active().text)
                 } else {
                     button
-                        .border_color(theme::LINE)
-                        .text_color(theme::MUTED)
-                        .hover(|button| button.text_color(theme::TEXT))
+                        .border_color(theme::active().line)
+                        .text_color(theme::active().muted)
+                        .hover(|button| button.text_color(theme::active().text))
                 }
             })
             .when(pressed, |button| {
                 button
-                    .bg(theme::PRESSED)
-                    .border_color(theme::TEXT)
-                    .text_color(theme::TEXT)
+                    .bg(theme::active().pressed)
+                    .border_color(theme::active().text)
+                    .text_color(theme::active().text)
             })
-            .active(|button| button.bg(theme::PRESSED))
+            .active(|button| button.bg(theme::active().pressed))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                 this.perform(Command::Loop(deck, action), window, cx);
@@ -423,25 +423,25 @@ fn pads(
                 .map(|pad_button| {
                     if face.lit && loaded {
                         pad_button
-                            .bg(theme::RAISED)
-                            .border_color(face.dot.unwrap_or(theme::LINE))
+                            .bg(theme::active().raised)
+                            .border_color(face.dot.unwrap_or(theme::active().line))
                     } else if playable {
-                        pad_button.bg(theme::RAISED).border_color(theme::LINE)
+                        pad_button.bg(theme::active().raised).border_color(theme::active().line)
                     } else {
                         pad_button
                             .border_dashed()
-                            .border_color(theme::LINE)
-                            .text_color(theme::MUTED)
+                            .border_color(theme::active().line)
+                            .text_color(theme::active().muted)
                     }
                 })
                 .when(pressed, |pad_button| {
-                    pad_button.bg(theme::PRESSED).border_color(theme::TEXT)
+                    pad_button.bg(theme::active().pressed).border_color(theme::active().text)
                 })
-                .active(|pad_button| pad_button.bg(theme::PRESSED))
+                .active(|pad_button| pad_button.bg(theme::active().pressed))
                 .when(playable, |pad_button| {
                     pad_button
                         .cursor_pointer()
-                        .hover(|pad_button| pad_button.border_color(theme::MUTED))
+                        .hover(|pad_button| pad_button.border_color(theme::active().muted))
                         .aria_description("Enter plays this pad. Shift Enter performs its alternate action, such as deleting a hot cue.")
                         .on_key_down(cx.listener(move |this, event, window, cx| {
                             if shift_activation(event) {
@@ -475,7 +475,7 @@ fn pads(
                     div()
                         .font_family(MONO_FAMILY)
                         .text_size(theme::TINY_TEXT_SIZE)
-                        .text_color(theme::MUTED)
+                        .text_color(theme::active().muted)
                         .child(face.detail),
                 )
         }))

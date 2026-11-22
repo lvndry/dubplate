@@ -11,6 +11,7 @@ use dubplate_prep::GridEdit;
 
 use crate::controls::Control;
 use crate::pad_fx::{PadFxLayer, PadFxPreset};
+use crate::theme::ThemeId;
 
 /// Which way a control moves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -387,6 +388,8 @@ pub enum Command {
     PadFx(PadFxEdit),
     /// Show or hide the library's settings: the music folders and rekordbox.
     ToggleLibrary,
+    /// Wear a theme, from Settings.
+    ChooseTheme(ThemeId),
     /// Bring the rekordbox collection into the library.
     ImportRekordbox,
     /// Look for the files of the tracks that moved, in the music folders.

@@ -40,7 +40,7 @@ pub(super) fn render(
         .gap(px(10.0))
         .px(theme::GUTTER)
         .py(px(12.0))
-        .bg(theme::PANEL)
+        .bg(theme::active().panel)
         .child(title_row(app, deck, frame, entry))
         .child(overview::render(app, deck, frame, cx))
         .child(transport(app, deck, frame, cx))
@@ -66,29 +66,29 @@ fn title_row(
             (_, entry) if notice.is_some() => (
                 entry.map_or_else(|| "No track".into(), |entry| entry.row.title.clone()),
                 notice.cloned().unwrap_or_default(),
-                theme::ALERT,
+                theme::active().alert,
             ),
             (DeckContent::Failed(message), Some(entry)) => (
                 entry.row.title.clone(),
                 message.clone().into(),
-                theme::ALERT,
+                theme::active().alert,
             ),
             (DeckContent::Loading, Some(entry)) => (
                 entry.row.title.clone(),
                 "Loading\u{2026}".into(),
-                theme::MUTED,
+                theme::active().muted,
             ),
             (_, Some(entry)) if entry.origin == TrackOrigin::File => (
                 entry.row.title.clone(),
                 "Audio file, not in rekordbox".into(),
-                theme::MUTED,
+                theme::active().muted,
             ),
             (_, Some(entry)) => (
                 entry.row.title.clone(),
                 entry.row.artist.clone(),
-                theme::MUTED,
+                theme::active().muted,
             ),
-            (_, None) => ("No track".into(), "".into(), theme::MUTED),
+            (_, None) => ("No track".into(), "".into(), theme::active().muted),
         };
     let tempo = frame.state.tempo;
     let playing_bpm = app
@@ -159,10 +159,10 @@ fn title_row(
                             .px(px(4.0))
                             .rounded(px(3.0))
                             .border_1()
-                            .border_color(theme::LINE)
+                            .border_color(theme::active().line)
                             .font_family(MONO_FAMILY)
                             .text_size(theme::TINY_TEXT_SIZE)
-                            .text_color(theme::MUTED)
+                            .text_color(theme::active().muted)
                             .tooltip(tooltip(
                                 "Space plays or pauses this deck: the one you can hear",
                             ))
@@ -198,26 +198,26 @@ fn title_row(
                 .gap(px(12.0))
                 .font_family(MONO_FAMILY)
                 .text_size(theme::SMALL_TEXT_SIZE)
-                .text_color(theme::MUTED)
+                .text_color(theme::active().muted)
                 .child(key)
                 .child(pitch)
                 .child(
                     div()
-                        .when(ending, |time| time.text_color(theme::ATTENTION))
+                        .when(ending, |time| time.text_color(theme::active().attention))
                         .child(remaining),
                 )
                 .child(if analysing {
                     div()
                         .font_family(crate::fonts::UI_FAMILY)
                         .text_size(theme::SMALL_TEXT_SIZE)
-                        .text_color(theme::MUTED)
+                        .text_color(theme::active().muted)
                         .child("Analysing\u{2026}")
                 } else {
                     div()
                         .font_family(crate::fonts::UI_FAMILY)
                         .text_size(px(26.0))
                         .font_weight(FontWeight::MEDIUM)
-                        .text_color(theme::TEXT)
+                        .text_color(theme::active().text)
                         .child(bpm)
                 }),
         )
@@ -240,7 +240,7 @@ fn deck_badge(deck: DeckId) -> impl IntoElement {
         .size(px(24.0))
         .rounded(theme::SMALL_RADIUS)
         .bg(theme::deck_colour(deck))
-        .text_color(theme::ON_DECK)
+        .text_color(theme::active().on_deck)
         .font_family(MONO_FAMILY)
         .text_size(theme::SMALL_TEXT_SIZE)
         .font_weight(FontWeight::SEMIBOLD)
@@ -266,11 +266,11 @@ fn transport(
         .child(
             button(("cue", deck.index()))
                 .px(px(12.0))
-                .bg(theme::RAISED)
+                .bg(theme::active().raised)
                 .border_1()
-                .border_color(theme::LINE)
+                .border_color(theme::active().line)
                 .when(app.shows_pressed(HeldControl::Cue(deck)), pressed)
-                .active(|button| button.bg(theme::PRESSED))
+                .active(|button| button.bg(theme::active().pressed))
                 .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                     this.perform(Command::Cue(deck, Press::Tap), window, cx);
                 }))
@@ -280,12 +280,16 @@ fn transport(
             button(("play", deck.index()))
                 .accessible_toggle(format!("Deck {} Play or pause", deck_letter(deck)), playing)
                 .w(px(44.0))
-                .when(playing, |play| play.bg(colour).text_color(theme::ON_DECK))
+                .when(playing, |play| {
+                    play.bg(colour).text_color(theme::active().on_deck)
+                })
                 .when(!playing, |play| {
-                    play.bg(theme::RAISED).border_1().border_color(theme::LINE)
+                    play.bg(theme::active().raised)
+                        .border_1()
+                        .border_color(theme::active().line)
                 })
                 .when(app.shows_pressed(HeldControl::Play(deck)), |play| {
-                    play.border_1().border_color(theme::TEXT)
+                    play.border_1().border_color(theme::active().text)
                 })
                 .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                     this.perform(Command::TogglePlay(deck), window, cx);
@@ -298,7 +302,11 @@ fn transport(
                             PLAY_ICON_PATH
                         })
                         .size(px(13.0))
-                        .text_color(if playing { theme::ON_DECK } else { theme::TEXT }),
+                        .text_color(if playing {
+                            theme::active().on_deck
+                        } else {
+                            theme::active().text
+                        }),
                 ),
         )
         .child(
@@ -365,9 +373,9 @@ fn transport(
                     div()
                         .text_size(theme::SMALL_TEXT_SIZE)
                         .text_color(if waiting {
-                            theme::ATTENTION
+                            theme::active().attention
                         } else {
-                            theme::MUTED
+                            theme::active().muted
                         })
                         .child(if waiting {
                             "Move to take over"
@@ -392,7 +400,7 @@ fn transport(
                         .justify_end()
                         .font_family(MONO_FAMILY)
                         .text_size(theme::SMALL_TEXT_SIZE)
-                        .text_color(theme::MUTED)
+                        .text_color(theme::active().muted)
                         .child(tempo_range_label(app.tempo_range(deck))),
                 ),
         )
@@ -452,14 +460,14 @@ fn toggle(
         .px(px(10.0))
         .border_1()
         .map(|toggle| match lit {
-            Lit::On => toggle.border_color(colour).text_color(theme::TEXT),
+            Lit::On => toggle.border_color(colour).text_color(theme::active().text),
             Lit::Armed => toggle
                 .border_color(theme::faded(colour, 0.45))
                 .text_color(colour),
             Lit::Off => toggle
-                .border_color(theme::LINE)
-                .text_color(theme::MUTED)
-                .hover(|toggle| toggle.text_color(theme::TEXT)),
+                .border_color(theme::active().line)
+                .text_color(theme::active().muted)
+                .hover(|toggle| toggle.text_color(theme::active().text)),
         })
         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
             this.perform(command, window, cx);
@@ -470,9 +478,9 @@ fn toggle(
 /// A control's face while its twin on the controller is pressed.
 fn pressed(control: gpui::Stateful<gpui::Div>) -> gpui::Stateful<gpui::Div> {
     control
-        .bg(theme::PRESSED)
+        .bg(theme::active().pressed)
         .border_1()
-        .border_color(theme::TEXT)
+        .border_color(theme::active().text)
 }
 
 fn button(id: (&'static str, usize)) -> gpui::Stateful<gpui::Div> {

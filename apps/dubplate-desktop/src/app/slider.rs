@@ -62,7 +62,7 @@ pub(super) fn render(
     )
     .absolute()
     .size_full();
-    let track = div().absolute().rounded(px(2.0)).bg(theme::TRACK);
+    let track = div().absolute().rounded(px(2.0)).bg(theme::active().track);
     let filled = fill.map(|(from, colour)| {
         let start = from.min(fraction);
         let span = (from - fraction).abs();
@@ -82,13 +82,13 @@ pub(super) fn render(
                 .ml(-TRACK_THICKNESS / 2.0),
         }
     });
-    let knob = div().absolute().rounded(px(2.0)).bg(theme::THUMB);
+    let knob = div().absolute().rounded(px(2.0)).bg(theme::active().thumb);
     let waiting_knob = waiting.map(|waiting| {
         let outline = div()
             .absolute()
             .rounded(px(2.0))
             .border_1()
-            .border_color(theme::ATTENTION);
+            .border_color(theme::active().attention);
         match orientation {
             Orientation::Horizontal => outline
                 .left(relative(waiting))

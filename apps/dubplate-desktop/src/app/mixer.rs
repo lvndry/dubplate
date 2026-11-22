@@ -65,10 +65,10 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
         .gap(px(8.0))
         .px(theme::GUTTER)
         .py(px(12.0))
-        .bg(theme::BACKGROUND)
+        .bg(theme::active().background)
         .border_l_1()
         .border_r_1()
-        .border_color(theme::LINE)
+        .border_color(theme::active().line)
         .child(
             div()
                 .flex()
@@ -116,7 +116,7 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
                                     .items_center()
                                     .justify_center()
                                     .text_size(theme::TINY_TEXT_SIZE)
-                                    .text_color(theme::TEXT)
+                                    .text_color(theme::active().text)
                                     .child("Off"),
                             )
                         })
@@ -125,7 +125,7 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
                             Slider::Crossfader,
                             CROSSFADER_THUMB,
                             (app.smart_fader_on() && !app.smart_fader_resting())
-                                .then_some((0.0, theme::TEXT)),
+                                .then_some((0.0, theme::active().text)),
                             cx,
                         )),
                 )
@@ -153,14 +153,14 @@ fn smart_buttons(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl I
                 .child(
                     div()
                         .text_size(theme::TINY_TEXT_SIZE)
-                        .text_color(theme::MUTED)
+                        .text_color(theme::active().muted)
                         .child("Smart"),
                 )
                 .child(cue_button(
                     ("smart-cfx", 0),
                     "CFX",
                     app.smart_cfx_on(),
-                    theme::TEXT,
+                    theme::active().text,
                     Command::ToggleSmartCfx,
                     app.shows_pressed(HeldControl::SmartCfx),
                     cx,
@@ -176,11 +176,17 @@ fn smart_buttons(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl I
                         .px(px(6.0))
                         .rounded(px(5.0))
                         .text_size(theme::TINY_TEXT_SIZE)
-                        .text_color(theme::MUTED)
+                        .text_color(theme::active().muted)
                         .cursor_pointer()
-                        .hover(|button| button.bg(theme::RAISED).text_color(theme::TEXT))
+                        .hover(|button| {
+                            button
+                                .bg(theme::active().raised)
+                                .text_color(theme::active().text)
+                        })
                         .when(app.smart_cfx_menu, |button| {
-                            button.bg(theme::RAISED).text_color(theme::TEXT)
+                            button
+                                .bg(theme::active().raised)
+                                .text_color(theme::active().text)
                         })
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
@@ -193,7 +199,7 @@ fn smart_buttons(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl I
             ("smart-fader", 0),
             "Fader",
             app.smart_fader_on(),
-            theme::TEXT,
+            theme::active().text,
             Command::ToggleSmartFader,
             app.shows_pressed(HeldControl::SmartFader),
             cx,
@@ -218,8 +224,8 @@ fn smart_cfx_menu(current: SmartCfx, cx: &mut Context<'_, DubplateApp>) -> impl 
             .gap(px(1.0))
             .rounded(px(8.0))
             .border_1()
-            .border_color(theme::LINE)
-            .bg(theme::PANEL)
+            .border_color(theme::active().line)
+            .bg(theme::active().panel)
             .shadow_lg()
             .occlude()
             .on_mouse_down_out(cx.listener(|this, _, _, cx| this.close_smart_cfx_menu(cx)))
@@ -237,16 +243,17 @@ fn smart_cfx_menu(current: SmartCfx, cx: &mut Context<'_, DubplateApp>) -> impl 
                     .text_size(theme::SMALL_TEXT_SIZE)
                     .cursor_pointer()
                     .when(chosen, |item| {
-                        item.bg(theme::RAISED).font_weight(FontWeight::MEDIUM)
+                        item.bg(theme::active().raised)
+                            .font_weight(FontWeight::MEDIUM)
                     })
-                    .hover(|item| item.bg(theme::RAISED))
+                    .hover(|item| item.bg(theme::active().raised))
                     .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                         this.perform(Command::ChooseSmartCfx(preset), window, cx);
                         this.close_smart_cfx_menu(cx);
                     }))
                     .child(preset_label(preset))
                     .when(chosen, |item| {
-                        item.child(div().text_color(theme::MUTED).child("\u{2713}"))
+                        item.child(div().text_color(theme::active().muted).child("\u{2713}"))
                     })
             })),
     )
@@ -280,7 +287,7 @@ fn headphones(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl Into
                     app,
                     Control::HeadphoneMix,
                     HEADPHONE_KNOB_SIZE,
-                    theme::TEXT,
+                    theme::active().text,
                     cx,
                 ))
                 .child(label("Mix"))
@@ -288,7 +295,7 @@ fn headphones(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl Into
                     ("master-cue", 0),
                     "M",
                     master_cued,
-                    theme::TEXT,
+                    theme::active().text,
                     Command::ToggleMasterCue,
                     false,
                     cx,
@@ -297,7 +304,7 @@ fn headphones(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl Into
                     app,
                     Control::HeadphoneLevel,
                     HEADPHONE_KNOB_SIZE,
-                    theme::TEXT,
+                    theme::active().text,
                     cx,
                 ))
                 .child(label("Lvl")),
@@ -347,21 +354,21 @@ fn cue_button(
                 button
                     .border_color(colour)
                     .bg(theme::faded(colour, 0.18))
-                    .text_color(theme::TEXT)
+                    .text_color(theme::active().text)
             } else {
                 button
-                    .border_color(theme::LINE)
-                    .text_color(theme::MUTED)
-                    .hover(|button| button.text_color(theme::TEXT))
+                    .border_color(theme::active().line)
+                    .text_color(theme::active().muted)
+                    .hover(|button| button.text_color(theme::active().text))
             }
         })
         .when(pressed, |button| {
             button
-                .bg(theme::PRESSED)
-                .border_color(theme::TEXT)
-                .text_color(theme::TEXT)
+                .bg(theme::active().pressed)
+                .border_color(theme::active().text)
+                .text_color(theme::active().text)
         })
-        .active(|button| button.bg(theme::PRESSED))
+        .active(|button| button.bg(theme::active().pressed))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
             this.perform(command, window, cx);
@@ -403,7 +410,7 @@ fn names(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoEleme
             .flex()
             .items_center()
             .text_size(theme::TINY_TEXT_SIZE)
-            .text_color(theme::MUTED);
+            .text_color(theme::active().muted);
         column = if control(DeckId::A) == Control::Filter(DeckId::A) {
             column.child(row.child(cfx_name(app, cx)))
         } else {
@@ -433,9 +440,13 @@ fn cfx_name(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoEl
         .px(px(3.0))
         .rounded(px(4.0))
         .cursor_pointer()
-        .hover(|name| name.bg(theme::RAISED).text_color(theme::TEXT))
+        .hover(|name| {
+            name.bg(theme::active().raised)
+                .text_color(theme::active().text)
+        })
         .when(app.cfx_menu.is_some(), |name| {
-            name.bg(theme::RAISED).text_color(theme::TEXT)
+            name.bg(theme::active().raised)
+                .text_color(theme::active().text)
         })
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
@@ -467,10 +478,11 @@ fn cfx_menu(
             .cursor_pointer()
             .map(|chip| {
                 if on {
-                    chip.bg(theme::RAISED).text_color(theme::TEXT)
+                    chip.bg(theme::active().raised)
+                        .text_color(theme::active().text)
                 } else {
-                    chip.text_color(theme::MUTED)
-                        .hover(|chip| chip.text_color(theme::TEXT))
+                    chip.text_color(theme::active().muted)
+                        .hover(|chip| chip.text_color(theme::active().text))
                 }
             })
             .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
@@ -491,8 +503,8 @@ fn cfx_menu(
             .gap(px(1.0))
             .rounded(px(8.0))
             .border_1()
-            .border_color(theme::LINE)
-            .bg(theme::PANEL)
+            .border_color(theme::active().line)
+            .bg(theme::active().panel)
             .shadow_lg()
             .occlude()
             .on_mouse_down_out(cx.listener(|this, _, window, cx| {
@@ -528,7 +540,7 @@ fn cfx_menu(
                     .rounded(px(5.0))
                     .text_size(theme::SMALL_TEXT_SIZE)
                     .cursor_pointer()
-                    .hover(|item| item.bg(theme::RAISED))
+                    .hover(|item| item.bg(theme::active().raised))
                     .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                         this.perform(Command::ChooseCfxColour(colour), window, cx);
                     }))
@@ -537,7 +549,7 @@ fn cfx_menu(
                         div()
                             .font_family(MONO_FAMILY)
                             .text_size(theme::TINY_TEXT_SIZE)
-                            .text_color(theme::MUTED)
+                            .text_color(theme::active().muted)
                             .child(playing),
                     )
             })),
@@ -572,11 +584,11 @@ fn meter(meter: &PeakMeter, direction: MeterDirection) -> impl IntoElement {
     };
     let segments = (0..SEGMENTS).map(move |segment| {
         let colour = if segment >= lit {
-            theme::METER_OFF
+            theme::active().meter_off
         } else if segment >= HOT_FROM {
-            theme::METER_HOT
+            theme::active().meter_hot
         } else {
-            theme::METER_ON
+            theme::active().meter_on
         };
         div().size(size).rounded(px(1.0)).bg(colour)
     });
@@ -591,7 +603,7 @@ fn meter(meter: &PeakMeter, direction: MeterDirection) -> impl IntoElement {
 fn label(text: &'static str) -> impl IntoElement {
     div()
         .text_size(theme::TINY_TEXT_SIZE)
-        .text_color(theme::MUTED)
+        .text_color(theme::active().muted)
         .child(text)
 }
 
@@ -621,7 +633,7 @@ fn side_label(app: &DubplateApp, side: CrossfaderAssign) -> impl IntoElement {
         .text_size(theme::TINY_TEXT_SIZE)
         .font_weight(FontWeight::SEMIBOLD);
     if decks.is_empty() {
-        label = label.text_color(theme::MUTED).child("\u{2013}");
+        label = label.text_color(theme::active().muted).child("\u{2013}");
     }
     label.children(decks.into_iter().map(|deck| {
         div()
@@ -660,12 +672,12 @@ fn assign_switch(
                 .gap(px(1.0))
                 .rounded(px(5.0))
                 .border_1()
-                .border_color(theme::LINE)
+                .border_color(theme::active().line)
                 .children(CrossfaderAssign::ALL.into_iter().map(move |assign| {
                     let chosen = assign == current;
                     let colour = match assign {
                         CrossfaderAssign::A => theme::deck_colour(DeckId::A),
-                        CrossfaderAssign::Thru => theme::ATTENTION,
+                        CrossfaderAssign::Thru => theme::active().attention,
                         CrossfaderAssign::B => theme::deck_colour(DeckId::B),
                     };
                     div()
@@ -690,12 +702,12 @@ fn assign_switch(
                                 segment
                                     .border_color(theme::faded(colour, 0.6))
                                     .bg(theme::faded(colour, 0.18))
-                                    .text_color(theme::TEXT)
+                                    .text_color(theme::active().text)
                             } else {
                                 segment
                                     .border_color(gpui::transparent_black())
-                                    .text_color(theme::MUTED)
-                                    .hover(|segment| segment.text_color(theme::TEXT))
+                                    .text_color(theme::active().muted)
+                                    .hover(|segment| segment.text_color(theme::active().text))
                             }
                         })
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())

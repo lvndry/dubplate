@@ -281,8 +281,8 @@ pub(super) fn render(
         .p(px(20.0))
         .rounded(px(10.0))
         .border_1()
-        .border_color(theme::LINE)
-        .bg(theme::PANEL)
+        .border_color(theme::active().line)
+        .bg(theme::active().panel)
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_click(|_, _, cx| cx.stop_propagation())
         .child(
@@ -294,7 +294,7 @@ pub(super) fn render(
         .child(
             div()
                 .text_size(theme::SMALL_TEXT_SIZE)
-                .text_color(theme::MUTED)
+                .text_color(theme::active().muted)
                 .child(format!(
                     "{} Dubplate keeps the new places itself and never changes rekordbox.",
                     match review.relinked {
@@ -342,7 +342,7 @@ pub(super) fn render(
                 .child(
                     div()
                         .text_size(theme::SMALL_TEXT_SIZE)
-                        .text_color(theme::ATTENTION)
+                        .text_color(theme::active().attention)
                         .child(format!(
                             "{} not found in your music folders.",
                             count_label(review.not_found.len(), "file")
@@ -351,7 +351,7 @@ pub(super) fn render(
                 .child(if app.relinking {
                     div()
                         .text_size(theme::SMALL_TEXT_SIZE)
-                        .text_color(theme::MUTED)
+                        .text_color(theme::active().muted)
                         .child("Looking\u{2026}")
                         .into_any_element()
                 } else {
@@ -380,7 +380,7 @@ pub(super) fn render(
         .flex()
         .items_center()
         .justify_center()
-        .bg(theme::SCRIM)
+        .bg(theme::active().scrim)
         .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.close_relink_review(cx)))
         .child(card.focus_trap("relink-focus-trap", &app.modal_focus))
 }
@@ -414,7 +414,7 @@ fn pending_row(
         .gap(px(10.0))
         .py(px(6.0))
         .border_t_1()
-        .border_color(theme::ROW_LINE)
+        .border_color(theme::active().row_line)
         .child(
             div()
                 .flex()
@@ -426,7 +426,7 @@ fn pending_row(
                     div()
                         .truncate()
                         .text_size(theme::TINY_TEXT_SIZE)
-                        .text_color(theme::MUTED)
+                        .text_color(theme::active().muted)
                         .child(folder_of(&relocation.found)),
                 ),
         )
