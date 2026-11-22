@@ -19,12 +19,15 @@ mod fonts;
 mod frame_stats;
 mod hardware;
 mod library;
+mod library_match;
 mod library_view;
 mod loading;
 #[cfg(target_os = "macos")]
 mod macos_identity;
+mod match_cell;
 mod menus;
 mod meter;
+mod pad_fx;
 mod pads;
 mod phrases;
 mod playhead;
@@ -38,12 +41,15 @@ mod settings;
 mod shortcuts;
 mod single_instance;
 mod space;
+mod stems;
 mod tap_tempo;
 mod theme;
 mod transport;
 mod waveform;
 mod waveform_cache;
 mod widgets;
+
+use std::process::ExitCode;
 
 use gpui::prelude::*;
 use gpui::{
@@ -67,7 +73,10 @@ gpui::actions!(
 /// The app's name, in the menu bar and the Dock.
 pub const APP_NAME: &str = "Dubplate";
 
-fn main() {
+fn main() -> ExitCode {
+    if let Some(exit) = dubplate_stems::run_worker_if_requested() {
+        return exit;
+    }
     let devices = DeviceAccess::from_environment();
     if devices.is_offline() {
         eprintln!(
@@ -105,6 +114,7 @@ fn main() {
                 cx.quit();
             }
         });
+    ExitCode::SUCCESS
 }
 
 /// Makes this the one running Dubplate, or brings the running one to the front and quits. When

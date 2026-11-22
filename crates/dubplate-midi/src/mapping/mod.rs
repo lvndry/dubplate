@@ -222,7 +222,8 @@ impl Mapping {
         Some(self.outputs.get(&output)?.message(value))
     }
 
-    pub(crate) fn startup(&self) -> &[Vec<u8>] {
+    /// The messages sent to the controller when it is opened.
+    pub fn startup(&self) -> &[Vec<u8>] {
         &self.startup
     }
 
@@ -437,12 +438,15 @@ mod tests {
     fn the_flx4_asks_for_its_positions_and_is_kept_alive() {
         let mapping = Mapping::built_in_for_port("DDJ-FLX4").unwrap().unwrap();
         let query = [
+            0xF0, 0x00, 0x40, 0x05, 0x00, 0x00, 0x04, 0x05, 0x00, 0x03, 0x01, 0xF7,
+        ];
+        let awake = [
             0xF0, 0x00, 0x40, 0x05, 0x00, 0x00, 0x04, 0x05, 0x00, 0x50, 0x02, 0xF7,
         ];
         assert_eq!(mapping.startup(), [query.to_vec()]);
         let keepalive = mapping.keepalive().unwrap();
         assert_eq!(keepalive.interval, Duration::from_millis(200));
-        assert_eq!(keepalive.message, query);
+        assert_eq!(keepalive.message, awake);
     }
 
     #[test]

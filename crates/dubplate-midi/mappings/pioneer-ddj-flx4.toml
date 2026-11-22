@@ -14,10 +14,12 @@ ports = ["DDJ-FLX4"]
 # Mixxx scratches with 720 ticks per turn of the platter.
 jog_ticks_per_revolution = 720
 
-# Asks the unit to report every fader and knob position (Mixxx).
-startup = [[0xF0, 0x00, 0x40, 0x05, 0x00, 0x00, 0x04, 0x05, 0x00, 0x50, 0x02, 0xF7]]
+# Asks the unit to report its fader, knob, tempo and CH SELECT lever positions. The 03 01 request
+# is the one Mixxx sends the DDJ-400 and DDJ-200 at startup, with the FLX4's own device bytes
+# (04 05); the FLX4 answers it with one message per control. The keepalive below gets no answer.
+startup = [[0xF0, 0x00, 0x40, 0x05, 0x00, 0x00, 0x04, 0x05, 0x00, 0x03, 0x01, 0xF7]]
 
-# Mixxx repeats the same message every 200 ms while the unit is open.
+# Mixxx repeats this message every 200 ms while the unit is open.
 keepalive = { interval_ms = 200, message = [0xF0, 0x00, 0x40, 0x05, 0x00, 0x00, 0x04, 0x05, 0x00, 0x50, 0x02, 0xF7] }
 
 buttons = [

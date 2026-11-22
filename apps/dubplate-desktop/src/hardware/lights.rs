@@ -19,6 +19,9 @@ pub struct DeckLights {
     pub pad_mode: PadMode,
     /// The pads lit in that mode, pad 1 first.
     pub pads: [bool; PAD_COUNT],
+    /// The pads lit while SHIFT is held, when SHIFT + the pads does something else in that
+    /// mode, such as the stems in BEAT LOOP mode; `None` lights the same pads on both layers.
+    pub shift_pads: Option<[bool; PAD_COUNT]>,
     /// The channel level meter.
     pub level: U7,
     /// BEAT SYNC.
@@ -31,6 +34,9 @@ pub struct DeckLights {
     pub loop_out: bool,
     /// 4 BEAT/EXIT.
     pub four_beat: bool,
+    /// Whether the jog's top holds the record (vinyl mode) or only nudges (CDJ mode). The
+    /// FLX4 reports platter touches differently in each.
+    pub vinyl_mode: bool,
 }
 
 impl Default for DeckLights {
@@ -40,12 +46,14 @@ impl Default for DeckLights {
             cue: false,
             pad_mode: PadMode::HotCue,
             pads: [false; PAD_COUNT],
+            shift_pads: None,
             level: U7::MIN,
             sync: false,
             headphone_cue: false,
             loop_in: false,
             loop_out: false,
             four_beat: false,
+            vinyl_mode: true,
         }
     }
 }
@@ -69,27 +77,42 @@ impl Lights {
     /// have encode to nothing in its mapping.
     pub fn for_each_feedback(&self, mut show: impl FnMut(Feedback)) {
         for (deck, lights) in DECKS.into_iter().zip(&self.decks) {
-            let mut light = |button: Button, on: bool| {
+            let mut light = |button: Button, normal: bool, shifted: bool| {
                 for layer in LAYERS {
+                    let on = match layer {
+                        Layer::Normal => normal,
+                        Layer::Shift => shifted,
+                    };
                     show(Feedback::Light { button, layer, on });
                 }
             };
-            light(Button::Play(deck), lights.play);
-            light(Button::Cue(deck), lights.cue);
-            light(Button::LoopIn(deck), lights.loop_in);
-            light(Button::LoopOut(deck), lights.loop_out);
-            light(Button::FourBeatExit(deck), lights.four_beat);
-            light(Button::Sync(deck), lights.sync);
-            light(Button::HeadphoneCue(deck), lights.headphone_cue);
+            light(Button::Play(deck), lights.play, lights.play);
+            light(Button::Cue(deck), lights.cue, lights.cue);
+            light(Button::LoopIn(deck), lights.loop_in, lights.loop_in);
+            light(Button::LoopOut(deck), lights.loop_out, lights.loop_out);
+            light(
+                Button::FourBeatExit(deck),
+                lights.four_beat,
+                lights.four_beat,
+            );
+            light(Button::Sync(deck), lights.sync, lights.sync);
+            light(
+                Button::HeadphoneCue(deck),
+                lights.headphone_cue,
+                lights.headphone_cue,
+            );
+            let shift_pads = lights.shift_pads.unwrap_or(lights.pads);
             for mode in PAD_MODES {
-                light(Button::PadMode { deck, mode }, mode == lights.pad_mode);
-                for (pad_position, lit) in lights.pads.iter().enumerate() {
+                let current = mode == lights.pad_mode;
+                light(Button::PadMode { deck, mode }, current, current);
+                for pad_position in 0..PAD_COUNT {
                     let Some(pad) = pad_index(pad_position) else {
                         continue;
                     };
                     light(
                         Button::Pad { deck, mode, pad },
-                        *lit && mode == lights.pad_mode,
+                        current && lights.pads[pad_position],
+                        current && shift_pads[pad_position],
                     );
                 }
             }
@@ -97,7 +120,10 @@ impl Lights {
                 deck,
                 level: lights.level,
             });
-            show(Feedback::VinylMode { deck, on: true });
+            show(Feedback::VinylMode {
+                deck,
+                on: lights.vinyl_mode,
+            });
         }
         for layer in LAYERS {
             show(Feedback::Light {
@@ -209,6 +235,47 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    fn shift_lights_its_own_pads_when_shift_and_the_pads_do_something_else() {
+        let mut lights = Lights::default();
+        lights.decks[0].pad_mode = PadMode::BeatLoop;
+        lights.decks[0].pads = [true, false, false, false, false, false, false, false];
+        lights.decks[0].shift_pads = Some([false, true, true, true, false, false, false, true]);
+        let mut pad_lights = Vec::new();
+        lights.for_each_feedback(|feedback| {
+            if let Feedback::Light {
+                button:
+                    Button::Pad {
+                        deck: Deck::A,
+                        mode: PadMode::BeatLoop,
+                        pad,
+                    },
+                layer,
+                on,
+            } = feedback
+            {
+                pad_lights.push((pad, layer, on));
+            }
+        });
+        let lit = |layer| -> Vec<bool> {
+            (0..PAD_COUNT)
+                .map(|position| {
+                    pad_lights.iter().any(|(pad, light_layer, on)| {
+                        Some(*pad) == pad_index(position) && *light_layer == layer && *on
+                    })
+                })
+                .collect()
+        };
+        assert_eq!(
+            lit(Layer::Normal),
+            [true, false, false, false, false, false, false, false]
+        );
+        assert_eq!(
+            lit(Layer::Shift),
+            [false, true, true, true, false, false, false, true]
+        );
+    }
+
     fn flx4() -> Mapping {
         Mapping::built_in_for_port("DDJ-FLX4")
             .expect("the built-in mappings parse")
@@ -250,6 +317,16 @@ mod tests {
                 [0x9A, 0x02, 0x7F],
             ]
         );
+    }
+
+    #[test]
+    fn cdj_mode_tells_the_flx4_its_jog_only_nudges() {
+        let mapping = flx4();
+        let mut cache = LightCache::default();
+        let mut lights = Lights::default();
+        sent(&mut cache, &mapping, &lights);
+        lights.decks[1].vinyl_mode = false;
+        assert_eq!(sent(&mut cache, &mapping, &lights), [[0x91, 0x17, 0x00]]);
     }
 
     #[test]
