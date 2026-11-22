@@ -346,8 +346,18 @@ impl DubplateApp {
             ..MixerPositions::default()
         });
         let mode = settings.screen();
-        let (engine, audio_problem) =
+        let (mut engine, audio_problem) =
             audio::start_engine(&mixer, settings.audio_device.as_deref(), &devices);
+        if let Ok(engine) = &mut engine {
+            for deck in DeckId::ALL {
+                if let Err(problem) = engine
+                    .controller
+                    .set_key_lock(deck, settings.key_lock_on_new_tracks)
+                {
+                    problems.push(format!("Key lock could not be set: {problem}"));
+                }
+            }
+        }
         problems.extend(audio_problem);
         let hardware = match &devices {
             DeviceAccess::Offline { script } => {
@@ -834,6 +844,7 @@ impl DubplateApp {
         deck: DeckId,
         mut prepared: PreparedTrack,
     ) -> Result<TrackVisuals, LoadError> {
+        let key_lock = self.settings.key_lock_on_new_tracks;
         let engine = self
             .engine
             .as_mut()
@@ -842,6 +853,7 @@ impl DubplateApp {
         engine
             .controller
             .load_prepared_track(deck, prepared.audio, prepared.beat_grid)?;
+        engine.controller.set_key_lock(deck, key_lock)?;
         // Loading clears transient pad gestures on the audio thread in the same command.
         self.held_pads[deck.index()] = None;
         Ok(visuals)
@@ -951,6 +963,10 @@ impl DubplateApp {
             Command::MakeTempoMaster(deck) => self.engine_command(cx, |controller| {
                 controller.set_master_tempo(MasterTempo::Deck(deck))
             }),
+            Command::SetKeyLockOnNewTracks(on) => {
+                self.settings.key_lock_on_new_tracks = on;
+                self.save_settings(cx);
+            }
             Command::Stems(deck, action) => self.apply_stem_action(deck, action, cx),
             Command::ToggleKeyLock(deck) => {
                 let locked = self.key_lock(deck);
