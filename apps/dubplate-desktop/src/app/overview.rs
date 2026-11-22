@@ -254,7 +254,13 @@ fn paint_content(bounds: Bounds<Pixels>, content: &OverviewContent, window: &mut
         }
     }
     for &seconds in &content.track.memory_cues {
-        paint_triangle(&area, area.x_of(seconds), 1.0, theme::active().memory_cue, window);
+        paint_triangle(
+            &area,
+            area.x_of(seconds),
+            1.0,
+            theme::active().memory_cue,
+            window,
+        );
     }
     let strip_top = area.bands_bottom + 1.0;
     for phrase in content.phrases.iter() {
@@ -335,7 +341,10 @@ fn paint_motion(bounds: Bounds<Pixels>, motion: OverviewMotion, window: &mut Win
     }
     if let Some(progress) = motion.progress {
         let played = progress * area.width;
-        window.paint_quad(fill(area.band_span(0.0, played), theme::active().played_shade));
+        window.paint_quad(fill(
+            area.band_span(0.0, played),
+            theme::active().played_shade,
+        ));
         paint_playhead(&area, area.playhead_left(progress), window);
     }
     if let Some(cue_point) = motion.cue_point {
