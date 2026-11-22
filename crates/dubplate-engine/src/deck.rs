@@ -7,6 +7,7 @@ use crate::channel::ChannelStrip;
 use crate::curves::{Ramp, channel_fader_gain};
 use crate::grid::BeatGrid;
 use crate::jog::{BlockStart, JogInput, Platter};
+use crate::keylock::{KeyLock, KeyLockBlock};
 use crate::looping::{LoopRegion, Looping};
 use crate::mixer::RetireQueue;
 use crate::processor::{AudioProcessor, ProcessContext, StereoBlock};
@@ -42,6 +43,10 @@ impl DeckId {
 /// holding a constant offset.
 const AUDIBLE_SPEED: f64 = 0.05;
 
+/// Key lock leaves a deck within this much of its own tempo to the plain resampler, which is
+/// exact there.
+const KEY_LOCK_TEMPO_TOLERANCE: f64 = 1e-6;
+
 /// Beats per second loops and beat jumps count on a deck without a beat grid: 120 BPM.
 const FALLBACK_BEATS_PER_SECOND: f64 = 2.0;
 
@@ -68,6 +73,9 @@ pub(crate) struct Deck {
     channel_gain: Ramp,
     fader_position: f32,
     platter: Platter,
+    steps: Vec<f64>,
+    key_lock: KeyLock,
+    key_lock_enabled: bool,
     strip: ChannelStrip,
     pub(crate) inserts: [Option<Box<dyn AudioProcessor>>; INSERT_SLOTS],
     pub(crate) block: StereoBlock,
@@ -92,6 +100,9 @@ impl Deck {
             channel_gain: Ramp::new(1.0, declick_frames),
             fader_position: 1.0,
             platter: Platter::new(output_rate),
+            steps: vec![0.0; max_block_frames],
+            key_lock: KeyLock::new(output_rate, declick_frames),
+            key_lock_enabled: false,
             strip: ChannelStrip::new(output_rate),
             inserts: std::array::from_fn(|_| None),
             block: StereoBlock::with_capacity(max_block_frames),
@@ -201,6 +212,7 @@ impl Deck {
         self.voice.position = 0.0;
         self.cue_point = 0.0;
         self.looping.clear();
+        self.key_lock.stop(retire);
         if let Some(previous) = self.beat_grid.take() {
             retire.beat_grid(previous);
         }
@@ -240,6 +252,11 @@ impl Deck {
             self.cue_point = self.snap_to_beat(self.voice.position);
             self.voice.position = self.cue_point;
         }
+    }
+
+    /// Key lock, the master tempo button: tempo changes keep the track's pitch.
+    pub(crate) fn set_key_lock(&mut self, enabled: bool) {
+        self.key_lock_enabled = enabled;
     }
 
     pub(crate) fn set_quantize(&mut self, enabled: bool) {
@@ -459,6 +476,7 @@ impl Deck {
     /// Jumps to a frame of the track, fading the old position out while the new one fades in.
     fn jump_to_frame(&mut self, frame: f64, retire: &mut RetireQueue) {
         self.voice.start_tail(self.platter.last_step(), retire);
+        self.key_lock.jumped();
         self.voice.position = self.clamp_position(frame);
         if self.playing {
             if self.at_end() {
@@ -706,25 +724,74 @@ impl Deck {
             self.voice.transport.set_target(transport_target);
         }
         self.block.set_frame_count(frame_count);
-        let audible_step = self.source_rate() / self.output_rate * AUDIBLE_SPEED;
+        let frame_count = self.block.frame_count();
+        let mut advance = 0.0;
+        for step in &mut self.steps[..frame_count] {
+            *step = self.platter.next_step(motor_step);
+            advance += *step;
+        }
+        let unit_step = self.source_rate() / self.output_rate;
+        let audible_step = unit_step * AUDIBLE_SPEED;
         let end_frame = self.voice.end_frame();
         let active_loop = self.looping.active_loop();
+        let stretched = self.key_lock.prepare(
+            KeyLockBlock {
+                wanted: self.key_lock_enabled
+                    && self.playing
+                    && !holding
+                    && (self.tempo - 1.0).abs() > KEY_LOCK_TEMPO_TOLERANCE,
+                track: self.voice.track.as_ref(),
+                playhead: self.voice.position,
+                advance,
+                frames: frame_count,
+                unit_step,
+                active_loop,
+            },
+            retire,
+            &mut result.starved,
+        );
+        let fully_stretched = stretched && self.key_lock.is_fully_in();
         let voice = &mut self.voice;
-        let platter = &mut self.platter;
+        let key_lock = &mut self.key_lock;
         let trim = &mut self.trim;
         let (left_channel, right_channel) = self.block.channels_mut();
-        for (left, right) in left_channel.iter_mut().zip(right_channel.iter_mut()) {
-            let step = platter.next_step(motor_step);
+        for (index, ((left, right), step)) in left_channel
+            .iter_mut()
+            .zip(right_channel.iter_mut())
+            .zip(&self.steps[..frame_count])
+            .enumerate()
+        {
+            let step = *step;
             let stylus_gain = (step.abs() / audible_step).min(1.0) as f32;
             let gain = voice.transport.next_value() * stylus_gain;
-            let (left_sum, right_sum) = voice.next_frame(gain, retire, &mut result.starved);
+            let (playhead_left, playhead_right) = if stretched {
+                let (stretched_left, stretched_right, mix) = key_lock.next_frame(index);
+                let (plain_left, plain_right) = if mix < 1.0 && gain > 0.0 {
+                    voice.read_playhead(&mut result.starved)
+                } else {
+                    (0.0, 0.0)
+                };
+                (
+                    plain_left + (stretched_left - plain_left) * mix,
+                    plain_right + (stretched_right - plain_right) * mix,
+                )
+            } else if gain > 0.0 {
+                voice.read_playhead(&mut result.starved)
+            } else {
+                (0.0, 0.0)
+            };
+            let (tail_left, tail_right) = voice.next_tails(retire, &mut result.starved);
             if step != 0.0 {
                 let previous = voice.position;
                 voice.position = (previous + step).max(0.0);
                 if let Some(wrapped) =
                     active_loop.and_then(|active| active.wrap(previous, voice.position))
                 {
-                    voice.jump(wrapped, step, retire);
+                    if fully_stretched {
+                        voice.position = wrapped;
+                    } else {
+                        voice.jump(wrapped, step, retire);
+                    }
                 } else if let Some(end) = end_frame
                     && voice.position >= end
                 {
@@ -736,8 +803,8 @@ impl Deck {
                 }
             }
             let trim = trim.next_value();
-            *left = left_sum * trim;
-            *right = right_sum * trim;
+            *left = (playhead_left * gain + tail_left) * trim;
+            *right = (playhead_right * gain + tail_right) * trim;
         }
         self.strip.process(&mut self.block);
         for processor in self.inserts.iter_mut().flatten() {

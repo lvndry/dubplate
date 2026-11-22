@@ -31,6 +31,7 @@ mod error;
 mod grid;
 mod headphones;
 mod jog;
+mod keylock;
 mod looping;
 mod mixer;
 mod output;

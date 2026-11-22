@@ -47,6 +47,7 @@ pub fn offline_engine(sample_rate: u32) -> (Controller, Renderer) {
         channels: [ChannelSettings::default(); DECK_COUNT],
         quantize: true,
         headphones: HeadphoneSettings::default(),
+        key_locks: [false; DECK_COUNT],
     };
     let renderer = Renderer::new(
         sample_rate,
@@ -71,6 +72,7 @@ pub struct Controller {
     channels: [ChannelSettings; DECK_COUNT],
     quantize: bool,
     headphones: HeadphoneSettings,
+    key_locks: [bool; DECK_COUNT],
 }
 
 impl Controller {
@@ -390,6 +392,20 @@ impl Controller {
     /// 3 and 4 of a device with four or more channels, such as a DDJ-FLX4.
     pub fn headphones(&self) -> HeadphoneSettings {
         self.headphones
+    }
+
+    /// Key lock, a CDJ's MASTER TEMPO: tempo changes keep the track's pitch, through a
+    /// Signalsmith Stretch time-stretcher lined up with the playhead. Scratching and a stopped
+    /// record play without it, as on a CDJ. Switching it crossfades over 20 ms.
+    pub fn set_key_lock(&mut self, deck: DeckId, enabled: bool) -> Result<(), EngineError> {
+        self.send(Command::SetKeyLock { deck, enabled })?;
+        self.key_locks[deck.index()] = enabled;
+        Ok(())
+    }
+
+    /// Whether key lock is on for a deck.
+    pub fn key_lock(&self, deck: DeckId) -> bool {
+        self.key_locks[deck.index()]
     }
 
     /// Switches quantize for both decks, on by default. With quantize and a beat grid, the cue
