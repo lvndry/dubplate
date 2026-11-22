@@ -109,6 +109,7 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
                 .child(section_title("Sound card"))
                 .children(output_rows)
                 .child(section_title("Mixer"))
+                .child(crossfader_row(app.crossfader().enabled, cx))
                 .child(curve_row(
                     "Crossfader curve",
                     CrossfaderCurve::ALL.map(|curve| CurveChoice {
@@ -138,6 +139,70 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
                         ),
                 )
                 .focus_trap("settings-focus-trap", &app.modal_focus),
+        )
+}
+
+/// Whether the crossfader is in use, with what Off means. rekordbox has no single switch for
+/// it; DJs set both channels' crossfader assign to THRU, which Off does at once.
+fn crossfader_row(on: bool, cx: &mut Context<'_, DubplateApp>) -> impl IntoElement + use<> {
+    div()
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap(px(12.0))
+        .py(px(6.0))
+        .border_t_1()
+        .border_color(theme::ROW_LINE)
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(2.0))
+                .child(div().text_size(theme::SMALL_TEXT_SIZE).child("Crossfader"))
+                .child(
+                    div()
+                        .text_size(theme::TINY_TEXT_SIZE)
+                        .text_color(theme::MUTED)
+                        .child("Off: both channels play as on THRU, so the crossfader moves without changing the sound."),
+                ),
+        )
+        .child(
+            div()
+                .role(gpui::Role::RadioGroup)
+                .aria_label("Crossfader")
+                .flex()
+                .flex_none()
+                .gap(px(4.0))
+                .children([(true, "On"), (false, "Off")].map(|(choice, name)| {
+                    let chosen = choice == on;
+                    div()
+                        .id(SharedString::from(format!("crossfader-{name}")))
+                        .accessible_toggle(format!("Crossfader {name}"), chosen)
+                        .flex()
+                        .justify_center()
+                        .w(px(44.0))
+                        .py(px(4.0))
+                        .rounded(theme::SMALL_RADIUS)
+                        .border_1()
+                        .text_size(theme::SMALL_TEXT_SIZE)
+                        .cursor_pointer()
+                        .map(|option| {
+                            if chosen {
+                                option.border_color(theme::LINE).bg(theme::RAISED)
+                            } else {
+                                option
+                                    .border_color(gpui::transparent_black())
+                                    .text_color(theme::MUTED)
+                                    .hover(|option| option.bg(theme::RAISED))
+                            }
+                        })
+                        .when(!chosen, |option| {
+                            option.on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                                this.perform(Command::ToggleCrossfader, window, cx);
+                            }))
+                        })
+                        .child(name)
+                })),
         )
 }
 
@@ -259,7 +324,10 @@ fn paint_curve(bounds: Bounds<Pixels>, picture: CurvePicture, colour: Rgba, wind
         let position = sample as f32 / (CURVE_SAMPLES - 1) as f32;
         for level in picture.levels(position).into_iter().flatten() {
             let origin = bounds.origin + point(travel_x * position, travel_y * (1.0 - level));
-            window.paint_quad(fill(Bounds::new(origin, size(CURVE_DOT, CURVE_DOT)), colour));
+            window.paint_quad(fill(
+                Bounds::new(origin, size(CURVE_DOT, CURVE_DOT)),
+                colour,
+            ));
         }
     }
 }

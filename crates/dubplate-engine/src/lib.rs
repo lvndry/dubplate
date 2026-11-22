@@ -53,9 +53,9 @@ mod track;
 mod voice;
 
 pub use channel::ChannelSettings;
-pub use crossfader::{ChannelFaderCurve, Crossfader, CrossfaderAssign, CrossfaderCurve};
 pub use controller::{Controller, DeckSnapshot, offline_engine};
 pub use cpal;
+pub use crossfader::{ChannelFaderCurve, Crossfader, CrossfaderAssign, CrossfaderCurve};
 pub use curves::{
     channel_fader_gain, crossfader_gains, decibels_to_gain, eq_gain, gain_to_decibels,
 };

@@ -91,6 +91,7 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
             div()
                 .flex()
                 .justify_between()
+                .when(!app.crossfader().enabled, |switches| switches.opacity(0.4))
                 .child(assign_switch(app, DeckId::A, cx))
                 .child(assign_switch(app, DeckId::B, cx)),
         )
@@ -102,8 +103,22 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
                 .child(side_label(app, CrossfaderAssign::A))
                 .child(
                     div()
+                        .relative()
                         .flex_1()
                         .when(!crossfader_in_use(app), |slider| slider.opacity(0.4))
+                        .when(!app.crossfader().enabled, |slider| {
+                            slider.child(
+                                div()
+                                    .absolute()
+                                    .inset_0()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .text_size(theme::TINY_TEXT_SIZE)
+                                    .text_color(theme::TEXT)
+                                    .child("Off"),
+                            )
+                        })
                         .child(slider::render(
                             app,
                             Slider::Crossfader,
@@ -429,10 +444,12 @@ fn label(text: &'static str) -> impl IntoElement {
 
 /// Whether any channel plays through the crossfader.
 fn crossfader_in_use(app: &DubplateApp) -> bool {
-    app.crossfader()
-        .assign
-        .iter()
-        .any(|assign| *assign != CrossfaderAssign::Thru)
+    let crossfader = app.crossfader();
+    crossfader.enabled
+        && crossfader
+            .assign
+            .iter()
+            .any(|assign| *assign != CrossfaderAssign::Thru)
 }
 
 /// The decks on one side of the crossfader, at its end: the letters of the decks assigned

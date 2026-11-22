@@ -1053,6 +1053,10 @@ mod tests {
         deck.set_fader_position(0.5);
         assert_eq!(deck.level(standard, 1.0), 2.0 * 0.25);
         assert_eq!(deck.level(ChannelFaderCurve::Fast, 1.0), 2.0 * 0.75);
-        assert_eq!(deck.level(standard, 0.0), 0.0, "the crossfader cuts a playing deck");
+        assert_eq!(
+            deck.level(standard, 0.0),
+            0.0,
+            "the crossfader cuts a playing deck"
+        );
     }
 }

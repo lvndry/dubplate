@@ -107,6 +107,7 @@ pub const SHORTCUTS: [Shortcut; 76] = [
     outside_text("=", Command::NudgeTempo(DeckId::A, Direction::Up)),
     outside_text("shift--", Command::NudgeTempo(DeckId::B, Direction::Down)),
     outside_text("shift-=", Command::NudgeTempo(DeckId::B, Direction::Up)),
+    outside_text("alt-x", Command::ToggleCrossfader),
     outside_text("x", Command::CycleCrossfaderAssign(DeckId::A)),
     outside_text("shift-x", Command::CycleCrossfaderAssign(DeckId::B)),
     outside_text("left", Command::MoveCrossfader(Direction::Down)),
@@ -306,6 +307,7 @@ pub fn help_sections() -> Vec<HelpSection> {
                     &["x", "shift-x"],
                     "Crossfader assign A, THRU or B, deck A / deck B",
                 ),
+                line(&["alt-x"], "Crossfader on or off"),
             ],
         },
         HelpSection {

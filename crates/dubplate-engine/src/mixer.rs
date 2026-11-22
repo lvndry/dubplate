@@ -81,6 +81,7 @@ pub(crate) enum Command {
     },
     SetCrossfader(f32),
     SetCrossfaderCurve(CrossfaderCurve),
+    SetCrossfaderEnabled(bool),
     SetCrossfaderAssign {
         deck: DeckId,
         assign: CrossfaderAssign,
@@ -621,6 +622,10 @@ impl Renderer {
                 self.crossfader.curve = curve;
                 self.update_channel_gains();
             }
+            Command::SetCrossfaderEnabled(enabled) => {
+                self.crossfader.enabled = enabled;
+                self.update_channel_gains();
+            }
             Command::SetCrossfaderAssign { deck, assign } => {
                 self.crossfader.assign[deck.index()] = assign;
                 self.update_channel_gain(deck);
@@ -781,7 +786,9 @@ impl Renderer {
     fn update_channel_gain(&mut self, deck_id: DeckId) {
         let crossfader_gain = self.crossfader.gain(deck_id);
         let deck = &mut self.decks[deck_id.index()];
-        deck.set_channel_gain(self.channel_fader_curve.gain(deck.fader_position()) * crossfader_gain);
+        deck.set_channel_gain(
+            self.channel_fader_curve.gain(deck.fader_position()) * crossfader_gain,
+        );
     }
 
     fn update_channel_gains(&mut self) {

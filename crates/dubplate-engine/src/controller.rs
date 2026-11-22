@@ -67,6 +67,7 @@ pub fn offline_engine(sample_rate: u32) -> (Controller, Renderer) {
         smart_cfx: [None; DECK_COUNT],
         smart_fader: false,
         crossfader_curve: CrossfaderCurve::default(),
+        crossfader_enabled: true,
         crossfader_assign: DeckId::ALL.map(CrossfaderAssign::default_for),
         channel_fader_curve: ChannelFaderCurve::default(),
     };
@@ -103,6 +104,7 @@ pub struct Controller {
     smart_cfx: [Option<SmartCfx>; DECK_COUNT],
     smart_fader: bool,
     crossfader_curve: CrossfaderCurve,
+    crossfader_enabled: bool,
     crossfader_assign: [CrossfaderAssign; DECK_COUNT],
     channel_fader_curve: ChannelFaderCurve,
 }
@@ -360,6 +362,19 @@ impl Controller {
     pub fn set_crossfader(&mut self, position: f32) -> Result<(), EngineError> {
         check_range("crossfader", f64::from(position), 0.0, 1.0)?;
         self.send(Command::SetCrossfader(position))
+    }
+
+    /// Puts the crossfader in or out of use. Out of use, both channels play as if on THRU,
+    /// whatever its position, and Smart Fader rests.
+    pub fn set_crossfader_enabled(&mut self, enabled: bool) -> Result<(), EngineError> {
+        self.send(Command::SetCrossfaderEnabled(enabled))?;
+        self.crossfader_enabled = enabled;
+        Ok(())
+    }
+
+    /// Whether the crossfader is in use.
+    pub fn crossfader_enabled(&self) -> bool {
+        self.crossfader_enabled
     }
 
     /// Sets how the crossfader shares the level between its sides.

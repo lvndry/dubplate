@@ -145,10 +145,13 @@ impl fmt::Display for CrossfaderAssign {
     }
 }
 
-/// The crossfader: where it sits, its curve and which side each channel is on. The engine and
-/// the window work out a channel's crossfader gain from it the same way.
+/// The crossfader: whether it is in use, where it sits, its curve and which side each channel
+/// is on. The engine and the window work out a channel's crossfader gain from it the same way.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Crossfader {
+    /// Whether the crossfader changes the sound at all. Off, every channel plays as if on
+    /// THRU and the fader moves without effect, for DJs who mix on the channel faders alone.
+    pub enabled: bool,
     /// From 0.0, fully left (A), to 1.0, fully right (B).
     pub position: f32,
     /// How the level is shared between the sides.
@@ -160,6 +163,7 @@ pub struct Crossfader {
 impl Default for Crossfader {
     fn default() -> Self {
         Self {
+            enabled: true,
             position: 0.5,
             curve: CrossfaderCurve::default(),
             assign: DeckId::ALL.map(CrossfaderAssign::default_for),
@@ -168,8 +172,12 @@ impl Default for Crossfader {
 }
 
 impl Crossfader {
-    /// The gain the crossfader gives `deck`: its side's gain, or unity on THRU.
+    /// The gain the crossfader gives `deck`: its side's gain, or unity on THRU or with the
+    /// crossfader off.
     pub fn gain(&self, deck: DeckId) -> f32 {
+        if !self.enabled {
+            return 1.0;
+        }
         let (left, right) = self.curve.gains(self.position);
         match self.assign[deck.index()] {
             CrossfaderAssign::A => left,
@@ -178,9 +186,12 @@ impl Crossfader {
         }
     }
 
-    /// The deck on the left side and the deck on the right, when there is one deck on each:
-    /// what Smart Fader needs to move from one deck to the other.
+    /// The deck on the left side and the deck on the right, when the crossfader is on and
+    /// there is one deck on each: what Smart Fader needs to move from one deck to the other.
     pub fn sides(&self) -> Option<[DeckId; 2]> {
+        if !self.enabled {
+            return None;
+        }
         match self.assign {
             [CrossfaderAssign::A, CrossfaderAssign::B] => Some([DeckId::A, DeckId::B]),
             [CrossfaderAssign::B, CrossfaderAssign::A] => Some([DeckId::B, DeckId::A]),
@@ -259,6 +270,19 @@ mod tests {
         };
         assert!(close(at_b.gain(DeckId::A), 0.0));
         assert!(close(at_b.gain(DeckId::B), 1.0));
+        assert_eq!(crossfader.sides(), None);
+    }
+
+    #[test]
+    fn a_crossfader_turned_off_leaves_both_channels_open() {
+        let crossfader = Crossfader {
+            enabled: false,
+            position: 1.0,
+            curve: CrossfaderCurve::Scratch,
+            ..Crossfader::default()
+        };
+        assert!(close(crossfader.gain(DeckId::A), 1.0));
+        assert!(close(crossfader.gain(DeckId::B), 1.0));
         assert_eq!(crossfader.sides(), None);
     }
 

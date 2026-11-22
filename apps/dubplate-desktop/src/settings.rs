@@ -3,9 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
-use dubplate_engine::{
-    ChannelFaderCurve, CrossfaderAssign, CrossfaderCurve, DECK_COUNT, DeckId,
-};
+use dubplate_engine::{ChannelFaderCurve, CrossfaderAssign, CrossfaderCurve, DECK_COUNT, DeckId};
 use dubplate_library::{DataFolder, LibrarySettings};
 use serde::{Deserialize, Serialize};
 
@@ -79,6 +77,8 @@ pub struct Settings {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct MixerSetting {
+    /// Whether the crossfader changes the sound; off, both channels play as if on THRU.
+    pub crossfader_on: bool,
     /// The crossfader curve.
     pub crossfader_curve: String,
     /// The channel fader curve.
@@ -89,25 +89,19 @@ pub struct MixerSetting {
 
 impl Default for MixerSetting {
     fn default() -> Self {
-        Self::of(
-            CrossfaderCurve::default(),
-            ChannelFaderCurve::default(),
-            DeckId::ALL.map(CrossfaderAssign::default_for),
-        )
+        Self::of(&Crossfader::default(), ChannelFaderCurve::default())
     }
 }
 
 impl MixerSetting {
-    /// The setting that keeps these curves and switches.
-    pub fn of(
-        crossfader_curve: CrossfaderCurve,
-        channel_fader_curve: ChannelFaderCurve,
-        crossfader_assign: [CrossfaderAssign; DECK_COUNT],
-    ) -> Self {
+    /// The setting that keeps `crossfader`'s switches and curve, its position aside, and
+    /// the channel fader curve.
+    pub fn of(crossfader: &Crossfader, channel_fader_curve: ChannelFaderCurve) -> Self {
         Self {
-            crossfader_curve: crossfader_curve.to_string(),
+            crossfader_on: crossfader.enabled,
+            crossfader_curve: crossfader.curve.to_string(),
             channel_fader_curve: channel_fader_curve.to_string(),
-            crossfader_assign: crossfader_assign.map(|assign| assign.to_string()),
+            crossfader_assign: crossfader.assign.map(|assign| assign.to_string()),
         }
     }
 
@@ -422,9 +416,13 @@ mod tests {
                 headphone_mix: 0.7,
             },
             mixer: MixerSetting::of(
-                CrossfaderCurve::Scratch,
+                &Crossfader {
+                    enabled: false,
+                    position: 0.5,
+                    curve: CrossfaderCurve::Scratch,
+                    assign: [CrossfaderAssign::Thru, CrossfaderAssign::A],
+                },
                 ChannelFaderCurve::Fast,
-                [CrossfaderAssign::Thru, CrossfaderAssign::A],
             ),
             library_sort: LibrarySortSetting {
                 prepare: Some(SortSetting {
@@ -471,15 +469,20 @@ mod tests {
     #[test]
     fn mixer_switches_come_back_by_name_and_unknown_names_take_the_default() {
         let kept = MixerSetting::of(
-            CrossfaderCurve::Constant,
+            &Crossfader {
+                curve: CrossfaderCurve::Constant,
+                assign: [CrossfaderAssign::B, CrossfaderAssign::Thru],
+                ..Crossfader::default()
+            },
             ChannelFaderCurve::Slow,
-            [CrossfaderAssign::B, CrossfaderAssign::Thru],
         );
+        assert!(kept.crossfader_on);
         assert_eq!(kept.crossfader_curve(), CrossfaderCurve::Constant);
         assert_eq!(kept.channel_fader_curve(), ChannelFaderCurve::Slow);
         assert_eq!(kept.crossfader_assign(DeckId::A), CrossfaderAssign::B);
         assert_eq!(kept.crossfader_assign(DeckId::B), CrossfaderAssign::Thru);
         let unknown = MixerSetting {
+            crossfader_on: true,
             crossfader_curve: "wobbly".to_owned(),
             channel_fader_curve: String::new(),
             crossfader_assign: ["left".to_owned(), "right".to_owned()],

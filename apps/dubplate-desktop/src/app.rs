@@ -893,6 +893,7 @@ impl DubplateApp {
                 self.set_crossfader_assign(deck, assign, cx);
             }
             Command::CycleCrossfaderAssign(deck) => self.cycle_crossfader_assign(deck, cx),
+            Command::ToggleCrossfader => self.toggle_crossfader(cx),
             Command::SetCrossfaderCurve(curve) => self.set_crossfader_curve(curve, cx),
             Command::SetChannelFaderCurve(curve) => self.set_channel_fader_curve(curve, cx),
             Command::MoveSelection(direction) => match (self.mode, self.prepare_focus) {

@@ -199,6 +199,8 @@ pub enum Command {
     SetControl(Control, f32),
     /// Move the crossfader one step towards deck A ([`Direction::Down`]) or deck B.
     MoveCrossfader(Direction),
+    /// Put the crossfader in or out of use: out of use, both channels play as if on THRU.
+    ToggleCrossfader,
     /// Put a deck's channel on side A or B of the crossfader, or THRU, off it.
     SetCrossfaderAssign(DeckId, CrossfaderAssign),
     /// Move a deck's crossfader assign switch to its next position: A, THRU, B.

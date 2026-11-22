@@ -99,12 +99,18 @@ fn thru_takes_a_channel_off_the_crossfader_and_the_curves_shape_both_faders() {
     controller.play(DeckId::B).unwrap();
     let mut gains = || {
         let output = render_frames(&mut renderer, BLOCK * 2, BLOCK);
-        [output[output.len() - 2] / 0.5, output[output.len() - 1] / 0.5]
+        [
+            output[output.len() - 2] / 0.5,
+            output[output.len() - 1] / 0.5,
+        ]
     };
     controller
         .set_crossfader_assign(DeckId::B, CrossfaderAssign::Thru)
         .unwrap();
-    assert_eq!(controller.crossfader_assign(DeckId::B), CrossfaderAssign::Thru);
+    assert_eq!(
+        controller.crossfader_assign(DeckId::B),
+        CrossfaderAssign::Thru
+    );
     controller.set_crossfader(0.0).unwrap();
     let [deck_a, deck_b] = gains();
     assert_close(f64::from(deck_a), 1.0, 1e-5);
@@ -123,7 +129,10 @@ fn thru_takes_a_channel_off_the_crossfader_and_the_curves_shape_both_faders() {
     controller.set_crossfader(0.02).unwrap();
     let [deck_a, deck_b] = gains();
     assert_close(f64::from(deck_a), 1.0, 1e-5);
-    assert!(deck_b > 0.6, "the scratch curve opens deck B at once: {deck_b}");
+    assert!(
+        deck_b > 0.6,
+        "the scratch curve opens deck B at once: {deck_b}"
+    );
     controller
         .set_crossfader_curve(CrossfaderCurve::Constant)
         .unwrap();
@@ -138,6 +147,27 @@ fn thru_takes_a_channel_off_the_crossfader_and_the_curves_shape_both_faders() {
     controller.set_channel_fader(DeckId::A, 0.5).unwrap();
     let [deck_a, _] = gains();
     assert_close(f64::from(deck_a), 0.75, 1e-5);
+}
+
+#[test]
+fn a_crossfader_turned_off_moves_without_changing_the_sound() {
+    let (mut controller, mut renderer) = offline_engine(SAMPLE_RATE);
+    controller
+        .load_track(DeckId::A, constant_track(0.5, 0.0, 10.0, SAMPLE_RATE))
+        .unwrap();
+    controller
+        .load_track(DeckId::B, constant_track(0.0, 0.5, 10.0, SAMPLE_RATE))
+        .unwrap();
+    controller.play(DeckId::A).unwrap();
+    controller.play(DeckId::B).unwrap();
+    controller.set_crossfader_enabled(false).unwrap();
+    assert!(!controller.crossfader_enabled());
+    for position in [0.0_f32, 0.5, 1.0] {
+        controller.set_crossfader(position).unwrap();
+        let output = render_frames(&mut renderer, BLOCK * 2, BLOCK);
+        assert_close(f64::from(output[output.len() - 2] / 0.5), 1.0, 1e-5);
+        assert_close(f64::from(output[output.len() - 1] / 0.5), 1.0, 1e-5);
+    }
 }
 
 #[test]

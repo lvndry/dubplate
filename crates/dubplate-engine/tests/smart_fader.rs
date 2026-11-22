@@ -134,6 +134,9 @@ fn smart_fader_follows_the_decks_to_the_sides_they_are_assigned() {
         assert_close(controller.tempo_state(deck).bpm.unwrap(), 130.0, 0.05);
     }
     let levels = channel_levels(&controller, &mut renderer);
-    assert!(levels[0] < 0.01, "deck A, on the far side, has its bass swapped out");
+    assert!(
+        levels[0] < 0.01,
+        "deck A, on the far side, has its bass swapped out"
+    );
     assert_close(f64::from(levels[1]), 0.5, 0.01);
 }

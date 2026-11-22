@@ -113,6 +113,7 @@ fn carry_over(source: &Controller, target: &mut Controller) -> Result<(), Engine
         target.set_smart_cfx(deck, source.smart_cfx(deck))?;
     }
     target.set_smart_fader(source.smart_fader())?;
+    target.set_crossfader_enabled(source.crossfader_enabled())?;
     target.set_crossfader_curve(source.crossfader_curve())?;
     target.set_channel_fader_curve(source.channel_fader_curve())?;
     for deck in DeckId::ALL {
@@ -217,8 +218,8 @@ impl DubplateApp {
 #[cfg(test)]
 mod tests {
     use dubplate_engine::{
-        BeatLength, ChannelFaderCurve, CrossfaderAssign, CrossfaderCurve, EffectKind,
-        EffectTarget, Renderer, SyncMode, TempoRange, Track, offline_engine,
+        BeatLength, ChannelFaderCurve, CrossfaderAssign, CrossfaderCurve, EffectKind, EffectTarget,
+        Renderer, SyncMode, TempoRange, Track, offline_engine,
     };
 
     use super::*;
