@@ -12,6 +12,7 @@ use dubplate_rekordbox::{HotCuePad, TrackAnalysis};
 
 use crate::collection::{CollectionTrack, TrackOrigin};
 use crate::playhead::PlayheadClock;
+use crate::prep::GridCorrection;
 use crate::waveform::{BeatMarks, OverviewWaveform, Zoom, ZoomedWaveform};
 
 /// A track made ready for a deck on a background thread.
@@ -93,12 +94,13 @@ pub enum LoadError {
     Audio(#[from] dubplate_engine::EngineError),
 }
 
-/// Opens the track's audio and reads its analysis from rekordbox's `share_directory`. Disk
-/// work: run it off the interface thread.
+/// Opens the track's audio and reads its analysis from rekordbox's `share_directory`, with
+/// the DJ's `correction` of its beat grid. Disk work: run it off the interface thread.
 pub fn prepare_track(
     entry: &CollectionTrack,
     share_directory: Option<&Path>,
     zoom: Zoom,
+    correction: GridCorrection,
 ) -> Result<PreparedTrack, LoadError> {
     let path = entry.track.file_path.as_deref().ok_or(LoadError::NoFile)?;
     if !path.is_file() {
@@ -122,18 +124,20 @@ pub fn prepare_track(
         (TrackOrigin::Rekordbox, _, _) => Err("rekordbox has not analysed this track".to_owned()),
     };
     Ok(match analysis {
-        Ok(analysis) => PreparedTrack {
-            audio,
-            zoomed: ZoomedWaveform::from_waveforms(&analysis.waveforms, zoom),
-            overview: OverviewWaveform::from_waveforms(&analysis.waveforms),
-            beats: analysis
+        Ok(analysis) => {
+            let grid = analysis
                 .beat_grid
                 .as_ref()
-                .map(BeatMarks::from_grid)
-                .unwrap_or_default(),
-            beat_grid: analysis.beat_grid.as_ref().and_then(engine_beat_grid),
-            analysis_problem: None,
-        },
+                .map(|grid| correction.apply(grid));
+            PreparedTrack {
+                audio,
+                zoomed: ZoomedWaveform::from_waveforms(&analysis.waveforms, zoom),
+                overview: OverviewWaveform::from_waveforms(&analysis.waveforms),
+                beats: grid.as_ref().map(BeatMarks::from_grid).unwrap_or_default(),
+                beat_grid: grid.as_ref().and_then(engine_beat_grid),
+                analysis_problem: None,
+            }
+        }
         Err(problem) => PreparedTrack {
             audio,
             zoomed: None,
