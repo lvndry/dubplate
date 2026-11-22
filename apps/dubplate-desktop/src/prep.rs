@@ -161,9 +161,7 @@ pub fn chosen_grid(
 /// The downbeat nearest to `seconds` on `grid`: where I and O put a mix cue.
 pub fn nearest_bar_ms(grid: &BeatGrid, seconds: f64) -> Option<u32> {
     let target = seconds * 1000.0;
-    grid.beats
-        .iter()
-        .filter(|beat| beat.beat_in_bar == 1)
+    grid.downbeats()
         .min_by(|first, second| {
             (f64::from(first.time_ms) - target)
                 .abs()
@@ -360,7 +358,7 @@ mod tests {
         assert!(readiness(&known, Some(&check), &cues).is_ready());
         assert_eq!(
             readiness(&known, Some(&check), &SetEntry::default()).badge(),
-            "Grid unconfirmed +2"
+            "Grid unconfirmed, and 2 more"
         );
         let unconfirmed = SetEntry {
             grid_confirmed: false,

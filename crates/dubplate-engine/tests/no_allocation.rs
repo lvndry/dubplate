@@ -8,13 +8,13 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 use std::path::{Path, PathBuf};
 
-use common::{SAMPLE_RATE, constant_track, wait_until_decoded, write_wav};
+use common::{SAMPLE_RATE, constant_track, stems_like, wait_until_decoded, write_wav};
 use dubplate_engine::cpal::{OutputCallbackInfo, OutputStreamTimestamp, StreamInstant};
 use dubplate_engine::{
     AudioProcessor, BeatGrid, BeatLength, Controller, DeckId, EffectKind, EffectTarget,
-    EffectUnitId, EngineError, EqBand, GridBeat, MasterTempo, PadEffect, Preview, PreviewTrack,
-    ProcessContext, Renderer, SampleMode, SampleSettings, SmartCfx, StereoBlock, SyncMode,
-    TempoRange, offline_engine,
+    EffectUnitId, EngineError, EqBand, GridBeat, MasterTempo, PadEffect, PadRelease,
+    ParameterValue, Preview, PreviewTrack, ProcessContext, Renderer, SampleMode, SampleSettings,
+    SmartCfx, Stem, StemLevel, StemSettings, StereoBlock, SyncMode, TempoRange, offline_engine,
 };
 
 struct CountingAllocator;
@@ -184,7 +184,7 @@ fn run_session(
     controller.set_beat_grid(DeckId::B, Some(BeatGrid::new(128.0, 0.0)?))?;
     let targets = [
         EffectTarget::Deck(DeckId::A),
-        EffectTarget::Deck(DeckId::B),
+        EffectTarget::BothDecks,
         EffectTarget::Master,
     ];
     for (unit, target) in EffectUnitId::ALL.into_iter().zip(targets) {
@@ -206,7 +206,7 @@ fn run_session(
         let beat = BeatLength::STANDARD[step % BeatLength::STANDARD.len()];
         controller.set_effect_kind(unit, kind)?;
         controller.set_effect_target(unit, target)?;
-        controller.set_effect_beat(unit, beat)?;
+        controller.set_effect_parameter(unit, ParameterValue::Beats(beat))?;
         controller.set_effect_depth(unit, step as f32 / EffectKind::ALL.len() as f32)?;
         if step % 4 == 3 {
             controller.toggle_effect(unit)?;
@@ -228,6 +228,10 @@ fn run_session(
 
     let steps: &[Step] = &[
         |controller| controller.set_smart_fader(true),
+        |controller| controller.set_fader_echo(true),
+        |controller| controller.set_channel_fader(DeckId::A, 0.3),
+        |controller| controller.set_channel_fader(DeckId::A, 0.0),
+        |controller| controller.set_channel_fader(DeckId::A, 1.0),
         |controller| controller.set_crossfader(0.6),
         |controller| controller.set_crossfader(0.9),
         |controller| controller.set_smart_fader(false),
@@ -267,11 +271,11 @@ fn run_session(
                     start_seconds: 0.2,
                     tempo: 1.05,
                 },
-                second: PreviewTrack {
+                second: Some(PreviewTrack {
                     track,
                     start_seconds: 0.0,
                     tempo: 0.95,
-                },
+                }),
                 second_offset_seconds: 0.05,
                 key_lock: true,
             }))
@@ -286,8 +290,9 @@ fn run_session(
                 DeckId::B,
                 PadEffect {
                     kind: EffectKind::Brake,
-                    beat: BeatLength::HALF,
+                    parameter: Some(ParameterValue::Beats(BeatLength::HALF)),
                     depth: 1.0,
+                    release: PadRelease::RingOut,
                 },
             )
         },
@@ -342,6 +347,17 @@ fn run_session(
         |controller| controller.cue(DeckId::B),
         |controller| controller.set_deck_insert(DeckId::A, 0, Some(echo())),
         |controller| controller.set_master_insert(1, None),
+        |controller| attach_stems(controller, DeckId::A),
+        |controller| attach_stems(controller, DeckId::B),
+        |controller| controller.set_stems(DeckId::A, StemSettings::UNTOUCHED.without(Stem::Vocals)),
+        |controller| controller.set_stems(DeckId::A, StemSettings::UNTOUCHED.solo(Stem::Vocals)),
+        |controller| {
+            controller.set_stems(
+                DeckId::B,
+                StemSettings::UNTOUCHED.with_level(Stem::Bass, StemLevel::new(0.5)),
+            )
+        },
+        |controller| controller.set_stems(DeckId::A, StemSettings::UNTOUCHED),
         |controller| controller.load_track(DeckId::B, constant_track(0.3, 0.3, 2.0, SAMPLE_RATE)),
         |controller| {
             controller.load_prepared_track(
@@ -374,6 +390,16 @@ fn run_session(
     let mut four_channels = vec![0.0_f32; 2048 * 4];
     render_armed(renderer, &mut four_channels, 4);
     Ok(())
+}
+
+/// Gives the track on `deck` stems as long as it, at its rate.
+fn attach_stems(controller: &mut Controller, deck: DeckId) -> Result<(), EngineError> {
+    let track = controller
+        .track(deck)
+        .cloned()
+        .ok_or(EngineError::NoOutputDevice)?;
+    let seconds = track.duration_seconds().unwrap_or_default();
+    track.attach_stems(stems_like(seconds, track.sample_rate()))
 }
 
 fn generated_files(directory: &Path) -> Vec<PathBuf> {

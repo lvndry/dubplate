@@ -276,10 +276,6 @@ impl Sampler {
                 }
             }
         }
-        for (left, right) in left_bus.iter_mut().zip(right_bus.iter_mut()) {
-            let volume = self.volume.next_value();
-            *left *= volume;
-            *right *= volume;
-        }
+        self.volume.apply(left_bus, right_bus);
     }
 }

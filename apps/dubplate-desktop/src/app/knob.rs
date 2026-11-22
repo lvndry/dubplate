@@ -34,7 +34,7 @@ pub(super) fn render(
     let colour = if (value - control.resting()).abs() > AT_REST {
         accent
     } else {
-        theme::TEXT
+        theme::active().text
     };
     div()
         .id(SharedString::from(format!("knob-{control:?}")))
@@ -67,7 +67,7 @@ pub(super) fn render(
                     let radius = f32::from(bounds.size.width.min(bounds.size.height)) / 2.0
                         - f32::from(STROKE);
                     if let Some(track) = arc(center, radius, 1.0) {
-                        window.paint_path(track, theme::TRACK);
+                        window.paint_path(track, theme::active().track);
                     }
                     if let Some(filled) = arc(center, radius, value) {
                         window.paint_path(filled, colour);

@@ -1,25 +1,30 @@
-//! Dubplate's own database: sets, their ordered entries, seam plans, snapshots
-//! and play history.
+//! Dubplate's own database: sets, their ordered entries, seam plans, snapshots,
+//! play history, and the cues the DJ made for each track.
 //!
 //! The file lives where Dubplate owns it, never inside rekordbox's folders, so
 //! every write Dubplate makes stays out of rekordbox's files. A guard refuses
 //! any path that is inside rekordbox's; migrations are tracked by `user_version`
 //! and an existing file is backed up before any migration runs on it.
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior};
 use thiserror::Error;
 
-mod types;
-
+use crate::grid::{GridCorrection, TrackGrid};
 use crate::sql::{execute_cached, query_row_cached};
 
+mod cues;
+mod history;
+mod types;
+
+pub use history::{Play, PlayDeck, PlayId, RecordedPlay};
 pub use types::{CueSource, EqIntent, Seam, SeamStatus, Set, SetEntry, SetId, SetList};
 
 /// The highest schema version `MIGRATIONS` can bring a database to.
-const SCHEMA_VERSION: u32 = 2;
+const SCHEMA_VERSION: u32 = 5;
 
 /// One migration per schema version, index = target version - 1.
 const MIGRATIONS: &[&str] = &[
@@ -85,6 +90,79 @@ ALTER TABLE set_entry ADD COLUMN downbeat_shift INTEGER NOT NULL DEFAULT 0;
 
 PRAGMA user_version = 2;
 "#,
+    r#"
+CREATE TABLE track_grid (
+    track_path TEXT PRIMARY KEY,
+    offset_ms INTEGER NOT NULL DEFAULT 0,
+    downbeat_shift INTEGER NOT NULL DEFAULT 0,
+    confirmed INTEGER NOT NULL DEFAULT 0
+);
+
+INSERT OR REPLACE INTO track_grid (track_path, offset_ms, downbeat_shift, confirmed)
+    SELECT entry.track_path, entry.grid_offset_ms, entry.downbeat_shift, entry.grid_confirmed
+    FROM set_entry AS entry JOIN sets ON sets.id = entry.set_id
+    WHERE entry.grid_offset_ms != 0 OR entry.downbeat_shift != 0 OR entry.grid_confirmed != 0
+    ORDER BY sets.updated_at;
+
+PRAGMA user_version = 3;
+"#,
+    r#"
+CREATE TABLE track_cues (
+    identity_kind TEXT NOT NULL,
+    identity TEXT NOT NULL,
+    track_path TEXT,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (identity_kind, identity)
+);
+
+CREATE TABLE track_cue (
+    identity_kind TEXT NOT NULL,
+    identity TEXT NOT NULL,
+    pad INTEGER CHECK (pad BETWEEN 0 AND 7),
+    start_ms INTEGER NOT NULL CHECK (start_ms >= 0),
+    loop_end_ms INTEGER CHECK (loop_end_ms > start_ms),
+    color_table_index INTEGER,
+    memory_color INTEGER,
+    name TEXT NOT NULL DEFAULT '',
+    FOREIGN KEY (identity_kind, identity) REFERENCES track_cues (identity_kind, identity)
+        ON DELETE CASCADE ON UPDATE CASCADE
+);
+
+CREATE UNIQUE INDEX track_cue_pad ON track_cue (identity_kind, identity, pad)
+    WHERE pad IS NOT NULL;
+CREATE INDEX track_cue_track ON track_cue (identity_kind, identity);
+
+PRAGMA user_version = 4;
+"#,
+    r#"
+CREATE TABLE play_history_v4 (
+    id INTEGER PRIMARY KEY,
+    set_id INTEGER REFERENCES sets(id) ON DELETE SET NULL,
+    track_path TEXT NOT NULL,
+    rekordbox_id TEXT,
+    title TEXT NOT NULL DEFAULT '',
+    artist TEXT NOT NULL DEFAULT '',
+    started_at INTEGER NOT NULL,
+    seconds_played REAL NOT NULL DEFAULT 0,
+    deck TEXT NOT NULL
+);
+
+INSERT INTO play_history_v4 (set_id, track_path, rekordbox_id, started_at, deck)
+SELECT
+    CASE WHEN off_plan OR set_id NOT IN (SELECT id FROM sets) THEN NULL ELSE set_id END,
+    track_path,
+    rekordbox_id,
+    played_at,
+    deck
+FROM play_history
+ORDER BY played_at;
+
+DROP TABLE play_history;
+ALTER TABLE play_history_v4 RENAME TO play_history;
+CREATE INDEX play_history_started_at ON play_history (started_at);
+
+PRAGMA user_version = 5;
+"#,
 ];
 
 /// A position no real entry can hold while one is in the middle of moving.
@@ -132,6 +210,9 @@ pub enum StoreError {
     /// An entry position the operation referred to is not in the set.
     #[error("position {0} is not in the set")]
     PositionNotFound(usize),
+    /// A play the operation referred to is not in the history.
+    #[error("play {0} is not in the history")]
+    PlayNotFound(PlayId),
     /// A SQLite operation failed.
     #[error("set store error: {0}")]
     Database(#[from] rusqlite::Error),
@@ -143,7 +224,7 @@ pub enum StoreError {
     Io(#[from] std::io::Error),
 }
 
-/// Dubplate's own database of sets, seam plans, snapshots and play history.
+/// Dubplate's own database of sets, seam plans, snapshots, play history and track cues.
 ///
 /// One `SetStore` owns one SQLite file in WAL mode. Every mutating method runs
 /// in a transaction and refreshes the set's `updated_at`.
@@ -154,7 +235,7 @@ pub struct SetStore {
 
 /// Room for every statement the store runs, so none is compiled again because another pushed
 /// it out of the cache.
-const STATEMENT_CACHE_CAPACITY: usize = 32;
+const STATEMENT_CACHE_CAPACITY: usize = 64;
 
 /// The folder next to the database that keeps pre-migration backups.
 const BACKUPS_FOLDER_NAME: &str = "backups";
@@ -176,7 +257,7 @@ impl SetStore {
         }
 
         let existing = path.exists();
-        let connection = Connection::open(path)?;
+        let mut connection = Connection::open(path)?;
         connection.pragma_update(None, "journal_mode", "wal")?;
         connection.set_prepared_statement_cache_capacity(STATEMENT_CACHE_CAPACITY);
 
@@ -217,7 +298,9 @@ impl SetStore {
         for (index, migration) in MIGRATIONS.iter().enumerate() {
             let target_version = u32::try_from(index).unwrap_or(u32::MAX).saturating_add(1);
             if target_version > user_version {
-                connection.execute_batch(migration)?;
+                let transaction = connection.transaction()?;
+                transaction.execute_batch(migration)?;
+                transaction.commit()?;
             }
         }
 
@@ -254,8 +337,8 @@ impl SetStore {
         Ok(())
     }
 
-    /// Deletes a set and everything that belongs to it: entries, seams,
-    /// snapshots and play history.
+    /// Deletes a set and everything that belongs to it: entries, seams and
+    /// snapshots. Its plays stay in the history, no longer tied to a set.
     pub fn delete_set(&mut self, set: SetId) -> Result<(), StoreError> {
         let transaction = self.transaction()?;
         let deleted = execute_cached(
@@ -291,30 +374,32 @@ impl SetStore {
 
     /// Loads a whole set: its metadata, ordered entries and every stored seam.
     pub fn load_set(&self, set: SetId) -> Result<Set, StoreError> {
-        let (name, target_minutes, created_at, updated_at) = self
-            .connection
-            .query_row(
-                "SELECT name, target_minutes, created_at, updated_at FROM sets WHERE id = ?1",
-                (set.as_i64(),),
-                |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, i64>(1)?,
-                        row.get::<_, i64>(2)?,
-                        row.get::<_, i64>(3)?,
-                    ))
-                },
-            )
-            .optional()?
-            .ok_or(StoreError::SetNotFound(set))?;
+        let (name, target_minutes, created_at, updated_at) = query_row_cached(
+            &self.connection,
+            "SELECT name, target_minutes, created_at, updated_at FROM sets WHERE id = ?1",
+            (set.as_i64(),),
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
+            },
+        )
+        .optional()?
+        .ok_or(StoreError::SetNotFound(set))?;
         let target_minutes = u32::try_from(target_minutes).unwrap_or(0);
 
         let mut entries_statement = self.connection.prepare_cached(
-            "SELECT track_path, rekordbox_id, mix_in_ms, mix_out_ms, cue_source, grid_confirmed,
-                energy_override, vocal_in_ms, vocal_out_ms, note, is_backup, grid_offset_ms,
-                downbeat_shift
-             FROM set_entry WHERE set_id = ?1
-             ORDER BY is_backup, position",
+            "SELECT entry.track_path, entry.rekordbox_id, entry.mix_in_ms, entry.mix_out_ms,
+                entry.cue_source, COALESCE(grid.confirmed, 0), entry.energy_override,
+                entry.vocal_in_ms, entry.vocal_out_ms, entry.note, entry.is_backup,
+                COALESCE(grid.offset_ms, 0), COALESCE(grid.downbeat_shift, 0)
+             FROM set_entry AS entry
+             LEFT JOIN track_grid AS grid ON grid.track_path = entry.track_path
+             WHERE entry.set_id = ?1
+             ORDER BY entry.is_backup, entry.position",
         )?;
         let entries = entries_statement
             .query_map((set.as_i64(),), entry_from_row)?
@@ -341,7 +426,7 @@ impl SetStore {
 
     /// Replaces a set's metadata, entries and seams atomically, returning the saved set.
     ///
-    /// A failed write leaves the previous set intact. Revisions and play history remain
+    /// A failed write leaves the previous set intact. Revisions and plays remain
     /// attached to the same set; its creation time does not change.
     pub fn replace_set(&mut self, set: &Set) -> Result<Set, StoreError> {
         let mut transaction = self.transaction()?;
@@ -372,6 +457,7 @@ impl SetStore {
                 .enumerate()
             {
                 insert_entry_row(&mut transaction, set.id, list, position, entry)?;
+                upsert_track_grid(&mut transaction, &entry.track_path, TrackGrid::of(entry))?;
             }
         }
         for seam in &set.seams {
@@ -392,7 +478,8 @@ impl SetStore {
     }
 
     /// Inserts an entry into the list's order at `position`, shifting every
-    /// later position of that list up by one.
+    /// later position of that list up by one. An entry that carries a grid fix
+    /// keeps it for its track; one without leaves the track's fix as it was.
     pub fn insert_entry(
         &mut self,
         set: SetId,
@@ -404,6 +491,10 @@ impl SetStore {
         touch_set(&mut transaction, set)?;
         shift_entry_positions(&mut transaction, set, list, position, usize::MAX, 1)?;
         insert_entry_row(&mut transaction, set, list, position, &entry)?;
+        let grid = TrackGrid::of(&entry);
+        if grid != TrackGrid::default() {
+            upsert_track_grid(&mut transaction, &entry.track_path, grid)?;
+        }
         transaction.commit()?;
         Ok(())
     }
@@ -515,6 +606,39 @@ impl SetStore {
                 entry.downbeat_shift,
             ),
         )?;
+        upsert_track_grid(&mut transaction, &entry.track_path, TrackGrid::of(&entry))?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    /// Every track's grid fix, by its file: the one place a track's grid correction and its
+    /// confirmation are kept, whatever set or deck changed them.
+    pub fn track_grids(&self) -> Result<HashMap<PathBuf, TrackGrid>, StoreError> {
+        let mut statement = self.connection.prepare_cached(
+            "SELECT track_path, offset_ms, downbeat_shift, confirmed FROM track_grid",
+        )?;
+        let grids = statement
+            .query_map([], |row| {
+                let confirmed: i64 = row.get(3)?;
+                Ok((
+                    PathBuf::from(row.get::<_, String>(0)?),
+                    TrackGrid {
+                        correction: GridCorrection {
+                            offset_ms: row.get(1)?,
+                            downbeat_shift: row.get(2)?,
+                        },
+                        confirmed: confirmed != 0,
+                    },
+                ))
+            })?
+            .collect::<Result<HashMap<_, _>, _>>()?;
+        Ok(grids)
+    }
+
+    /// Keeps `grid` as the grid fix of the track whose file is `path`.
+    pub fn set_track_grid(&mut self, path: &Path, grid: TrackGrid) -> Result<(), StoreError> {
+        let mut transaction = self.transaction()?;
+        upsert_track_grid(&mut transaction, path, grid)?;
         transaction.commit()?;
         Ok(())
     }
@@ -543,34 +667,6 @@ impl SetStore {
         let revision_id = transaction.last_insert_rowid();
         transaction.commit()?;
         Ok(revision_id)
-    }
-
-    /// Records a track being played for a set, on a deck, planned or off plan.
-    pub fn record_play(
-        &mut self,
-        set: SetId,
-        track_path: &Path,
-        rekordbox_id: Option<&str>,
-        deck_label: &str,
-        off_plan: bool,
-    ) -> Result<(), StoreError> {
-        let mut transaction = self.transaction()?;
-        touch_set(&mut transaction, set)?;
-        execute_cached(
-            &transaction,
-            "INSERT INTO play_history (set_id, track_path, rekordbox_id, played_at, deck, off_plan)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            (
-                set.as_i64(),
-                &track_path.to_string_lossy(),
-                rekordbox_id,
-                now_unix_millis(),
-                deck_label,
-                off_plan,
-            ),
-        )?;
-        transaction.commit()?;
-        Ok(())
     }
 
     fn transaction(&mut self) -> Result<Transaction<'_>, StoreError> {
@@ -682,6 +778,30 @@ fn shift_entry_positions(
         "UPDATE set_entry SET position = -position - 1
          WHERE set_id = ?1 AND is_backup = ?2 AND position < 0",
         (set.as_i64(), list.is_backup()),
+    )?;
+    Ok(())
+}
+
+/// Writes a track's grid fix within the caller's transaction.
+fn upsert_track_grid(
+    transaction: &mut Transaction<'_>,
+    path: &Path,
+    grid: TrackGrid,
+) -> Result<(), StoreError> {
+    execute_cached(
+        transaction,
+        "INSERT INTO track_grid (track_path, offset_ms, downbeat_shift, confirmed)
+         VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT (track_path) DO UPDATE SET
+             offset_ms = excluded.offset_ms,
+             downbeat_shift = excluded.downbeat_shift,
+             confirmed = excluded.confirmed",
+        (
+            &path.to_string_lossy(),
+            grid.correction.offset_ms,
+            grid.correction.downbeat_shift,
+            grid.confirmed,
+        ),
     )?;
     Ok(())
 }

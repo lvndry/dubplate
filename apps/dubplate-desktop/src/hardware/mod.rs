@@ -2,12 +2,14 @@
 //! them into [`crate::commands::Command`]s, and showing the decks on their lights.
 
 mod dispatch;
+mod held;
 mod lights;
 mod link;
 
 use std::time::{Duration, Instant};
 
 pub use dispatch::{Dispatcher, Surface, controller_deck};
+pub use held::HeldControl;
 pub use lights::{DeckLights, Lights, meter_level};
 pub use link::LinkEvent;
 
@@ -26,7 +28,8 @@ struct Connected {
 
 /// The controllers the window knows about, the dispatcher that reads them, and their lights.
 pub struct Hardware {
-    link: ControllerLink,
+    /// The controller thread, or `None` when the controllers stay closed.
+    link: Option<ControllerLink>,
     /// Turns controller events into commands.
     pub dispatcher: Dispatcher,
     connected: Vec<Connected>,
@@ -43,14 +46,23 @@ impl Hardware {
         // lets the controller thread see controllers plugged in later.
         dubplate_midi::input_ports().ok();
         let (link, events) = ControllerLink::start()?;
-        let hardware = Self {
+        Ok((Self::with_link(Some(link)), events))
+    }
+
+    /// Hardware that never opens a controller, for a Dubplate running with offline devices.
+    /// Controller events still go through its dispatcher when a script plays them.
+    pub fn offline() -> Self {
+        Self::with_link(None)
+    }
+
+    fn with_link(link: Option<ControllerLink>) -> Self {
+        Self {
             link,
             dispatcher: Dispatcher::default(),
             connected: Vec::new(),
             shown: None,
             started: Instant::now(),
-        };
-        Ok((hardware, events))
+        }
     }
 
     /// Notes a controller that connected or went away.
@@ -91,13 +103,17 @@ impl Hardware {
     /// Shows `lights` on the controllers when they differ from what they show.
     pub fn show(&mut self, lights: Lights) {
         if self.shown != Some(lights) {
-            self.link.show(lights);
+            if let Some(link) = &self.link {
+                link.show(lights);
+            }
             self.shown = Some(lights);
         }
     }
 
     /// Sends a one-off signal, such as the track loaded animation.
     pub fn signal(&self, feedback: Feedback) {
-        self.link.signal(feedback);
+        if let Some(link) = &self.link {
+            link.signal(feedback);
+        }
     }
 }

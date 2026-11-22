@@ -1,6 +1,7 @@
 use std::f32::consts::FRAC_PI_2;
 
 const GLIDE_SECONDS: f32 = 0.05;
+const BENDING_GLIDE_SECONDS: f32 = 0.25;
 const CROSSFADE_SECONDS: f32 = 0.04;
 const JUMP_RATIO: f64 = 0.12;
 const SETTLED_SAMPLES: f64 = 1e-4;
@@ -22,6 +23,7 @@ pub(crate) struct DelayTaps {
 /// echoes jump cleanly instead of sweeping through every time in between.
 #[derive(Clone, Debug)]
 pub(crate) struct DelayTime {
+    bends: bool,
     current: f64,
     target: f64,
     previous: f64,
@@ -35,6 +37,7 @@ pub(crate) struct DelayTime {
 impl DelayTime {
     pub(crate) fn new() -> Self {
         Self {
+            bends: false,
             current: 0.0,
             target: 0.0,
             previous: 0.0,
@@ -46,11 +49,25 @@ impl DelayTime {
         }
     }
 
+    /// A delay time that glides to every new time, however far, so the repeats bend in pitch
+    /// like a tape machine changing speed: the Spiral's and the Helix's sound.
+    pub(crate) fn bending() -> Self {
+        Self {
+            bends: true,
+            ..Self::new()
+        }
+    }
+
     pub(crate) fn set_target(&mut self, samples: f32, sample_rate: f32) {
         if sample_rate != self.sample_rate {
             self.sample_rate = sample_rate;
             self.crossfade_step = 1.0 / (CROSSFADE_SECONDS * sample_rate);
-            self.glide_coefficient = (-1.0 / f64::from(GLIDE_SECONDS * sample_rate)).exp();
+            let glide_seconds = if self.bends {
+                BENDING_GLIDE_SECONDS
+            } else {
+                GLIDE_SECONDS
+            };
+            self.glide_coefficient = (-1.0 / f64::from(glide_seconds * sample_rate)).exp();
         }
         self.target = f64::from(samples);
         if !self.primed {
@@ -67,7 +84,7 @@ impl DelayTime {
     pub(crate) fn next(&mut self) -> DelayTaps {
         if self.crossfade_position >= 1.0 && self.current != self.target {
             let difference = (self.target - self.current).abs();
-            if difference > self.current * JUMP_RATIO {
+            if !self.bends && difference > self.current * JUMP_RATIO {
                 self.previous = self.current;
                 self.current = self.target;
                 self.crossfade_position = 0.0;

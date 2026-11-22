@@ -4,8 +4,8 @@ mod common;
 
 use common::{Deck, Stereo, largest_kink, peak, seconds_to_frames, sine};
 use dubplate_fx::{
-    Backspin, BeatLength, Brake, Crusher, Echo, Effect, EffectConfig, EffectKind, Filter,
-    FilterMode, FilterSlope, Flanger, Gate, Phaser, PingPong, Reverb, SweepFilter, create,
+    Backspin, BeatFilter, BeatLength, Brake, Crusher, Echo, Effect, EffectConfig, EffectKind,
+    Filter, FilterMode, FilterSlope, Flanger, Gate, Phaser, PingPong, Reverb, create,
 };
 
 const OUTPUT_CEILING: f32 = 4.0;
@@ -44,11 +44,11 @@ fn at_maximum(kind: EffectKind) -> Box<dyn Effect> {
             filter.set_cutoff_hz(55.0);
             Box::new(filter)
         }
-        EffectKind::SweepFilter => {
-            let mut sweep = SweepFilter::new();
-            sweep.set_resonance(1.0);
-            sweep.set_position(-0.75);
-            Box::new(sweep)
+        EffectKind::Filter => {
+            let mut filter = BeatFilter::new();
+            filter.set_depth(1.0);
+            filter.set_beat(BeatLength::QUARTER);
+            Box::new(filter)
         }
         EffectKind::Flanger => {
             let mut flanger = Flanger::new(&config);
@@ -60,7 +60,7 @@ fn at_maximum(kind: EffectKind) -> Box<dyn Effect> {
             phaser.set_feedback(0.9);
             Box::new(phaser)
         }
-        EffectKind::Gate => Box::new(Gate::new()),
+        EffectKind::Trans => Box::new(Gate::new()),
         EffectKind::Crusher => {
             let mut crusher = Crusher::new();
             crusher.set_bits(1.0);
@@ -69,6 +69,11 @@ fn at_maximum(kind: EffectKind) -> Box<dyn Effect> {
         }
         EffectKind::Brake => Box::new(Brake::new(&config)),
         EffectKind::Backspin => Box::new(Backspin::new(&config)),
+        other => {
+            let mut effect = create(other, &config);
+            effect.set_depth(1.0);
+            effect
+        }
     };
     effect.set_mix(1.0);
     if effect.beat().is_some() {
@@ -180,15 +185,59 @@ fn decibels_or_silence(level: f32) -> f32 {
     common::decibels(level.max(1e-6))
 }
 
-#[test]
-fn turning_knobs_and_switching_never_clicks() {
-    let smooth_effects = EffectKind::ALL.into_iter().filter(|kind| {
+/// The effects whose own sound is not made of edges, so a kink in their output is a click.
+fn smooth_effects() -> impl Iterator<Item = EffectKind> {
+    EffectKind::ALL.into_iter().filter(|kind| {
         !matches!(
             kind,
-            EffectKind::Gate | EffectKind::Crusher | EffectKind::Brake | EffectKind::Backspin
+            EffectKind::Trans
+                | EffectKind::Crusher
+                | EffectKind::CrushEcho
+                | EffectKind::Brake
+                | EffectKind::Backspin
+                | EffectKind::VinylBrake
+                | EffectKind::Noise
+                | EffectKind::MobiusSaw
+                | EffectKind::MobiusTriangle
         )
-    });
-    for kind in smooth_effects {
+    })
+}
+
+#[test]
+fn switching_off_dry_leaves_the_music_untouched_without_a_click() {
+    for kind in smooth_effects() {
+        let mut effect = create(kind, &EffectConfig::default());
+        effect.set_depth(0.8);
+        let frames = seconds_to_frames(2.0);
+        let source = Stereo::mono(sine(220.0, 0.5, frames));
+        let mut audio = source.clone();
+        let mut deck = Deck::new(124.0);
+        let switch_on = seconds_to_frames(0.2);
+        let switch = seconds_to_frames(1.0);
+        deck.play_range(effect.as_mut(), &mut audio, 0, switch_on);
+        effect.set_enabled(true);
+        deck.play_range(effect.as_mut(), &mut audio, switch_on, switch);
+        effect.switch_off_dry();
+        deck.play_range(effect.as_mut(), &mut audio, switch, frames);
+
+        let kink = largest_kink(&audio.left).max(largest_kink(&audio.right));
+        assert!(kink < 0.01, "{kind} clicked going dry: largest kink {kink}");
+        let settled = switch + seconds_to_frames(0.1);
+        let leftover = audio.left[settled..]
+            .iter()
+            .zip(&source.left[settled..])
+            .map(|(played, dry)| (played - dry).abs())
+            .fold(0.0, f32::max);
+        assert!(
+            leftover < 1e-3,
+            "{kind} still plays {leftover} over the dry music"
+        );
+    }
+}
+
+#[test]
+fn turning_knobs_and_switching_never_clicks() {
+    for kind in smooth_effects() {
         let mut effect = create(kind, &EffectConfig::default());
         effect.set_depth(0.0);
         let frames = seconds_to_frames(3.0);

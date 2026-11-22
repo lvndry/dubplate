@@ -26,7 +26,8 @@ impl BandLevels {
         self.low.max(self.mid).max(self.high)
     }
 
-    fn max(self, other: Self) -> Self {
+    /// The louder of `self` and `other` in each band.
+    pub fn max(self, other: Self) -> Self {
         Self {
             low: self.low.max(other.low),
             mid: self.mid.max(other.mid),
@@ -56,6 +57,54 @@ impl Zoom {
         pixels_per_second: DETAIL_COLUMNS_PER_SECOND as f64,
     };
 
+    /// The zooms of the scrolling lanes, widest view first: from about 30 seconds across a
+    /// laptop's lanes to about 3, as rekordbox's enlarged waveform zooms.
+    pub const LEVELS: [Self; 7] = [
+        Self::at(37.5),
+        Self::at(50.0),
+        Self::at(75.0),
+        Self::at(100.0),
+        Self::DEFAULT,
+        Self::at(225.0),
+        Self::at(300.0),
+    ];
+
+    const fn at(pixels_per_second: f64) -> Self {
+        Self { pixels_per_second }
+    }
+
+    /// The next zoom of [`Zoom::LEVELS`] in (`closer` true) or out, staying at the ends. A
+    /// zoom between two levels moves to the next one in that direction.
+    pub fn step(self, closer: bool) -> Self {
+        let levels = Self::LEVELS.into_iter();
+        let next = if closer {
+            levels
+                .filter(|level| level.pixels_per_second > self.pixels_per_second)
+                .min_by(|first, second| {
+                    first.pixels_per_second.total_cmp(&second.pixels_per_second)
+                })
+        } else {
+            levels
+                .filter(|level| level.pixels_per_second < self.pixels_per_second)
+                .max_by(|first, second| {
+                    first.pixels_per_second.total_cmp(&second.pixels_per_second)
+                })
+        };
+        next.unwrap_or(self)
+    }
+
+    /// The zoom kept in the settings as `pixels_per_second`, or the default when that is not
+    /// one of [`Zoom::LEVELS`].
+    pub fn from_setting(pixels_per_second: Option<f64>) -> Self {
+        pixels_per_second
+            .and_then(|kept| {
+                Self::LEVELS
+                    .into_iter()
+                    .find(|level| (level.pixels_per_second - kept).abs() < 1e-6)
+            })
+            .unwrap_or(Self::DEFAULT)
+    }
+
     /// A zoom of `pixels_per_second`, at least one pixel a second.
     #[cfg(test)]
     pub fn new(pixels_per_second: f64) -> Self {
@@ -64,9 +113,17 @@ impl Zoom {
         }
     }
 
-    /// Screen pixels per second of the track.
+    /// Screen pixels per second of real time, the same for both lanes whatever their tempo,
+    /// and the columns the waveforms are made with per second of a track played at its own
+    /// tempo.
     pub fn pixels_per_second(self) -> f64 {
         self.pixels_per_second
+    }
+
+    /// Screen pixels per second of a track played at `tempo`, where 1.0 is its own tempo: the
+    /// shared real-time scale divided by how fast the track plays.
+    pub fn pixels_per_track_second(self, tempo: f64) -> f64 {
+        self.pixels_per_second / tempo.max(SLOWEST_DRAWN_TEMPO)
     }
 }
 
@@ -103,10 +160,11 @@ impl ZoomedWaveform {
     }
 }
 
-/// A track's whole-track waveform as one level per column, from 0.0 to 1.0.
+/// A track's whole-track waveform as the three bands' levels per column, from 0.0 to 1.0, so
+/// the overview can show where the lows drop out and come back.
 #[derive(Debug, Clone, PartialEq)]
 pub struct OverviewWaveform {
-    levels: Vec<f32>,
+    levels: Vec<BandLevels>,
 }
 
 impl OverviewWaveform {
@@ -130,20 +188,21 @@ impl OverviewWaveform {
             detail_levels(waveforms)?
         };
         Some(Self {
-            levels: normalized(levels)
-                .into_iter()
-                .map(BandLevels::loudest)
-                .collect(),
+            levels: normalized(levels),
         })
     }
 
-    /// The level of each of `bar_count` bars across the whole track: the loudest column under
-    /// each bar.
-    pub fn bars(&self, bar_count: usize) -> Vec<f32> {
+    /// The bands of each of `bar_count` bars across the whole track: each band's loudest
+    /// column under the bar.
+    pub fn bars(&self, bar_count: usize) -> Vec<BandLevels> {
         (0..bar_count)
             .map(|bar| {
                 let columns = covered_columns(bar, bar_count, self.levels.len());
-                self.levels[columns].iter().copied().fold(0.0, f32::max)
+                self.levels[columns]
+                    .iter()
+                    .fold(BandLevels::default(), |loudest, column| {
+                        loudest.max(*column)
+                    })
             })
             .collect()
     }
@@ -234,16 +293,25 @@ fn resample(columns: &[BandLevels], source_rate: f64, target_rate: f64) -> Vec<B
         .collect()
 }
 
+/// The slowest playback speed the lanes scale for, so a stopped or nearly stopped tempo never
+/// stretches a waveform without bound.
+const SLOWEST_DRAWN_TEMPO: f64 = 0.05;
+
 /// Where the zoomed waveform of one lane sits on screen for one frame: the playhead position
-/// is drawn at the centre of the lane.
+/// is drawn at the centre of the lane. The lanes share one real-time axis, as on CDJs and in
+/// rekordbox: a pixel is the same span of time in both, so a track played faster has its
+/// waveform and beats drawn closer together, and two tracks at the same BPM scroll at the same
+/// speed with the same beat spacing.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LaneView {
     /// The lane's width in pixels.
     pub width: f32,
-    /// The playhead position in seconds.
+    /// The playhead position in seconds of the track.
     pub playhead_seconds: f64,
     /// The horizontal scale.
     pub zoom: Zoom,
+    /// The playback speed, where 1.0 is the track's own tempo.
+    pub tempo: f64,
 }
 
 /// The columns a lane shows in one frame.
@@ -253,6 +321,9 @@ pub struct VisibleColumns {
     pub range: Range<usize>,
     /// The x position of the first column's left edge, relative to the lane.
     pub first_x: f32,
+    /// How wide each column is drawn: narrower than a pixel when the track plays faster than
+    /// its own tempo.
+    pub column_width: f32,
 }
 
 impl LaneView {
@@ -260,28 +331,101 @@ impl LaneView {
         f64::from(self.width) / 2.0
     }
 
+    /// Screen pixels per second of the track.
+    pub fn pixels_per_track_second(&self) -> f64 {
+        self.zoom.pixels_per_track_second(self.tempo)
+    }
+
     /// The x position, relative to the lane, of a moment in the track.
     pub fn x_of(&self, seconds: f64) -> f32 {
-        (self.centre() + (seconds - self.playhead_seconds) * self.zoom.pixels_per_second()) as f32
+        (self.centre() + (seconds - self.playhead_seconds) * self.pixels_per_track_second()) as f32
     }
 
     /// The moments of the track at the left and right edges of the lane.
     pub fn seconds_on_screen(&self) -> Range<f64> {
-        let half_span = self.centre() / self.zoom.pixels_per_second();
+        let half_span = self.centre() / self.pixels_per_track_second();
         self.playhead_seconds - half_span..self.playhead_seconds + half_span
     }
 
-    /// The columns of a waveform with `column_count` one-pixel columns that fall on screen.
+    /// The columns of a waveform made at this view's zoom (one column per pixel at the
+    /// track's own tempo) that fall on screen, and where they go.
+    #[cfg(test)]
     pub fn visible_columns(&self, column_count: usize) -> VisibleColumns {
-        let left_column = self.playhead_seconds * self.zoom.pixels_per_second() - self.centre();
+        self.visible_columns_of(column_count, self.zoom)
+    }
+
+    /// The columns of a waveform made at `made_at` that fall on screen, and where they go:
+    /// columns narrower than a pixel when the view is zoomed out further than the waveform was
+    /// made, wider when zoomed in.
+    pub fn visible_columns_of(&self, column_count: usize, made_at: Zoom) -> VisibleColumns {
+        let column_width = self.pixels_per_track_second() / made_at.pixels_per_second();
+        let left_column = self.seconds_on_screen().start * made_at.pixels_per_second();
+        let columns_across = f64::from(self.width) / column_width;
         let first = left_column.floor().max(0.0);
-        let last = (left_column + f64::from(self.width)).ceil().max(0.0);
+        let last = (left_column + columns_across).ceil().max(0.0);
         let start = (first as usize).min(column_count);
         let end = (last as usize).clamp(start, column_count);
         VisibleColumns {
             range: start..end,
-            first_x: (first - left_column) as f32,
+            first_x: ((first - left_column) * column_width) as f32,
+            column_width: column_width as f32,
         }
+    }
+}
+
+/// How a lane draws a deck's loop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoopLook {
+    /// The playhead goes round it: a tinted band with solid edges.
+    Active,
+    /// Set but left, waiting for RELOOP: a dim outline.
+    Set,
+    /// LOOP IN pressed, waiting for LOOP OUT: a band growing from the in point to the
+    /// playhead.
+    Pending,
+}
+
+/// A deck's loop as a lane draws it, from the engine's [`dubplate_engine::LoopState`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LaneLoop {
+    /// Where it starts, in seconds of the track.
+    pub start_seconds: f64,
+    /// Where it ends; the playhead while it waits for LOOP OUT.
+    pub end_seconds: f64,
+    /// How it is drawn.
+    pub look: LoopLook,
+    /// Its length in beats, for a beat loop or a roll.
+    pub length: Option<dubplate_engine::BeatLength>,
+}
+
+impl LaneLoop {
+    /// The loop of `state` with the playhead at `playhead_seconds`, or `None` without one.
+    pub fn of(state: &dubplate_engine::LoopState, playhead_seconds: f64) -> Option<Self> {
+        if let Some(start_seconds) = state.pending_start_seconds {
+            return Some(Self {
+                start_seconds,
+                end_seconds: playhead_seconds.max(start_seconds),
+                look: LoopLook::Pending,
+                length: None,
+            });
+        }
+        Some(Self {
+            start_seconds: state.start_seconds?,
+            end_seconds: state.end_seconds?,
+            look: if state.active {
+                LoopLook::Active
+            } else {
+                LoopLook::Set
+            },
+            length: state.length,
+        })
+    }
+
+    /// The loop's left and right edges in `view`, kept to the lane, or `None` off screen.
+    pub fn span(&self, view: &LaneView) -> Option<Range<f32>> {
+        let left = view.x_of(self.start_seconds).max(0.0);
+        let right = view.x_of(self.end_seconds).min(view.width);
+        (right > left).then_some(left..right)
     }
 }
 
@@ -292,7 +436,48 @@ pub struct BeatMark {
     pub seconds: f64,
     /// Whether it starts a bar.
     pub downbeat: bool,
+    /// The bar it is in, 1 for the bar of the first downbeat and 0 before it.
+    pub bar: u32,
+    /// Where it falls in its bar, from 1, the downbeat, to 4.
+    pub beat_in_bar: u16,
 }
+
+/// Where a playhead is in the bars of a beat grid, as a CDJ's beat counter reads it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BeatPosition {
+    /// The bar, 1 for the bar of the first downbeat.
+    pub bar: u32,
+    /// The beat in the bar, from 1 to 4.
+    pub beat: u16,
+    /// How far the playhead is from this beat to the next, from 0.0 to 1.0.
+    pub fraction: f64,
+}
+
+impl BeatPosition {
+    /// The beats since the start of the bar, from 0.0 to just under 4.0.
+    fn beats_into_bar(self) -> f64 {
+        f64::from(self.beat.saturating_sub(1)) + self.fraction
+    }
+
+    /// How far these beats are ahead of `master`'s, in beats from -0.5 to 0.5: positive when
+    /// they come early. 0 when the two decks' beats land together.
+    pub fn phase_offset(self, master: Self) -> f64 {
+        let difference = self.fraction - master.fraction;
+        difference - difference.round()
+    }
+
+    /// How many whole beats this deck's downbeat is ahead of `master`'s, from -2 to 2, once
+    /// the beats are in phase: 0 when the bars line up.
+    pub fn bar_offset(self, master: Self) -> i32 {
+        let difference =
+            self.beats_into_bar() - master.beats_into_bar() - self.phase_offset(master);
+        let wrapped = difference - BEATS_PER_BAR * (difference / BEATS_PER_BAR).round();
+        wrapped.round() as i32
+    }
+}
+
+/// The beats in a bar of the grids rekordbox writes.
+const BEATS_PER_BAR: f64 = 4.0;
 
 /// A track's beat grid in seconds, for drawing.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -307,12 +492,37 @@ impl BeatMarks {
             marks: grid
                 .beats
                 .iter()
-                .map(|beat| BeatMark {
-                    seconds: f64::from(beat.time_ms) / 1000.0,
-                    downbeat: beat.is_downbeat(),
+                .scan(0_u32, |bar, beat| {
+                    if beat.is_downbeat() {
+                        *bar += 1;
+                    }
+                    Some(BeatMark {
+                        seconds: f64::from(beat.time_ms) / 1000.0,
+                        downbeat: beat.is_downbeat(),
+                        bar: *bar,
+                        beat_in_bar: beat.beat_in_bar,
+                    })
                 })
                 .collect(),
         }
+    }
+
+    /// Where `seconds` falls in the bars, between the first beat and the last; `None` outside.
+    pub fn position(&self, seconds: f64) -> Option<BeatPosition> {
+        let next = self.marks.partition_point(|mark| mark.seconds <= seconds);
+        let current = self.marks.get(next.checked_sub(1)?)?;
+        let following = self.marks.get(next)?;
+        let span = following.seconds - current.seconds;
+        let fraction = if span > 0.0 {
+            ((seconds - current.seconds) / span).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        Some(BeatPosition {
+            bar: current.bar,
+            beat: current.beat_in_bar,
+            fraction,
+        })
     }
 
     /// The beats between `range.start` and `range.end` seconds.
@@ -354,6 +564,8 @@ mod tests {
                 .map(|seconds| BeatMark {
                     seconds,
                     downbeat: false,
+                    bar: 0,
+                    beat_in_bar: 2,
                 })
                 .to_vec(),
         };
@@ -449,6 +661,7 @@ mod tests {
             width: 100.0,
             playhead_seconds: 1.0,
             zoom: Zoom::new(100.0),
+            tempo: 1.0,
         };
         let visible = view.visible_columns(1000);
         assert_eq!(visible.range, 50..150);
@@ -464,6 +677,7 @@ mod tests {
             width: 100.0,
             playhead_seconds: 1.0025,
             zoom: Zoom::new(100.0),
+            tempo: 1.0,
         };
         let visible = view.visible_columns(1000);
         assert_eq!(visible.range, 50..151);
@@ -476,6 +690,7 @@ mod tests {
             width: 100.0,
             playhead_seconds: 0.0,
             zoom: Zoom::new(100.0),
+            tempo: 1.0,
         };
         let visible = start.visible_columns(1000);
         assert_eq!(visible.range, 0..50);
@@ -491,6 +706,101 @@ mod tests {
             ..start
         };
         assert!(past_the_end.visible_columns(1000).range.is_empty());
+    }
+
+    /// The pixels between two beats of a grid at `bpm` played at `tempo`.
+    fn beat_spacing(bpm: f64, tempo: f64) -> f32 {
+        let view = LaneView {
+            width: 600.0,
+            playhead_seconds: 10.0,
+            zoom: Zoom::DEFAULT,
+            tempo,
+        };
+        let beat_seconds = 60.0 / bpm;
+        view.x_of(10.0 + beat_seconds) - view.x_of(10.0)
+    }
+
+    #[test]
+    fn two_decks_at_the_same_bpm_space_their_beats_alike() {
+        let at_own_tempo = beat_spacing(120.0, 1.0);
+        let pitched_down = beat_spacing(125.0, 120.0 / 125.0);
+        assert!((at_own_tempo - 75.0).abs() < 1e-3, "{at_own_tempo}");
+        assert!(
+            (pitched_down - at_own_tempo).abs() < 1e-3,
+            "a 125 BPM track slowed to 120 lines up with a 120 BPM one: {pitched_down}"
+        );
+    }
+
+    #[test]
+    fn a_faster_tempo_draws_the_beats_closer_together() {
+        let own = beat_spacing(122.0, 1.0);
+        let faster = beat_spacing(122.0, 1.08);
+        assert!((faster / own - 1.0 / 1.08).abs() < 1e-5, "{own} {faster}");
+    }
+
+    #[test]
+    fn columns_shrink_with_the_tempo_and_still_span_the_lane() {
+        let view = LaneView {
+            width: 100.0,
+            playhead_seconds: 1.0,
+            zoom: Zoom::new(100.0),
+            tempo: 1.25,
+        };
+        let visible = view.visible_columns(1000);
+        assert!((visible.column_width - 0.8).abs() < 1e-6);
+        assert_eq!(visible.range, 37..163);
+        let right_edge = visible.first_x + visible.range.len() as f32 * visible.column_width;
+        assert!(right_edge >= 100.0, "{right_edge}");
+        assert_eq!(view.x_of(1.0), 50.0);
+        assert_eq!(view.seconds_on_screen(), 0.375..1.625);
+    }
+
+    #[test]
+    fn a_loop_is_drawn_between_its_edges_and_a_pending_one_up_to_the_playhead() {
+        use dubplate_engine::{BeatLength, LoopState};
+
+        let view = LaneView {
+            width: 600.0,
+            playhead_seconds: 10.0,
+            zoom: Zoom::DEFAULT,
+            tempo: 1.0,
+        };
+        let active = LoopState {
+            start_seconds: Some(9.0),
+            end_seconds: Some(11.0),
+            active: true,
+            length: Some(BeatLength::FOUR),
+            pending_start_seconds: None,
+        };
+        let drawn = LaneLoop::of(&active, 10.0).unwrap();
+        assert_eq!(drawn.look, LoopLook::Active);
+        assert_eq!(drawn.span(&view), Some(150.0..450.0));
+        let exited = LoopState {
+            active: false,
+            ..active
+        };
+        assert_eq!(LaneLoop::of(&exited, 10.0).unwrap().look, LoopLook::Set);
+        let waiting = LoopState {
+            start_seconds: None,
+            end_seconds: None,
+            active: false,
+            length: None,
+            pending_start_seconds: Some(9.5),
+        };
+        let pending = LaneLoop::of(&waiting, 10.0).unwrap();
+        assert_eq!(pending.look, LoopLook::Pending);
+        assert_eq!(pending.span(&view), Some(225.0..300.0));
+        let none = LoopState {
+            pending_start_seconds: None,
+            ..waiting
+        };
+        assert_eq!(LaneLoop::of(&none, 10.0), None);
+        let far = LaneLoop {
+            start_seconds: 30.0,
+            end_seconds: 32.0,
+            ..drawn
+        };
+        assert_eq!(far.span(&view), None, "a loop off screen is not drawn");
     }
 
     #[test]
@@ -509,6 +819,7 @@ mod tests {
             width: 300.0,
             playhead_seconds: 2.0,
             zoom: Zoom::new(100.0),
+            tempo: 1.0,
         };
         let shown = marks.within(view.seconds_on_screen());
         let seconds: Vec<f64> = shown.iter().map(|mark| mark.seconds).collect();
@@ -534,8 +845,97 @@ mod tests {
             ..Waveforms::default()
         };
         let overview = OverviewWaveform::from_waveforms(&waveforms).unwrap();
-        assert_eq!(overview.bars(2), [1.0, 0.5]);
-        assert_eq!(overview.bars(4), [0.25, 1.0, 0.5, 0.0]);
+        let loudest = |bars: Vec<BandLevels>| -> Vec<f32> {
+            bars.into_iter().map(BandLevels::loudest).collect()
+        };
+        assert_eq!(loudest(overview.bars(2)), [1.0, 0.5]);
+        assert_eq!(loudest(overview.bars(4)), [0.25, 1.0, 0.5, 0.0]);
+        let second = overview.bars(4)[1];
+        assert_eq!((second.low, second.mid, second.high), (0.0, 1.0, 0.0));
         assert_eq!(overview.bars(8).len(), 8);
+    }
+
+    #[test]
+    fn zoom_steps_through_the_levels_and_stays_at_the_ends() {
+        assert_eq!(Zoom::DEFAULT.step(true), Zoom::new(225.0));
+        assert_eq!(Zoom::DEFAULT.step(false), Zoom::new(100.0));
+        assert_eq!(Zoom::new(300.0).step(true), Zoom::new(300.0));
+        assert_eq!(Zoom::new(37.5).step(false), Zoom::new(37.5));
+        assert_eq!(Zoom::new(120.0).step(true), Zoom::DEFAULT);
+        assert_eq!(Zoom::from_setting(Some(75.0)), Zoom::new(75.0));
+        assert_eq!(Zoom::from_setting(Some(80.0)), Zoom::DEFAULT);
+        assert_eq!(Zoom::from_setting(None), Zoom::DEFAULT);
+    }
+
+    #[test]
+    fn a_zoomed_out_view_puts_several_columns_in_a_pixel() {
+        let view = LaneView {
+            width: 100.0,
+            playhead_seconds: 10.0,
+            zoom: Zoom::new(50.0),
+            tempo: 1.0,
+        };
+        let visible = view.visible_columns_of(10_000, Zoom::DEFAULT);
+        assert!((visible.column_width - 1.0 / 3.0).abs() < 1e-6);
+        assert_eq!(visible.range, 1350..1650);
+    }
+
+    fn grid_marks(bpm: f64, first_beat_ms: u32, beats: u16) -> BeatMarks {
+        let beat_ms = 60_000.0 / bpm;
+        let grid = BeatGrid {
+            beats: (0..beats)
+                .map(|index| Beat {
+                    beat_in_bar: index % 4 + 1,
+                    tempo_hundredths: (bpm * 100.0) as u16,
+                    time_ms: first_beat_ms + (f64::from(index) * beat_ms) as u32,
+                })
+                .collect(),
+        };
+        BeatMarks::from_grid(&grid)
+    }
+
+    #[test]
+    fn the_beat_counter_reads_bar_and_beat() {
+        let marks = grid_marks(120.0, 1000, 64);
+        assert_eq!(marks.position(0.5), None, "before the first beat");
+        let position = marks.position(1.0 + 4.5 * 0.5).unwrap();
+        assert_eq!((position.bar, position.beat), (2, 1));
+        assert!((position.fraction - 0.5).abs() < 1e-3);
+        assert_eq!(marks.position(99.0), None, "after the last beat");
+    }
+
+    #[test]
+    fn the_phase_meter_measures_beats_and_bars_between_two_decks() {
+        let master = BeatPosition {
+            bar: 9,
+            beat: 1,
+            fraction: 0.1,
+        };
+        let early = BeatPosition {
+            bar: 3,
+            beat: 1,
+            fraction: 0.2,
+        };
+        assert!((early.phase_offset(master) - 0.1).abs() < 1e-9);
+        assert_eq!(early.bar_offset(master), 0);
+        let late_across_the_beat = BeatPosition {
+            bar: 3,
+            beat: 4,
+            fraction: 0.95,
+        };
+        assert!((late_across_the_beat.phase_offset(master) + 0.15).abs() < 1e-9);
+        assert_eq!(late_across_the_beat.bar_offset(master), 0);
+        let two_beats_ahead = BeatPosition {
+            bar: 3,
+            beat: 3,
+            fraction: 0.1,
+        };
+        assert_eq!(two_beats_ahead.bar_offset(master).abs(), 2);
+        let one_beat_behind = BeatPosition {
+            bar: 3,
+            beat: 4,
+            fraction: 0.1,
+        };
+        assert_eq!(one_beat_behind.bar_offset(master), -1);
     }
 }

@@ -3,7 +3,7 @@
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use dubplate_engine::{Controller, DecodeStatus, Renderer, Track};
+use dubplate_engine::{Controller, DecodeStatus, Renderer, Stem, StemTracks, Track};
 
 pub const SAMPLE_RATE: u32 = 48_000;
 pub const DECLICK_FRAMES: usize = 240;
@@ -113,6 +113,87 @@ pub fn sine_track(
             let phase = std::f64::consts::TAU * frequency * index as f64 / f64::from(sample_rate);
             let value = phase.sin() as f32;
             [value * left_amplitude, value * right_amplitude]
+        })
+        .collect();
+    Track::from_interleaved_stereo(&samples, sample_rate).expect("valid test track")
+}
+
+/// The frequency of the tone each synthetic stem holds, in the order of [`Stem::ALL`].
+pub const STEM_TONES: [f64; Stem::COUNT] = [150.0, 60.0, 700.0, 1_000.0];
+/// The level of every synthetic stem's tone.
+pub const STEM_AMPLITUDE: f64 = 0.2;
+
+/// One synthetic stem at `sample_rate`: a tone of its own, the same on both sides, quantized to
+/// 16 bits as the separation writes stems.
+pub fn stem_samples(stem: Stem, seconds: f64, sample_rate: u32) -> Vec<i16> {
+    let frame_count = (seconds * f64::from(sample_rate)).round() as usize;
+    (0..frame_count)
+        .flat_map(|index| {
+            let time = index as f64 / f64::from(sample_rate);
+            let value =
+                (std::f64::consts::TAU * STEM_TONES[stem.index()] * time).sin() * STEM_AMPLITUDE;
+            let quantized = (value * 32_768.0).round() as i16;
+            [quantized, quantized]
+        })
+        .collect()
+}
+
+/// Four synthetic stems lasting `seconds` at `sample_rate`.
+pub fn stems_like(seconds: f64, sample_rate: u32) -> StemTracks {
+    let stems = Stem::ALL.map(|stem| stem_samples(stem, seconds, sample_rate));
+    StemTracks::from_interleaved_stereo(
+        std::array::from_fn(|index| stems[index].as_slice()),
+        sample_rate,
+    )
+    .expect("valid stems")
+}
+
+/// The track the synthetic stems were separated from: the four of them summed, exactly, at
+/// `sample_rate`.
+pub fn mix_of_stems(seconds: f64, sample_rate: u32) -> Track {
+    let stems = Stem::ALL.map(|stem| stem_samples(stem, seconds, sample_rate));
+    let samples: Vec<f32> = (0..stems[0].len())
+        .map(|index| {
+            stems
+                .iter()
+                .map(|stem| f32::from(stem[index]) / 32_768.0)
+                .sum()
+        })
+        .collect();
+    Track::from_interleaved_stereo(&samples, sample_rate).expect("valid test track")
+}
+
+/// A four-to-the-floor loop at `tempo_bpm`: a kick on every beat, a hi-hat on every off-beat, a
+/// shaker on the sixteenths and a held chord, peaking around -3 dBFS. Busy enough that a filter,
+/// a gate or an echo all change it audibly.
+pub fn club_loop_track(tempo_bpm: f64, seconds: f64, sample_rate: u32) -> Track {
+    let frames = (seconds * f64::from(sample_rate)) as usize;
+    let beat_seconds = 60.0 / tempo_bpm;
+    let mut noise_state: u64 = 0x2545_f491_4f6c_dd1d;
+    let mut kick_phase = 0.0;
+    let samples: Vec<f32> = (0..frames)
+        .flat_map(|frame| {
+            let seconds = frame as f64 / f64::from(sample_rate);
+            let beats = seconds / beat_seconds;
+            let since_beat = beats.fract() * beat_seconds;
+            let kick_hz = 50.0 + 90.0 * (-since_beat / 0.03).exp();
+            kick_phase += kick_hz / f64::from(sample_rate);
+            let kick = (std::f64::consts::TAU * kick_phase).sin() * (-since_beat / 0.2).exp() * 0.5;
+            noise_state ^= noise_state << 13;
+            noise_state ^= noise_state >> 7;
+            noise_state ^= noise_state << 17;
+            let noise = (noise_state >> 40) as f64 / (1_u64 << 24) as f64 * 2.0 - 1.0;
+            let since_off_beat = (beats + 0.5).fract() * beat_seconds;
+            let hat = noise * 0.2 * (-since_off_beat / 0.03).exp();
+            let since_sixteenth = (beats * 4.0).fract() * beat_seconds / 4.0;
+            let shaker = noise * 0.06 * (-since_sixteenth / 0.02).exp();
+            let chord: f64 = [220.0, 261.63, 329.63]
+                .iter()
+                .map(|hertz| (std::f64::consts::TAU * hertz * seconds).sin())
+                .sum::<f64>()
+                * 0.07;
+            let value = (kick + hat + shaker + chord) as f32;
+            [value, value]
         })
         .collect();
     Track::from_interleaved_stereo(&samples, sample_rate).expect("valid test track")

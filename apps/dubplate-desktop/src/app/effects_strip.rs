@@ -1,49 +1,77 @@
 //! The effects strip under the decks: one compact row per effect unit with its effect, which
-//! opens the effect picker, its beat length, where it sits, its level and its On button. It
+//! opens the effect picker, its parameter, where it sits, its level and its On button. It
 //! shows what the controller's BEAT FX section changes as it changes.
 
 use std::rc::Rc;
 
-use dubplate_engine::{DeckId, EffectTarget, EffectUnitId, EffectUnitState};
+use dubplate_engine::{DeckId, EffectTarget, EffectUnitId, EffectUnitState, ReleaseFx};
 use gpui::component::input::Input;
 use gpui::prelude::*;
 use gpui::{
-    ClickEvent, Context, FontWeight, MouseButton, MouseDownEvent, Pixels, Rgba, SharedString,
-    canvas, deferred, div, px, relative, svg,
+    ClickEvent, Context, FontWeight, KeyDownEvent, MouseButton, MouseDownEvent, Pixels, Rgba,
+    SharedString, canvas, deferred, div, px, relative, svg,
 };
 
-use super::{DubplateApp, HitAreas};
+use super::{DubplateApp, HitAreas, Lever, MenuOpening};
 use crate::assets::CHEVRON_DOWN_PATH;
 use crate::commands::{Command, Direction, EffectEdit};
-use crate::effects::{effect_label, search, target_letter};
+use crate::effects::{
+    PickerMove, effect_label, parameter_label, picker_rows, search, target_letter,
+};
 use crate::fonts::MONO_FAMILY;
+use crate::hardware::HeldControl;
 use crate::theme;
 use crate::widgets::{InteractiveControl, adjusted_value};
 
-const STRIP_HEIGHT: Pixels = px(46.0);
 const UNIT_HEIGHT: Pixels = px(32.0);
+/// The space above and below a row of units: a one-row strip is 46 px tall.
+const STRIP_PADDING: Pixels = px(7.0);
 const LEVEL_WIDTH: Pixels = px(52.0);
-const MENU_WIDTH: Pixels = px(300.0);
+const MENU_WIDTH: Pixels = px(372.0);
+/// The tallest the picker grows, enough for every effect at once on a large window.
+const MENU_HEIGHT: Pixels = px(560.0);
+/// The picker never shrinks below this, so a few rows always show.
+const MENU_SMALLEST: Pixels = px(160.0);
+/// The gap the picker keeps from the window's bottom edge.
+const MENU_MARGIN: Pixels = px(8.0);
+/// The gap it keeps from the window's top, clear of the header and the window's buttons.
+const MENU_TOP_MARGIN: Pixels = px(52.0);
+const GROUP_WIDTH: Pixels = px(58.0);
+const PICK_WIDTH: Pixels = px(96.0);
+const PICK_HEIGHT: Pixels = px(24.0);
 
 pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoElement {
     let show_focus = app.hardware_connected();
+    // A window too narrow for the three units side by side puts the last on a second row
+    // rather than cutting it off: every unit stays whole and in reach.
     let mut strip = div()
         .flex()
+        .flex_wrap()
         .flex_none()
         .items_center()
-        .gap(px(10.0))
-        .h(STRIP_HEIGHT)
+        .gap_x(px(10.0))
+        .gap_y(px(6.0))
+        .py(STRIP_PADDING)
         .px(theme::GUTTER)
         .border_b_1()
-        .border_color(theme::LINE)
-        .bg(theme::BACKGROUND);
+        .border_color(theme::active().line)
+        .bg(theme::active().background);
     for unit in EffectUnitId::ALL {
         if let Some(state) = app.effect_unit(unit) {
+            let lever = app.beat_fx_lever().filter(|_| app.effect_focus == unit);
             let focused = show_focus && app.effect_focus == unit;
-            strip = strip.child(unit_row(app, unit, state, focused, cx));
+            strip = strip.child(unit_row(app, unit, state, focused, lever, cx));
         }
     }
-    strip
+    let hit_areas = Rc::clone(&app.hit_areas);
+    strip.relative().child(
+        canvas(
+            move |bounds, _, _| hit_areas.effect_strip.set(Some(bounds)),
+            |_, (), _, _| {},
+        )
+        .absolute()
+        .size_full(),
+    )
 }
 
 fn unit_row(
@@ -51,16 +79,19 @@ fn unit_row(
     unit: EffectUnitId,
     state: EffectUnitState,
     focused: bool,
+    lever: Option<Lever>,
     cx: &mut Context<'_, DubplateApp>,
 ) -> impl IntoElement + use<> {
-    let menu_open = app.effect_menu == Some(unit);
+    let menu = app.effect_menu.filter(|menu| menu.unit == unit);
+    let menu_open = menu.is_some();
     let accent = match state.target {
         EffectTarget::Deck(deck) => theme::deck_colour(deck),
-        EffectTarget::Master => theme::deck_colour(DeckId::A),
+        EffectTarget::BothDecks | EffectTarget::Master => theme::deck_colour(DeckId::A),
     };
     div()
         .relative()
         .flex()
+        .flex_none()
         .items_center()
         .gap(px(6.0))
         .h(UNIT_HEIGHT)
@@ -68,15 +99,25 @@ fn unit_row(
         .pr(px(4.0))
         .rounded(px(8.0))
         .border_1()
-        .border_color(theme::LINE)
-        .bg(theme::PANEL)
+        .border_color(theme::active().line)
+        .bg(theme::active().panel)
         .child(unit_label(unit, focused))
         .child(effect_button(unit, &state, menu_open, cx))
-        .child(beat_stepper(unit, &state, cx))
+        .child(parameter_stepper(unit, &state, cx))
         .child(targets(unit, &state, cx))
+        .when_some(lever, |row, lever| row.child(lever_reading(lever)))
         .child(level_bar(app, unit, state.depth, cx))
-        .child(on_button(unit, state.enabled, accent, cx))
-        .when(menu_open, |row| row.child(menu(app, unit, &state, cx)))
+        .child(on_button(
+            unit,
+            state.enabled,
+            accent,
+            focused && app.shows_pressed(HeldControl::BeatFxOn),
+            cx,
+        ))
+        .child(release_button(unit, &state, cx))
+        .when_some(menu, |row, menu| {
+            row.child(picker(app, unit, &state, menu.opening, cx))
+        })
 }
 
 /// `FX 1`, with a dot when the controller's BEAT FX section drives this unit.
@@ -86,9 +127,13 @@ fn unit_label(unit: EffectUnitId, focused: bool) -> impl IntoElement {
         .items_center()
         .gap(px(4.0))
         .text_size(theme::TINY_TEXT_SIZE)
-        .text_color(if focused { theme::TEXT } else { theme::MUTED })
+        .text_color(if focused {
+            theme::active().text
+        } else {
+            theme::active().muted
+        })
         .when(focused, |label| {
-            label.child(div().size(px(5.0)).rounded_full().bg(theme::OK))
+            label.child(div().size(px(5.0)).rounded_full().bg(theme::active().ok))
         })
         .child(unit.to_string())
 }
@@ -117,8 +162,8 @@ fn effect_button(
         .rounded(px(5.0))
         .font_weight(FontWeight::MEDIUM)
         .cursor_pointer()
-        .when(menu_open, |button| button.bg(theme::RAISED))
-        .hover(|button| button.bg(theme::RAISED))
+        .when(menu_open, |button| button.bg(theme::active().raised))
+        .hover(|button| button.bg(theme::active().raised))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
             this.toggle_effect_menu(unit, window, cx);
@@ -128,32 +173,45 @@ fn effect_button(
             svg()
                 .path(CHEVRON_DOWN_PATH)
                 .size(px(10.0))
-                .text_color(theme::MUTED),
+                .text_color(theme::active().muted),
         )
 }
 
-fn beat_stepper(
+fn parameter_stepper(
     unit: EffectUnitId,
     state: &EffectUnitState,
     cx: &mut Context<'_, DubplateApp>,
 ) -> impl IntoElement + use<> {
+    let name = state
+        .kind
+        .parameter()
+        .map_or("parameter", |spec| spec.name)
+        .to_lowercase();
     let arrow = |id: &'static str, glyph: &'static str, direction: Direction| {
+        let label = match direction {
+            Direction::Up => format!("Effect {} {name} up", unit.index() + 1),
+            Direction::Down => format!("Effect {} {name} down", unit.index() + 1),
+        };
         div()
             .id((id, unit.index()))
-            .accessible_button(format!("Effect {} {id}", unit.index() + 1))
+            .accessible_button(label)
             .flex()
             .items_center()
             .justify_center()
             .w(px(22.0))
             .h(px(26.0))
             .rounded(px(5.0))
-            .text_color(theme::MUTED)
+            .text_color(theme::active().muted)
             .cursor_pointer()
-            .hover(|button| button.bg(theme::RAISED).text_color(theme::TEXT))
+            .hover(|button| {
+                button
+                    .bg(theme::active().raised)
+                    .text_color(theme::active().text)
+            })
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                 this.perform(
-                    Command::Effect(unit, EffectEdit::Beat(direction)),
+                    Command::Effect(unit, EffectEdit::Parameter(direction)),
                     window,
                     cx,
                 );
@@ -171,7 +229,7 @@ fn beat_stepper(
                 .justify_center()
                 .font_family(MONO_FAMILY)
                 .text_size(theme::SMALL_TEXT_SIZE)
-                .child(state.beat.to_string()),
+                .child(parameter_label(state.parameter)),
         )
         .child(arrow("beat-longer", "\u{203a}", Direction::Up))
 }
@@ -189,7 +247,7 @@ fn targets(
             let checked = target == current;
             let underline = match target {
                 EffectTarget::Deck(deck) => theme::deck_colour(deck),
-                EffectTarget::Master => theme::TEXT,
+                EffectTarget::BothDecks | EffectTarget::Master => theme::active().text,
             };
             div()
                 .id((
@@ -216,14 +274,14 @@ fn targets(
                 .map(|button| {
                     if checked {
                         button
-                            .bg(theme::RAISED)
-                            .text_color(theme::TEXT)
+                            .bg(theme::active().raised)
+                            .text_color(theme::active().text)
                             .border_color(underline)
                     } else {
                         button
-                            .text_color(theme::MUTED)
+                            .text_color(theme::active().muted)
                             .border_color(theme::faded(underline, 0.0))
-                            .hover(|button| button.text_color(theme::TEXT))
+                            .hover(|button| button.text_color(theme::active().text))
                     }
                 })
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
@@ -238,6 +296,8 @@ fn targets(
         }))
 }
 
+/// The level bar. The controller's LEVEL/DEPTH knob sets it the moment it reports, so the bar
+/// always shows where the knob sits.
 fn level_bar(
     app: &DubplateApp,
     unit: EffectUnitId,
@@ -270,8 +330,8 @@ fn level_bar(
         .cursor_ew_resize()
         .on_mouse_down(
             MouseButton::Left,
-            cx.listener(move |this, event: &MouseDownEvent, _, cx| {
-                this.begin_effect_level_drag(unit, event.position, cx);
+            cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                this.begin_effect_level_drag(unit, event.position, window, cx);
                 cx.stop_propagation();
             }),
         )
@@ -289,7 +349,7 @@ fn level_bar(
                 .w_full()
                 .h(px(3.0))
                 .rounded(px(2.0))
-                .bg(theme::TRACK)
+                .bg(theme::active().track)
                 .child(
                     div()
                         .absolute()
@@ -298,7 +358,7 @@ fn level_bar(
                         .bottom_0()
                         .w(relative(depth.clamp(0.0, 1.0)))
                         .rounded(px(2.0))
-                        .bg(theme::TEXT),
+                        .bg(theme::active().text),
                 ),
         )
 }
@@ -307,6 +367,7 @@ fn on_button(
     unit: EffectUnitId,
     enabled: bool,
     accent: Rgba,
+    pressed: bool,
     cx: &mut Context<'_, DubplateApp>,
 ) -> impl IntoElement + use<> {
     div()
@@ -321,10 +382,18 @@ fn on_button(
         .cursor_pointer()
         .map(|button| {
             if enabled {
-                button.bg(accent).text_color(theme::ON_DECK)
+                button.bg(accent).text_color(theme::active().on_deck)
             } else {
-                button.bg(theme::RAISED).text_color(theme::MUTED)
+                button
+                    .bg(theme::active().raised)
+                    .text_color(theme::active().muted)
             }
+        })
+        .when(pressed, |button| {
+            button
+                .border_1()
+                .border_color(theme::active().text)
+                .text_color(theme::active().text)
         })
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
@@ -333,31 +402,127 @@ fn on_button(
         .child("On")
 }
 
-/// The effect picker: a search field and the effects in their groups.
-fn menu(
-    app: &DubplateApp,
+/// The Release FX that SHIFT + BEAT FX ON plays on this unit; a click picks the next one. It
+/// lights while the release is held.
+fn release_button(
     unit: EffectUnitId,
     state: &EffectUnitState,
     cx: &mut Context<'_, DubplateApp>,
 ) -> impl IntoElement + use<> {
-    let query = app.effect_search.read(cx).value().to_string();
+    let name = release_label(state.release);
+    div()
+        .id(("effect-release", unit.index()))
+        .accessible_button(format!("Effect {} release: {name}", unit.index() + 1))
+        .flex()
+        .items_center()
+        .h(px(24.0))
+        .px(px(6.0))
+        .rounded(px(5.0))
+        .text_size(theme::TINY_TEXT_SIZE)
+        .cursor_pointer()
+        .map(|button| {
+            if state.releasing {
+                button
+                    .bg(theme::active().attention)
+                    .text_color(theme::active().on_deck)
+            } else {
+                button.text_color(theme::active().muted).hover(|button| {
+                    button
+                        .bg(theme::active().raised)
+                        .text_color(theme::active().text)
+                })
+            }
+        })
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+            this.perform(Command::Effect(unit, EffectEdit::NextRelease), window, cx);
+        }))
+        .child(name)
+}
+
+/// A Release FX's name on the strip.
+fn release_label(release: ReleaseFx) -> &'static str {
+    match release {
+        ReleaseFx::Echo => "Echo out",
+        ReleaseFx::BackSpin => "Back spin",
+        ReleaseFx::VinylBrake => "Vinyl brake",
+    }
+}
+
+/// Where the controller's CH SELECT lever sits, next to the targets of the unit it drives, so
+/// a target that differs from the lever shows at once.
+fn lever_reading(lever: Lever) -> impl IntoElement {
+    let reading = match lever {
+        Lever::At(target) => target_letter(target),
+        Lever::Unreported => "?",
+    };
+    div()
+        .id("beat-fx-lever")
+        .aria_label(match lever {
+            Lever::At(target) => format!("CH SELECT lever on {}", target_letter(target)),
+            Lever::Unreported => "CH SELECT lever not reported yet".to_owned(),
+        })
+        .flex()
+        .items_center()
+        .gap(px(3.0))
+        .text_size(theme::TINY_TEXT_SIZE)
+        .text_color(theme::active().muted)
+        .child("lever")
+        .child(
+            div()
+                .font_family(MONO_FAMILY)
+                .text_color(theme::active().text)
+                .child(reading),
+        )
+}
+
+/// The effect picker. Opened with the pointer it has a search field and stays open, the arrow
+/// keys move its highlight and Enter picks; opened by FX SELECT it only shows the effects with
+/// the chosen one highlighted. It opens downward or upward, whichever side of the strip has
+/// more room, no taller than that room, and its list scrolls under the pinned search field.
+fn picker(
+    app: &DubplateApp,
+    unit: EffectUnitId,
+    state: &EffectUnitState,
+    opening: MenuOpening,
+    cx: &mut Context<'_, DubplateApp>,
+) -> impl IntoElement + use<> {
+    let searching = opening == MenuOpening::Pointer;
+    let query = if searching {
+        app.effect_search.read(cx).value().to_string()
+    } else {
+        String::new()
+    };
     let current = state.kind;
-    let mut groups = div().flex().flex_col().gap(px(8.0));
-    let found = search(&query);
-    if found.is_empty() {
-        groups = groups.child(
+    let rows = picker_rows(&search(&query));
+    let highlighted = if searching {
+        app.effect_highlighted(&rows)
+    } else {
+        Some(current)
+    };
+    let mut list = div()
+        .id(("effect-list", unit.index()))
+        .flex()
+        .flex_col()
+        .flex_1()
+        .min_h_0()
+        .overflow_y_scroll()
+        .track_scroll(&app.effect_picker_scroll);
+    if rows.is_empty() {
+        list = list.child(
             div()
                 .px(px(2.0))
                 .text_size(theme::SMALL_TEXT_SIZE)
-                .text_color(theme::MUTED)
+                .text_color(theme::active().muted)
                 .child("No effect has that name."),
         );
     }
-    for (name, effects) in found {
-        let mut grid = div().flex().flex_wrap().gap(px(2.0));
-        for kind in effects {
+    for row in rows {
+        let mut effects = div().flex().gap(px(2.0));
+        for kind in row.effects {
             let chosen = kind == current;
-            grid = grid.child(
+            let lit = Some(kind) == highlighted;
+            effects = effects.child(
                 div()
                     .id(SharedString::from(format!(
                         "pick-{}-{}",
@@ -367,69 +532,142 @@ fn menu(
                     .accessible_toggle(effect_label(kind), chosen)
                     .flex()
                     .items_center()
-                    .w(px(92.0))
-                    .h(px(28.0))
-                    .px(px(8.0))
-                    .rounded(px(5.0))
+                    .gap(px(4.0))
+                    .w(PICK_WIDTH)
+                    .h(PICK_HEIGHT)
+                    .px(px(6.0))
+                    .rounded(px(4.0))
+                    .border_1()
+                    .border_color(if lit {
+                        theme::active().text
+                    } else {
+                        theme::active().panel
+                    })
                     .text_size(theme::SMALL_TEXT_SIZE)
                     .cursor_pointer()
                     .when(chosen, |button| {
-                        button.bg(theme::RAISED).font_weight(FontWeight::MEDIUM)
+                        button
+                            .bg(theme::active().raised)
+                            .font_weight(FontWeight::MEDIUM)
                     })
-                    .hover(|button| button.bg(theme::RAISED))
+                    .hover(|button| button.bg(theme::active().raised))
                     .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                         this.perform(Command::Effect(unit, EffectEdit::Kind(kind)), window, cx);
                         this.close_effect_menu(cx);
                     }))
+                    .when(chosen, |button| {
+                        button.child(
+                            div()
+                                .size(px(5.0))
+                                .rounded(px(3.0))
+                                .bg(theme::active().text),
+                        )
+                    })
                     .child(effect_label(kind)),
             );
         }
-        groups = groups.child(
+        list = list.child(
             div()
                 .flex()
-                .flex_col()
-                .gap(px(4.0))
+                .items_center()
+                .when(row.group.is_some(), |row| row.pt(px(5.0)))
                 .child(
                     div()
+                        .w(GROUP_WIDTH)
+                        .flex_none()
                         .px(px(2.0))
                         .text_size(theme::TINY_TEXT_SIZE)
-                        .text_color(theme::MUTED)
-                        .child(name),
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(theme::active().muted)
+                        .children(row.group),
                 )
-                .child(grid),
+                .child(effects),
         );
     }
-    deferred(
-        div()
-            .id(("effect-menu", unit.index()))
-            .absolute()
-            .left_0()
-            .top(px(38.0))
-            .w(MENU_WIDTH)
-            .p(px(8.0))
-            .flex()
-            .flex_col()
-            .gap(px(8.0))
-            .rounded(px(10.0))
-            .border_1()
-            .border_color(theme::LINE)
-            .bg(theme::PANEL)
-            .shadow_lg()
-            .occlude()
-            .on_mouse_down_out(cx.listener(|this, _, _, cx| this.close_effect_menu(cx)))
-            .child(
-                div()
-                    .h(px(30.0))
-                    .px(px(8.0))
-                    .flex()
-                    .items_center()
-                    .rounded(px(6.0))
-                    .border_1()
-                    .border_color(theme::LINE)
-                    .bg(theme::BACKGROUND)
-                    .child(Input::new(&app.effect_search).appearance(false)),
-            )
-            .child(groups),
-    )
-    .with_priority(1)
+    let room = picker_room(app);
+    let picker = div()
+        .id(("effect-menu", unit.index()))
+        .absolute()
+        .left_0()
+        .map(|picker| match room {
+            PickerRoom::Below(_) => picker.top(px(38.0)),
+            PickerRoom::Above(_) => picker.bottom(px(38.0)),
+        })
+        .max_h(room.height())
+        .w(MENU_WIDTH)
+        .p(px(8.0))
+        .flex()
+        .flex_col()
+        .gap(px(6.0))
+        .rounded(px(10.0))
+        .border_1()
+        .border_color(theme::active().line)
+        .bg(theme::active().panel)
+        .shadow_lg()
+        .occlude()
+        .on_mouse_down_out(cx.listener(|this, _, _, cx| this.close_effect_menu(cx)))
+        .when(searching, |picker| {
+            picker
+                .capture_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                    let direction = match event.keystroke.key.as_str() {
+                        "up" => PickerMove::Up,
+                        "down" => PickerMove::Down,
+                        "left" if this.effect_search.read(cx).value().is_empty() => {
+                            PickerMove::Left
+                        }
+                        "right" if this.effect_search.read(cx).value().is_empty() => {
+                            PickerMove::Right
+                        }
+                        _ => return,
+                    };
+                    this.move_effect_highlight(direction, cx);
+                    cx.stop_propagation();
+                }))
+                .child(
+                    div()
+                        .flex_none()
+                        .h(px(30.0))
+                        .px(px(8.0))
+                        .flex()
+                        .items_center()
+                        .rounded(px(6.0))
+                        .border_1()
+                        .border_color(theme::active().line)
+                        .bg(theme::active().background)
+                        .child(Input::new(&app.effect_search).appearance(false)),
+                )
+        })
+        .child(list);
+    deferred(picker).with_priority(1)
+}
+
+/// Where the effect picker has room, and how tall it may be there.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum PickerRoom {
+    Below(Pixels),
+    Above(Pixels),
+}
+
+impl PickerRoom {
+    fn height(self) -> Pixels {
+        match self {
+            PickerRoom::Below(height) | PickerRoom::Above(height) => height,
+        }
+    }
+}
+
+/// The side of the strip the picker opens on: below it when the whole list fits there or
+/// below has more room, else above it.
+fn picker_room(app: &DubplateApp) -> PickerRoom {
+    let window_height = app.window_size.height;
+    let Some(strip) = app.hit_areas.effect_strip.get() else {
+        return PickerRoom::Below(MENU_HEIGHT);
+    };
+    let below = window_height - strip.bottom() - MENU_MARGIN;
+    let above = strip.top() - MENU_TOP_MARGIN;
+    if below >= MENU_HEIGHT || below >= above {
+        PickerRoom::Below(below.min(MENU_HEIGHT).max(MENU_SMALLEST))
+    } else {
+        PickerRoom::Above(above.min(MENU_HEIGHT).max(MENU_SMALLEST))
+    }
 }

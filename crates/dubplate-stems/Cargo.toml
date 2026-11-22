@@ -1,0 +1,24 @@
+[package]
+name = "dubplate-stems"
+description = "Separating the tracks of a set into drums, bass, melody and vocals ahead of time, and keeping the stems"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+dubplate-engine = { version = "0.1.0", path = "../dubplate-engine" }
+dubplate-library = { version = "0.1.0", path = "../dubplate-library" }
+euphoria-core = { workspace = true, features = ["stems"] }
+hound = "3.5.1"
+rubato = "5.1.0"
+libc = "0.2.191"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+thiserror = "2.0.21"
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+tempfile = "3.27.0"

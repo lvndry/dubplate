@@ -18,7 +18,7 @@ Done when:
 | Question | Decision | Why |
 | --- | --- | --- |
 | Where the set lives | A Set panel docked to the right of the library in Prepare, not its own mode | The DJ's loop is dig, place, check, plan. A mode switch breaks it. |
-| Space key | Space plays deck A in every mode. Shortlist is **B** | Muscle memory and safety on a live system: a key never changes meaning between modes. |
+| Space key | Space plays or pauses the deck the room can hear (channel fader and crossfader both above 20%); of two, the tempo master, else the louder; deck A when neither. Shift+Space is always deck B. Shortlist is **B** | The key follows the mix, the same in every mode, and acts on one deck only, so a single press can never stop a whole mix. |
 | Audition | **P** plays a track from its mix-in cue, **S** plays 20 seconds of a seam, both on the headphone bus only | Never surprise the room. The seam audition waits for the engine's headphone cue. |
 | Vocals | Tagged by hand in the first version (vocals in and out per track) | Automatic detection needs stem separation, minutes per track. The clash warning reads the tags. |
 | Undo | Every edit saves at once; undo in memory for the session; snapshots on lock and every 5 minutes | Undo across restarts adds complexity for little gain. |

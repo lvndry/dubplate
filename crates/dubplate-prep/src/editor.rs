@@ -7,9 +7,11 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use dubplate_rekordbox::TrackCues;
+
 use crate::{
-    BEATS_PER_BAR, CueSource, EqIntent, Seam, SeamStatus, Set, SetEntry, SetId, SetList, SetStore,
-    StoreError,
+    CueSource, EqIntent, GridEdit, Play, PlayId, RecordedPlay, Seam, SeamStatus, Set, SetEntry,
+    SetId, SetList, SetStore, StoreError, TrackGrid, TrackIdentity,
 };
 
 /// The name of the set made on first launch.
@@ -199,29 +201,32 @@ impl SetEditor {
         })
     }
 
-    /// Marks the grid of the track at `position` as checked by ear, or no longer.
-    pub fn toggle_grid_confirmed(&mut self, position: usize) -> Result<(), StoreError> {
+    /// Makes `edit` to the grid of the track at `position`. A moved grid needs confirming
+    /// again.
+    pub fn edit_grid(&mut self, position: usize, edit: GridEdit) -> Result<(), StoreError> {
         self.update(position, |entry| {
-            entry.grid_confirmed = !entry.grid_confirmed
+            TrackGrid::of(entry).edited(edit).write_to(entry)
         })
     }
 
-    /// Moves the grid of the track at `position` by `milliseconds`, later when positive. A
-    /// moved grid needs confirming again.
-    pub fn nudge_grid(&mut self, position: usize, milliseconds: i32) -> Result<(), StoreError> {
-        self.update(position, |entry| {
-            entry.grid_offset_ms = entry.grid_offset_ms.saturating_add(milliseconds);
-            entry.grid_confirmed = false;
-        })
+    /// Every track's grid fix, by its file, whether or not the track is in this set.
+    pub fn track_grids(&self) -> Result<HashMap<PathBuf, TrackGrid>, StoreError> {
+        self.store.track_grids()
     }
 
-    /// Moves the bars of the track at `position` by `beats`, so the downbeat lands where the
-    /// music's bar starts. A moved grid needs confirming again.
-    pub fn shift_downbeat(&mut self, position: usize, beats: i32) -> Result<(), StoreError> {
-        self.update(position, |entry| {
-            entry.downbeat_shift = (entry.downbeat_shift + beats).rem_euclid(BEATS_PER_BAR);
-            entry.grid_confirmed = false;
-        })
+    /// Keeps `grid` as the grid of the track whose file is `path`, as a deck's grid edit does.
+    /// A deck's edit is no set edit to undo, so the sets kept for undo carry it too: undoing a
+    /// set edit never takes a track's grid back.
+    pub fn set_track_grid(&mut self, path: &Path, grid: TrackGrid) -> Result<(), StoreError> {
+        self.store.set_track_grid(path, grid)?;
+        for kept in std::iter::once(&mut self.set).chain(&mut self.undo) {
+            for entry in &mut kept.entries {
+                if entry.track_path == path {
+                    grid.write_to(entry);
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Changes the track at `position` with `change`, saving only when something changed.
@@ -246,11 +251,12 @@ impl SetEditor {
         self.follow_files(&HashMap::from([(from.to_path_buf(), to.to_path_buf())]))
     }
 
-    /// Points the set's entries and seams at the new places of files that moved, each keyed by
-    /// its old place. Where a file lives is not an edit to undo, so this is no step of its own,
+    /// Points the set's entries and seams, and the cues kept for each file, at the new places of
+    /// files that moved, each keyed by its old place. Where a file lives is not an edit to undo, so this is no step of its own,
     /// and the sets kept for undo follow the files too: undoing an edit never sends a track
     /// back to a place its file left.
     pub fn follow_files(&mut self, moves: &HashMap<PathBuf, PathBuf>) -> Result<(), StoreError> {
+        self.store.follow_cue_files(moves)?;
         let moved = |path: &PathBuf| moves.get(path).cloned();
         let mut followed = self.set.clone();
         for entry in &mut followed.entries {
@@ -276,6 +282,22 @@ impl SetEditor {
             }
         }
         Ok(())
+    }
+
+    /// The cues the DJ made in Dubplate, by track.
+    pub fn track_cues(&self) -> Result<HashMap<TrackIdentity, TrackCues>, StoreError> {
+        self.store.track_cues()
+    }
+
+    /// Keeps `cues` as the whole list of the track `identity`, whose file is at `track_path`.
+    /// Cues are no edit of the set, so this is no step to undo.
+    pub fn save_track_cues(
+        &mut self,
+        identity: &TrackIdentity,
+        track_path: Option<&Path>,
+        cues: &TrackCues,
+    ) -> Result<(), StoreError> {
+        self.store.save_track_cues(identity, track_path, cues)
     }
 
     /// Keeps a track as a backup, or stops keeping it.
@@ -305,6 +327,22 @@ impl SetEditor {
         self.set = self.store.replace_set(previous)?;
         self.undo.pop();
         Ok(true)
+    }
+
+    /// Records a play in the history kept beside the set. Plays are not set edits: undo
+    /// never takes one back.
+    pub fn record_play(&mut self, play: &Play) -> Result<PlayId, StoreError> {
+        self.store.record_play(play)
+    }
+
+    /// Sets how long a recorded play has played in all.
+    pub fn set_play_length(&mut self, id: PlayId, played: Duration) -> Result<(), StoreError> {
+        self.store.set_play_length(id, played)
+    }
+
+    /// Every recorded play, newest first.
+    pub fn play_history(&self) -> Result<Vec<RecordedPlay>, StoreError> {
+        self.store.play_history()
     }
 
     /// Carries out one change on the store, then reads the set back, keeping what it was for
@@ -531,15 +569,33 @@ mod tests {
     }
 
     #[test]
+    fn a_decks_grid_edit_survives_undoing_a_set_edit() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut editor = editor(&directory);
+        editor.add(track("a")).unwrap();
+        let path = PathBuf::from("/Music/a.mp3");
+        let deck_grid = TrackGrid::default().nudged(15);
+        editor.set_track_grid(&path, deck_grid).unwrap();
+        assert_eq!(TrackGrid::of(editor.tracks()[0]), deck_grid);
+        editor.add(track("b")).unwrap();
+        editor.undo().unwrap();
+        editor.undo().unwrap();
+        assert!(editor.tracks().is_empty());
+        editor.add(track("a")).unwrap();
+        assert_eq!(TrackGrid::of(editor.tracks()[0]), deck_grid);
+        assert_eq!(editor.track_grids().unwrap()[&path], deck_grid);
+    }
+
+    #[test]
     fn grid_fixes_and_hand_set_cues_are_kept_and_a_moved_grid_needs_confirming() {
         let directory = tempfile::tempdir().unwrap();
         let mut editor = editor(&directory);
         editor.add(track("a")).unwrap();
-        editor.toggle_grid_confirmed(0).unwrap();
+        editor.edit_grid(0, GridEdit::ToggleConfirmed).unwrap();
         assert!(editor.tracks()[0].grid_confirmed);
-        editor.nudge_grid(0, -5).unwrap();
-        editor.nudge_grid(0, -5).unwrap();
-        editor.shift_downbeat(0, -1).unwrap();
+        editor.edit_grid(0, GridEdit::Nudge(-5)).unwrap();
+        editor.edit_grid(0, GridEdit::Nudge(-5)).unwrap();
+        editor.edit_grid(0, GridEdit::ShiftDownbeat(-1)).unwrap();
         editor.set_mix_in(0, 16_000).unwrap();
         editor.set_mix_out(0, 330_000).unwrap();
         let entry = editor.tracks()[0].clone();

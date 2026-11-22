@@ -8,7 +8,8 @@ use common::{
 };
 use dubplate_engine::{
     BeatGrid, BeatLength, Controller, DeckId, EFFECT_UNIT_COUNT, EffectKind, EffectTarget,
-    EffectUnitId, EngineError, MasterTempo, Renderer, Track, offline_engine,
+    EffectUnitId, EngineError, MasterTempo, ParameterValue, ReleaseFx, Renderer, Track,
+    offline_engine,
 };
 
 const BLOCK: usize = 480;
@@ -84,6 +85,47 @@ fn an_effect_on_deck_a_changes_only_deck_a_and_only_while_on() {
 }
 
 #[test]
+fn an_effect_on_both_decks_changes_each_deck() {
+    let (_reference_controller, mut reference) = two_decks_on_their_own_sides().unwrap();
+    let (mut controller, mut renderer) = two_decks_on_their_own_sides().unwrap();
+    controller
+        .set_effect_kind(FIRST_UNIT, EffectKind::Crusher)
+        .unwrap();
+    controller
+        .set_effect_target(FIRST_UNIT, EffectTarget::BothDecks)
+        .unwrap();
+    controller.set_effect_depth(FIRST_UNIT, 1.0).unwrap();
+    controller.set_effect_enabled(FIRST_UNIT, true).unwrap();
+    let expected = render_frames(&mut reference, BLOCK * 20, BLOCK);
+    let during = render_frames(&mut renderer, BLOCK * 20, BLOCK);
+    let sides = [
+        ("deck A", left_channel(&during), left_channel(&expected)),
+        ("deck B", right_channel(&during), right_channel(&expected)),
+    ];
+    for (name, actual, dry) in sides {
+        let changed = actual
+            .iter()
+            .zip(dry)
+            .filter(|(actual, dry)| (*actual - dry).abs() > 1e-3)
+            .count();
+        assert!(changed > BLOCK * 10, "the crusher barely changed {name}");
+    }
+
+    controller
+        .set_effect_target(FIRST_UNIT, EffectTarget::Deck(DeckId::B))
+        .unwrap();
+    render_frames(&mut reference, BLOCK * 10, BLOCK);
+    render_frames(&mut renderer, BLOCK * 10, BLOCK);
+    let expected = render_frames(&mut reference, BLOCK * 10, BLOCK);
+    let after = render_frames(&mut renderer, BLOCK * 10, BLOCK);
+    assert_eq!(
+        left_channel(&after),
+        left_channel(&expected),
+        "deck A kept the effect after the unit moved to deck B"
+    );
+}
+
+#[test]
 fn an_off_filter_unit_leaves_the_audio_bit_identical() {
     let (_reference_controller, mut reference) = two_decks_on_their_own_sides().unwrap();
     let (mut controller, mut renderer) = two_decks_on_their_own_sides().unwrap();
@@ -116,6 +158,7 @@ fn an_off_filter_unit_leaves_the_audio_bit_identical() {
 
 #[test]
 fn an_off_echo_still_rings_out_its_trail() {
+    let (_reference_controller, mut reference) = two_decks_on_their_own_sides().unwrap();
     let (mut controller, mut renderer) = two_decks_on_their_own_sides().unwrap();
     controller
         .set_effect_kind(FIRST_UNIT, EffectKind::Echo)
@@ -125,32 +168,37 @@ fn an_off_echo_still_rings_out_its_trail() {
         .unwrap();
     controller.set_effect_depth(FIRST_UNIT, 1.0).unwrap();
     controller.set_effect_enabled(FIRST_UNIT, true).unwrap();
-    render_frames(&mut renderer, BLOCK * 20, BLOCK);
+    render_frames(&mut reference, BLOCK * 200, BLOCK);
+    render_frames(&mut renderer, BLOCK * 200, BLOCK);
     controller.set_effect_enabled(FIRST_UNIT, false).unwrap();
 
-    // The trail is still alive just after the switch-off, and rings down from there.
-    let first_peak = left_channel(&render_frames(&mut renderer, BLOCK * 2, BLOCK))
-        .iter()
-        .fold(0.0f32, |peak, sample| peak.max(sample.abs()));
+    // What the echo adds to deck A, against the same decks without it: still alive just after
+    // the switch-off, and ringing down from there.
+    let mut trail_peak = |frames: usize| {
+        let dry = left_channel(&render_frames(&mut reference, frames, BLOCK));
+        let wet = left_channel(&render_frames(&mut renderer, frames, BLOCK));
+        wet.iter()
+            .zip(&dry)
+            .fold(0.0f32, |peak, (wet, dry)| peak.max((wet - dry).abs()))
+    };
+    trail_peak(BLOCK * 4);
+    let first_peak = trail_peak(BLOCK * 8);
     assert!(
-        first_peak > 0.0,
+        first_peak > 0.01,
         "the echo stopped ringing the moment it was switched off"
     );
     let mut previous_peak = first_peak;
     for _ in 0..8 {
-        let frames = render_frames(&mut renderer, BLOCK * 8, BLOCK);
-        let peak = left_channel(&frames)
-            .iter()
-            .chain(right_channel(&frames).iter())
-            .fold(0.0f32, |peak, sample| peak.max(sample.abs()));
+        let peak = trail_peak(BLOCK * 24);
         assert!(
-            peak <= previous_peak + 1e-6,
+            peak <= previous_peak + 1e-3,
             "the echo trail is growing: {previous_peak} -> {peak}"
         );
         previous_peak = peak;
     }
-    assert!(previous_peak > 0.0);
+    assert!(previous_peak < first_peak, "the echo trail never rang down");
 }
+
 #[test]
 fn moving_a_unit_or_changing_its_effect_never_clicks() {
     let amplitude = 0.5;
@@ -182,7 +230,7 @@ fn moving_a_unit_or_changing_its_effect_never_clicks() {
     let changes: [Step; 6] = [
         |controller| controller.set_effect_kind(FIRST_UNIT, EffectKind::HighPass),
         |controller| controller.set_effect_target(FIRST_UNIT, EffectTarget::Master),
-        |controller| controller.set_effect_kind(FIRST_UNIT, EffectKind::SweepFilter),
+        |controller| controller.set_effect_kind(FIRST_UNIT, EffectKind::Filter),
         |controller| controller.set_effect_target(FIRST_UNIT, EffectTarget::Deck(DeckId::A)),
         |controller| controller.set_effect_kind(FIRST_UNIT, EffectKind::Echo),
         |controller| controller.set_effect_target(FIRST_UNIT, EffectTarget::Deck(DeckId::B)),
@@ -221,7 +269,7 @@ fn first_echo_delay(
 ) -> Result<f64, EngineError> {
     controller.set_effect_kind(FIRST_UNIT, EffectKind::Echo)?;
     controller.set_effect_target(FIRST_UNIT, target)?;
-    controller.set_effect_beat(FIRST_UNIT, BeatLength::HALF)?;
+    controller.set_effect_parameter(FIRST_UNIT, ParameterValue::Beats(BeatLength::HALF))?;
     controller.set_effect_depth(FIRST_UNIT, 1.0)?;
     controller.set_effect_enabled(FIRST_UNIT, true)?;
     for deck in DeckId::ALL {
@@ -313,20 +361,27 @@ fn the_controller_reports_unit_settings_and_rejects_bad_values() {
     assert!(BeatGrid::new(5.0, 0.0).is_err());
 
     let unit = EffectUnitId::ALL[1];
-    controller.set_effect_kind(unit, EffectKind::Gate).unwrap();
+    controller.set_effect_kind(unit, EffectKind::Trans).unwrap();
     controller
         .set_effect_target(unit, EffectTarget::Deck(DeckId::B))
         .unwrap();
     controller
-        .set_effect_beat(unit, BeatLength::QUARTER)
+        .set_effect_parameter(unit, ParameterValue::Beats(BeatLength::QUARTER))
+        .unwrap();
+    controller
+        .set_effect_parameter(unit, ParameterValue::Percent(40))
         .unwrap();
     controller.set_effect_depth(unit, 0.75).unwrap();
     controller.toggle_effect(unit).unwrap();
     render_frames(&mut renderer, BLOCK, BLOCK);
     let state = controller.effect_unit(unit);
-    assert_eq!(state.kind, EffectKind::Gate);
+    assert_eq!(state.kind, EffectKind::Trans);
     assert_eq!(state.target, EffectTarget::Deck(DeckId::B));
-    assert_eq!(state.beat, BeatLength::QUARTER);
+    assert_eq!(
+        state.parameter,
+        Some(ParameterValue::Beats(BeatLength::QUARTER)),
+        "a gate keeps its beat and ignores a percentage"
+    );
     assert_eq!(state.depth, 0.75);
     assert!(state.enabled);
     assert!(state.sounding);
@@ -346,4 +401,63 @@ fn loading_a_track_clears_the_deck_beat_grid() {
         .load_track(DeckId::A, constant_track(0.1, 0.1, 1.0, SAMPLE_RATE))
         .unwrap();
     assert_eq!(controller.beat_grid(DeckId::A), None);
+}
+
+#[test]
+fn a_held_release_fx_cuts_the_beat_effect_and_the_music_and_letting_go_brings_the_music_back() {
+    for release in ReleaseFx::ALL {
+        let (mut controller, mut renderer) = two_decks_on_their_own_sides().unwrap();
+        controller
+            .set_effect_target(FIRST_UNIT, EffectTarget::Deck(DeckId::A))
+            .unwrap();
+        controller.set_effect_enabled(FIRST_UNIT, true).unwrap();
+        controller.set_release_fx(FIRST_UNIT, release).unwrap();
+        render_frames(&mut renderer, BLOCK * 100, BLOCK);
+        let playing = rms(&left_channel(&render_frames(
+            &mut renderer,
+            BLOCK * 20,
+            BLOCK,
+        )));
+
+        controller.hold_release_fx(FIRST_UNIT, true).unwrap();
+        let state = controller.effect_unit(FIRST_UNIT);
+        assert!(!state.enabled && state.releasing, "{release}: {state:?}");
+        render_frames(&mut renderer, seconds_to_frames(2.5), BLOCK);
+        let held = rms(&left_channel(&render_frames(
+            &mut renderer,
+            BLOCK * 20,
+            BLOCK,
+        )));
+        assert!(
+            held < playing * 0.3,
+            "{release} left deck A at {held} against {playing}"
+        );
+        let right = rms(&right_channel(&render_frames(
+            &mut renderer,
+            BLOCK * 20,
+            BLOCK,
+        )));
+        assert!(right > 0.2, "{release} cut deck B too");
+
+        controller.hold_release_fx(FIRST_UNIT, false).unwrap();
+        render_frames(&mut renderer, seconds_to_frames(3.0), BLOCK);
+        let back = rms(&left_channel(&render_frames(
+            &mut renderer,
+            BLOCK * 20,
+            BLOCK,
+        )));
+        assert!(
+            (back - playing).abs() < playing * 0.2,
+            "{release}: deck A came back at {back} against {playing}"
+        );
+        assert!(!controller.effect_unit(FIRST_UNIT).enabled);
+    }
+}
+
+fn rms(samples: &[f32]) -> f32 {
+    let energy: f64 = samples
+        .iter()
+        .map(|sample| f64::from(*sample).powi(2))
+        .sum();
+    (energy / samples.len().max(1) as f64).sqrt() as f32
 }

@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use dubplate_midi::{
     ControlEvent, ControllerInput, ControllerOutput, Feedback, InputEvents, Mapping, MidiError,
-    input_ports,
+    STARTUP_DELAY, input_ports,
 };
 
 use super::lights::{LightCache, Lights};
@@ -21,6 +21,9 @@ const POLL_INTERVAL: Duration = Duration::from_millis(1);
 const IDLE_INTERVAL: Duration = Duration::from_millis(25);
 /// How often the list of MIDI ports is read, to notice controllers plugged in or out.
 const SCAN_INTERVAL: Duration = Duration::from_millis(1000);
+/// How long a controller that was asked for its positions has to answer before Dubplate notes it
+/// stayed silent.
+const REPORT_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// What the controller thread tells the window.
 #[derive(Debug, Clone)]
@@ -117,10 +120,12 @@ struct Connection {
     output: Option<ControllerOutput>,
     lit: LightCache,
     reported_drops: u64,
+    report_due: Option<Instant>,
 }
 
 impl Connection {
     fn open(port: &str, mapping: Mapping) -> Result<(Self, Option<MidiError>), MidiError> {
+        let has_startup_request = !mapping.startup().is_empty();
         let mapping = Arc::new(mapping);
         let (input, events) =
             ControllerInput::open(port, Some(Arc::clone(&mapping)), QUEUE_CAPACITY)?;
@@ -136,6 +141,8 @@ impl Connection {
             output,
             lit: LightCache::default(),
             reported_drops: 0,
+            report_due: has_startup_request
+                .then(|| Instant::now() + STARTUP_DELAY + REPORT_TIMEOUT),
         };
         Ok((connection, output_problem))
     }
@@ -160,9 +167,9 @@ impl Connection {
         }
     }
 
-    fn keep_alive(&mut self, now: Instant) -> Result<(), MidiError> {
+    fn service(&mut self, now: Instant) -> Result<(), MidiError> {
         match self.output.as_mut() {
-            Some(output) => output.keep_alive(now),
+            Some(output) => output.service(now),
             None => Ok(()),
         }
     }
@@ -349,6 +356,7 @@ impl ControllerThread {
         let mut failures: Vec<(String, MidiError)> = Vec::new();
         for connection in &mut self.connections {
             while let Some(event) = connection.events.pop() {
+                connection.report_due = None;
                 if let Some(control) = event.control {
                     self.events
                         .try_send(LinkEvent::Control {
@@ -369,7 +377,14 @@ impl ControllerThread {
                     .ok();
                 connection.reported_drops = dropped;
             }
-            if let Err(error) = connection.keep_alive(now) {
+            if connection.report_due.is_some_and(|due| now >= due) {
+                connection.report_due = None;
+                eprintln!(
+                    "{} did not report its control positions when asked, so they are unknown until moved.",
+                    connection.mapping.name()
+                );
+            }
+            if let Err(error) = connection.service(now) {
                 failures.push((connection.port.clone(), error));
             }
         }

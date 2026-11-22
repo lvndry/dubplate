@@ -68,20 +68,20 @@ fn the_badge_counts_the_remaining_problems() {
     let cases = [
         (
             readiness(false, false, false, false, false),
-            "File missing +4",
+            "File missing, and 4 more",
         ),
         (readiness(true, false, true, true, true), "Grid unconfirmed"),
         (
             readiness(true, false, false, false, false),
-            "Grid unconfirmed +3",
+            "Grid unconfirmed, and 3 more",
         ),
         (
             readiness(true, false, false, true, true),
-            "Grid unconfirmed +1",
+            "Grid unconfirmed, and 1 more",
         ),
         (
             readiness(true, true, true, false, false),
-            "No mix-out cue +1",
+            "No mix-out cue, and 1 more",
         ),
     ];
 
@@ -89,6 +89,19 @@ fn the_badge_counts_the_remaining_problems() {
         let report = ready_report(&readiness_case);
         assert_eq!(report.badge(), expected_badge);
     }
+}
+
+#[test]
+fn the_details_list_every_problem_in_order() {
+    let report = ready_report(&readiness(false, false, false, true, true));
+    assert_eq!(
+        report.details(),
+        "File missing\nGrid unconfirmed\nNo mix-in cue"
+    );
+    assert_eq!(
+        ready_report(&readiness(true, true, true, true, true)).details(),
+        ""
+    );
 }
 
 #[test]

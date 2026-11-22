@@ -24,7 +24,7 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
         .flex()
         .items_center()
         .justify_center()
-        .bg(theme::SCRIM)
+        .bg(theme::active().scrim)
         .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
             this.perform(Command::ToggleHelp, window, cx);
         }))
@@ -47,8 +47,8 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
                 .p(px(24.0))
                 .rounded(px(10.0))
                 .border_1()
-                .border_color(theme::LINE)
-                .bg(theme::PANEL)
+                .border_color(theme::active().line)
+                .bg(theme::active().panel)
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_click(|_, _, cx| cx.stop_propagation())
                 .child(
@@ -66,7 +66,7 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
                         .child(
                             div()
                                 .text_size(theme::SMALL_TEXT_SIZE)
-                                .text_color(theme::MUTED)
+                                .text_color(theme::active().muted)
                                 .child("Shift plays the same key on deck B \u{b7} Esc closes"),
                         )
                         .child(button("close-help", "Close", Emphasis::Secondary).on_click(
@@ -114,7 +114,7 @@ fn section(section: HelpSection) -> impl IntoElement {
                 .pb(px(6.0))
                 .text_size(theme::TINY_TEXT_SIZE)
                 .font_weight(FontWeight::MEDIUM)
-                .text_color(theme::MUTED)
+                .text_color(theme::active().muted)
                 .child(section.title),
         )
         .children(section.lines.into_iter().map(line))
@@ -133,7 +133,7 @@ fn line(line: HelpLine) -> impl IntoElement {
             keys = keys.child(
                 div()
                     .text_size(theme::TINY_TEXT_SIZE)
-                    .text_color(theme::MUTED)
+                    .text_color(theme::active().muted)
                     .child("/"),
             );
         }
@@ -148,14 +148,14 @@ fn line(line: HelpLine) -> impl IntoElement {
         .gap(px(12.0))
         .py(px(5.0))
         .border_t_1()
-        .border_color(theme::ROW_LINE)
+        .border_color(theme::active().row_line)
         .child(keys)
         .child(
             div()
                 .flex_1()
                 .min_w_0()
                 .text_size(theme::SMALL_TEXT_SIZE)
-                .text_color(theme::MUTED)
+                .text_color(theme::active().muted)
                 .child(line.description),
         )
 }
@@ -168,8 +168,8 @@ fn keycap(keystroke: String) -> impl IntoElement {
         .px(px(6.0))
         .rounded(px(4.0))
         .border_1()
-        .border_color(theme::LINE)
-        .bg(theme::RAISED)
+        .border_color(theme::active().line)
+        .bg(theme::active().raised)
         .font_family(MONO_FAMILY)
         .text_size(theme::TINY_TEXT_SIZE)
         .whitespace_nowrap()

@@ -1,15 +1,15 @@
 //! The library as the browser and the decks use it: every track from the DJ's music folders and,
 //! when they chose to import it, the rekordbox collection, with the text the table shows, its
-//! hot cues from `master.db`, and the crates.
+//! cues from `master.db`, and the crates.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use dubplate_library::{FolderScan, LibraryTrack};
-use dubplate_prep::{RekordboxCollection, file_track, folder_track};
+use dubplate_prep::{RekordboxCollection, TrackIdentity, file_track, folder_track};
 use dubplate_rekordbox::{
-    Cue, DatabaseKey, HotCuePad, Library, Playlist, PlaylistKind, Track, default_master_db,
+    Cue, DatabaseKey, Library, Playlist, PlaylistKind, Track, TrackCues, default_master_db,
 };
 use gpui::SharedString;
 
@@ -33,15 +33,6 @@ impl CrateIndex {
     }
 }
 
-/// A hot cue as rekordbox saved it in `master.db`.
-#[derive(Debug, Clone, PartialEq)]
-pub struct HotCue {
-    /// Pad A to H.
-    pub pad: HotCuePad,
-    /// Where the cue is, in seconds from the start of the track.
-    pub seconds: f64,
-}
-
 /// A track of the collection with what the browser and the decks need of it.
 #[derive(Debug, Clone)]
 pub struct CollectionTrack {
@@ -51,8 +42,8 @@ pub struct CollectionTrack {
     pub origin: TrackOrigin,
     /// The text of its row in the browser.
     pub row: RowText,
-    /// Its hot cues, ordered by pad.
-    pub hot_cues: Vec<HotCue>,
+    /// Its hot cues, memory cues and saved loops as rekordbox keeps them.
+    pub cues: Arc<TrackCues>,
     /// Its title, artist, genre, folder and comment folded for search.
     pub search_text: SearchText,
 }
@@ -175,7 +166,7 @@ pub struct Collection {
     tracks: Vec<Arc<CollectionTrack>>,
     crates: Vec<Crate>,
     share_directory: Option<PathBuf>,
-    by_identity: HashMap<String, TrackIndex>,
+    by_identity: HashMap<TrackIdentity, TrackIndex>,
     by_path: HashMap<PathBuf, TrackIndex>,
 }
 
@@ -299,7 +290,7 @@ impl Collection {
 
     /// The track that is the file or rekordbox entry `identity` names, if the collection holds
     /// it.
-    pub fn find(&self, identity: &str) -> Option<TrackIndex> {
+    pub fn find(&self, identity: &TrackIdentity) -> Option<TrackIndex> {
         self.by_identity.get(identity).copied()
     }
 
@@ -372,18 +363,7 @@ impl CollectionTrack {
         source: &str,
         filing: Option<&str>,
     ) -> Self {
-        let mut hot_cues: Vec<HotCue> = cues
-            .iter()
-            .filter_map(|cue| {
-                let pad = cue.kind.pad()?;
-                Some(HotCue {
-                    pad,
-                    seconds: milliseconds_to_seconds(cue.start_ms),
-                })
-            })
-            .collect();
-        hot_cues.sort_by_key(|cue| cue.pad);
-        hot_cues.dedup_by_key(|cue| cue.pad);
+        let cues = Arc::new(TrackCues::from_rekordbox(cues.iter().copied()));
         let title = track.title.clone().unwrap_or_else(|| file_name(&track));
         let artist = track.artist.clone().unwrap_or_default();
         let genre_tag = track.genre.as_deref().map(str::trim).unwrap_or_default();
@@ -421,16 +401,18 @@ impl CollectionTrack {
             track,
             origin,
             row,
-            hot_cues,
+            cues,
             search_text,
         }
     }
 
     /// What tells this track apart from every other: its rekordbox id, or its file's path.
-    pub fn identity(&self) -> String {
+    pub fn identity(&self) -> TrackIdentity {
         match (self.origin, &self.track.file_path) {
-            (TrackOrigin::Folder | TrackOrigin::File, Some(path)) => path.display().to_string(),
-            _ => self.track.id.clone(),
+            (TrackOrigin::Folder | TrackOrigin::File, Some(path)) => {
+                TrackIdentity::File(path.clone())
+            }
+            _ => TrackIdentity::Rekordbox(self.track.id.clone()),
         }
     }
 }
@@ -526,10 +508,6 @@ fn file_name(track: &Track) -> String {
         .unwrap_or_default()
 }
 
-fn milliseconds_to_seconds(milliseconds: u32) -> f64 {
-    f64::from(milliseconds) / 1000.0
-}
-
 /// `seconds` as `m:ss`, rounded down to the second.
 pub fn clock(seconds: f64) -> String {
     let whole_seconds = seconds.max(0.0).floor() as u64;
@@ -538,7 +516,7 @@ pub fn clock(seconds: f64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use dubplate_rekordbox::CueKind;
+    use dubplate_rekordbox::{CueKind, HotCuePad};
 
     use super::*;
 
@@ -574,7 +552,8 @@ mod tests {
             },
             start_ms,
             loop_end_ms: None,
-            color: None,
+            hot_cue_color: None,
+            memory_color: None,
             comment: None,
         }
     }
@@ -607,14 +586,11 @@ mod tests {
         let entry = collection.track(TrackIndex(0));
         assert_eq!(entry.row.bpm.as_ref(), "124.00");
         assert_eq!(entry.row.time.as_ref(), "6:48");
-        let pads: Vec<char> = entry.hot_cues.iter().map(|cue| cue.pad.letter()).collect();
+        let pads: Vec<char> = entry.cues.hot_cues().map(|(pad, _)| pad.letter()).collect();
         assert_eq!(pads, ['A', 'B']);
-        let pad_b = entry
-            .hot_cues
-            .iter()
-            .find(|cue| cue.pad == HotCuePad::B)
-            .unwrap();
-        assert!((pad_b.seconds - 45.0).abs() < 1e-9);
+        let pad_b = entry.cues.hot_cue(HotCuePad::B).unwrap();
+        assert!((pad_b.start_seconds() - 45.0).abs() < 1e-9);
+        assert_eq!(entry.cues.memory_cues().len(), 1);
     }
 
     #[test]
@@ -653,7 +629,7 @@ mod tests {
         let entry = CollectionTrack::from_file(Path::new("/Music/Artist - Title.flac"));
         assert_eq!(entry.row.title.as_ref(), "Artist - Title");
         assert_eq!(entry.origin, TrackOrigin::File);
-        assert!(entry.hot_cues.is_empty());
+        assert!(entry.cues.is_empty());
         assert_eq!(entry.row.bpm.as_ref(), "");
     }
 

@@ -39,9 +39,26 @@ impl DubplateApp {
         );
     }
 
-    /// Asks for the analysis of every other track of the library not analysed yet.
+    /// Asks for the analysis of every other track of the library not analysed yet. rekordbox's
+    /// analysed tracks and missing files are asked for too, but the header's count of tracks to
+    /// analyse leaves them out: their analysis only fills in.
     pub(super) fn request_library_analysis(&mut self, cx: &mut Context<'_, Self>) {
         let catalogue = Arc::clone(&self.catalogue);
+        let rekordbox_analysed = catalogue
+            .tracks
+            .iter()
+            .filter(|track| track.rekordbox_id.is_some() && track.bpm.is_some())
+            .map(|track| track.track_path.clone());
+        let missing = self.collection().map(|collection| {
+            self.missing
+                .iter()
+                .filter_map(|missing| collection.track(missing.track).track.file_path.clone())
+                .collect::<Vec<_>>()
+        });
+        let filling_in = rekordbox_analysed
+            .chain(missing.into_iter().flatten())
+            .collect();
+        self.analyses.set_filling_in(filling_in);
         self.request_analysis(
             catalogue
                 .tracks
@@ -66,6 +83,7 @@ impl DubplateApp {
 
     /// Gives a freshly built catalogue the analyses already made, while a rescan confirms them.
     pub(super) fn restore_analyses(&mut self) {
+        self.rematch_library();
         let catalogue = Arc::make_mut(&mut self.catalogue);
         for (path, analysis) in self.analyses.found() {
             catalogue.set_analysis(path, analysis);
@@ -96,17 +114,20 @@ impl DubplateApp {
         else {
             return;
         };
-        let grid = DeckGrid::new(&grid, self.grid_correction(&track));
+        let fixed = DeckGrid::new(&grid, self.grid_correction(&track));
         let deck_state = &mut self.decks[deck.index()];
         let DeckContent::Loaded(visuals) = &mut deck_state.content else {
             return;
         };
-        visuals.beats = Arc::new(grid.beats);
+        visuals.beats = Arc::new(fixed.beats);
+        visuals.read_grid = Some(Arc::new(grid));
         if visuals.zoomed.is_none() {
             visuals.analysis_problem = Some(ANALYSED_GRID_NOTE.to_owned());
         }
         deck_state.grid_source = Some(GridSource::Analysis);
-        self.engine_command(cx, |controller| controller.set_beat_grid(deck, grid.engine));
+        self.engine_command(cx, |controller| {
+            controller.set_beat_grid(deck, fixed.engine)
+        });
     }
 
     fn collect_analyses_while_waiting(&mut self, cx: &mut Context<'_, Self>) {
@@ -136,6 +157,7 @@ impl DubplateApp {
         if answered.is_empty() {
             return;
         }
+        self.rematch_library();
         let catalogue = Arc::make_mut(&mut self.catalogue);
         for (path, analysis) in &answered {
             if let Ok(analysis) = analysis {
@@ -203,8 +225,8 @@ impl DubplateApp {
         self.ensure_track_detail(cx);
     }
 
-    /// How many tracks are waiting for their analysis, for the header.
-    pub(super) fn analysis_waiting(&self) -> usize {
-        self.analyses.waiting()
+    /// How many tracks have nothing to show until their analysis arrives, for the header.
+    pub(super) fn analysis_awaited(&self) -> usize {
+        self.analyses.awaited()
     }
 }
