@@ -18,6 +18,7 @@ mod library_panel;
 mod mixer;
 mod pad_grid;
 mod pads;
+mod pickup;
 mod prepare;
 mod recording;
 mod relink;
@@ -641,7 +642,7 @@ impl DubplateApp {
             Command::InstantDouble(deck) => self.instant_double(deck, cx),
             Command::NudgeTempo(deck, direction) => {
                 let slider = nudged_tempo_slider(
-                    self.mixer.tempo_sliders[deck.index()],
+                    self.control_fraction(Control::Tempo(deck)),
                     direction.sign(),
                     self.tempo_range(deck),
                 );
@@ -958,11 +959,6 @@ impl DubplateApp {
         .detach();
     }
 
-    /// Where a fader or knob is, from 0.0 to 1.0.
-    pub(super) fn control_fraction(&self, control: Control) -> f32 {
-        self.mixer.fraction(control)
-    }
-
     fn set_control(&mut self, control: Control, fraction: f32, cx: &mut Context<'_, Self>) {
         let fraction = fraction.clamp(0.0, 1.0);
         match control {
@@ -1052,7 +1048,7 @@ impl DubplateApp {
                 }
                 LinkEvent::Control { control, received } => {
                     let surface = Surface {
-                        positions: self.mixer,
+                        positions: self.shown_positions(),
                         playing: DeckId::ALL.map(|deck| self.deck_state(deck).playing),
                         focused_effect: Some(self.effect_focus),
                         effect_depth: self

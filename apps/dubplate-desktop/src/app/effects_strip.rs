@@ -222,6 +222,8 @@ fn targets(
         }))
 }
 
+/// The level bar, with an amber mark where the controller's LEVEL/DEPTH knob waits while it has
+/// not picked up this unit's level yet.
 fn level_bar(
     app: &DubplateApp,
     unit: EffectUnitId,
@@ -229,6 +231,7 @@ fn level_bar(
     cx: &mut Context<'_, DubplateApp>,
 ) -> impl IntoElement + use<> {
     let hit_areas: Rc<HitAreas> = Rc::clone(&app.hit_areas);
+    let waiting = app.depth_waiting(unit, depth);
     div()
         .id(("effect-level", unit.index()))
         .relative()
@@ -270,6 +273,17 @@ fn level_bar(
                         .bg(theme::TEXT),
                 ),
         )
+        .children(waiting.map(|knob| {
+            div()
+                .absolute()
+                .left(relative(knob.clamp(0.0, 1.0)))
+                .ml(px(-1.0))
+                .top(px(2.0))
+                .bottom(px(2.0))
+                .w(px(2.0))
+                .rounded(px(1.0))
+                .bg(theme::ATTENTION)
+        }))
 }
 
 fn on_button(

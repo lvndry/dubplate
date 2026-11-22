@@ -65,6 +65,7 @@ pub fn controller_deck(deck: DeckId) -> Deck {
 #[derive(Debug, Clone, Copy, Default)]
 struct Pickup {
     last_hardware: Option<f32>,
+    holding: bool,
 }
 
 impl Pickup {
@@ -78,7 +79,16 @@ impl Pickup {
         let was_holding =
             previous.is_some_and(|previous| (previous - shown).abs() <= PICKUP_DISTANCE);
         let crossed = previous.is_some_and(|previous| (previous < shown) != (hardware < shown));
-        free || close || was_holding || crossed
+        let takes_over = free || close || was_holding || crossed;
+        self.holding = !takes_over;
+        takes_over
+    }
+
+    /// Where the control sits while it holds back from the value on screen at `shown`, so the
+    /// screen can show both, as rekordbox does until the DJ moves it through.
+    fn waiting_at(&self, shown: f32) -> Option<f32> {
+        self.last_hardware
+            .filter(|hardware| self.holding && (hardware - shown).abs() > PICKUP_DISTANCE)
     }
 }
 
@@ -106,6 +116,20 @@ impl Default for Dispatcher {
 }
 
 impl Dispatcher {
+    /// Where a deck's TEMPO slider sits while it waits to reach the tempo on screen at
+    /// `shown`.
+    pub fn tempo_waiting(&self, deck: DeckId, shown: f32) -> Option<f32> {
+        self.tempo_pickups[deck.index()].waiting_at(shown)
+    }
+
+    /// Where the LEVEL/DEPTH knob sits while it waits to reach `unit`'s level on screen at
+    /// `shown`.
+    pub fn depth_waiting(&self, unit: EffectUnitId, shown: f32) -> Option<f32> {
+        self.depth_pickup
+            .waiting_at(shown)
+            .filter(|_| self.depth_unit == Some(unit))
+    }
+
     /// What `event`, which arrived at `now`, asks of the app, if anything.
     pub fn dispatch(
         &mut self,
@@ -564,6 +588,12 @@ mod tests {
             &[moved(tempo, 0.5), moved(tempo, 0.6), moved(tempo, 0.7)],
         );
         assert!(commands.is_empty(), "{commands:?}");
+        let waiting = dispatcher.tempo_waiting(DeckId::A, 0.75);
+        assert!(
+            waiting.is_some_and(|position| (position - 0.7).abs() < 1e-2),
+            "the screen can show where the slider waits: {waiting:?}"
+        );
+        assert_eq!(dispatcher.tempo_waiting(DeckId::B, 0.75), None);
         let commands = run(&mut dispatcher, &surface, &[moved(tempo, 0.8)]);
         assert!(
             matches!(
@@ -572,6 +602,7 @@ mod tests {
             ),
             "crossing the tempo on screen picks it up: {commands:?}"
         );
+        assert_eq!(dispatcher.tempo_waiting(DeckId::A, 0.8), None);
     }
 
     #[test]
@@ -715,6 +746,13 @@ mod tests {
         let surface = fx_surface();
         let level = |fraction| moved(Continuous::BeatFxLevelDepth, fraction);
         assert!(run(&mut dispatcher, &surface, &[level(0.9), level(0.8)]).is_empty());
+        let unit = EffectUnitId::ALL[1];
+        assert!(
+            dispatcher
+                .depth_waiting(unit, 0.5)
+                .is_some_and(|position| (position - 0.8).abs() < 1e-2)
+        );
+        assert_eq!(dispatcher.depth_waiting(EffectUnitId::ALL[0], 0.5), None);
         let commands = run(&mut dispatcher, &surface, &[level(0.4)]);
         assert!(
             matches!(

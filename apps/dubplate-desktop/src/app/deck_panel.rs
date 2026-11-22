@@ -367,12 +367,21 @@ fn transport(
                 .items_center()
                 .gap(px(10.0))
                 .ml(px(10.0))
-                .child(
+                .child({
+                    let waiting = app.tempo_slider_view(deck).waiting_fader.is_some();
                     div()
                         .text_size(theme::SMALL_TEXT_SIZE)
-                        .text_color(theme::MUTED)
-                        .child("Tempo"),
-                )
+                        .text_color(if waiting {
+                            theme::ATTENTION
+                        } else {
+                            theme::MUTED
+                        })
+                        .child(if waiting {
+                            "Move to take over"
+                        } else {
+                            "Tempo"
+                        })
+                })
                 .child(
                     slider::render(
                         app,
