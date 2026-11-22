@@ -1897,6 +1897,7 @@ dependencies = [
  "dubplate-prep",
  "dubplate-rekordbox",
  "dubplate-stems",
+ "dubplate-usb",
  "gpui-kit",
  "hound",
  "jiff",
