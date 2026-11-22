@@ -2,7 +2,7 @@
 //! each set track's file and analysis in the background, the Next suggestions, and loading the
 //! set onto the decks.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -50,6 +50,7 @@ impl PrepareFocus {
 }
 
 /// A set track as the panel shows it.
+#[derive(Clone)]
 pub(super) struct SetRow {
     /// Its place in the set, from 0.
     pub position: usize,
@@ -66,6 +67,7 @@ pub(super) struct SetRow {
 }
 
 /// A suggestion of the Next panel.
+#[derive(Clone)]
 pub(super) struct NextTrack {
     /// The track's audio file.
     pub path: PathBuf,
@@ -78,8 +80,10 @@ pub(super) struct NextTrack {
 }
 
 /// The Next panel's suggestions.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub(super) struct NextSuggestions {
+    /// Ranking is running for the current inputs.
+    pub pending: bool,
     /// The title of the track they follow, when there is one.
     pub after: Option<String>,
     /// Where they take the energy, once the track they follow is rated.
@@ -88,8 +92,128 @@ pub(super) struct NextSuggestions {
     pub tracks: Vec<NextTrack>,
 }
 
+impl NextSuggestions {
+    /// Pending results can retain old rows internally; none may be inserted until current.
+    fn suggestion(&self, rank: usize) -> Result<&NextTrack, &'static str> {
+        if self.pending {
+            return Err("Finding suggestions for this track. Try again in a moment.");
+        }
+        self.tracks.get(rank).ok_or(if self.after.is_none() {
+            "Select a set track first: the suggestions follow it."
+        } else {
+            "There is no such suggestion: nothing else in the library mixes well after it."
+        })
+    }
+}
+
+/// Derived preparation data, rebuilt on input changes rather than animation frames.
+#[derive(Default, Clone)]
+pub(super) struct PrepareViewModel {
+    pub rows: Vec<SetRow>,
+    pub seams: Vec<Option<SeamSummary>>,
+    pub warnings: Vec<SetWarning>,
+    pub next: NextSuggestions,
+    pub backups: Vec<String>,
+    pub energy_range: EnergyRange,
+}
+
 impl DubplateApp {
-    /// Carries out a change to the set.
+    /// Executes serialized storage work on the set worker and accepts only newer snapshots.
+    /// Failures are reported even when a newer completion has already updated the view.
+    pub(super) fn queue_set_edit<ResultValue: Send + 'static>(
+        &mut self,
+        edit: impl FnOnce(&mut SetEditor) -> Result<ResultValue, StoreError> + Send + 'static,
+        complete: impl FnOnce(&mut Self, ResultValue, &mut Context<'_, Self>) + 'static,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if self.quit_requested {
+            return;
+        }
+        let Some(session) = &self.set_editor else {
+            self.show_notice(
+                NoticePlace::Window,
+                "The set is still opening. Try again in a moment.",
+                cx,
+            );
+            return;
+        };
+        let job = match session.submit(edit) {
+            Ok(job) => job,
+            Err(error) => {
+                self.report_set_save_failure(error, cx);
+                return;
+            }
+        };
+        self.set_edits_pending += 1;
+        cx.spawn(async move |this, cx| {
+            let answer = cx
+                .background_executor()
+                .spawn(async move { job.wait() })
+                .await;
+            this.update(cx, |this, cx| {
+                this.set_edits_pending = this.set_edits_pending.saturating_sub(1);
+                let completion = match answer {
+                    Ok(completion) => completion,
+                    Err(error) => {
+                        this.report_set_save_failure(error, cx);
+                        this.finish_quit_if_saved(cx);
+                        return;
+                    }
+                };
+                let selected_path = this.selected_set_path();
+                let Some(session) = this.set_editor.as_mut() else {
+                    this.finish_quit_if_saved(cx);
+                    return;
+                };
+                let invalidated = invalidated_check_paths(session.set(), &completion.set);
+                let applied = session.apply(&completion);
+                if applied {
+                    this.set_selection = selected_path
+                        .as_deref()
+                        .and_then(|path| session.position(path))
+                        .or_else(|| {
+                            this.set_selection.and_then(|position| {
+                                let count = session.set().main_entries().count();
+                                (count > 0).then(|| position.min(count - 1))
+                            })
+                        });
+                    if invalidated
+                        .iter()
+                        .any(|path| this.checks_pending.contains(path))
+                    {
+                        // An older result for one of these files must not reinstall its old grid.
+                        this.forget_track_checks();
+                    } else {
+                        for path in &invalidated {
+                            this.track_checks.remove(path);
+                        }
+                    }
+                }
+                match completion.outcome {
+                    Ok(value) if applied => complete(this, value, cx),
+                    Ok(_) => {}
+                    Err(error) => this.report_set_save_failure(error, cx),
+                }
+                if applied {
+                    this.set_changed(cx);
+                }
+                this.finish_quit_if_saved(cx);
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn selected_set_path(&self) -> Option<PathBuf> {
+        self.set_editor
+            .as_ref()?
+            .set()
+            .main_entries()
+            .nth(self.set_selection?)
+            .map(|entry| entry.track_path.clone())
+    }
+
+    /// Carries out a change to the set without waiting for storage on the UI thread.
     pub(super) fn edit_set(&mut self, edit: SetEdit, cx: &mut Context<'_, Self>) {
         let edit = match edit {
             SetEdit::Add | SetEdit::InsertAfterSelection
@@ -103,49 +227,64 @@ impl DubplateApp {
             self.insert_suggestion_ranked(rank, cx);
             return;
         }
+        match edit {
+            SetEdit::AcceptProposedCues => {
+                self.accept_proposed_cues(cx);
+                return;
+            }
+            SetEdit::MixInAtPlayhead | SetEdit::MixOutAtPlayhead => {
+                self.set_cue_at_playhead(edit == SetEdit::MixInAtPlayhead, cx);
+                return;
+            }
+            _ => {}
+        }
         let selected = self.library_selection(cx);
-        let Some(editor) = self.set_editor.as_mut() else {
-            return;
-        };
-        let result = apply_edit(editor, edit, selected, &mut self.set_selection);
-        let result = match (edit, result) {
-            (SetEdit::AcceptProposedCues, Ok(())) => self.accept_proposed_cues(cx),
-            (SetEdit::MixInAtPlayhead | SetEdit::MixOutAtPlayhead, Ok(())) => {
-                self.set_cue_at_playhead(edit == SetEdit::MixInAtPlayhead, cx)
-            }
-            (SetEdit::NudgeGrid(_) | SetEdit::ShiftDownbeat(_), Ok(())) => {
-                self.forget_track_checks();
-                Ok(())
-            }
-            (_, result) => result,
-        };
-        if let Err(error) = result {
-            self.show_notice(
-                NoticePlace::Window,
-                format!("The set was not saved: {error}"),
-                cx,
-            );
-        }
-        self.set_changed(cx);
+        let selection = self.selected_set_path();
+        self.set_selection_generation += 1;
+        let generation = self.set_selection_generation;
+        self.queue_set_edit(
+            move |editor| apply_edit(editor, edit, selected, selection.as_deref()),
+            move |this, selection, _| {
+                if this.set_selection_generation == generation {
+                    this.set_selection = selection;
+                }
+            },
+            cx,
+        );
     }
 
-    /// Moves a set track by dragging it onto another row.
+    /// Moves the originally dragged track relative to the originally targeted track.
     pub(super) fn drop_set_track(&mut self, from: usize, to: usize, cx: &mut Context<'_, Self>) {
-        let Some(editor) = self.set_editor.as_mut() else {
+        let Some(session) = &self.set_editor else {
             return;
         };
-        match editor.move_track(from, to) {
-            Ok(position) => self.set_selection = Some(position),
-            Err(error) => self.show_notice(
-                NoticePlace::Window,
-                format!("The set was not saved: {error}"),
-                cx,
-            ),
-        }
-        self.set_changed(cx);
+        let tracks = session.tracks();
+        let (Some(from_path), Some(to_path)) = (tracks.get(from), tracks.get(to)) else {
+            return;
+        };
+        let from_path = from_path.track_path.clone();
+        let to_path = to_path.track_path.clone();
+        self.set_selection_generation += 1;
+        let generation = self.set_selection_generation;
+        self.queue_set_edit(
+            move |editor| {
+                let (Some(from), Some(to)) =
+                    (editor.position(&from_path), editor.position(&to_path))
+                else {
+                    return Ok(None);
+                };
+                editor.move_track(from, to).map(Some)
+            },
+            move |this, position, _| {
+                if this.set_selection_generation == generation {
+                    this.set_selection = position;
+                }
+            },
+            cx,
+        );
     }
 
-    /// Puts a library track right after the set track at `after`, or first.
+    /// Puts a library track after the original target, resolving its current place on the worker.
     pub(super) fn insert_into_set(
         &mut self,
         track: TrackIndex,
@@ -155,41 +294,62 @@ impl DubplateApp {
         let Some(reference) = self.track_ref(track) else {
             return;
         };
-        let Some(editor) = self.set_editor.as_mut() else {
+        let Some(session) = &self.set_editor else {
             return;
         };
-        match editor.insert_after(after, reference) {
-            Ok(position) => self.set_selection = Some(position),
-            Err(error) => self.show_notice(
-                NoticePlace::Window,
-                format!("The set was not saved: {error}"),
-                cx,
-            ),
-        }
-        self.set_changed(cx);
+        let after_path = after
+            .and_then(|position| session.set().main_entries().nth(position))
+            .map(|entry| entry.track_path.clone());
+        self.set_selection_generation += 1;
+        let generation = self.set_selection_generation;
+        self.queue_set_edit(
+            move |editor| {
+                let after_position = after_path.as_deref().and_then(|path| editor.position(path));
+                if after.is_some() && after_position.is_none() {
+                    return Err(StoreError::PositionNotFound(after.unwrap_or(0)));
+                }
+                editor.insert_after(after_position, reference)
+            },
+            move |this, position, _| {
+                if this.set_selection_generation == generation {
+                    this.set_selection = Some(position);
+                }
+            },
+            cx,
+        );
     }
 
-    /// Inserts the Next suggestion at `rank`, 0 for the first, as a click on it does. The
-    /// suggestions then follow the track just inserted, so pressing it again builds a run.
+    /// Inserts exactly the suggestion currently shown at this rank, without ranking again.
     fn insert_suggestion_ranked(&mut self, rank: usize, cx: &mut Context<'_, Self>) {
-        let rows = self.set_rows();
-        let next = self.next_tracks(&rows);
-        let Some(suggestion) = next.tracks.get(rank) else {
-            let message = if next.after.is_none() {
-                "Select a set track first: the suggestions follow it."
-            } else {
-                "There is no such suggestion: nothing else in the library mixes well after it."
-            };
-            self.show_notice(NoticePlace::Window, message, cx);
+        if self.set_edits_pending > 0 || self.prepare_view.next.pending {
+            self.show_notice(
+                NoticePlace::Window,
+                "Updating the set and its suggestions. Try again in a moment.",
+                cx,
+            );
             return;
+        }
+        let path = match self.prepare_view.next.suggestion(rank) {
+            Ok(suggestion) => suggestion.path.clone(),
+            Err(message) => {
+                self.show_notice(NoticePlace::Window, message, cx);
+                return;
+            }
         };
-        let path = suggestion.path.clone();
         self.insert_suggestion(&path, cx);
     }
 
-    /// Moves the highlight through the Next suggestions.
+    /// Moves through the cached suggestions. Pending rankings have no selectable rows.
     pub(super) fn move_next_cursor(&mut self, direction: Direction) {
-        let count = self.next_tracks(&self.set_rows()).tracks.len();
+        let count = if self.prepare_view.next.pending {
+            0
+        } else {
+            self.prepare_view.next.tracks.len()
+        };
+        if count == 0 {
+            self.next_cursor = 0;
+            return;
+        }
         self.next_cursor = match direction {
             Direction::Up => self.next_cursor.saturating_sub(1),
             Direction::Down => (self.next_cursor + 1).min(count.saturating_sub(1)),
@@ -198,6 +358,14 @@ impl DubplateApp {
 
     /// Inserts a suggestion right after the selected set track, or the last one.
     pub(super) fn insert_suggestion(&mut self, path: &Path, cx: &mut Context<'_, Self>) {
+        if self.prepare_view.next.pending || self.set_edits_pending > 0 {
+            self.show_notice(
+                NoticePlace::Window,
+                "Updating the set and its suggestions. Try again in a moment.",
+                cx,
+            );
+            return;
+        }
         let Some(track) = self
             .collection()
             .and_then(|collection| collection.find_path(path))
@@ -220,16 +388,18 @@ impl DubplateApp {
 
     /// Selects a set track and moves the keys to the set.
     pub(super) fn select_set_track(&mut self, position: usize, cx: &mut Context<'_, Self>) {
+        self.set_selection_generation += 1;
         self.set_selection = Some(position);
         self.prepare_focus = PrepareFocus::Set;
         self.next_cursor = 0;
+        self.refresh_prepare_view(cx);
         self.refresh_filter_reference(cx);
         self.ensure_track_detail(cx);
         cx.notify();
     }
 
     /// Moves the set selection one row up or down.
-    pub(super) fn move_set_selection(&mut self, direction: Direction) {
+    pub(super) fn move_set_selection(&mut self, direction: Direction, cx: &mut Context<'_, Self>) {
         let count = self.set_track_count();
         if count == 0 {
             return;
@@ -239,13 +409,15 @@ impl DubplateApp {
             (Some(position), Direction::Up) => position.saturating_sub(1),
             (Some(position), Direction::Down) => (position + 1).min(count - 1),
         };
+        self.set_selection_generation += 1;
         self.set_selection = Some(next);
         self.next_cursor = 0;
         self.reveal_set_selection();
+        self.refresh_prepare_view(cx);
+        self.refresh_filter_reference(cx);
     }
 
-    /// Scrolls the set list to the selected track, which a key or an insertion may have moved
-    /// out of sight. Each track row is followed by its seam row.
+    /// Each track row is followed by its seam; reveal keyboard and insertion selections.
     fn reveal_set_selection(&self) {
         if let Some(position) = self.set_selection {
             self.set_scroll.scroll_to_item(position * 2);
@@ -268,64 +440,66 @@ impl DubplateApp {
 
     /// Puts the selected set track's mix-in or mix-out on the bar nearest the track check's
     /// playhead, on the DJ's corrected grid.
-    fn set_cue_at_playhead(
-        &mut self,
-        mix_in: bool,
-        cx: &mut Context<'_, Self>,
-    ) -> Result<(), StoreError> {
-        let Some(position) = self.set_selection else {
-            return Ok(());
-        };
+    fn set_cue_at_playhead(&mut self, mix_in: bool, cx: &mut Context<'_, Self>) {
         let Some((entry, detail)) = self.selected_detail() else {
             self.show_notice(
                 NoticePlace::Window,
                 "The track check is still reading this track.",
                 cx,
             );
-            return Ok(());
+            return;
         };
         let seconds = self.check_playhead(&entry.track_path);
-        let bar = detail
-            .grid
-            .as_ref()
-            .map(|grid| GridCorrection::of(&entry).apply(grid))
-            .and_then(|grid| nearest_bar_ms(&grid, seconds));
-        let milliseconds = bar.unwrap_or_else(|| (seconds * 1000.0).round().max(0.0) as u32);
-        match self.set_editor.as_mut() {
-            Some(editor) if mix_in => editor.set_mix_in(position, milliseconds),
-            Some(editor) => editor.set_mix_out(position, milliseconds),
-            None => Ok(()),
-        }
+        self.set_selection_generation += 1;
+        self.queue_set_edit(
+            move |editor| {
+                let Some(position) = editor.position(&entry.track_path) else {
+                    return Ok(());
+                };
+                let current = editor.tracks()[position];
+                let milliseconds = detail
+                    .grid
+                    .as_ref()
+                    .map(|grid| GridCorrection::of(current).apply(grid))
+                    .and_then(|grid| nearest_bar_ms(&grid, seconds))
+                    .unwrap_or_else(|| (seconds * 1000.0).round().max(0.0) as u32);
+                if mix_in {
+                    editor.set_mix_in(position, milliseconds)
+                } else {
+                    editor.set_mix_out(position, milliseconds)
+                }
+            },
+            |_, (), _| {},
+            cx,
+        );
     }
 
-    fn accept_proposed_cues(&mut self, cx: &mut Context<'_, Self>) -> Result<(), StoreError> {
-        let Some(position) = self.set_selection else {
-            return Ok(());
+    fn accept_proposed_cues(&mut self, cx: &mut Context<'_, Self>) {
+        let Some(path) = self.selected_set_path() else {
+            return;
         };
-        let Some(entry) = self
-            .set_editor
-            .as_ref()
-            .and_then(|editor| editor.tracks().get(position).map(|entry| (*entry).clone()))
-        else {
-            return Ok(());
-        };
-        match self.track_checks.get(&entry.track_path).copied() {
+        match self.track_checks.get(&path).copied() {
             Some(check) if check.proposal.mix_in.is_some() || check.proposal.mix_out.is_some() => {
-                let (mix_in, mix_out) = accept_proposal(&entry, check.proposal);
-                match self.set_editor.as_mut() {
-                    Some(editor) => editor.set_proposed_cues(position, mix_in, mix_out),
-                    None => Ok(()),
-                }
-            }
-            Some(_) => {
-                self.show_notice(
-                    NoticePlace::Window,
-                    "No cues to propose: this track has no beat grid yet.",
+                self.set_selection_generation += 1;
+                self.queue_set_edit(
+                    move |editor| {
+                        let Some(position) = editor.position(&path) else {
+                            return Ok(());
+                        };
+                        let (mix_in, mix_out) =
+                            accept_proposal(editor.tracks()[position], check.proposal);
+                        editor.set_proposed_cues(position, mix_in, mix_out)
+                    },
+                    |_, (), _| {},
                     cx,
                 );
-                Ok(())
             }
-            None => Ok(()),
+            Some(_) => self.show_notice(
+                NoticePlace::Window,
+                "No cues to propose: this track has no beat grid yet.",
+                cx,
+            ),
+            None => {}
         }
     }
 
@@ -357,6 +531,7 @@ impl DubplateApp {
         self.refresh_filter_reference(cx);
         self.ensure_track_detail(cx);
         self.request_set_analysis(cx);
+        self.refresh_prepare_view(cx);
         cx.notify();
     }
 
@@ -418,6 +593,7 @@ impl DubplateApp {
                     this.checks_pending.remove(&path);
                     this.track_checks.insert(path, check);
                 }
+                this.refresh_prepare_view(cx);
                 cx.notify();
             })
             .ok();
@@ -521,51 +697,80 @@ impl DubplateApp {
             .collect()
     }
 
-    /// Five tracks from the library that would follow the selected set track, or the last one,
-    /// taking the energy toward the target.
-    pub(super) fn next_tracks(&self, rows: &[SetRow]) -> NextSuggestions {
-        let Some(editor) = &self.set_editor else {
-            return NextSuggestions::default();
+    /// Rebuilds set-sized data once; catalogue scans and ranking run on the executor. An
+    /// older calculation can never overwrite a newer selection, edit or analysis update.
+    pub(super) fn refresh_prepare_view(&mut self, cx: &mut Context<'_, Self>) {
+        self.prepare_generation += 1;
+        let generation = self.prepare_generation;
+        let rows = self.set_rows();
+        let mut view = PrepareViewModel {
+            seams: Self::seams(&rows),
+            warnings: Self::warnings(&rows),
+            backups: self.backup_titles(),
+            rows,
+            ..Default::default()
         };
-        let Some((position, reference)) = self
+        let reference = self
             .set_selection
-            .or_else(|| rows.len().checked_sub(1))
-            .and_then(|position| Some((position, rows.get(position)?.track.as_ref()?)))
-        else {
-            return NextSuggestions::default();
-        };
-        let lengths: Vec<(Option<Duration>, Option<f32>)> =
-            rows.iter().map(|row| (row.duration, None)).collect();
-        let reference_end = set_curve(&lengths, editor.target())
-            .get(position)
-            .map_or(1.0, |step| step.end);
-        let range = EnergyRange::of_library(
-            self.catalogue
-                .tracks
-                .iter()
-                .filter_map(|track| track.energy),
-        );
-        let direction = direction_toward_target(reference.energy, reference_end, range);
-        let tracks = suggest_next(
-            reference,
-            &self.catalogue.tracks,
-            direction,
-            |candidate| editor.position(&candidate.track_path).is_some(),
-            SUGGESTIONS,
-        )
-        .into_iter()
-        .map(|suggestion| NextTrack {
-            path: suggestion.track.track_path.clone(),
-            title: suggestion.track.title.clone(),
-            artist: suggestion.track.artist.clone(),
-            reason: suggestion.reason(),
-        })
-        .collect();
-        NextSuggestions {
-            after: Some(reference.title.clone()),
-            direction: reference.energy.map(|_| direction),
-            tracks,
+            .or_else(|| view.rows.len().checked_sub(1))
+            .and_then(|position| Some((position, view.rows.get(position)?.track.clone()?)));
+        if let Some((_, reference)) = &reference {
+            view.next.after = Some(reference.title.clone());
+            view.next.pending = true;
         }
+        let target = self
+            .set_editor
+            .as_ref()
+            .map(|editor| editor.target())
+            .unwrap_or_default();
+        let lengths: Vec<_> = view.rows.iter().map(|row| (row.duration, None)).collect();
+        let paths: HashSet<PathBuf> = self
+            .set_editor
+            .as_ref()
+            .map(|editor| {
+                editor
+                    .set()
+                    .main_entries()
+                    .map(|entry| entry.track_path.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let catalogue = Arc::clone(&self.catalogue);
+        self.prepare_view = Arc::new(view.clone());
+        cx.spawn(async move |this, cx| {
+            let view = cx
+                .background_executor()
+                .spawn(async move {
+                    view.energy_range = EnergyRange::of_library(
+                        catalogue.tracks.iter().filter_map(|track| track.energy),
+                    );
+                    if let Some((position, reference)) = reference {
+                        let end = set_curve(&lengths, target)
+                            .get(position)
+                            .map_or(1.0, |step| step.end);
+                        view.next = ranked_next(
+                            &reference,
+                            &catalogue.tracks,
+                            &paths,
+                            end,
+                            view.energy_range,
+                        );
+                    }
+                    Arc::new(view)
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                if this.prepare_generation == generation {
+                    this.next_cursor = this
+                        .next_cursor
+                        .min(view.next.tracks.len().saturating_sub(1));
+                    this.prepare_view = view;
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// Puts the set's first track on deck A and its second on deck B, each cued at its mix-in.
@@ -595,43 +800,104 @@ impl DubplateApp {
     }
 }
 
+/// A newly added file may still have cached checks from a previous entry; it needs a fresh
+/// check just as a changed correction does. Reordering alone leaves checks valid.
+fn invalidated_check_paths(
+    before: &dubplate_prep::Set,
+    after: &dubplate_prep::Set,
+) -> HashSet<PathBuf> {
+    let previous: HashMap<_, _> = before
+        .entries
+        .iter()
+        .map(|entry| {
+            (
+                (entry.track_path.as_path(), entry.is_backup),
+                GridCorrection::of(entry),
+            )
+        })
+        .collect();
+    after
+        .entries
+        .iter()
+        .filter(|entry| {
+            previous
+                .get(&(entry.track_path.as_path(), entry.is_backup))
+                .is_none_or(|correction| *correction != GridCorrection::of(entry))
+        })
+        .map(|entry| entry.track_path.clone())
+        .collect()
+}
+
+/// The ranking input is a snapshot, so it needs no UI or storage access.
+fn ranked_next(
+    reference: &PrepTrack,
+    catalogue: &[PrepTrack],
+    in_set: &HashSet<PathBuf>,
+    reference_end: f32,
+    range: EnergyRange,
+) -> NextSuggestions {
+    let direction = direction_toward_target(reference.energy, reference_end, range);
+    let tracks = suggest_next(
+        reference,
+        catalogue,
+        direction,
+        |candidate| in_set.contains(&candidate.track_path),
+        SUGGESTIONS,
+    )
+    .into_iter()
+    .map(|suggestion| NextTrack {
+        path: suggestion.track.track_path.clone(),
+        title: suggestion.track.title.clone(),
+        artist: suggestion.track.artist.clone(),
+        reason: suggestion.reason(),
+    })
+    .collect();
+    NextSuggestions {
+        pending: false,
+        after: Some(reference.title.clone()),
+        direction: reference.energy.map(|_| direction),
+        tracks,
+    }
+}
+
 /// Carries out an edit on the set, moving the selection with it. Accepting proposed cues needs
 /// the track checks and is finished by the caller.
 fn apply_edit(
     editor: &mut SetEditor,
     edit: SetEdit,
     selected: Option<SetTrackRef>,
-    selection: &mut Option<usize>,
-) -> Result<(), StoreError> {
+    selected_path: Option<&Path>,
+) -> Result<Option<usize>, StoreError> {
+    let mut selection = selected_path.and_then(|path| editor.position(path));
     match edit {
         SetEdit::Add => {
             if let Some(track) = selected {
-                *selection = Some(editor.add(track)?);
+                selection = Some(editor.add(track)?);
             }
         }
         SetEdit::InsertAfterSelection => {
             if let Some(track) = selected {
-                *selection = Some(editor.insert_after(*selection, track)?);
+                selection = Some(editor.insert_after(selection, track)?);
             }
         }
         SetEdit::Move(direction) => {
-            if let Some(position) = *selection {
+            if let Some(position) = selection {
                 let target = match direction {
                     Direction::Up => position.saturating_sub(1),
                     Direction::Down => position + 1,
                 };
-                *selection = Some(editor.move_track(position, target)?);
+                selection = Some(editor.move_track(position, target)?);
             }
         }
         SetEdit::Remove => {
-            if let Some(position) = *selection {
+            if let Some(position) = selection {
                 editor.remove(position)?;
                 let count = editor.tracks().len();
-                *selection = (count > 0).then(|| position.min(count - 1));
+                selection = (count > 0).then(|| position.min(count - 1));
             }
         }
         SetEdit::TogglePlanned => {
-            if let Some(position) = *selection {
+            if let Some(position) = selection {
                 editor.toggle_free(position)?;
             }
         }
@@ -643,23 +909,23 @@ fn apply_edit(
         SetEdit::Undo => {
             if editor.undo()? {
                 let count = editor.tracks().len();
-                *selection = selection
+                selection = selection
                     .filter(|_| count > 0)
                     .map(|position| position.min(count - 1));
             }
         }
         SetEdit::ConfirmGrid => {
-            if let Some(position) = *selection {
+            if let Some(position) = selection {
                 editor.toggle_grid_confirmed(position)?;
             }
         }
         SetEdit::NudgeGrid(milliseconds) => {
-            if let Some(position) = *selection {
+            if let Some(position) = selection {
                 editor.nudge_grid(position, milliseconds)?;
             }
         }
         SetEdit::ShiftDownbeat(beats) => {
-            if let Some(position) = *selection {
+            if let Some(position) = selection {
                 editor.shift_downbeat(position, beats)?;
             }
         }
@@ -668,7 +934,7 @@ fn apply_edit(
         | SetEdit::MixOutAtPlayhead
         | SetEdit::InsertSuggestion(_) => {}
     }
-    Ok(())
+    Ok(selection)
 }
 
 /// Whether the proposal could fill a cue the entry lacks.
@@ -682,4 +948,135 @@ fn file_title(path: &Path) -> String {
     path.file_stem()
         .map(|stem| stem.to_string_lossy().into_owned())
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::mpsc;
+
+    use dubplate_prep::SetSession;
+
+    use super::*;
+
+    fn track(name: &str) -> SetTrackRef {
+        SetTrackRef {
+            path: PathBuf::from(format!("/Music/{name}.mp3")),
+            rekordbox_id: None,
+        }
+    }
+
+    #[test]
+    fn queued_moves_resolve_the_selected_file_after_preceding_removals() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut editor = SetEditor::open(&directory.path().join("sets.sqlite")).unwrap();
+        for name in ["a", "b", "c"] {
+            editor.add(track(name)).unwrap();
+        }
+        let mut session = SetSession::new(editor).unwrap();
+        let (started, started_rx) = mpsc::channel();
+        let (release, release_rx) = mpsc::channel();
+        let removal = session
+            .submit(move |editor| {
+                started.send(()).unwrap();
+                release_rx.recv().unwrap();
+                apply_edit(editor, SetEdit::Remove, None, Some(&track("a").path))
+            })
+            .unwrap();
+        started_rx.recv().unwrap();
+        let movement = session
+            .submit(move |editor| {
+                apply_edit(
+                    editor,
+                    SetEdit::Move(Direction::Down),
+                    None,
+                    Some(&track("b").path),
+                )
+            })
+            .unwrap();
+        assert_eq!(
+            session.position(&track("b").path),
+            Some(1),
+            "the view is still the prior committed snapshot"
+        );
+        release.send(()).unwrap();
+        let moved = movement.wait().unwrap();
+        assert_eq!(moved.outcome.as_ref().unwrap(), &Some(1));
+        assert!(session.apply(&moved));
+        assert!(!session.apply(&removal.wait().unwrap()));
+        let paths: Vec<_> = session
+            .tracks()
+            .iter()
+            .map(|entry| entry.track_path.clone())
+            .collect();
+        assert_eq!(paths, [track("c").path, track("b").path]);
+    }
+
+    #[test]
+    fn a_queued_edit_never_targets_the_neighbor_of_a_removed_selection() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut editor = SetEditor::open(&directory.path().join("sets.sqlite")).unwrap();
+        editor.add(track("a")).unwrap();
+        editor.add(track("b")).unwrap();
+        apply_edit(&mut editor, SetEdit::Remove, None, Some(&track("a").path)).unwrap();
+        apply_edit(
+            &mut editor,
+            SetEdit::ConfirmGrid,
+            None,
+            Some(&track("a").path),
+        )
+        .unwrap();
+        assert!(!editor.tracks()[0].grid_confirmed);
+    }
+
+    #[test]
+    fn grid_check_invalidation_follows_identity_and_catches_undo() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut editor = SetEditor::open(&directory.path().join("sets.sqlite")).unwrap();
+        editor.add(track("a")).unwrap();
+        editor.add(track("b")).unwrap();
+        let before = editor.set().clone();
+        editor.move_track(0, 1).unwrap();
+        assert!(invalidated_check_paths(&before, editor.set()).is_empty());
+        editor.nudge_grid(0, 5).unwrap();
+        let nudged = editor.set().clone();
+        assert!(!invalidated_check_paths(&before, &nudged).is_empty());
+        editor.undo().unwrap();
+        assert!(!invalidated_check_paths(&nudged, editor.set()).is_empty());
+    }
+
+    #[test]
+    fn readding_a_file_invalidates_checks_from_its_previous_entry() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut editor = SetEditor::open(&directory.path().join("sets.sqlite")).unwrap();
+        editor.add(track("a")).unwrap();
+        editor.nudge_grid(0, 5).unwrap();
+        editor.remove(0).unwrap();
+        let without = editor.set().clone();
+        editor.add(track("a")).unwrap();
+        assert_eq!(editor.tracks()[0].grid_offset_ms, 0);
+        assert!(invalidated_check_paths(&without, editor.set()).contains(&track("a").path));
+    }
+
+    #[test]
+    fn a_pending_ranking_cannot_insert_an_old_cached_suggestion() {
+        let suggestion = NextTrack {
+            path: track("a").path,
+            title: "a".to_owned(),
+            artist: String::new(),
+            reason: String::new(),
+        };
+        let mut next = NextSuggestions {
+            pending: true,
+            after: Some("reference".to_owned()),
+            tracks: vec![suggestion],
+            ..Default::default()
+        };
+        assert!(
+            next.suggestion(0).is_err(),
+            "old rows are not current while ranking runs"
+        );
+        next.pending = false;
+        assert_eq!(next.suggestion(0).unwrap().path, track("a").path);
+        assert!(next.suggestion(1).is_err());
+    }
 }

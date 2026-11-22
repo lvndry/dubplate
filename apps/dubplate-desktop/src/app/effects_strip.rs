@@ -18,6 +18,7 @@ use crate::commands::{Command, Direction, EffectEdit};
 use crate::effects::{effect_label, search, target_letter};
 use crate::fonts::MONO_FAMILY;
 use crate::theme;
+use crate::widgets::{InteractiveControl, adjusted_value};
 
 const STRIP_HEIGHT: Pixels = px(46.0);
 const UNIT_HEIGHT: Pixels = px(32.0);
@@ -100,6 +101,12 @@ fn effect_button(
 ) -> impl IntoElement + use<> {
     div()
         .id(("effect-name", unit.index()))
+        .accessible_button(format!(
+            "Effect {}: {}",
+            unit.index() + 1,
+            effect_label(state.kind)
+        ))
+        .aria_expanded(menu_open)
         .flex()
         .items_center()
         .justify_between()
@@ -133,6 +140,7 @@ fn beat_stepper(
     let arrow = |id: &'static str, glyph: &'static str, direction: Direction| {
         div()
             .id((id, unit.index()))
+            .accessible_button(format!("Effect {} {id}", unit.index() + 1))
             .flex()
             .items_center()
             .justify_center()
@@ -188,6 +196,14 @@ fn targets(
                     "effect-target",
                     unit.index() * EffectTarget::ALL.len() + target.index(),
                 ))
+                .accessible_toggle(
+                    format!(
+                        "Effect {} target {}",
+                        unit.index() + 1,
+                        target_letter(target)
+                    ),
+                    checked,
+                )
                 .flex()
                 .items_center()
                 .justify_center()
@@ -231,6 +247,21 @@ fn level_bar(
     let hit_areas: Rc<HitAreas> = Rc::clone(&app.hit_areas);
     div()
         .id(("effect-level", unit.index()))
+        .accessible_slider(format!("Effect {} depth", unit.index() + 1), depth)
+        .aria_orientation(gpui::Orientation::Horizontal)
+        .map(|element| {
+            crate::widgets::numeric_actions(element, cx, move |this, change, cx| {
+                let current = this.effect_unit(unit).map_or(depth, |state| state.depth);
+                this.edit_effect(unit, EffectEdit::Depth(change.apply(current)), cx);
+            })
+        })
+        .on_key_down(cx.listener(move |this, event, _, cx| {
+            let current = this.effect_unit(unit).map_or(depth, |state| state.depth);
+            if let Some(value) = adjusted_value(event, current, 0.5) {
+                this.edit_effect(unit, EffectEdit::Depth(value), cx);
+                cx.stop_propagation();
+            }
+        }))
         .relative()
         .flex()
         .items_center()
@@ -280,6 +311,7 @@ fn on_button(
 ) -> impl IntoElement + use<> {
     div()
         .id(("effect-on", unit.index()))
+        .accessible_toggle(format!("Effect {} On", unit.index() + 1), enabled)
         .flex()
         .items_center()
         .h(px(24.0))
@@ -332,6 +364,7 @@ fn menu(
                         unit.index(),
                         kind.name()
                     )))
+                    .accessible_toggle(effect_label(kind), chosen)
                     .flex()
                     .items_center()
                     .w(px(92.0))
