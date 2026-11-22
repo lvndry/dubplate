@@ -160,7 +160,8 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
         };
         // The same height as the check itself, so the set list below never jumps while a
         // track is read.
-        let content_height = CONTROLS_HEIGHT + ROW_GAP * 2.0 + LANE_HEIGHT + OVERVIEW_HEIGHT;
+        let content_height =
+            CONTROLS_HEIGHT + ROW_GAP * 2.0 + LANE_HEIGHT + PHRASE_LANE_HEIGHT + OVERVIEW_HEIGHT;
         return strip.child(
             div()
                 .h(content_height)
