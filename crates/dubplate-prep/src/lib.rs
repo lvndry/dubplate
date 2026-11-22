@@ -4,11 +4,16 @@
 //! direction) so a DJ can pick and order the tracks of a set. Dubplate never builds a set on
 //! its own: it suggests and checks, the DJ decides. A prepared set goes to rekordbox as a
 //! rekordbox XML file, never by writing rekordbox's own files.
+//!
+//! Tracks rekordbox never analysed get Dubplate's own analysis, from Euphoria's detectors: a
+//! tempo, a beat grid with its downbeats, a key and an energy, from one decode, in the
+//! background and cached.
 
+mod analysis;
+mod analysis_cache;
+mod analysis_queue;
 mod cue_proposal;
 mod energy;
-mod energy_cache;
-mod energy_queue;
 mod export;
 mod grid;
 mod ready;
@@ -17,10 +22,13 @@ mod suggestion;
 mod track;
 mod warnings;
 
+pub use analysis::{
+    AnalysedGrid, AnalysisError, AudioAnalysis, analyse_audio, analyse_track, analysis_version,
+};
+pub use analysis_cache::{AnalysisCache, AnalysisCacheError};
+pub use analysis_queue::{AnalysisQueue, AnalysisResult, Priority};
 pub use cue_proposal::{ProposalSource, ProposedCue, ProposedCues, propose_mix_cues};
-pub use energy::{EnergyError, EnergyWindow, TrackEnergy, measure_track_energy};
-pub use energy_cache::{EnergyCache, EnergyCacheError};
-pub use energy_queue::{EnergyQueue, EnergyResult, Priority};
+pub use energy::{EnergyWindow, TrackEnergy};
 pub use euphoria_core::harmony::EnergyDirection;
 pub use euphoria_core::key::Key;
 pub use export::{

@@ -50,6 +50,13 @@ cargo run -p dubplate -- set list
 cargo run -p dubplate -- set export "Friday" --xml friday.xml
 ```
 
+Dubplate analyses the tracks rekordbox never did (tempo, beat grid with downbeats, key and energy, with Euphoria's detectors). The same analysis runs on audio files or whole folders from the command line, and can be compared with rekordbox's BPM, key and grid for the tracks rekordbox also holds. Audio files and rekordbox's files are only read:
+
+```
+cargo run --release -p dubplate -- analyse ~/Music/House
+cargo run --release -p dubplate -- analyse ~/Music/House --compare-rekordbox
+```
+
 ## Run the desktop app
 
 On first launch the desktop app asks for your music folders; importing the rekordbox collection is a separate choice. For the rekordbox collection it reads the same key as the command line tool (see "Try it" above) and a copy of rekordbox's `master.db`, so rekordbox can stay open.

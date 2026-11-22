@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 const SETTINGS_NAME: &str = "settings.toml";
 const LIBRARY_CACHE_NAME: &str = "library-cache.json";
 const SETS_NAME: &str = "sets.sqlite";
-const ENERGY_CACHE_NAME: &str = "energy.sqlite";
+const ANALYSIS_CACHE_NAME: &str = "analysis.sqlite";
 
 /// Dubplate's own folder in the user's configuration, never one of rekordbox's:
 /// `~/Library/Application Support/dubplate/` on macOS and `~/.config/dubplate/` on Linux.
@@ -46,9 +46,10 @@ impl DataFolder {
         self.root.join(SETS_NAME)
     }
 
-    /// The tracks' energy ratings, kept between launches.
-    pub fn energy_cache(&self) -> PathBuf {
-        self.root.join(ENERGY_CACHE_NAME)
+    /// What Dubplate's analysis found in each track (tempo, beat grid, key and energy), kept
+    /// between launches.
+    pub fn analysis_cache(&self) -> PathBuf {
+        self.root.join(ANALYSIS_CACHE_NAME)
     }
 }
 
@@ -172,7 +173,7 @@ mod tests {
             folder.settings(),
             folder.library_cache(),
             folder.sets(),
-            folder.energy_cache(),
+            folder.analysis_cache(),
         ] {
             assert_eq!(path.parent(), Some(Path::new("/Config/dubplate")));
         }
