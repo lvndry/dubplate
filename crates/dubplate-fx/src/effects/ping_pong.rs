@@ -21,16 +21,17 @@ const TRAIL_MARGIN_SECONDS: f32 = 0.05;
 /// one beat length later, and so on, each a little quieter. Like [`crate::Echo`], it follows
 /// the tempo live, ages its repeats like tape and rings out when switched off.
 ///
-/// The depth knob raises the echo from silence to its full level, which sits under the music,
-/// and the feedback from 0.35 to 0.85. Whatever the feedback, the trail sounds about as loud:
-/// more feedback makes it last longer, not louder. The repeats never build up past the music
-/// that feeds them and are held under the room the music leaves below full scale.
+/// The depth knob balances the music and the echo, as the LEVEL/DEPTH knob of a DJ mixer does:
+/// at a quarter the first repeat plays 12 dB under the music, in the middle both play at full
+/// level, and fully right only the echo plays. It also raises the feedback from 0.5 to 0.8, so
+/// the trail grows longer as the knob turns. The repeats never build up past the music that
+/// feeds them.
 pub struct PingPong {
     unit: Unit<PingPongKernel>,
 }
 
 impl PingPong {
-    /// Builds a ping-pong delay at 1/2 beat with the depth knob at 0.6 (feedback 0.65, mix 0.3),
+    /// Builds a ping-pong delay at 1/2 beat with the depth knob at 0.5 (feedback 0.65, mix 0.5),
     /// switched off. This allocates.
     pub fn new(config: &EffectConfig) -> Self {
         Self {
