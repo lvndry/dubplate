@@ -20,6 +20,9 @@ impl FourCc {
     pub(crate) const THREE_BAND_WAVEFORM_DETAIL: Self = Self(*b"PWV7");
     pub(crate) const SONG_STRUCTURE: Self = Self(*b"PSSI");
     pub(crate) const FILE_MAGIC: Self = Self(*b"PMAI");
+    pub(crate) const VBR_INDEX: Self = Self(*b"PVBR");
+    pub(crate) const EXTENDED_BEAT_GRID: Self = Self(*b"PQT2");
+    pub(crate) const WAVEFORM_COLOR_INFO: Self = Self(*b"PWVC");
 }
 
 impl fmt::Display for FourCc {

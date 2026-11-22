@@ -23,7 +23,7 @@ Statuses are as audited on 22 November 2026, on `main` with a second Dubplate ru
 
 ## At every window size
 
-**V1 Nothing breaks when the window is small.** Must: at the smallest window (1100 × 700) every control a DJ needs while playing stays visible and usable, and text shortens to words, not fragments. Status: **Gap.** At 1100 × 700 the header status shortens to "1078…", "Pi…", "Sil…"; the deck's tempo slider and range are pushed off the deck; deck B's artist wraps to two lines and pushes deck B's overview and buttons below deck A's; the third effect unit is cut off; and the library shows its column titles with no rows. Fix: a compact layout below about 1300 points (tempo on its own row, header status as icons with tooltips, effect units that shrink). **In progress** (#140): the tempo slider wraps under the buttons, titles end in "…", the header shows status dots with tooltips, and the lanes get lower in a short window; the effect strip still cuts its third unit.
+**V1 Nothing breaks when the window is small.** Must: at the smallest window (1100 × 700) every control a DJ needs while playing stays visible and usable, and text shortens to words, not fragments. Status: **Gap.** At 1100 × 700 the header status shortens to "1078…", "Pi…", "Sil…"; the deck's tempo slider and range are pushed off the deck; deck B's artist wraps to two lines and pushes deck B's overview and buttons below deck A's; the third effect unit is cut off; and the library shows its column titles with no rows. Fix: a compact layout below about 1300 points (tempo on its own row, header status as icons with tooltips, effect units that shrink). **Done**: the tempo slider wraps under the buttons, titles end in "…", the header shows status dots with tooltips, and the lanes get lower in a short window; the effect strip still cuts its third unit.
 
 **V2 Readouts never jitter.** Must: numbers use tabular figures and fixed widths so a changing value never moves its neighbours. Status: **Done** for the deck readouts and the browser, which use the monospaced face.
 
@@ -31,7 +31,7 @@ Statuses are as audited on 22 November 2026, on `main` with a second Dubplate ru
 
 **S1 First launch.** Must: open in under two seconds to a calm window that says what to do first. See: one call to action ("Select a track and press ⇧ ← to load it on deck A"), no error text, no empty grey boxes. Status: **Done**, except the empty overview, a blank grey box until a track loads (**Gap**: give it the same hint as the lane, or draw nothing).
 
-**S2 Sound card.** Must: play on the controller's sound card when it is plugged in, master on outputs 1 and 2, headphones on 3 and 4, with a buffer size the DJ can choose. See: the card's name and latency. rekordbox: Preferences > Audio. Status: **Done** for the card; the buffer size is **In progress** (#131: Settings > Audio, with the dropout count moved out of the header).
+**S2 Sound card.** Must: play on the controller's sound card when it is plugged in, master on outputs 1 and 2, headphones on 3 and 4, with a buffer size the DJ can choose. See: the card's name and latency. rekordbox: Preferences > Audio. Status: **Done** for the card; the buffer size is **Done** (Settings > Audio, with the dropout count moved out of the header).
 
 **S3 Controller connects.** Must: recognised within a second of plugging in, no restart, every light showing the decks' state at once. See: "Pioneer DDJ-FLX4 connected" and the controller's name in the header. Status: **Done.**
 
@@ -39,15 +39,15 @@ Statuses are as audited on 22 November 2026, on `main` with a second Dubplate ru
 
 ## Loading a track
 
-**L1 Load to a deck.** Must: ready within half a second, cued at the first memory or hot cue when it has one, else at its first sound on the beat (rekordbox's Load Setting and Auto Cue, Preferences > Controller > Deck). See: title, artist, BPM, key, time left, the scrolling waveform with its grid, the overview with its cues, the cue marker. FLX4: CUE lit (at the cue point), PLAY blinking (paused), the load signal. Status: **Gap** (tracks load at 0:00, often in silence); **In progress** (#129).
+**L1 Load to a deck.** Must: ready within half a second, cued at the first memory or hot cue when it has one, else at its first sound on the beat (rekordbox's Load Setting and Auto Cue, Preferences > Controller > Deck). See: title, artist, BPM, key, time left, the scrolling waveform with its grid, the overview with its cues, the cue marker. FLX4: CUE lit (at the cue point), PLAY blinking (paused), the load signal. Status: **Gap** (tracks load at 0:00, often in silence); **Done**.
 
-**L2 A track Dubplate has to analyse.** Must: the waveform, BPM, key and grid appear as soon as they are ready, and the deck says "Analysing" until then. Status: **Gap.** A folder track shows "--.--" for its BPM and no grid for 20 seconds or more with nothing saying why; the header's "1078 to analyse" did not move while the audit ran. Fix: "Analysing…" where the BPM goes, and the queue's progress in the header. **In progress** (#126) for the deck's readout.
+**L2 A track Dubplate has to analyse.** Must: the waveform, BPM, key and grid appear as soon as they are ready, and the deck says "Analysing" until then. Status: **Gap.** A folder track shows "--.--" for its BPM and no grid for 20 seconds or more with nothing saying why; the header's "1078 to analyse" did not move while the audit ran. Fix: "Analysing…" where the BPM goes, and the queue's progress in the header. **Done** for the deck's readout.
 
 **L3 Load onto a playing deck.** Must: refused while Lock playing deck is on, with a notice; the playing deck untouched. rekordbox: Preferences > Controller > Deck > Eject/Load Lock. Status: **Done.**
 
 **L4 Instant doubles.** Must: LOAD twice copies the other deck at the same place, playing, in phase. Status: **Done.**
 
-**L5 Played tracks.** See: tracks played this session marked in the library, as rekordbox colours them. Status: **Missing** ([inventory 25](feature-inventory.md#top-40-gaps)). Spec: a track played 60 seconds or more gets a dimmed title and a played mark, with a Hide played filter. **In progress** (#134, reusing #119's played set).
+**L5 Played tracks.** See: tracks played this session marked in the library, as rekordbox colours them. Status: **Done**: a track played 60 seconds or more of track time gets a dimmed title and a tick, the same rule as the History, and Hide played beside Key fits puts `played:no` in the search.
 
 ## The cue point and CUE
 
@@ -73,7 +73,7 @@ Statuses are as audited on 22 November 2026, on `main` with a second Dubplate ru
 
 ## Tempo
 
-**T1 Tempo fader.** Must: continuous, no audible steps; on Pioneer hardware toward the DJ is faster. See: tempo in percent with two decimals (+1.25%), the BPM it gives with two decimals. Status: **Gap.** The deck shows one decimal ("+0.0%"), too coarse to match by numbers (0.1% at 122 BPM is 0.12 BPM). Fix: two decimals. **In progress** (#126).
+**T1 Tempo fader.** Must: continuous, no audible steps; on Pioneer hardware toward the DJ is faster. See: tempo in percent with two decimals (+1.25%), the BPM it gives with two decimals. Status: **Gap.** The deck shows one decimal ("+0.0%"), too coarse to match by numbers (0.1% at 122 BPM is 0.12 BPM). Fix: two decimals. **Done**.
 
 **T2 Tempo range.** SHIFT + BEAT SYNC steps ±6, ±10, ±16, WIDE. See: the range beside the tempo. Status: **Done.**
 
@@ -95,19 +95,19 @@ Statuses are as audited on 22 November 2026, on `main` with a second Dubplate ru
 
 **B1 Two waveforms on one time axis.** Status: **Done.**
 
-**B2 Phase.** See: a phase meter showing how far the following deck's beats are from the master's, and a bar.beat counter. Status: **In progress** (#130: beat counter on each lane, phase meter on the following deck, green when in phase, "+2 beats" when the bars do not line up).
+**B2 Phase.** See: a phase meter showing how far the following deck's beats are from the master's, and a bar.beat counter. Status: **Done** (beat counter on each lane, phase meter on the following deck, green when in phase, "+2 beats" when the bars do not line up).
 
 **B3 Nudge.** Status: **Done.**
 
-**B4 Scratch and hold.** Status: **Done.** Vinyl or CDJ jog mode per deck is **In progress** (#121: Vinyl switch, V).
+**B4 Scratch and hold.** Status: **Done.** Vinyl or CDJ jog mode per deck is **Done** (Vinyl switch, Option+V).
 
 **B5 Search.** SHIFT + jog. Status: **Done.**
 
 **B6 Smooth scrolling.** Must: the waveforms move every display frame, no jitter. Measured with `DUBPLATE_FRAME_STATS=1`, two decks playing, a loop on deck A: frames every 12.2 ms on average (worst 38 ms once in four seconds), render 0.45 ms, waveform paint 2.2 ms (worst 4.5 ms). Status: **Gap** for 120 Hz screens: 82 frames a second where the display offers 120. The paint fits a 8.3 ms frame, so the pacing, not the drawing, is the limit; to measure again with the display awake.
 
-**B7 Zoom.** Status: **In progress** (#124: seven levels, Cmd+= and Cmd+-, Shift + BROWSE, pinch).
+**B7 Zoom.** Status: **Done** (seven levels, Cmd+= and Cmd+-, Shift + BROWSE, pinch).
 
-**B8 Drag the waveform.** Status: **Done** (#111: drag the lanes to scrub a stopped deck or nudge a playing one); to check on the decks.
+**B8 Drag the waveform.** Status: **Done** (drag the lanes to scrub a stopped deck or nudge a playing one); to check on the decks.
 
 **B9 Pitch-bend feedback.** See: while nudging, the BPM shows the bent tempo. Status: **Missing.**
 
@@ -117,9 +117,9 @@ Statuses are as audited on 22 November 2026, on `main` with a second Dubplate ru
 
 **W2 Overview.** 3 bands, played part, playhead, hot cues, memory cues, loops, phrases, minute ticks, the last 30 seconds. Status: **Done.**
 
-**W3 Beat grid on the waveforms.** A line per beat, the downbeat stronger, bar numbers. Status: lines **Done**; bar numbers **In progress** (#130) with the beat counter.
+**W3 Beat grid on the waveforms.** A line per beat, the downbeat stronger, bar numbers. Status: lines **Done**; bar numbers **Done** with the beat counter.
 
-**W4 Marks on the scrolling waveform.** Cue point, hot cues in colour, memory cues, the loop and its length, the slip shadow. Status: **Done** except memory cues and hot cue colours, **In progress** (cues work).
+**W4 Marks on the scrolling waveform.** Cue point, hot cues in colour, memory cues, the loop and its length, the slip shadow. Status: **Done.**
 
 **W5 Folder tracks.** A waveform for every track. Status: **Done.**
 
@@ -131,19 +131,19 @@ Statuses are as audited on 22 November 2026, on `main` with a second Dubplate ru
 
 **H3 Delete a hot cue.** SHIFT + pad. Status: **Done.**
 
-**H4 Colours and names.** rekordbox's colours and comments on screen and pads. Status: **In progress** (#122).
+**H4 Colours and names.** rekordbox's colours and comments on screen and pads. Status: **Done** on screen (own colour, else rekordbox's COLORFUL default for the pad); the FLX4's pads only light on or off.
 
-**H5 Hot loops.** Status: **In progress** (#122).
+**H5 Hot loops.** A hot loop's pad starts its loop; an empty pad pressed during a loop keeps it as a hot loop. Status: **Done.**
 
 **H6 Hot cues survive.** Must: a hot cue set in Dubplate is there next time the track loads, after a relaunch, and in the rekordbox XML. Status: **Done** (kept per track in Dubplate's database, in place of rekordbox's cues, and exported).
 
 ## Memory cues
 
-**M1 Show memory cues.** Red triangles on the overview and the lanes. Status: overview **Done**, lanes **In progress** (#120).
+**M1 Show memory cues.** Red triangles on the overview and the lanes. Status: **Done.**
 
-**M2 Store and delete a memory cue.** Status: **In progress** (#120).
+**M2 Store and delete a memory cue.** SHIFT + CUE/LOOP CALL ▶ keeps the cue point (or the loop that is on), up to 10; SHIFT + ◀ deletes the one at the cue point. Status: **Done.**
 
-**M3 Call memory cues.** CUE/LOOP CALL ◀ ▶ when no loop plays. Status: **In progress** (#120).
+**M3 Call memory cues.** CUE/LOOP CALL ◀ ▶ when no loop plays; the deck pauses on the called cue as its cue point. Status: **Done.**
 
 ## Loops
 
@@ -171,19 +171,21 @@ Statuses are as audited on 22 November 2026, on `main` with a second Dubplate ru
 
 **PD1 to PD3** Hot Cue, Pad FX 1 and 2, Beat Jump, Sampler, Keyboard, Beat Loop, Key Shift. Status: **Done.**
 
+**PD4 Presses show on screen.** Must: a pad or button pressed on the FLX4 lights its twin on screen while held, a quick tap flashes, and a pad shows what it did (the jump, the loop length, the effect held). Status: **In progress**.
+
 ## Effects
 
-**FX1 to FX6 Beat FX.** Status: the FLX4 lever and knob **Done** (#102); effect tuning and the full Beat FX list **In progress** (effects work).
+**FX1 to FX6 Beat FX.** Status: the FLX4 lever and knob **Done**; effect tuning and the full Beat FX list **In progress** (effects work).
 
 **CF1 Filter knob.** Status: **Done.**
 
-**CF2 Smart CFX.** Status: **Done** (#109).
+**CF2 Smart CFX.** Status: **Done**.
 
 ## The mixer
 
 **X1 Trim**, **X2 EQ**: Status: **Done.**
 
-**X3 Channel fader curve**, **X4 Crossfader curve**, **X5 Crossfader assign (A, THRU, B)**, **X10 Crossfader off**: Status: **In progress** (#116, crossfader pull request; rekordbox's Preferences > Controller > Mixer has the curves, its mixer panel the assign).
+**X3 Channel fader curve**, **X4 Crossfader curve**, **X5 Crossfader assign (A, THRU, B)**, **X10 Crossfader off**: Status: **Done** (crossfader pull request; rekordbox's Preferences > Controller > Mixer has the curves, its mixer panel the assign).
 
 **X6 Meters.** Channel meters before the fader and a master meter. Status: **Done.** A clip light and peak hold: **Missing.**
 
@@ -191,7 +193,7 @@ Statuses are as audited on 22 November 2026, on `main` with a second Dubplate ru
 
 **X8 Headphone cue.** Status: **Done.**
 
-**X9 Smart Fader.** Status: **Done**; resting with a deck on THRU or the crossfader off is **In progress** (#116).
+**X9 Smart Fader.** Status: **Done**; resting with a deck on THRU or the crossfader off is **Done**.
 
 ## Sampler and recording
 
@@ -211,19 +213,19 @@ Statuses are as audited on 22 November 2026, on `main` with a second Dubplate ru
 
 **BR5 Preview in the headphones.** Status: **In progress** (P previews the selected track on the headphone bus, from its first cue).
 
-**BR6 History.** Status: **In progress** (#125: plays of 60 seconds or more recorded, a History list, TXT and CSV tracklists).
+**BR6 History.** See: under History in the browser's sidebar, this session's plays newest first (start time, deck, title, artist) and earlier sessions by day; a track counts after 60 seconds of track time on one load, once per load, as in rekordbox's History. Export TXT and CSV tracklists with times into the mix. Status: **In progress** (play history pull request). rekordbox's own histories: **Missing.**
 
 ## The app
 
-**A1 Menu bar.** A Mac app's menus (Dubplate, File, Edit, View, Window, Help) with Settings ⌘, and every command's shortcut. Status: **Gap** (only Quit); **In progress** (#128).
+**A1 Menu bar.** A Mac app's menus (Dubplate, File, Edit, View, Window, Help) with Settings ⌘, and every command's shortcut. Status: **Gap** (only Quit); **Done**.
 
 **A2 Errors and notices.** Calm, one line, saying what to do. Status: **Done**, except the dropout count, red in the header, which the DJ could not read; **In progress** (moved to Settings > Audio, a notice only when the audio glitches three times in a minute).
 
 ## Preparing
 
-**PR1 Beat grid.** Status: **Done** in the track check and on the decks (#111).
+**PR1 Beat grid.** Status: **Done** in the track check and on the decks.
 
-**PR2 Cues.** Status: **Done** for hot cues, memory cues and loops made on the decks, kept per track and in the rekordbox XML (#113); memory cues on the decks **In progress** (#120).
+**PR2 Cues.** Status: **Done** for hot cues, memory cues and loops made on the decks, kept per track and in the rekordbox XML; memory cues on the decks **Done**.
 
 **PR3 The set.** Status: **Done** ([set preparation](set-prep.md)).
 

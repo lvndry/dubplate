@@ -1,6 +1,7 @@
 //! The Graphite look: every colour, font and size the views draw with, defined once.
 
 use dubplate_engine::DeckId;
+use dubplate_rekordbox::{HotCue, HotCuePad, MemoryCue, Rgb};
 use gpui::component::{Theme as ComponentTheme, ThemeMode};
 use gpui::{App, Pixels, Rgba, px};
 
@@ -82,10 +83,10 @@ pub const METER_OFF: Rgba = white_alpha(0.07);
 pub const METER_HOT: Rgba = hex(0xF5B78E);
 /// Behind the selected browser row.
 pub const SELECTED_ROW: Rgba = white_alpha(0.05);
+/// The title of a track played this session, dimmed as rekordbox dims played tracks.
+pub const PLAYED_TITLE: Rgba = with_alpha(0xEEEFF1, 0.45);
 /// Between browser rows.
 pub const ROW_LINE: Rgba = white_alpha(0.045);
-/// Behind the cue letters on the zoomed waveforms.
-pub const CUE_FLAG: Rgba = hex(0xEEEFF1);
 /// Behind the help overlay.
 pub const SCRIM: Rgba = with_alpha(0x000000, 0.55);
 
@@ -118,17 +119,32 @@ pub const PHRASE_OUTRO: Rgba = hex(0x8A8F98);
 /// See [`PHRASE_INTRO`].
 pub const PHRASE_OTHER: Rgba = white_alpha(0.2);
 
-/// The colours of the hot cue pads A to H.
-pub const HOT_CUE_TINTS: [Rgba; 8] = [
-    hex(0xF5B78E),
-    hex(0xF2D48A),
-    hex(0xB9DE9E),
-    hex(0x8FD3C8),
-    hex(0xA3B6FF),
-    hex(0xC7B1F5),
-    hex(0xF0A8C8),
-    hex(0xD7D9DD),
-];
+/// A colour rekordbox gave a cue, from its hot cue palette or its memory colours, drawn as
+/// rekordbox draws it.
+pub const fn rekordbox_colour(rgb: Rgb) -> Rgba {
+    Rgba {
+        r: rgb.red as f32 / 255.0,
+        g: rgb.green as f32 / 255.0,
+        b: rgb.blue as f32 / 255.0,
+        a: 1.0,
+    }
+}
+
+/// The colour of the hot cue on `pad`: its own, else rekordbox's default for the pad, or
+/// orange for a hot loop.
+pub fn hot_cue_colour(pad: HotCuePad, cue: &HotCue) -> Rgba {
+    rekordbox_colour(cue.display_color(pad).rgb())
+}
+
+/// The colour of a memory cue's mark: its own, else [`MEMORY_CUE`], or [`SAVED_LOOP`] for a
+/// memory loop without one.
+pub fn memory_cue_colour(cue: &MemoryCue) -> Rgba {
+    match (cue.color, cue.loop_end_ms) {
+        (Some(color), _) => rekordbox_colour(color.rgb()),
+        (None, Some(_)) => SAVED_LOOP,
+        (None, None) => MEMORY_CUE,
+    }
+}
 
 /// The colour that marks everything belonging to a deck.
 pub const fn deck_colour(deck: DeckId) -> Rgba {

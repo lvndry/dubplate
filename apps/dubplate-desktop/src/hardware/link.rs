@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use dubplate_midi::{
     ControlEvent, ControllerInput, ControllerOutput, Feedback, InputEvents, Mapping, MidiError,
-    input_ports,
+    STARTUP_DELAY, input_ports,
 };
 
 use super::lights::{LightCache, Lights};
@@ -141,7 +141,8 @@ impl Connection {
             output,
             lit: LightCache::default(),
             reported_drops: 0,
-            report_due: has_startup_request.then(|| Instant::now() + REPORT_TIMEOUT),
+            report_due: has_startup_request
+                .then(|| Instant::now() + STARTUP_DELAY + REPORT_TIMEOUT),
         };
         Ok((connection, output_problem))
     }
@@ -166,9 +167,9 @@ impl Connection {
         }
     }
 
-    fn keep_alive(&mut self, now: Instant) -> Result<(), MidiError> {
+    fn service(&mut self, now: Instant) -> Result<(), MidiError> {
         match self.output.as_mut() {
-            Some(output) => output.keep_alive(now),
+            Some(output) => output.service(now),
             None => Ok(()),
         }
     }
@@ -383,7 +384,7 @@ impl ControllerThread {
                     connection.mapping.name()
                 );
             }
-            if let Err(error) = connection.keep_alive(now) {
+            if let Err(error) = connection.service(now) {
                 failures.push((connection.port.clone(), error));
             }
         }

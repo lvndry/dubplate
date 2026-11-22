@@ -48,7 +48,8 @@ pub enum SearchFilter {
     Artist(String),
     /// `energy:6`, `energy:6+` or `energy:4-6`.
     Energy(Bounds<f32>),
-    /// `played:yes` or `played:no`: whether a deck played the track this session.
+    /// `played:yes` or `played:no`: whether a deck played the track this session, a minute or
+    /// more, as the history counts a play.
     Played(bool),
     /// `rated:4` or `rated:4+`: rekordbox's stars.
     Rated(Bounds<u8>),
@@ -217,6 +218,25 @@ fn examples(name: &str, context: &SuggestionContext) -> Vec<String> {
     }
 }
 
+/// The word Hide played puts in the search.
+const HIDE_PLAYED: &str = "played:no";
+
+/// `text` with `played:no` added at the end, or, when it already hides played tracks, with
+/// every `played:` filter taken out; the other words stay as they were.
+pub fn toggle_hide_played(text: &str) -> String {
+    let hides = text
+        .split_whitespace()
+        .any(|word| SearchFilter::parse(word) == Some(SearchFilter::Played(false)));
+    let mut kept: Vec<&str> = text
+        .split_whitespace()
+        .filter(|word| !matches!(SearchFilter::parse(word), Some(SearchFilter::Played(_))))
+        .collect();
+    if !hides {
+        kept.push(HIDE_PLAYED);
+    }
+    kept.join(" ")
+}
+
 /// `text` with its last, partly typed word replaced by `word`, ready for more typing.
 pub fn complete(text: &str, word: &str) -> String {
     let kept = if text.ends_with(char::is_whitespace) || text.is_empty() {
@@ -234,6 +254,29 @@ pub fn complete(text: &str, word: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hide_played_adds_played_no_and_takes_it_out_again() {
+        assert_eq!(toggle_hide_played(""), "played:no");
+        assert_eq!(
+            toggle_hide_played("kabza bpm:112-114"),
+            "kabza bpm:112-114 played:no"
+        );
+        assert_eq!(
+            toggle_hide_played("kabza played:no bpm:112"),
+            "kabza bpm:112"
+        );
+        assert_eq!(
+            toggle_hide_played("played:yes kabza"),
+            "kabza played:no",
+            "played:yes gives way to played:no"
+        );
+        assert_eq!(
+            toggle_hide_played("Played:N"),
+            "",
+            "any spelling of played:no"
+        );
+    }
 
     fn facts() -> TrackFacts<'static> {
         TrackFacts {

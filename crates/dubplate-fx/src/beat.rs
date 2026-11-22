@@ -1,7 +1,7 @@
 use std::fmt;
 use std::str::FromStr;
 
-/// A musical length in beats, from 1/16 of a beat to 32 beats.
+/// A musical length in beats, from 1/32 of a beat to 32 beats.
 ///
 /// Beat-synced effects use it for their echo time, sweep period, gate step or stop time. The
 /// length in seconds always follows the current tempo.
@@ -12,6 +12,8 @@ pub struct BeatLength {
 }
 
 impl BeatLength {
+    /// A thirty-second of a beat, the shortest roll.
+    pub const THIRTY_SECOND: Self = Self::fraction(1, 32);
     /// A sixteenth of a beat.
     pub const SIXTEENTH: Self = Self::fraction(1, 16);
     /// An eighth of a beat.
@@ -65,13 +67,13 @@ impl BeatLength {
         }
     }
 
-    /// Builds `numerator / denominator` beats, or `None` when it falls outside 1/16 to 32 beats.
+    /// Builds `numerator / denominator` beats, or `None` when it falls outside 1/32 to 32 beats.
     pub fn new(numerator: u16, denominator: u16) -> Option<Self> {
         if numerator == 0 || denominator == 0 {
             return None;
         }
         let beats = f64::from(numerator) / f64::from(denominator);
-        let shortest = Self::SIXTEENTH.beats();
+        let shortest = Self::THIRTY_SECOND.beats();
         let longest = Self::THIRTY_TWO.beats();
         (shortest..=longest)
             .contains(&beats)
@@ -160,7 +162,7 @@ impl fmt::Display for ParseBeatLengthError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             formatter,
-            "`{}` is not a beat length from 1/16 to 32, such as 1/2, 3/4 or 4",
+            "`{}` is not a beat length from 1/32 to 32, such as 1/2, 3/4 or 4",
             self.text
         )
     }
@@ -191,11 +193,15 @@ mod tests {
     use super::BeatLength;
 
     #[test]
-    fn halving_and_doubling_stay_exact_between_a_sixteenth_and_thirty_two_beats() {
+    fn halving_and_doubling_stay_exact_between_a_thirty_second_and_thirty_two_beats() {
         assert_eq!(BeatLength::FOUR.halved(), Some(BeatLength::TWO));
         assert_eq!(BeatLength::ONE.halved(), Some(BeatLength::HALF));
         assert_eq!(BeatLength::EIGHTH.halved(), Some(BeatLength::SIXTEENTH));
-        assert_eq!(BeatLength::SIXTEENTH.halved(), None);
+        assert_eq!(
+            BeatLength::SIXTEENTH.halved(),
+            Some(BeatLength::THIRTY_SECOND)
+        );
+        assert_eq!(BeatLength::THIRTY_SECOND.halved(), None);
         assert_eq!(BeatLength::HALF.doubled(), Some(BeatLength::ONE));
         assert_eq!(BeatLength::SIXTEEN.doubled(), Some(BeatLength::THIRTY_TWO));
         assert_eq!(BeatLength::THIRTY_TWO.doubled(), None);
@@ -219,7 +225,7 @@ mod tests {
 
     #[test]
     fn rejects_lengths_outside_the_range() {
-        assert!("1/32".parse::<BeatLength>().is_err());
+        assert!("1/64".parse::<BeatLength>().is_err());
         assert!("64".parse::<BeatLength>().is_err());
         assert!("0".parse::<BeatLength>().is_err());
         assert!("half".parse::<BeatLength>().is_err());

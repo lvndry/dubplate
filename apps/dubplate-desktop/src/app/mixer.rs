@@ -1,15 +1,14 @@
 //! The mixer between the decks: the master level and meter, each channel's trim, EQ and filter
 //! knobs, a meter and a fader per channel, the crossfader, and the headphone section.
 
-use dubplate_engine::SmartCfx;
-use dubplate_engine::{DeckId, EqBand};
+use dubplate_engine::{CrossfaderAssign, DeckId, EqBand, SmartCfx};
 use gpui::prelude::*;
 use gpui::{ClickEvent, Context, FontWeight, MouseButton, Pixels, SharedString, deferred, div, px};
 
 use super::slider::{self, CROSSFADER_THUMB, FADER_THUMB, SMALL_THUMB};
-use super::smart::preset_label;
+use super::smart::{colour_label, preset_label};
 use super::{DubplateApp, knob};
-use crate::commands::Command;
+use crate::commands::{CfxScope, Command};
 use crate::controls::{Control, Slider};
 use crate::deck::deck_letter;
 use crate::fonts::MONO_FAMILY;
@@ -84,27 +83,52 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
                 .justify_between()
                 .child(knob_column(app, DeckId::A, cx))
                 .child(channel(app, DeckId::A, cx))
-                .child(names())
+                .child(names(app, cx))
                 .child(channel(app, DeckId::B, cx))
                 .child(knob_column(app, DeckId::B, cx)),
         )
         .child(
             div()
                 .flex()
+                .justify_between()
+                .when(!app.crossfader().enabled, |switches| switches.opacity(0.4))
+                .child(assign_switch(app, DeckId::A, cx))
+                .child(assign_switch(app, DeckId::B, cx)),
+        )
+        .child(
+            div()
+                .flex()
                 .items_center()
                 .gap(px(8.0))
-                .child(deck_label(DeckId::A))
+                .child(side_label(app, CrossfaderAssign::A))
                 .child(
-                    slider::render(
-                        app,
-                        Slider::Crossfader,
-                        CROSSFADER_THUMB,
-                        app.smart_fader_on().then_some((0.0, theme::TEXT)),
-                        cx,
-                    )
-                    .flex_1(),
+                    div()
+                        .relative()
+                        .flex_1()
+                        .when(!crossfader_in_use(app), |slider| slider.opacity(0.4))
+                        .when(!app.crossfader().enabled, |slider| {
+                            slider.child(
+                                div()
+                                    .absolute()
+                                    .inset_0()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .text_size(theme::TINY_TEXT_SIZE)
+                                    .text_color(theme::TEXT)
+                                    .child("Off"),
+                            )
+                        })
+                        .child(slider::render(
+                            app,
+                            Slider::Crossfader,
+                            CROSSFADER_THUMB,
+                            (app.smart_fader_on() && !app.smart_fader_resting())
+                                .then_some((0.0, theme::TEXT)),
+                            cx,
+                        )),
                 )
-                .child(deck_label(DeckId::B)),
+                .child(side_label(app, CrossfaderAssign::B)),
         )
         .child(smart_buttons(app, cx))
         .child(headphones(app, cx))
@@ -350,21 +374,160 @@ fn knob_column(
     column
 }
 
-/// The knobs' names, between the two channels, each beside its row.
-fn names() -> impl IntoElement {
-    let mut column = div().flex().flex_col().items_center().gap(KNOB_GAP);
-    for (name, _) in STRIP {
-        column = column.child(
-            div()
-                .h(KNOB_SIZE)
-                .flex()
-                .items_center()
-                .text_size(theme::TINY_TEXT_SIZE)
-                .text_color(theme::MUTED)
-                .child(name),
-        );
+/// The knobs' names, between the two channels, each beside its row. The CFX knobs' name says
+/// what they play and opens the Sound Color FX picker.
+fn names(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoElement + use<> {
+    let mut column = div()
+        .relative()
+        .flex()
+        .flex_col()
+        .items_center()
+        .gap(KNOB_GAP);
+    for (name, control) in STRIP {
+        let row = div()
+            .h(KNOB_SIZE)
+            .flex()
+            .items_center()
+            .text_size(theme::TINY_TEXT_SIZE)
+            .text_color(theme::MUTED);
+        column = if control(DeckId::A) == Control::Filter(DeckId::A) {
+            column.child(row.child(cfx_name(app, cx)))
+        } else {
+            column.child(row.child(name))
+        };
     }
-    column
+    column.when_some(app.cfx_menu, |column, scope| {
+        column.child(cfx_menu(app, scope, cx))
+    })
+}
+
+/// What the CFX knobs play, as their name: the Smart CFX preset while SMART CFX is on, the
+/// Sound Color FX both channels share, or `CFX` when they differ.
+fn cfx_name(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoElement + use<> {
+    let colours = DeckId::ALL.map(|deck| app.cfx_colour(deck));
+    let name = if app.smart_cfx_on() {
+        preset_label(app.smart_cfx_preset()).to_owned()
+    } else if colours[0] == colours[1] {
+        colour_label(colours[0]).to_owned()
+    } else {
+        "CFX".to_owned()
+    };
+    div()
+        .id("cfx-colour")
+        .accessible_button(format!("CFX knobs play {name}. Choose the Sound Color FX"))
+        .aria_expanded(app.cfx_menu.is_some())
+        .px(px(3.0))
+        .rounded(px(4.0))
+        .cursor_pointer()
+        .hover(|name| name.bg(theme::RAISED).text_color(theme::TEXT))
+        .when(app.cfx_menu.is_some(), |name| {
+            name.bg(theme::RAISED).text_color(theme::TEXT)
+        })
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+            this.perform(Command::ToggleCfxMenu, window, cx);
+        }))
+        .child(name)
+}
+
+/// The Sound Color FX picker: which channels it sets, then the filter and every colour, each
+/// marked with the channels that play it.
+fn cfx_menu(
+    app: &DubplateApp,
+    scope: CfxScope,
+    cx: &mut Context<'_, DubplateApp>,
+) -> impl IntoElement + use<> {
+    let colours = DeckId::ALL.map(|deck| app.cfx_colour(deck));
+    let scope_chip = |chip: CfxScope, label: &'static str| {
+        let on = chip == scope;
+        div()
+            .id(SharedString::from(format!("cfx-scope-{label}")))
+            .accessible_toggle(format!("Set {label}"), on)
+            .flex_1()
+            .flex()
+            .justify_center()
+            .h(px(20.0))
+            .items_center()
+            .rounded(px(4.0))
+            .text_size(theme::TINY_TEXT_SIZE)
+            .cursor_pointer()
+            .map(|chip| {
+                if on {
+                    chip.bg(theme::RAISED).text_color(theme::TEXT)
+                } else {
+                    chip.text_color(theme::MUTED)
+                        .hover(|chip| chip.text_color(theme::TEXT))
+                }
+            })
+            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                this.perform(Command::SetCfxScope(chip), window, cx);
+            }))
+            .child(label)
+    };
+    let choices = std::iter::once(None).chain(SmartCfx::ALL.into_iter().map(Some));
+    deferred(
+        div()
+            .id("cfx-menu")
+            .absolute()
+            .top(px(0.0))
+            .w(px(150.0))
+            .p(px(4.0))
+            .flex()
+            .flex_col()
+            .gap(px(1.0))
+            .rounded(px(8.0))
+            .border_1()
+            .border_color(theme::LINE)
+            .bg(theme::PANEL)
+            .shadow_lg()
+            .occlude()
+            .on_mouse_down_out(cx.listener(|this, _, window, cx| {
+                if this.cfx_menu.is_some() {
+                    this.perform(Command::ToggleCfxMenu, window, cx);
+                }
+            }))
+            .child(
+                div()
+                    .flex()
+                    .gap(px(2.0))
+                    .pb(px(3.0))
+                    .child(scope_chip(CfxScope::Both, "A and B"))
+                    .child(scope_chip(CfxScope::Deck(DeckId::A), "A"))
+                    .child(scope_chip(CfxScope::Deck(DeckId::B), "B")),
+            )
+            .children(choices.map(|colour| {
+                let playing: String = DeckId::ALL
+                    .into_iter()
+                    .filter(|deck| colours[deck.index()] == colour)
+                    .map(deck_letter)
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                let id = colour.map_or_else(|| "filter".to_owned(), |preset| preset.to_string());
+                div()
+                    .id(SharedString::from(format!("cfx-colour-{id}")))
+                    .accessible_toggle(colour_label(colour), !playing.is_empty())
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .h(px(24.0))
+                    .px(px(8.0))
+                    .rounded(px(5.0))
+                    .text_size(theme::SMALL_TEXT_SIZE)
+                    .cursor_pointer()
+                    .hover(|item| item.bg(theme::RAISED))
+                    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                        this.perform(Command::ChooseCfxColour(colour), window, cx);
+                    }))
+                    .child(colour_label(colour))
+                    .child(
+                        div()
+                            .font_family(MONO_FAMILY)
+                            .text_size(theme::TINY_TEXT_SIZE)
+                            .text_color(theme::MUTED)
+                            .child(playing),
+                    )
+            })),
+    )
 }
 
 /// The height of the knob column, which the faders match.
@@ -418,11 +581,114 @@ fn label(text: &'static str) -> impl IntoElement {
         .child(text)
 }
 
-fn deck_label(deck: DeckId) -> impl IntoElement {
-    div()
+/// Whether any channel plays through the crossfader.
+fn crossfader_in_use(app: &DubplateApp) -> bool {
+    let crossfader = app.crossfader();
+    crossfader.enabled
+        && crossfader
+            .assign
+            .iter()
+            .any(|assign| *assign != CrossfaderAssign::Thru)
+}
+
+/// The decks on one side of the crossfader, at its end: the letters of the decks assigned
+/// there, or a dash when none is.
+fn side_label(app: &DubplateApp, side: CrossfaderAssign) -> impl IntoElement {
+    let assign = app.crossfader().assign;
+    let decks: Vec<DeckId> = DeckId::ALL
+        .into_iter()
+        .filter(|deck| assign[deck.index()] == side)
+        .collect();
+    let mut label = div()
+        .flex()
+        .justify_center()
+        .min_w(px(8.0))
         .font_family(MONO_FAMILY)
         .text_size(theme::TINY_TEXT_SIZE)
-        .font_weight(FontWeight::SEMIBOLD)
-        .text_color(theme::deck_colour(deck))
-        .child(deck_letter(deck))
+        .font_weight(FontWeight::SEMIBOLD);
+    if decks.is_empty() {
+        label = label.text_color(theme::MUTED).child("\u{2013}");
+    }
+    label.children(decks.into_iter().map(|deck| {
+        div()
+            .text_color(theme::deck_colour(deck))
+            .child(deck_letter(deck))
+    }))
+}
+
+/// A channel's crossfader assign switch, as under each channel of a DJM: A, THRU or B. THRU,
+/// which takes the channel off the crossfader, is outlined in amber so it never goes unseen.
+fn assign_switch(
+    app: &DubplateApp,
+    deck: DeckId,
+    cx: &mut Context<'_, DubplateApp>,
+) -> impl IntoElement + use<> {
+    let current = app.crossfader().assign[deck.index()];
+    div()
+        .flex()
+        .items_center()
+        .gap(px(4.0))
+        .child(
+            div()
+                .w(px(3.0))
+                .h(px(12.0))
+                .rounded(px(1.5))
+                .bg(theme::deck_colour(deck)),
+        )
+        .child(
+            div()
+                .id(("crossfader-assign", deck.index()))
+                .role(gpui::Role::RadioGroup)
+                .aria_label(format!("Deck {} crossfader assign", deck_letter(deck)))
+                .flex()
+                .h(px(18.0))
+                .p(px(1.0))
+                .gap(px(1.0))
+                .rounded(px(5.0))
+                .border_1()
+                .border_color(theme::LINE)
+                .children(CrossfaderAssign::ALL.into_iter().map(move |assign| {
+                    let chosen = assign == current;
+                    let colour = match assign {
+                        CrossfaderAssign::A => theme::deck_colour(DeckId::A),
+                        CrossfaderAssign::Thru => theme::ATTENTION,
+                        CrossfaderAssign::B => theme::deck_colour(DeckId::B),
+                    };
+                    div()
+                        .id(SharedString::from(format!(
+                            "crossfader-assign-{}-{assign}",
+                            deck_letter(deck)
+                        )))
+                        .accessible_toggle(
+                            format!("Deck {} on {assign}", deck_letter(deck)),
+                            chosen,
+                        )
+                        .flex()
+                        .items_center()
+                        .px(px(4.0))
+                        .rounded(px(4.0))
+                        .border_1()
+                        .font_family(MONO_FAMILY)
+                        .text_size(px(9.0))
+                        .cursor_pointer()
+                        .map(|segment| {
+                            if chosen {
+                                segment
+                                    .border_color(theme::faded(colour, 0.6))
+                                    .bg(theme::faded(colour, 0.18))
+                                    .text_color(theme::TEXT)
+                            } else {
+                                segment
+                                    .border_color(gpui::transparent_black())
+                                    .text_color(theme::MUTED)
+                                    .hover(|segment| segment.text_color(theme::TEXT))
+                            }
+                        })
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                            this.perform(Command::SetCrossfaderAssign(deck, assign), window, cx);
+                        }))
+                        .child(assign.to_string())
+                })),
+        )
 }

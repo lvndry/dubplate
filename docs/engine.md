@@ -99,7 +99,7 @@ The settings came from an A/B on real music pushed 9 dB too hot and on a 40 Hz s
 
 Beat loops run from a sixteenth of a beat to 32 beats on the beat grid, so a loop on a track whose tempo changes still holds whole beats. LOOP IN and LOOP OUT set a loop by hand, halving and doubling work from the loop's start, and RELOOP/EXIT leaves the loop or goes back to it. Beat jump moves any number of beats either way and takes a loop that is on along with it. Every jump and every turn of a loop crossfades over 5 ms, so none of them clicks.
 
-Quantize is on by default, as in rekordbox. With a beat grid, the cue button, LOOP IN and LOOP OUT set their points on the nearest beat, a beat loop starts on the beat just passed so the music never jumps, and hot cues and reloop land in rhythm, as far past their point as the playhead was past its last beat. A hot cue on a stopped deck jumps there and plays.
+Quantize is on by default, as in rekordbox. With a beat grid, the cue button, LOOP IN and LOOP OUT set their points on the nearest beat, a beat loop starts on the beat nearest to what you hear, which may be just ahead, so the music never jumps (with quantize off it starts exactly where you pressed), and hot cues and reloop land in rhythm, as far past their point as the playhead was past its last beat. A hot cue on a stopped deck jumps there and plays.
 
 ## Effects while you mix
 

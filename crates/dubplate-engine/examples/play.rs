@@ -26,8 +26,8 @@
 //! cues the selected deck, f and g turn the headphone mix towards the cue and the master, and
 //! a switches key lock on the selected deck. For
 //! the effects: 1, 2 and 3 switch effect units 1 to 3 on and off, e selects the next effect on
-//! unit 1, t moves unit 1 to the next target (deck A, deck B, master), [ and ] shorten and
-//! lengthen its beat, and - and = turn its depth down and up.
+//! unit 1, t moves unit 1 to the next target (deck A, deck B, master), [ and ] step its
+//! parameter (its beat, or a reverb's size) down and up, and - and = turn its depth down and up.
 
 use std::io::{IsTerminal, Write};
 use std::path::PathBuf;
@@ -359,8 +359,15 @@ fn control_effects(controller: &mut Controller, key: char) -> Result<(), EngineE
     match key {
         'e' => controller.set_effect_kind(unit, next(&EffectKind::ALL, state.kind)),
         't' => controller.set_effect_target(unit, next(&EffectTarget::ALL, state.target)),
-        '[' => controller.set_effect_beat(unit, state.beat.shorter()),
-        ']' => controller.set_effect_beat(unit, state.beat.longer()),
+        '[' | ']' => {
+            let steps = if key == '[' { -1 } else { 1 };
+            match (state.kind.parameter(), state.parameter) {
+                (Some(spec), Some(value)) => {
+                    controller.set_effect_parameter(unit, spec.step(value, steps))
+                }
+                _ => Ok(()),
+            }
+        }
         '-' => controller.set_effect_depth(unit, (state.depth - DEPTH_STEP).max(0.0)),
         '=' => controller.set_effect_depth(unit, (state.depth + DEPTH_STEP).min(1.0)),
         _ => Ok(()),
@@ -419,7 +426,9 @@ fn status_line(controller: &Controller, selected: Option<DeckId>) -> String {
             format!(
                 "{unit} {} {} {target} {:.0}% {}",
                 state.kind,
-                state.beat,
+                state
+                    .parameter
+                    .map_or_else(|| "-".to_owned(), |value| value.to_string()),
                 state.depth * 100.0,
                 if state.enabled { "on" } else { "off" }
             )
