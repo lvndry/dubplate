@@ -244,3 +244,7 @@ cargo fmt --all
 cargo clippy --workspace --all-targets
 cargo test --workspace
 ```
+
+## License
+
+Dubplate is free software under the GNU General Public License, version 3 or any later version (`GPL-3.0-or-later`); see [LICENSE](LICENSE). It builds on Euphoria's `euphoria-core`, which uses the same license.
