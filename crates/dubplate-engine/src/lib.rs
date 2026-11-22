@@ -63,6 +63,7 @@ pub use deck::DeckId;
 pub use decode::decode_file;
 pub use dubplate_fx::{
     BeatLength, EffectKind, EqBand, HIGH_CROSSOVER_HZ, LIMITER_CEILING, LOW_CROSSOVER_HZ,
+    ParameterSpec, ParameterValue, SignedBeats,
 };
 pub use effects::{EffectTarget, EffectUnitId, EffectUnitState};
 pub use error::EngineError;

@@ -1,6 +1,6 @@
 use std::fmt;
 
-use dubplate_fx::{BeatLength, Effect, EffectConfig, EffectKind, create};
+use dubplate_fx::{Effect, EffectConfig, EffectKind, ParameterValue, create};
 
 use crate::deck::DeckId;
 use crate::error::EngineError;
@@ -114,8 +114,10 @@ pub struct EffectUnitState {
     pub kind: EffectKind,
     /// Where the unit sits.
     pub target: EffectTarget,
-    /// The beat length, which sets the echo time, sweep period, gate step or stop time.
-    pub beat: BeatLength,
+    /// The selected effect's parameter, as its BEAT buttons step through it: the echo time,
+    /// sweep period or gate step in beats, a reverb's size, a filter's resonance. `None` for an
+    /// effect without one.
+    pub parameter: Option<ParameterValue>,
     /// The level and depth knob, from 0 to 1.
     pub depth: f32,
     /// Whether the effect is switched on.
@@ -130,7 +132,7 @@ pub struct EffectUnitState {
 pub(crate) struct EffectSettings {
     kind: EffectKind,
     target: EffectTarget,
-    beat: BeatLength,
+    parameters: [Option<ParameterValue>; KIND_COUNT],
     depth: f32,
     enabled: bool,
 }
@@ -140,7 +142,7 @@ impl EffectSettings {
         Self {
             kind: DEFAULT_KINDS[unit.index()],
             target: EffectTarget::Master,
-            beat: BeatLength::ONE,
+            parameters: EffectKind::ALL.map(|kind| kind.parameter().map(|spec| spec.default)),
             depth: DEFAULT_DEPTH,
             enabled: false,
         }
@@ -154,7 +156,15 @@ impl EffectSettings {
         match change {
             EffectChange::Kind(kind) => self.kind = kind,
             EffectChange::Target(target) => self.target = target,
-            EffectChange::Beat(beat) => self.beat = beat,
+            EffectChange::Parameter(value) => {
+                if self
+                    .kind
+                    .parameter()
+                    .is_some_and(|spec| spec.accepts(value))
+                {
+                    self.parameters[self.kind.index()] = Some(value);
+                }
+            }
             EffectChange::Depth(depth) => self.depth = depth,
             EffectChange::Enabled(enabled) => self.enabled = enabled,
         }
@@ -164,7 +174,7 @@ impl EffectSettings {
         EffectUnitState {
             kind: self.kind,
             target: self.target,
-            beat: self.beat,
+            parameter: self.parameters[self.kind.index()],
             depth: self.depth,
             enabled: self.enabled,
             sounding,
@@ -177,7 +187,7 @@ impl EffectSettings {
 pub(crate) enum EffectChange {
     Kind(EffectKind),
     Target(EffectTarget),
-    Beat(BeatLength),
+    Parameter(ParameterValue),
     Depth(f32),
     Enabled(bool),
 }
@@ -205,7 +215,9 @@ impl EffectUnit {
         };
         unit.for_each_effect(|effect| {
             effect.set_depth(settings.depth);
-            effect.set_beat(settings.beat);
+            if let Some(value) = settings.parameters[effect.kind().index()] {
+                effect.set_parameter(value);
+            }
         });
         unit
     }
@@ -228,7 +240,16 @@ impl EffectUnit {
         let previous = self.settings;
         self.settings.apply(change);
         match change {
-            EffectChange::Beat(beat) => self.for_each_effect(|effect| effect.set_beat(beat)),
+            EffectChange::Parameter(_) => {
+                let kind = self.settings.kind;
+                if let Some(value) = self.settings.parameters[kind.index()] {
+                    self.for_each_effect(|effect| {
+                        if effect.kind() == kind {
+                            effect.set_parameter(value);
+                        }
+                    });
+                }
+            }
             EffectChange::Depth(depth) => self.for_each_effect(|effect| effect.set_depth(depth)),
             EffectChange::Kind(_) | EffectChange::Target(_) | EffectChange::Enabled(_) => {
                 for bus in Bus::ALL {

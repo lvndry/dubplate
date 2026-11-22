@@ -7,6 +7,7 @@ use dubplate_engine::{
     ChannelFaderCurve, Crossfader, CrossfaderAssign, CrossfaderCurve, DECK_COUNT, DeckId,
 };
 use dubplate_library::{DataFolder, LibrarySettings};
+use dubplate_stems::StemsLocation;
 use serde::{Deserialize, Serialize};
 
 use crate::commands::Mode;
@@ -72,6 +73,9 @@ pub struct Settings {
     pub mixer: MixerSetting,
     /// How the library's tracks are sorted on each screen.
     pub library_sort: LibrarySortSetting,
+    /// Whether a track loaded on a deck starts with key lock on, as rekordbox's Master Tempo
+    /// default: the deck's Key lock button still changes it for the track on the deck.
+    pub key_lock_on_new_tracks: bool,
 }
 
 /// The mixer's curves and switches as the DJ left them, by name: `blend`, `constant` or
@@ -288,6 +292,7 @@ impl Default for Settings {
             levels: LevelsSetting::default(),
             mixer: MixerSetting::default(),
             library_sort: LibrarySortSetting::default(),
+            key_lock_on_new_tracks: true,
         }
     }
 }
@@ -306,6 +311,11 @@ impl Settings {
     /// Where what Dubplate's analysis found in each track is kept between launches.
     pub fn analysis_cache_path() -> Result<PathBuf, SettingsError> {
         Ok(data_folder()?.analysis_cache())
+    }
+
+    /// Where separated stems and the separation model are kept.
+    pub fn stems_location() -> Result<StemsLocation, SettingsError> {
+        Ok(StemsLocation::in_data_folder(&data_folder()?))
     }
 
     /// The file that keeps a second Dubplate from starting beside this one.
@@ -399,7 +409,7 @@ mod tests {
             effect_units: vec![EffectUnitSetting {
                 effect: "reverb".to_owned(),
                 target: "M".to_owned(),
-                beat: "2".to_owned(),
+                parameter: "2".to_owned(),
                 depth: 0.25,
             }],
             smart_cfx_preset: Some("dub echo".to_owned()),
@@ -437,6 +447,7 @@ mod tests {
                 }),
                 perform: None,
             },
+            key_lock_on_new_tracks: false,
         };
         settings.save(&path).unwrap();
         assert_eq!(Settings::load(&path).unwrap(), settings);
@@ -500,6 +511,19 @@ mod tests {
     }
 
     #[test]
+    fn key_lock_on_new_tracks_is_kept_off_once_turned_off() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join(FILE_NAME);
+        let mut settings = Settings::default();
+        assert!(settings.key_lock_on_new_tracks);
+        settings.key_lock_on_new_tracks = false;
+        settings.save(&path).unwrap();
+        let saved = std::fs::read_to_string(&path).unwrap();
+        assert!(saved.contains("key_lock_on_new_tracks = false"), "{saved}");
+        assert!(!Settings::load(&path).unwrap().key_lock_on_new_tracks);
+    }
+
+    #[test]
     fn a_missing_file_or_setting_takes_the_default() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join(FILE_NAME);
@@ -507,6 +531,10 @@ mod tests {
         std::fs::write(&path, "audio_device = \"Headphones\"\n").unwrap();
         let settings = Settings::load(&path).unwrap();
         assert!(settings.lock_playing_deck);
+        assert!(
+            settings.key_lock_on_new_tracks,
+            "key lock is on for new tracks unless the DJ turned it off"
+        );
         assert_eq!(settings.audio_device.as_deref(), Some("Headphones"));
         assert!(settings.library.music_folders.is_empty());
         assert!(

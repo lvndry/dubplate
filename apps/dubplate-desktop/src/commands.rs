@@ -4,7 +4,7 @@
 
 use dubplate_engine::{
     ChannelFaderCurve, CrossfaderAssign, CrossfaderCurve, DeckId, EffectKind, EffectTarget,
-    EffectUnitId, SmartCfx,
+    EffectUnitId, SmartCfx, Stem, StemSettings,
 };
 use dubplate_midi::PadMode;
 use dubplate_prep::GridEdit;
@@ -106,10 +106,6 @@ pub enum LoopAction {
     Out,
     /// 4 BEAT/EXIT: a four-beat loop, or leave the loop that is on.
     FourBeatOrExit,
-    /// Halve the loop that is on.
-    Halve,
-    /// Double the loop that is on.
-    Double,
 }
 
 /// What turning a jog wheel does to the track.
@@ -130,14 +126,60 @@ pub enum EffectEdit {
     Kind(EffectKind),
     /// Move through the effects in the picker's order, as FX SELECT does; negative goes back.
     StepKind(i32),
-    /// The next longer ([`Direction::Up`]) or shorter beat length.
-    Beat(Direction),
+    /// Step the effect's parameter up or down, as the BEAT buttons do: the next beat length,
+    /// percentage or pitch the effect offers.
+    Parameter(Direction),
     /// Put the unit on a deck or the master.
     Target(EffectTarget),
     /// Turn the level and depth knob, from 0.0 to 1.0.
     Depth(f32),
     /// Switch the unit on or off.
     Toggle,
+}
+
+/// What a stems control does on a deck.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StemAction {
+    /// Mute the stem, or bring it back.
+    Toggle(Stem),
+    /// The vocals out and every other stem in, for an instrumental; back to every stem when the
+    /// deck plays one already.
+    Instrumental,
+    /// Only the vocals, for an acapella; back to every stem when the deck plays one already.
+    Acapella,
+    /// Only the drums and the bass, a groove to ride under another track; back to every stem
+    /// when the deck plays it already.
+    Groove,
+    /// Every stem back.
+    AllStems,
+}
+
+impl StemAction {
+    /// The stem settings this action leaves after `settings`. Muting keeps each stem's level.
+    pub fn apply(self, settings: StemSettings) -> StemSettings {
+        let every_stem = Stem::ALL
+            .into_iter()
+            .fold(settings, |settings, stem| settings.with_muted(stem, false));
+        match self {
+            StemAction::Toggle(stem) => settings.toggled(stem),
+            StemAction::Instrumental if settings.is_without(Stem::Vocals) => every_stem,
+            StemAction::Instrumental => settings.without(Stem::Vocals),
+            StemAction::Acapella if settings.is_solo(Stem::Vocals) => every_stem,
+            StemAction::Acapella => settings.solo(Stem::Vocals),
+            StemAction::Groove if is_groove(settings) => every_stem,
+            StemAction::Groove => [Stem::Melody, Stem::Vocals]
+                .into_iter()
+                .fold(every_stem, |settings, stem| settings.with_muted(stem, true)),
+            StemAction::AllStems => every_stem,
+        }
+    }
+}
+
+/// Whether only the drums and the bass play.
+pub fn is_groove(settings: StemSettings) -> bool {
+    Stem::ALL
+        .into_iter()
+        .all(|stem| settings.is_muted(stem) == matches!(stem, Stem::Melody | Stem::Vocals))
 }
 
 /// Something the DJ asks for.
@@ -161,6 +203,14 @@ pub enum Command {
     ToggleSlip(DeckId),
     /// A loop button.
     Loop(DeckId, LoopAction),
+    /// CUE/LOOP CALL ◀ ([`Direction::Down`]) or ▶: halve or double the loop that is on, else
+    /// call the memory cue before or after the playhead, pausing on it as its cue point.
+    CueLoopCall(DeckId, Direction),
+    /// MEMORY, as SHIFT + CUE/LOOP CALL ▶: keep the cue point, or the loop that is on, as a
+    /// memory cue of the track.
+    StoreMemoryCue(DeckId),
+    /// DELETE, as SHIFT + CUE/LOOP CALL ◀: delete the memory cue at the cue point.
+    DeleteMemoryCue(DeckId),
     /// A channel's headphone CUE button: hear the channel in the headphones, before its fader.
     ToggleHeadphoneCue(DeckId),
     /// MASTER CUE: hear the master in the headphones too.
@@ -199,6 +249,10 @@ pub enum Command {
     CycleTempoRange(DeckId),
     /// Key lock, a CDJ's MASTER TEMPO: tempo changes keep the track's pitch.
     ToggleKeyLock(DeckId),
+    /// Choose whether a track loaded on a deck starts with key lock on, from Settings.
+    SetKeyLockOnNewTracks(bool),
+    /// A stems control of a deck: mute or bring back a stem, or a one-touch mix.
+    Stems(DeckId, StemAction),
     /// Move a fader or knob to a position from 0.0 to 1.0.
     SetControl(Control, f32),
     /// Move the crossfader one step towards deck A ([`Direction::Down`]) or deck B.

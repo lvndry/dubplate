@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use dubplate_engine::DeckId;
 use dubplate_prep::{AudioAnalysis, Key};
+use dubplate_stems::StemsStatus;
 use gpui::component::input::{Input, InputEvent, InputState};
 use gpui::prelude::*;
 use gpui::{
@@ -22,11 +23,14 @@ use crate::collection::{Collection, CollectionTrack, CrateIndex, CrateKind, Trac
 use crate::commands::{Direction, Mode};
 use crate::deck::deck_letter;
 use crate::fonts::MONO_FAMILY;
+use crate::library_match::{LibraryMatches, TrackMatch};
 use crate::library_view::{
     BpmRange, Column, FilterReference, LibraryView, RangeEnd, Sort, SortDirection,
 };
+use crate::match_cell::MatchCell;
 use crate::search::{SearchQuery, filter_tracks};
 use crate::search_filter::{SuggestionContext, TrackFacts, complete, suggestions};
+use crate::stems::{StemStatuses, stems_cell};
 use crate::theme;
 use crate::widgets::{Emphasis, InteractiveControl, button, tooltip};
 
@@ -35,8 +39,14 @@ const SIDEBAR_WIDTH: Pixels = px(200.0);
 const BPM_WIDTH: Pixels = px(72.0);
 const KEY_WIDTH: Pixels = px(56.0);
 const ENERGY_WIDTH: Pixels = px(64.0);
+const STEMS_WIDTH: Pixels = px(72.0);
+/// What a track without stems offers in the Stems column on hover.
+const SEPARATE_LABEL: &str = "Separate";
 const TIME_WIDTH: Pixels = px(64.0);
 const SOURCE_WIDTH: Pixels = px(88.0);
+const MATCH_WIDTH: Pixels = px(232.0);
+/// How faint a row is once its track played this session.
+const PLAYED_ROW_OPACITY: f32 = 0.55;
 /// How the spare width is shared: titles are the longest text in a row, so the title takes the
 /// most; the genre gets room for a folder and its subfolder, such as `afro house / warmup`.
 const TITLE_SHARE: f32 = 3.0;
@@ -80,6 +90,10 @@ pub enum BrowserEvent {
     RelinkAll,
     /// Find the moved file of one missing track.
     Relink(TrackIndex),
+    /// Separate a track into stems, ahead of every other track waiting.
+    SeparateStems(TrackIndex),
+    /// Stop separating a track, or forget it if it waits.
+    CancelStems(TrackIndex),
     /// The DJ sorted a screen's tracks by another column, or went back to the crate's order.
     Sorted {
         /// The screen.
@@ -141,6 +155,8 @@ pub struct Browser {
     missing: Arc<HashSet<TrackIndex>>,
     relinking: bool,
     analyses: HashMap<PathBuf, Result<Arc<AudioAnalysis>, String>>,
+    matches: Arc<LibraryMatches>,
+    stems: StemStatuses,
     search_input: Entity<InputState>,
     table_focus: FocusHandle,
     scroll: UniformListScrollHandle,
@@ -183,6 +199,8 @@ impl Browser {
             missing: Arc::default(),
             relinking: false,
             analyses: HashMap::new(),
+            matches: Arc::default(),
+            stems: StemStatuses::default(),
             search_input,
             table_focus: cx.focus_handle(),
             scroll: UniformListScrollHandle::new(),
@@ -236,6 +254,51 @@ impl Browser {
             self.refilter(cx);
         }
         cx.notify();
+    }
+
+    /// Shows how every track mixes after the track the room follows.
+    pub fn set_matches(&mut self, matches: Arc<LibraryMatches>, cx: &mut Context<'_, Self>) {
+        let narrows = self
+            .view
+            .set_match_reference(matches.reference_title().is_some());
+        self.matches = matches;
+        if narrows
+            || self.view.match_filter_on()
+            || self.sort().is_some_and(|sort| sort.column == Column::Match)
+        {
+            self.refilter(cx);
+        }
+        cx.notify();
+    }
+
+    /// Shows where each track's stems stand.
+    pub fn set_stems(&mut self, stems: StemStatuses, cx: &mut Context<'_, Self>) {
+        self.stems = stems;
+        if self.sort().is_some_and(|sort| sort.column == Column::Stems) {
+            self.refilter(cx);
+        }
+        cx.notify();
+    }
+
+    /// How `entry` mixes after the track the room follows.
+    fn track_match(&self, entry: &CollectionTrack) -> Option<&TrackMatch> {
+        self.matches.get(entry.track.file_path.as_deref()?)
+    }
+
+    fn toggle_match_filter(&mut self, cx: &mut Context<'_, Self>) {
+        self.view.toggle_match_filter();
+        self.refilter(cx);
+        self.reveal_selection();
+    }
+
+    /// Where the stems of `entry` stand.
+    fn stems_status(&self, entry: &CollectionTrack) -> &StemsStatus {
+        entry
+            .track
+            .file_path
+            .as_ref()
+            .and_then(|path| self.stems.get(path))
+            .unwrap_or(&StemsStatus::None)
     }
 
     /// What the analyser has said about `entry` so far.
@@ -368,6 +431,12 @@ impl Browser {
             Column::Bpm => bpm_cell(entry, self.analysis_state(entry)),
             Column::Key => key_cell(entry, self.analysis_state(entry)),
             Column::Energy => energy_cell(self.analysis_state(entry)),
+            Column::Match => self
+                .track_match(entry)
+                .and_then(|found| found.rank)
+                .map(|rank| rank.to_string().into())
+                .unwrap_or_default(),
+            Column::Stems => stems_cell(self.stems_status(entry)),
             Column::Time => row.time.clone(),
             Column::Source => {
                 if self.missing.contains(&track) {
@@ -501,12 +570,14 @@ impl Browser {
         self.scroll.scroll_to_item(0, ScrollStrategy::Top);
     }
 
-    /// Marks the tracks a deck played this session, which `played:` filters read.
+    /// Marks the tracks a deck played this session: `played:` filters read them, and their
+    /// rows are dimmed.
     pub fn set_played(&mut self, played: Arc<HashSet<PathBuf>>, cx: &mut Context<'_, Self>) {
         self.played = played;
         if self.query.has_filters() {
             self.refilter(cx);
         }
+        cx.notify();
     }
 
     /// Puts a suggested filter in place of the word being typed, and keeps typing there.
@@ -791,6 +862,7 @@ impl Browser {
             .border_color(theme::LINE)
             .child(self.bpm_filter(cx))
             .child(self.key_filter(cx))
+            .child(self.match_filter(cx))
             .child(div().flex_1())
             .child(
                 div()
@@ -935,6 +1007,30 @@ impl Browser {
             })
     }
 
+    /// Matches master: only the tracks the Next suggestions would offer after the track the
+    /// room follows.
+    fn match_filter(&self, cx: &mut Context<'_, Self>) -> impl IntoElement + use<> {
+        let reference = self.matches.reference_title().map(str::to_owned);
+        let on = self.view.match_filter_on();
+        let explanation: SharedString = match &reference {
+            Some(title) => format!(
+                "Only tracks that mix well after {title}: a key that fits and a tempo within reach"
+            )
+            .into(),
+            None => "Play a deck to see what mixes after it".into(),
+        };
+        filter_chip("match-filter", "Matches master", on)
+            .when(reference.is_none(), |chip| {
+                chip.opacity(0.5).cursor_default().tab_stop(false)
+            })
+            .tooltip(tooltip(explanation))
+            .when(reference.is_some(), |chip| {
+                chip.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                    this.toggle_match_filter(cx);
+                }))
+            })
+    }
+
     fn render_header(&self, cx: &mut Context<'_, Self>) -> impl IntoElement + use<> {
         let actions = self.actions();
         let sort = self.sort();
@@ -963,17 +1059,21 @@ impl Browser {
                         .flex_none()
                         .text_color(theme::TEXT)
                 });
-                let label = div().truncate().child(column.label());
+                let heading: SharedString = match (column, self.matches.heading()) {
+                    (Column::Match, Some(heading)) => heading.to_owned().into(),
+                    _ => column.label().into(),
+                };
+                let label = div().truncate().child(heading.clone());
                 column_box(column)
                     .id(("sort", column as usize))
                     .accessible_button(match direction {
                         Some(SortDirection::Ascending) => {
-                            format!("Sort by {}, ascending", column.label())
+                            format!("Sort by {heading}, ascending")
                         }
                         Some(SortDirection::Descending) => {
-                            format!("Sort by {}, descending", column.label())
+                            format!("Sort by {heading}, descending")
                         }
-                        None => format!("Sort by {}", column.label()),
+                        None => format!("Sort by {heading}"),
                     })
                     .role(gpui::Role::ColumnHeader)
                     .aria_column_index(column as usize + 1)
@@ -1026,6 +1126,9 @@ impl Browser {
         let selected = self.selected == Some(track);
         let missing = self.missing.contains(&track);
         let in_set = self.in_set.contains(&track);
+        let path = entry.track.file_path.as_deref();
+        let played = path.is_some_and(|path| self.played.contains(path));
+        let match_cell = path.map(|path| MatchCell::of(&self.matches, path));
         let dragged = DraggedTrack {
             track,
             title: entry.row.title.clone(),
@@ -1064,13 +1167,17 @@ impl Browser {
                 }),
             )
             .on_drag(dragged, |dragged, _, _, cx| cx.new(|_| dragged.clone()))
+            .when(played, |row| row.opacity(PLAYED_ROW_OPACITY))
             .children(Column::ALL.map(|column| {
                 let text = self.cell_text(entry, track, column);
                 let cell = column_box(column)
                     .id(("track-cell", column as usize))
                     .role(gpui::Role::Cell)
                     .aria_column_index(column as usize + 1)
-                    .aria_label(text.clone());
+                    .aria_label(match (column, match_cell) {
+                        (Column::Match, Some(found)) => found.description(played).into(),
+                        _ => text.clone(),
+                    });
                 match column {
                     Column::Title => cell
                         .gap(px(8.0))
@@ -1101,6 +1208,45 @@ impl Browser {
                         .font_family(MONO_FAMILY)
                         .text_size(theme::SMALL_TEXT_SIZE)
                         .child(text),
+                    Column::Match => cell.children(match_cell.map(MatchCell::render)),
+                    Column::Stems => {
+                        let status = self.stems_status(entry);
+                        let separable =
+                            matches!(status, StemsStatus::None | StemsStatus::Failed(_))
+                                && entry.track.file_path.is_some()
+                                && !missing;
+                        let pending = status.is_pending();
+                        cell.font_family(MONO_FAMILY)
+                            .text_size(theme::SMALL_TEXT_SIZE)
+                            .text_color(theme::MUTED)
+                            .when(separable, |cell| {
+                                cell.cursor_pointer()
+                                    .child(
+                                        div()
+                                            .opacity(0.0)
+                                            .group_hover(ROW_GROUP, |label| label.opacity(1.0))
+                                            .hover(|label| label.text_color(theme::TEXT))
+                                            .child(SEPARATE_LABEL),
+                                    )
+                                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                        cx.stop_propagation()
+                                    })
+                                    .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {
+                                        cx.emit(BrowserEvent::SeparateStems(track));
+                                    }))
+                            })
+                            .when(pending, |cell| {
+                                cell.cursor_pointer()
+                                    .hover(|cell| cell.text_color(theme::TEXT))
+                                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                        cx.stop_propagation()
+                                    })
+                                    .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {
+                                        cx.emit(BrowserEvent::CancelStems(track));
+                                    }))
+                            })
+                            .when(!separable, |cell| cell.child(text))
+                    }
                     Column::Time => cell
                         .font_family(MONO_FAMILY)
                         .text_size(theme::SMALL_TEXT_SIZE)
@@ -1175,6 +1321,8 @@ fn column_box(column: Column) -> gpui::Div {
         Column::Bpm => fixed(cell, BPM_WIDTH).justify_end(),
         Column::Key => fixed(cell, KEY_WIDTH),
         Column::Energy => fixed(cell, ENERGY_WIDTH).justify_end(),
+        Column::Match => fixed(cell, MATCH_WIDTH),
+        Column::Stems => fixed(cell, STEMS_WIDTH).justify_end(),
         Column::Time => fixed(cell, TIME_WIDTH).justify_end(),
         Column::Source => fixed(cell, SOURCE_WIDTH),
     }

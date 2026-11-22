@@ -1,7 +1,7 @@
 //! The effects as the DJ picks them: their names on screen, the groups of the effect picker,
 //! and the order FX SELECT steps through.
 
-use dubplate_engine::{BeatLength, DeckId, EffectKind, EffectTarget, EffectUnitState};
+use dubplate_engine::{DeckId, EffectKind, EffectTarget, EffectUnitState, ParameterValue};
 use serde::{Deserialize, Serialize};
 
 use crate::commands::Direction;
@@ -122,12 +122,24 @@ pub fn search(query: &str) -> Vec<(&'static str, Vec<EffectKind>)> {
         .collect()
 }
 
-/// The next standard beat length up, or down.
-pub fn step_beat(beat: BeatLength, direction: Direction) -> BeatLength {
-    match direction {
-        Direction::Up => beat.longer(),
-        Direction::Down => beat.shorter(),
-    }
+/// The value one BEAT button press up or down from `value` gives `kind`'s parameter, stopping
+/// at either end, or `None` for an effect without a parameter.
+pub fn step_parameter(
+    kind: EffectKind,
+    value: Option<ParameterValue>,
+    direction: Direction,
+) -> Option<ParameterValue> {
+    let spec = kind.parameter()?;
+    let steps = match direction {
+        Direction::Up => 1,
+        Direction::Down => -1,
+    };
+    Some(spec.step(value.unwrap_or(spec.default), steps))
+}
+
+/// The parameter as the strip shows it: `1/2`, `75%`, `+3 st`, or a dash for none.
+pub fn parameter_label(value: Option<ParameterValue>) -> String {
+    value.map_or_else(|| "\u{2013}".to_owned(), |value| value.to_string())
 }
 
 /// The letter of a target on the strip's target buttons.
@@ -155,8 +167,10 @@ pub struct EffectUnitSetting {
     pub effect: String,
     /// `A`, `B` or `M` for the master.
     pub target: String,
-    /// The beat length, such as `1/2`.
-    pub beat: String,
+    /// The effect's parameter, such as `1/2`, `75%` or `+3 st`. The key keeps its first name,
+    /// `beat`, so files written before effects had other parameters still load.
+    #[serde(rename = "beat")]
+    pub parameter: String,
     /// The level and depth knob, from 0.0 to 1.0.
     pub depth: f32,
 }
@@ -167,7 +181,9 @@ impl EffectUnitSetting {
         Self {
             effect: state.kind.name().to_owned(),
             target: target_letter(state.target).to_owned(),
-            beat: state.beat.to_string(),
+            parameter: state
+                .parameter
+                .map_or_else(String::new, |value| value.to_string()),
             depth: state.depth,
         }
     }
@@ -182,9 +198,9 @@ impl EffectUnitSetting {
         target_from_letter(&self.target)
     }
 
-    /// The beat length, if it reads as one.
-    pub fn beat(&self) -> Option<BeatLength> {
-        self.beat.parse().ok()
+    /// The parameter, if it reads as one.
+    pub fn parameter(&self) -> Option<ParameterValue> {
+        self.parameter.parse().ok()
     }
 
     /// The depth, kept between 0.0 and 1.0.
@@ -196,6 +212,8 @@ impl EffectUnitSetting {
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
+
+    use dubplate_engine::BeatLength;
 
     use super::*;
 
@@ -243,16 +261,34 @@ mod tests {
     }
 
     #[test]
-    fn the_beat_arrows_step_through_the_standard_lengths() {
-        assert_eq!(step_beat(BeatLength::ONE, Direction::Up), BeatLength::TWO);
+    fn the_beat_arrows_step_through_each_effects_own_values() {
+        let beat = |length| Some(ParameterValue::Beats(length));
         assert_eq!(
-            step_beat(BeatLength::ONE, Direction::Down),
-            BeatLength::THREE_QUARTERS
+            step_parameter(EffectKind::Echo, beat(BeatLength::ONE), Direction::Up),
+            beat(BeatLength::TWO)
         );
         assert_eq!(
-            step_beat(BeatLength::THIRTY_TWO, Direction::Up),
-            BeatLength::THIRTY_TWO
+            step_parameter(EffectKind::Echo, beat(BeatLength::ONE), Direction::Down),
+            beat(BeatLength::THREE_QUARTERS)
         );
+        assert_eq!(
+            step_parameter(EffectKind::Echo, beat(BeatLength::SIXTEEN), Direction::Up),
+            beat(BeatLength::SIXTEEN)
+        );
+        assert_eq!(
+            step_parameter(
+                EffectKind::Reverb,
+                Some(ParameterValue::Percent(50)),
+                Direction::Up
+            ),
+            Some(ParameterValue::Percent(60))
+        );
+        assert_eq!(
+            step_parameter(EffectKind::Crusher, None, Direction::Up),
+            None
+        );
+        assert_eq!(parameter_label(Some(ParameterValue::Percent(75))), "75%");
+        assert_eq!(parameter_label(None), "\u{2013}");
     }
 
     #[test]
@@ -260,7 +296,7 @@ mod tests {
         let state = EffectUnitState {
             kind: EffectKind::PingPong,
             target: EffectTarget::Deck(DeckId::B),
-            beat: BeatLength::THREE_QUARTERS,
+            parameter: Some(ParameterValue::Beats(BeatLength::THREE_QUARTERS)),
             depth: 0.4,
             enabled: true,
             sounding: true,
@@ -268,17 +304,20 @@ mod tests {
         let setting = EffectUnitSetting::of(&state);
         assert_eq!(setting.kind(), Some(EffectKind::PingPong));
         assert_eq!(setting.target(), Some(EffectTarget::Deck(DeckId::B)));
-        assert_eq!(setting.beat(), Some(BeatLength::THREE_QUARTERS));
+        assert_eq!(
+            setting.parameter(),
+            Some(ParameterValue::Beats(BeatLength::THREE_QUARTERS))
+        );
         assert_eq!(setting.depth(), Some(0.4));
         let unknown = EffectUnitSetting {
             effect: "wah".to_owned(),
             target: "C".to_owned(),
-            beat: "64".to_owned(),
+            parameter: "64".to_owned(),
             depth: f32::NAN,
         };
         assert_eq!(unknown.kind(), None);
         assert_eq!(unknown.target(), None);
-        assert_eq!(unknown.beat(), None);
+        assert_eq!(unknown.parameter(), None);
         assert_eq!(unknown.depth(), None);
         assert_eq!(target_from_letter("m"), Some(EffectTarget::Master));
     }

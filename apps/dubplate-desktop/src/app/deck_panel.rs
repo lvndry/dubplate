@@ -44,9 +44,14 @@ pub(super) fn render(
         .child(overview::render(app, deck, frame, cx))
         .child(transport(app, deck, frame, cx))
         .children(deck_grid::grid_bar(app, deck, cx))
+        .child(super::stems_strip::render(app, deck, cx))
         .child(pad_grid::render(app, deck, cx));
     accept_drops(panel, deck, cx)
 }
+
+/// The narrowest the tempo slider with its label and range gets before it wraps under the
+/// transport buttons.
+const TEMPO_GROUP_MIN_WIDTH: Pixels = px(220.0);
 
 fn title_row(
     app: &DubplateApp,
@@ -93,8 +98,12 @@ fn title_row(
                 .and_then(|entry| entry.track.bpm)
                 .map(|bpm| bpm * tempo)
         });
+    let analysing = playing_bpm.is_none()
+        && entry
+            .and_then(|entry| entry.track.file_path.as_deref())
+            .is_some_and(|path| matches!(app.analyses.state(path), AnalysisState::Waiting));
     let bpm = playing_bpm.map_or_else(|| "--.--".to_owned(), |bpm| format!("{bpm:.2}"));
-    let pitch = format!("{:+.1}%", (tempo - 1.0) * 100.0).replace('-', "\u{2212}");
+    let pitch = pitch_label(tempo);
     let ending = frame
         .duration_seconds
         .is_some_and(|duration| duration - frame.playhead_seconds <= ENDING_SECONDS);
@@ -167,11 +176,17 @@ fn title_row(
                         .min_w_0()
                         .child(
                             div()
+                                .truncate()
                                 .text_size(px(14.0))
                                 .font_weight(FontWeight::MEDIUM)
                                 .child(title),
                         )
-                        .child(div().text_color(subtitle_colour).child(subtitle)),
+                        .child(
+                            div()
+                                .truncate()
+                                .text_color(subtitle_colour)
+                                .child(subtitle),
+                        ),
                 ),
         )
         .child(
@@ -190,15 +205,29 @@ fn title_row(
                         .when(ending, |time| time.text_color(theme::ATTENTION))
                         .child(remaining),
                 )
-                .child(
+                .child(if analysing {
+                    div()
+                        .font_family(crate::fonts::UI_FAMILY)
+                        .text_size(theme::SMALL_TEXT_SIZE)
+                        .text_color(theme::MUTED)
+                        .child("Analysing\u{2026}")
+                } else {
                     div()
                         .font_family(crate::fonts::UI_FAMILY)
                         .text_size(px(26.0))
                         .font_weight(FontWeight::MEDIUM)
                         .text_color(theme::TEXT)
-                        .child(bpm),
-                ),
+                        .child(bpm)
+                }),
         )
+}
+
+/// The tempo as a CDJ shows it, to the hundredth of a percent with a true minus sign, so two
+/// decks can be matched by their numbers: 0.1% at 122 BPM is already 0.12 BPM.
+fn pitch_label(tempo: f64) -> String {
+    let percent = (tempo - 1.0) * 100.0;
+    let percent = if percent.abs() < 0.005 { 0.0 } else { percent };
+    format!("{percent:+.2}%").replace('-', "\u{2212}")
 }
 
 fn deck_badge(deck: DeckId) -> impl IntoElement {
@@ -226,8 +255,11 @@ fn transport(
     let playing = frame.state.playing;
     let colour = theme::deck_colour(deck);
     let tempo = app.tempo_state(deck);
+    // The tempo slider wraps under the buttons when the deck is too narrow for both on one
+    // row, rather than being pushed off the deck.
     div()
         .flex()
+        .flex_wrap()
         .items_center()
         .gap(px(6.0))
         .child(
@@ -307,6 +339,7 @@ fn transport(
             div()
                 .flex()
                 .flex_1()
+                .min_w(TEMPO_GROUP_MIN_WIDTH)
                 .items_center()
                 .gap(px(10.0))
                 .ml(px(10.0))
@@ -433,4 +466,17 @@ fn button(id: (&'static str, usize)) -> gpui::Stateful<gpui::Div> {
         .rounded(theme::CONTROL_RADIUS)
         .cursor_pointer()
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_tempo_reads_to_the_hundredth_of_a_percent() {
+        assert_eq!(pitch_label(1.0), "+0.00%");
+        assert_eq!(pitch_label(1.0125), "+1.25%");
+        assert_eq!(pitch_label(0.9998), "\u{2212}0.02%");
+        assert_eq!(pitch_label(0.99999), "+0.00%");
+    }
 }

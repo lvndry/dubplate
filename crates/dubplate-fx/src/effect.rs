@@ -15,6 +15,7 @@ use crate::effects::gate::Gate;
 use crate::effects::phaser::Phaser;
 use crate::effects::ping_pong::PingPong;
 use crate::effects::reverb::Reverb;
+use crate::parameter::{ParameterSpec, ParameterValue, parameter_spec};
 
 /// The name the beat filter had when it was the mixer's one-knob filter, still read from saved
 /// settings.
@@ -61,11 +62,23 @@ pub trait Effect: Send {
     /// to the controls that make it sound deeper; the documentation of each effect says how.
     fn set_depth(&mut self, depth: f32);
 
+    /// Sets the effect's parameter, the value the BEAT buttons of a DJ mixer step through: a
+    /// beat length for time-based effects, a percentage or a pitch for the others. See
+    /// [`EffectKind::parameter`]. A value of another unit than the effect's is ignored.
+    fn set_parameter(&mut self, value: ParameterValue);
+
+    /// The effect's parameter, or `None` for an effect without one.
+    fn parameter(&self) -> Option<ParameterValue>;
+
     /// Sets the beat length of a beat-synced effect. Effects without one ignore it.
-    fn set_beat(&mut self, beat: BeatLength);
+    fn set_beat(&mut self, beat: BeatLength) {
+        self.set_parameter(ParameterValue::Beats(beat));
+    }
 
     /// The beat length of a beat-synced effect, or `None` for effects without one.
-    fn beat(&self) -> Option<BeatLength>;
+    fn beat(&self) -> Option<BeatLength> {
+        self.parameter().and_then(ParameterValue::beats)
+    }
 
     /// Clears every buffer and filter, silencing any trail at once.
     fn reset(&mut self);
@@ -80,14 +93,14 @@ pub enum EffectKind {
     PingPong,
     /// A room-to-hall reverb.
     Reverb,
+    /// A low-pass filter that sweeps down and back up in time with the beat.
+    Filter,
     /// A resonant low-pass filter.
     LowPass,
     /// A resonant high-pass filter.
     HighPass,
     /// A resonant band-pass filter.
     BandPass,
-    /// A low-pass filter that sweeps down and back up in time with the beat.
-    Filter,
     /// A beat-synced jet flanger.
     Flanger,
     /// A beat-synced phaser.
@@ -119,6 +132,18 @@ impl EffectKind {
         Self::Brake,
         Self::Backspin,
     ];
+
+    /// Where the effect sits in [`EffectKind::ALL`], which lists the effects in the order they
+    /// are declared.
+    pub const fn index(self) -> usize {
+        self as usize
+    }
+
+    /// The effect's parameter: what it sets, the values the BEAT buttons step through and its
+    /// default, or `None` for an effect without one.
+    pub fn parameter(self) -> Option<&'static ParameterSpec> {
+        parameter_spec(self)
+    }
 
     /// The short name used on screen and on the command line.
     pub fn name(self) -> &'static str {
@@ -220,6 +245,9 @@ mod tests {
             assert_eq!(kind.name().parse::<EffectKind>(), Ok(kind));
         }
         assert!("wah".parse::<EffectKind>().is_err());
+        for (index, kind) in EffectKind::ALL.into_iter().enumerate() {
+            assert_eq!(kind.index(), index, "{kind} is declared out of order");
+        }
         assert_eq!("sweep".parse::<EffectKind>(), Ok(EffectKind::Filter));
     }
 }
