@@ -25,6 +25,7 @@ use crate::state::{
     DeckState, EngineStats, LoopState, Meters, PlatterState, SharedState, SlipState, TempoState,
     decode_loop_length, take_peak,
 };
+use crate::stems::StemSettings;
 use crate::sync::SyncMode;
 use crate::tempo::{MasterTempo, TempoRange};
 use crate::track::{MAX_TRACK_SECONDS, Track};
@@ -60,6 +61,7 @@ pub fn offline_engine(sample_rate: u32) -> (Controller, Renderer) {
         quantize: true,
         headphones: HeadphoneSettings::default(),
         key_locks: [false; DECK_COUNT],
+        stem_settings: [StemSettings::UNTOUCHED; DECK_COUNT],
         key_shifts: [0.0; DECK_COUNT],
         pad_effects: [None; DECK_COUNT],
         samples: std::array::from_fn(|_| None),
@@ -94,6 +96,7 @@ pub struct Controller {
     quantize: bool,
     headphones: HeadphoneSettings,
     key_locks: [bool; DECK_COUNT],
+    stem_settings: [StemSettings; DECK_COUNT],
     key_shifts: [f32; DECK_COUNT],
     pad_effects: [Option<PadEffect>; DECK_COUNT],
     samples: [Option<(Track, SampleSettings)>; SAMPLER_SLOTS],
@@ -626,6 +629,22 @@ impl Controller {
     /// Whether key lock is on for a deck.
     pub fn key_lock(&self, deck: DeckId) -> bool {
         self.key_locks[deck.index()]
+    }
+
+    /// Sets the level of each of a deck's stems and which are muted, such as
+    /// [`StemSettings::without`] the vocals for an instrumental. Every stem glides to its new
+    /// gain over 20 ms, so muting never clicks; the settings stay for the next track. A track
+    /// plays its stems once they are attached with [`Track::attach_stems`], and plays as it is
+    /// until then.
+    pub fn set_stems(&mut self, deck: DeckId, settings: StemSettings) -> Result<(), EngineError> {
+        self.send(Command::SetStems { deck, settings })?;
+        self.stem_settings[deck.index()] = settings;
+        Ok(())
+    }
+
+    /// A deck's stem settings, as last set.
+    pub fn stems(&self, deck: DeckId) -> StemSettings {
+        self.stem_settings[deck.index()]
     }
 
     /// Auditions a seam in the headphones, or stops the audition with `None`: two tracks, each

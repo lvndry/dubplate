@@ -2,8 +2,40 @@
 
 use std::path::{Path, PathBuf};
 
-use dubplate_engine::Stem;
+use dubplate_engine::{EngineError, Stem, StemTracks};
 use euphoria_core::stems as separation;
+
+/// Why a track's stems could not be loaded for a deck.
+#[derive(Debug, thiserror::Error)]
+pub enum StemLoadError {
+    /// A stem file could not be read.
+    #[error("could not read {}: {source}", path.display())]
+    Read {
+        /// The stem file.
+        path: PathBuf,
+        /// What went wrong.
+        source: hound::Error,
+    },
+    /// A stem file is not 16-bit stereo at the rate of the others.
+    #[error("{} is not a 16-bit stereo stem at {sample_rate} Hz", path.display())]
+    Format {
+        /// The stem file.
+        path: PathBuf,
+        /// The rate the stems must share.
+        sample_rate: u32,
+    },
+    /// A stem could not be resampled to the track's rate.
+    #[error("could not resample {}: {reason}", path.display())]
+    Resample {
+        /// The stem file.
+        path: PathBuf,
+        /// What went wrong.
+        reason: String,
+    },
+    /// The engine refused the stems, for example because they differ in length.
+    #[error(transparent)]
+    Engine(#[from] EngineError),
+}
 
 /// The sample rate of the stem files: 44.1 kHz, the rate the network was trained at, whatever
 /// the rate of the track.
@@ -18,7 +50,7 @@ pub struct StemFiles {
 
 impl StemFiles {
     /// The stems in `directory` when all four files are there.
-    pub(crate) fn complete_in(directory: PathBuf) -> Option<Self> {
+    pub fn in_folder(directory: PathBuf) -> Option<Self> {
         let files = Self { directory };
         Stem::ALL
             .iter()
@@ -41,10 +73,95 @@ impl StemFiles {
         &self.directory
     }
 
+    /// Reads the four files into memory for a deck playing a track at `sample_rate`, the
+    /// track's own rate: stems separated at [`STEMS_SAMPLE_RATE`] are resampled to it, so the
+    /// deck reads stems and track at the same positions. About 320 MB for seven minutes at
+    /// 48 kHz, read and resampled in a few seconds: run it off the audio and interface threads.
+    pub fn load(&self, sample_rate: u32) -> Result<StemTracks, StemLoadError> {
+        let stems = self.paths().map(|path| {
+            let samples = read_stem(&path, STEMS_SAMPLE_RATE)?;
+            resample(&samples, STEMS_SAMPLE_RATE, sample_rate)
+                .map_err(|reason| StemLoadError::Resample { path, reason })
+        });
+        let [drums, bass, melody, vocals] = stems;
+        let samples = [drums?, bass?, melody?, vocals?];
+        Ok(StemTracks::from_interleaved_stereo(
+            std::array::from_fn(|stem| samples[stem].as_slice()),
+            sample_rate,
+        )?)
+    }
+
     /// The name of the folder inside the cache, which names the model and the track's content.
     pub(crate) fn entry_name(&self) -> Option<&str> {
         self.directory.file_name()?.to_str()
     }
+}
+
+/// The interleaved 16-bit samples of the stereo WAV file at `path`, which must be at
+/// `sample_rate`.
+fn read_stem(path: &Path, sample_rate: u32) -> Result<Vec<i16>, StemLoadError> {
+    let read_error = |source| StemLoadError::Read {
+        path: path.to_path_buf(),
+        source,
+    };
+    let reader = hound::WavReader::open(path).map_err(read_error)?;
+    let spec = reader.spec();
+    let expected = spec.channels == 2
+        && spec.bits_per_sample == 16
+        && spec.sample_format == hound::SampleFormat::Int
+        && spec.sample_rate == sample_rate;
+    if !expected {
+        return Err(StemLoadError::Format {
+            path: path.to_path_buf(),
+            sample_rate,
+        });
+    }
+    reader
+        .into_samples::<i16>()
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(read_error)
+}
+
+/// Interleaved 16-bit stereo `samples` at `source_rate`, resampled to `target_rate` with the
+/// same FFT resampler the separation decodes with. The same samples when the rates match.
+fn resample(samples: &[i16], source_rate: u32, target_rate: u32) -> Result<Vec<i16>, String> {
+    use rubato::audioadapter_buffers::direct::SequentialSliceOfVecs;
+    use rubato::{Fft, FixedSync, Resampler};
+
+    const CHUNK_FRAMES: usize = 4096;
+    const SCALE: f32 = 32_768.0;
+    if source_rate == target_rate {
+        return Ok(samples.to_vec());
+    }
+    let frames = samples.len() / 2;
+    let channels: Vec<Vec<f32>> = (0..2)
+        .map(|channel| {
+            samples
+                .iter()
+                .skip(channel)
+                .step_by(2)
+                .map(|sample| f32::from(*sample) / SCALE)
+                .collect()
+        })
+        .collect();
+    let mut resampler = Fft::<f32>::new(
+        source_rate as usize,
+        target_rate as usize,
+        CHUNK_FRAMES,
+        2,
+        FixedSync::Input,
+    )
+    .map_err(|error| error.to_string())?;
+    let input =
+        SequentialSliceOfVecs::new(&channels, 2, frames).map_err(|error| error.to_string())?;
+    let output = resampler
+        .process_all(&input, frames, None)
+        .map_err(|error| error.to_string())?;
+    Ok(output
+        .take_data()
+        .into_iter()
+        .map(|sample| (sample * SCALE).round().clamp(-SCALE, SCALE - 1.0) as i16)
+        .collect())
 }
 
 /// The stem of the separating network that holds `stem`: the melody is what the network calls
@@ -78,6 +195,42 @@ mod tests {
         );
     }
 
+    fn write_stem(path: &Path, samples: &[i16], sample_rate: u32) {
+        let spec = hound::WavSpec {
+            channels: 2,
+            sample_rate,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+        let mut writer = hound::WavWriter::create(path, spec).unwrap();
+        for sample in samples {
+            writer.write_sample(*sample).unwrap();
+        }
+        writer.finalize().unwrap();
+    }
+
+    #[test]
+    fn stems_load_for_a_deck_and_refuse_a_file_of_another_kind() {
+        let folder = tempfile::tempdir().unwrap();
+        let files = StemFiles {
+            directory: folder.path().to_path_buf(),
+        };
+        for stem in Stem::ALL {
+            write_stem(&files.path(stem), &[0; 88_200], STEMS_SAMPLE_RATE);
+        }
+        let stems = files.load(STEMS_SAMPLE_RATE).unwrap();
+        assert_eq!(stems.duration_seconds(), 1.0);
+        let resampled = files.load(48_000).unwrap();
+        assert_eq!(resampled.sample_rate(), 48_000);
+        assert!((resampled.duration_seconds() - 1.0).abs() < 1e-3);
+
+        write_stem(&files.path(Stem::Bass), &[0; 96_000], 48_000);
+        assert!(matches!(
+            files.load(STEMS_SAMPLE_RATE),
+            Err(StemLoadError::Format { sample_rate, .. }) if sample_rate == STEMS_SAMPLE_RATE
+        ));
+    }
+
     #[test]
     fn stems_count_only_when_all_four_files_are_there() {
         let folder = tempfile::tempdir().unwrap();
@@ -88,8 +241,8 @@ mod tests {
             };
             std::fs::write(files.path(*stem), b"").unwrap();
         }
-        assert_eq!(StemFiles::complete_in(directory.clone()), None);
+        assert_eq!(StemFiles::in_folder(directory.clone()), None);
         std::fs::write(directory.join("vocals.wav"), b"").unwrap();
-        assert!(StemFiles::complete_in(directory).is_some());
+        assert!(StemFiles::in_folder(directory).is_some());
     }
 }

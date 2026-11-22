@@ -259,11 +259,25 @@ struct GridAgreement {
     offset_ms: f64,
     /// Whether that beat is a downbeat of the analysed grid.
     same_downbeat: bool,
+    /// The length of a beat of the analysed grid.
+    beat_ms: f64,
 }
 
 impl GridAgreement {
     fn on_the_beat(self) -> bool {
         self.offset_ms.abs() <= ON_THE_BEAT_MS
+    }
+
+    /// Whether rekordbox's beats fall closer to the analysed grid's off-beats than to its
+    /// beats: the grid is half a beat off.
+    fn on_the_off_beat(self) -> bool {
+        self.offset_ms.abs() > self.beat_ms / 4.0
+    }
+
+    /// Whether the analysed grid's bars start where rekordbox's do: its beats on rekordbox's
+    /// and its downbeat on rekordbox's downbeat.
+    fn same_bars(self) -> bool {
+        self.same_downbeat && !self.on_the_off_beat()
     }
 
     fn describe(self) -> String {
@@ -285,6 +299,7 @@ fn grid_agreement(analysis: &AudioAnalysis, reading: &RekordboxReading) -> Optio
     Some(GridAgreement {
         offset_ms: (rekordbox_seconds - nearest_seconds) * 1000.0,
         same_downbeat: (beats as i64).rem_euclid(BEATS_PER_BAR) == 0,
+        beat_ms: grid.beat_seconds() * 1000.0,
     })
 }
 
@@ -301,7 +316,8 @@ struct Comparison {
     key_neighbour: usize,
     grid_compared: usize,
     grid_on_the_beat: usize,
-    grid_same_downbeat: usize,
+    grid_on_the_off_beat: usize,
+    grid_same_bars: usize,
     grid_offsets_ms: Vec<f64>,
 }
 
@@ -332,12 +348,9 @@ impl Comparison {
         if let Some(agreement) = grid_agreement(analysis, reading) {
             self.grid_compared += 1;
             self.grid_offsets_ms.push(agreement.offset_ms);
-            if agreement.on_the_beat() {
-                self.grid_on_the_beat += 1;
-                if agreement.same_downbeat {
-                    self.grid_same_downbeat += 1;
-                }
-            }
+            self.grid_on_the_beat += usize::from(agreement.on_the_beat());
+            self.grid_on_the_off_beat += usize::from(agreement.on_the_off_beat());
+            self.grid_same_bars += usize::from(agreement.same_bars());
         }
     }
 
@@ -379,8 +392,12 @@ impl Comparison {
             share(self.grid_on_the_beat, self.grid_compared)
         );
         println!(
-            "  Same downbeat as rekordbox, of those on the beat: {}",
-            share(self.grid_same_downbeat, self.grid_on_the_beat)
+            "  Grid half a beat off rekordbox's: {}",
+            share(self.grid_on_the_off_beat, self.grid_compared)
+        );
+        println!(
+            "  Same downbeat as rekordbox: {}",
+            share(self.grid_same_bars, self.grid_compared)
         );
     }
 }
@@ -515,9 +532,11 @@ mod tests {
         };
         let same = grid_agreement(&analysis, &reading(2_510)).unwrap();
         assert!((same.offset_ms - 10.0).abs() < 1e-6);
-        assert!(same.same_downbeat && same.on_the_beat());
+        assert!(same.same_bars() && same.on_the_beat());
         let shifted = grid_agreement(&analysis, &reading(1_000)).unwrap();
-        assert!(!shifted.same_downbeat);
+        assert!(!shifted.same_downbeat && !shifted.same_bars());
+        let off_beat = grid_agreement(&analysis, &reading(2_750)).unwrap();
+        assert!(off_beat.on_the_off_beat() && !off_beat.same_bars());
         let other_tempo = RekordboxReading {
             bpm: Some(122.0),
             ..reading(500)
