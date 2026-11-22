@@ -1,5 +1,5 @@
 //! The two zoomed waveforms, stacked, scrolling past one playhead in the middle, with the beat
-//! grid behind them and the hot cues above.
+//! grid behind them, the hot cues above and the memory cues as red triangles along the top.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use dubplate_engine::{BeatLength, DeckId};
+use dubplate_rekordbox::{HotCue, HotCuePad, TrackCues, cue_milliseconds};
 use gpui::prelude::*;
 use gpui::{
     Bounds, Context, FontWeight, MouseButton, MouseDownEvent, PathBuilder, PinchEvent, Pixels,
@@ -21,16 +22,11 @@ use crate::fonts::MONO_FAMILY;
 use crate::frame_stats::FrameStats;
 use crate::shortcuts::printed_keys;
 use crate::theme;
-use crate::waveform::{
-    BandLevels, BeatMarks, BeatPosition, LaneLoop, LaneView, LoopLook, Zoom, ZoomedWaveform,
-};
+use crate::waveform::{BandLevels, BeatMarks, LaneLoop, LaneView, LoopLook, Zoom, ZoomedWaveform};
 
 const LANE_HEIGHT: Pixels = px(74.0);
-/// The phase meter's track, in pixels: half of it is half a beat early or late.
-const PHASE_TRACK_WIDTH: f32 = 44.0;
-/// How close two decks' beats are, in beats, for the phase meter to call them in phase: about
-/// 8 ms at 120 BPM, under what an ear hears as a flam.
-const IN_PHASE_BEATS: f64 = 0.016;
+/// The lanes' height in a short window, so the library keeps some rows.
+const SHORT_LANE_HEIGHT: Pixels = px(50.0);
 const PLAYHEAD_WIDTH: Pixels = px(2.0);
 const FLAG_WIDTH: f32 = 14.0;
 /// The quietest band still drawn, in pixels of half height.
@@ -44,8 +40,12 @@ const LOOP_EDGE_WIDTH: f32 = 2.0;
 /// How strongly the slip shadow playhead shows.
 const SLIP_SHADOW_OPACITY: f32 = 0.55;
 
-/// What a deck lane draws over its waveform besides the beats: the loop and the slip shadow.
-#[derive(Debug, Clone, Copy)]
+/// How many rows of pixels a memory cue's triangle is tall; each row is two pixels narrower.
+const MEMORY_CUE_ROWS: u8 = 5;
+
+/// What a deck lane draws over its waveform besides the beats: the loop, the memory cues and
+/// the slip shadow.
+#[derive(Debug, Clone)]
 pub(super) struct LaneMarks {
     /// The deck's loop, when it has one.
     pub lane_loop: Option<LaneLoop>,
@@ -57,6 +57,9 @@ pub(super) struct LaneMarks {
     pub cue_point: Option<f64>,
     /// A cue just set, in seconds, and how strongly it still pulses.
     pub pulse: Option<(f64, f32)>,
+    /// The track's cues, for its memory cues. Shared with the deck, so a frame never copies
+    /// them.
+    pub cues: Option<Arc<TrackCues>>,
 }
 
 /// The loop length as its label reads, such as `4` or `1/2`, without allocating for the
@@ -83,7 +86,6 @@ pub(super) fn render(
     frames: &[DeckFrame; 2],
     cx: &mut Context<'_, DubplateApp>,
 ) -> impl IntoElement {
-    let readings = beat_readings(app, frames);
     div()
         .relative()
         .flex()
@@ -99,8 +101,8 @@ pub(super) fn render(
         .on_pinch(cx.listener(|this, event: &PinchEvent, _, cx| {
             this.pinch_lanes(event.delta, cx);
         }))
-        .child(lane(app, DeckId::A, &frames[0], readings[0], cx))
-        .child(lane(app, DeckId::B, &frames[1], readings[1], cx))
+        .child(lane(app, DeckId::A, &frames[0], cx))
+        .child(lane(app, DeckId::B, &frames[1], cx))
         .child(zoom_label(app.lane_zoom))
         .child(
             div()
@@ -143,131 +145,10 @@ fn zoom_label(zoom: Zoom) -> impl IntoElement {
         }))
 }
 
-/// What the beat counter and the phase meter read for one deck in this frame.
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct BeatReading {
-    /// Where the deck is in its bars.
-    position: BeatPosition,
-    /// How far its beats are from the deck it follows, when it has one to follow.
-    phase: Option<Phase>,
-}
-
-/// How a deck's beats sit against the deck it is mixed against.
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct Phase {
-    /// In beats, from -0.5 to 0.5, positive when early.
-    beats: f64,
-    /// Whole beats between the downbeats, from -2 to 2.
-    bar_offset: i32,
-}
-
-/// The beat counters of both decks, and a phase meter on the deck that is not the tempo
-/// master (deck B when neither is), measured against the other deck, as the CDJ-3000 and
-/// rekordbox show over their waveforms.
-fn beat_readings(app: &DubplateApp, frames: &[DeckFrame; 2]) -> [Option<BeatReading>; 2] {
-    let positions = DeckId::ALL.map(|deck| {
-        app.deck(deck).visuals().and_then(|visuals| {
-            visuals
-                .beats
-                .position(frames[deck.index()].playhead_seconds)
-        })
-    });
-    let master = DeckId::ALL
-        .into_iter()
-        .find(|deck| app.tempo_state(*deck).is_some_and(|state| state.is_master))
-        .unwrap_or(DeckId::A);
-    DeckId::ALL.map(|deck| {
-        let position = positions[deck.index()]?;
-        let against = positions[master.index()].filter(|_| deck != master);
-        Some(BeatReading {
-            position,
-            phase: against.map(|master_position| Phase {
-                beats: position.phase_offset(master_position),
-                bar_offset: position.bar_offset(master_position),
-            }),
-        })
-    })
-}
-
-/// The beat counter, `17.3` for bar 17 beat 3, and the phase meter beside it: a short track
-/// with a centre line and a mark that sits on it when the beats land together, green then,
-/// with the beats between the downbeats when the bars do not line up.
-fn beat_counter(reading: BeatReading) -> impl IntoElement {
-    let in_phase = reading
-        .phase
-        .is_some_and(|phase| phase.beats.abs() <= IN_PHASE_BEATS);
-    div()
-        .absolute()
-        .top(px(2.0))
-        .left(px(4.0))
-        .flex()
-        .items_center()
-        .gap(px(6.0))
-        .px(px(4.0))
-        .py(px(1.0))
-        .rounded(px(3.0))
-        .bg(theme::faded(theme::BACKGROUND, 0.7))
-        .font_family(MONO_FAMILY)
-        .text_size(px(10.0))
-        .text_color(theme::MUTED)
-        .child(SharedString::from(format!(
-            "{}.{}",
-            reading.position.bar, reading.position.beat
-        )))
-        .children(reading.phase.map(|phase| {
-            let colour = if in_phase {
-                theme::OK
-            } else {
-                theme::ATTENTION
-            };
-            let offset = (phase.beats as f32 * 2.0).clamp(-1.0, 1.0) * PHASE_TRACK_WIDTH / 2.0;
-            div()
-                .flex()
-                .items_center()
-                .gap(px(4.0))
-                .child(
-                    div()
-                        .relative()
-                        .w(px(PHASE_TRACK_WIDTH))
-                        .h(px(6.0))
-                        .rounded(px(3.0))
-                        .bg(theme::TRACK)
-                        .child(
-                            div()
-                                .absolute()
-                                .top_0()
-                                .bottom_0()
-                                .left(px(PHASE_TRACK_WIDTH / 2.0))
-                                .w(px(1.0))
-                                .bg(theme::MUTED),
-                        )
-                        .child(
-                            div()
-                                .absolute()
-                                .top_0()
-                                .size(px(6.0))
-                                .rounded_full()
-                                .left(px(PHASE_TRACK_WIDTH / 2.0 - 3.0 + offset))
-                                .bg(colour),
-                        ),
-                )
-                .when(phase.bar_offset != 0, |meter| {
-                    meter.child(div().text_color(theme::ATTENTION).child(SharedString::from(
-                        format!(
-                            "{:+} beat{}",
-                            phase.bar_offset,
-                            if phase.bar_offset.abs() == 1 { "" } else { "s" }
-                        ),
-                    )))
-                })
-        }))
-}
-
 fn lane(
     app: &DubplateApp,
     deck: DeckId,
     frame: &DeckFrame,
-    reading: Option<BeatReading>,
     cx: &mut Context<'_, DubplateApp>,
 ) -> impl IntoElement {
     let content = &app.deck(deck).content;
@@ -290,6 +171,10 @@ fn lane(
             .deck(deck)
             .marker_pulse
             .and_then(|pulse| Some((pulse.seconds, pulse.strength(Instant::now())?))),
+        cues: app
+            .deck(deck)
+            .visuals()
+            .map(|_| Arc::clone(&app.deck(deck).cues)),
     };
     let stats = app.frame_stats.clone();
     let notice = app.deck_notice(deck).map(|notice| notice.to_string());
@@ -319,6 +204,7 @@ fn lane(
     });
     let zoom = app.lane_zoom;
     let pixels_per_track_second = zoom.pixels_per_track_second(tempo);
+    let lane_colour = marks.colour;
     let loop_label = marks.lane_loop.and_then(|lane_loop| {
         let length = lane_loop.length?;
         let offset = (lane_loop.start_seconds - playhead_seconds) * pixels_per_track_second;
@@ -327,11 +213,15 @@ fn lane(
     let flags = match content {
         DeckContent::Loaded(_) => app
             .deck(deck)
-            .hot_cues
-            .iter()
-            .map(|(pad, seconds)| {
-                let offset = (seconds - playhead_seconds) * pixels_per_track_second;
-                (pad.letter(), offset as f32)
+            .cues
+            .hot_cues()
+            .map(|(pad, cue)| {
+                let offset = (cue.start_seconds() - playhead_seconds) * pixels_per_track_second;
+                (
+                    flag_label(pad, cue),
+                    theme::hot_cue_colour(pad, cue),
+                    offset as f32,
+                )
             })
             .collect(),
         DeckContent::Empty | DeckContent::Loading | DeckContent::Failed(_) => Vec::new(),
@@ -357,7 +247,11 @@ fn lane(
                 )
         })
         .relative()
-        .h(LANE_HEIGHT)
+        .h(if app.short_window() {
+            SHORT_LANE_HEIGHT
+        } else {
+            LANE_HEIGHT
+        })
         .rounded(px(4.0))
         .overflow_hidden()
         .child(
@@ -386,7 +280,7 @@ fn lane(
             .absolute()
             .size_full(),
         )
-        .children(flags.into_iter().map(|(letter, offset)| {
+        .children(flags.into_iter().map(|(label, colour, offset)| {
             div()
                 .absolute()
                 .top_0()
@@ -395,7 +289,7 @@ fn lane(
                 .min_w(px(FLAG_WIDTH))
                 .px(px(3.0))
                 .rounded(px(3.0))
-                .bg(theme::CUE_FLAG)
+                .bg(colour)
                 .text_color(theme::ON_DECK)
                 .font_family(MONO_FAMILY)
                 .text_size(px(10.0))
@@ -403,7 +297,8 @@ fn lane(
                 .font_weight(FontWeight::SEMIBOLD)
                 .flex()
                 .justify_center()
-                .child(letter.to_string())
+                .whitespace_nowrap()
+                .child(label)
         }))
         .children(loop_label.map(|(label, offset)| {
             div()
@@ -413,7 +308,7 @@ fn lane(
                 .ml(px(offset + LOOP_EDGE_WIDTH + 2.0))
                 .px(px(4.0))
                 .rounded(px(3.0))
-                .bg(marks.colour)
+                .bg(lane_colour)
                 .text_color(theme::ON_DECK)
                 .font_family(MONO_FAMILY)
                 .text_size(px(10.0))
@@ -446,8 +341,7 @@ fn lane(
                 .text_size(px(10.0))
                 .font_weight(FontWeight::SEMIBOLD)
                 .child(deck_letter(deck)),
-        )
-        .children(reading.map(beat_counter));
+        );
     accept_drops(lane, deck, cx)
 }
 
@@ -518,6 +412,11 @@ pub(super) fn paint_lane(
         if let Some(lane_loop) = marks.lane_loop {
             paint_loop_edges(bounds, &view, lane_loop, marks.colour, window);
         }
+        if let Some(cues) = &marks.cues {
+            for (x, colour) in memory_cue_marks(cues, &view) {
+                paint_memory_cue(bounds, x, colour, window);
+            }
+        }
         if let Some(cue_point) = marks.cue_point {
             paint_cue_point(bounds, view.x_of(cue_point), window);
         }
@@ -552,6 +451,51 @@ pub(super) fn paint_cue_point(bounds: Bounds<Pixels>, x: f32, window: &mut Windo
     triangle.close();
     if let Ok(path) = triangle.build() {
         window.paint_path(path, theme::CUE_POINT);
+    }
+}
+
+/// What a hot cue's flag reads: its pad's letter, and its name when it has one.
+fn flag_label(pad: HotCuePad, cue: &HotCue) -> SharedString {
+    if cue.name.is_empty() {
+        SharedString::new_static(PAD_LETTERS[pad.index()])
+    } else {
+        format!("{} {}", pad.letter(), cue.name).into()
+    }
+}
+
+/// The pad letters as text, so a flag without a name never allocates.
+const PAD_LETTERS: [&str; HotCuePad::ALL.len()] = ["A", "B", "C", "D", "E", "F", "G", "H"];
+
+/// Where each memory cue on screen goes across the lane, and its colour: its own, else red for
+/// a memory cue and the saved loop colour for a memory loop.
+fn memory_cue_marks<'a>(
+    cues: &'a TrackCues,
+    view: &'a LaneView,
+) -> impl Iterator<Item = (f32, Rgba)> + 'a {
+    let on_screen = view.seconds_on_screen();
+    cues.memory_cues_between(
+        cue_milliseconds(on_screen.start),
+        cue_milliseconds(on_screen.end),
+    )
+    .iter()
+    .map(|cue| {
+        (
+            view.x_of(cue.start_seconds()),
+            theme::memory_cue_colour(cue),
+        )
+    })
+}
+
+/// A memory cue: a small triangle hanging from the lane's top edge, pointing down at `x`, made
+/// of one quad per row so painting it never allocates.
+fn paint_memory_cue(bounds: Bounds<Pixels>, x: f32, colour: Rgba, window: &mut Window) {
+    for row in 0..MEMORY_CUE_ROWS {
+        let half_width = f32::from(MEMORY_CUE_ROWS - row) - 0.5;
+        let line = Bounds::new(
+            bounds.origin + point(px(x - half_width), px(f32::from(row))),
+            size(px(half_width * 2.0), px(1.0)),
+        );
+        window.paint_quad(fill(line, colour));
     }
 }
 
@@ -728,5 +672,71 @@ impl BandArea {
             );
             window.paint_quad(fill(band, colour));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use dubplate_rekordbox::{MemoryCue, MemoryCueColor, PaletteColor};
+
+    use super::*;
+
+    #[test]
+    fn only_the_memory_cues_on_screen_are_drawn_where_they_fall() {
+        let cues = TrackCues::new(
+            Default::default(),
+            vec![
+                MemoryCue::at(10_000),
+                MemoryCue::at(31_000),
+                MemoryCue {
+                    loop_end_ms: Some(34_000),
+                    ..MemoryCue::at(33_000)
+                },
+                MemoryCue::at(90_000),
+            ],
+        );
+        let view = LaneView {
+            width: 1_000.0,
+            playhead_seconds: 30.0,
+            zoom: Zoom::new(100.0),
+            tempo: 1.0,
+        };
+        let marks: Vec<(f32, Rgba)> = memory_cue_marks(&cues, &view).collect();
+        assert_eq!(
+            marks,
+            [(600.0, theme::MEMORY_CUE), (800.0, theme::SAVED_LOOP)],
+            "five seconds either side of the playhead fit; a memory loop takes the loop colour"
+        );
+        let mut coloured = cues.clone();
+        coloured.insert_memory_cue(MemoryCue {
+            color: Some(MemoryCueColor::Blue),
+            ..MemoryCue::at(29_000)
+        });
+        let blue = memory_cue_marks(&coloured, &view).next().unwrap();
+        assert_eq!(
+            blue,
+            (400.0, theme::rekordbox_colour(MemoryCueColor::Blue.rgb()))
+        );
+    }
+
+    #[test]
+    fn a_flag_reads_its_letter_and_its_name_in_the_cue_s_colour() {
+        let plain = HotCue::at(1_000);
+        assert_eq!(flag_label(HotCuePad::C, &plain).as_ref(), "C");
+        let named = HotCue {
+            name: "Vocal".to_owned(),
+            color: PaletteColor::from_index(42),
+            ..HotCue::at(1_000)
+        };
+        assert_eq!(flag_label(HotCuePad::C, &named).as_ref(), "C Vocal");
+        assert_eq!(
+            theme::hot_cue_colour(HotCuePad::C, &named),
+            theme::rekordbox_colour(PaletteColor::from_index(42).unwrap().rgb())
+        );
+        assert_eq!(
+            theme::hot_cue_colour(HotCuePad::A, &plain),
+            theme::rekordbox_colour(PaletteColor::pad_default(HotCuePad::A).rgb()),
+            "a cue set in Dubplate takes rekordbox's default for its pad"
+        );
     }
 }

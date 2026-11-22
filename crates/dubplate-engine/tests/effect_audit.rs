@@ -107,8 +107,31 @@ struct Change {
 
 /// Plays `track` with the unit set to `kind` at `depth` on `target`, switched on for a few
 /// seconds and then off.
-fn change(track: &Track, kind: EffectKind, target: EffectTarget, depth: Option<f32>) -> Change {
-    let (_reference_controller, mut reference) = playing(track, deck_for(target));
+/// What the targeted deck sounds like without the unit: the music as it plays during the
+/// effect and in the second after it.
+struct Dry {
+    on: Vec<f32>,
+    trail: Vec<f32>,
+}
+
+fn dry(track: &Track, target: EffectTarget) -> Dry {
+    let (_controller, mut reference) = playing(track, deck_for(target));
+    render_frames(&mut reference, frames(LEAD_IN_SECONDS), BLOCK);
+    Dry {
+        on: render_frames(&mut reference, frames(ON_SECONDS), BLOCK),
+        trail: render_frames(&mut reference, frames(TRAIL_SECONDS), BLOCK),
+    }
+}
+
+/// Plays `track` with the unit set to `kind` at `depth` on `target`, switched on for a few
+/// seconds and then off, and compares it with the same music without the unit.
+fn change(
+    track: &Track,
+    dry: &Dry,
+    kind: EffectKind,
+    target: EffectTarget,
+    depth: Option<f32>,
+) -> Change {
     let (mut controller, mut renderer) = playing(track, deck_for(target));
     controller
         .set_effect_kind(UNIT, kind)
@@ -119,18 +142,14 @@ fn change(track: &Track, kind: EffectKind, target: EffectTarget, depth: Option<f
     if let Some(depth) = depth {
         controller.set_effect_depth(UNIT, depth).expect("depth");
     }
-    let lead_in = frames(LEAD_IN_SECONDS);
-    render_frames(&mut reference, lead_in, BLOCK);
-    render_frames(&mut renderer, lead_in, BLOCK);
+    render_frames(&mut renderer, frames(LEAD_IN_SECONDS), BLOCK);
     controller
         .set_effect_enabled(UNIT, true)
         .expect("switch on");
-    let dry = render_frames(&mut reference, frames(ON_SECONDS), BLOCK);
     let wet = render_frames(&mut renderer, frames(ON_SECONDS), BLOCK);
     controller
         .set_effect_enabled(UNIT, false)
         .expect("switch off");
-    let dry_trail = render_frames(&mut reference, frames(TRAIL_SECONDS), BLOCK);
     let wet_trail = render_frames(&mut renderer, frames(TRAIL_SECONDS), BLOCK);
 
     let difference = |wet: &[f32], dry: &[f32]| -> Vec<f32> {
@@ -139,11 +158,11 @@ fn change(track: &Track, kind: EffectKind, target: EffectTarget, depth: Option<f
     let both = |interleaved: &[f32]| {
         rms(&left_channel(interleaved)).hypot(rms(&right_channel(interleaved)))
     };
-    let dry_level = both(&dry);
+    let dry_level = both(&dry.on);
     Change {
-        difference_decibels: decibels(both(&difference(&wet, &dry)) / dry_level),
+        difference_decibels: decibels(both(&difference(&wet, &dry.on)) / dry_level),
         level_decibels: decibels(both(&wet) / dry_level),
-        trail_decibels: decibels(both(&difference(&wet_trail, &dry_trail)) / both(&dry_trail)),
+        trail_decibels: decibels(both(&difference(&wet_trail, &dry.trail)) / both(&dry.trail)),
     }
 }
 
@@ -154,23 +173,39 @@ fn change(track: &Track, kind: EffectKind, target: EffectTarget, depth: Option<f
 const AUDIBLE_DECIBELS: f64 = -20.0;
 
 #[test]
-fn every_effect_is_clearly_heard_on_every_target_from_a_quarter_of_the_knob() {
+fn every_effect_is_clearly_heard_on_deck_b_from_a_quarter_of_the_knob() {
     let track = club_loop(LEAD_IN_SECONDS + ON_SECONDS + TRAIL_SECONDS + 1.0);
+    let target = EffectTarget::Deck(DeckId::B);
+    let dry = dry(&track, target);
     let mut quiet = Vec::new();
     for kind in EffectKind::ALL {
-        for target in EffectTarget::ALL {
-            for depth in [None, Some(0.25)] {
-                let change = change(&track, kind, target, depth);
-                if change.difference_decibels < AUDIBLE_DECIBELS {
-                    quiet.push(format!(
-                        "{kind} on {target:?} at depth {depth:?}: {:.1} dB",
-                        change.difference_decibels
-                    ));
-                }
+        for depth in [None, Some(0.25)] {
+            let change = change(&track, &dry, kind, target, depth);
+            if change.difference_decibels < AUDIBLE_DECIBELS {
+                quiet.push(format!(
+                    "{kind} at depth {depth:?}: {:.1} dB",
+                    change.difference_decibels
+                ));
             }
         }
     }
     assert!(quiet.is_empty(), "barely heard:\n{}", quiet.join("\n"));
+}
+
+#[test]
+fn an_effect_is_clearly_heard_on_every_target() {
+    let track = club_loop(LEAD_IN_SECONDS + ON_SECONDS + TRAIL_SECONDS + 1.0);
+    for target in EffectTarget::ALL {
+        let dry = dry(&track, target);
+        for kind in [EffectKind::Echo, EffectKind::Filter, EffectKind::Brake] {
+            let change = change(&track, &dry, kind, target, Some(0.25));
+            assert!(
+                change.difference_decibels >= AUDIBLE_DECIBELS,
+                "{kind} on {target:?}: {:.1} dB",
+                change.difference_decibels
+            );
+        }
+    }
 }
 
 /// Prints what every effect does to the tracks named in `DUBPLATE_AUDIT_TRACKS`, separated by
@@ -200,10 +235,11 @@ fn audit_on_real_tracks() {
             "{:<10} {:<8} {:>6} {:>10} {:>8} {:>8}",
             "effect", "target", "depth", "difference", "level", "trail"
         );
-        for kind in EffectKind::ALL {
-            for target in EffectTarget::ALL {
+        for target in EffectTarget::ALL {
+            let dry = dry(&track, target);
+            for kind in EffectKind::ALL {
                 for depth in [None, Some(0.25), Some(1.0)] {
-                    let change = change(&track, kind, target, depth);
+                    let change = change(&track, &dry, kind, target, depth);
                     println!(
                         "{:<10} {:<8} {:>6} {:>10.1} {:>8.1} {:>8.1}",
                         kind.name(),

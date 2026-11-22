@@ -65,7 +65,7 @@ implement_effect!(Gate);
 
 impl Controls for Gate {
     fn effect_kind(&self) -> EffectKind {
-        EffectKind::Gate
+        EffectKind::Trans
     }
 
     fn apply_depth(&mut self, depth: f32) {

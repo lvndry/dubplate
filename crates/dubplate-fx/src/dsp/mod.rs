@@ -1,7 +1,12 @@
+pub(crate) mod allpass;
+pub(crate) mod crush;
 pub(crate) mod delay_line;
 pub(crate) mod delay_time;
 pub(crate) mod filters;
 pub(crate) mod lfo;
 pub(crate) mod loudness;
+pub(crate) mod noise;
+pub(crate) mod pitch_shift;
 pub(crate) mod shaping;
+pub(crate) mod shepard;
 pub(crate) mod smoothing;

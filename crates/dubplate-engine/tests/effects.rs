@@ -8,7 +8,8 @@ use common::{
 };
 use dubplate_engine::{
     BeatGrid, BeatLength, Controller, DeckId, EFFECT_UNIT_COUNT, EffectKind, EffectTarget,
-    EffectUnitId, EngineError, MasterTempo, Renderer, Track, offline_engine,
+    EffectUnitId, EngineError, MasterTempo, ParameterValue, ReleaseFx, Renderer, Track,
+    offline_engine,
 };
 
 const BLOCK: usize = 480;
@@ -268,7 +269,7 @@ fn first_echo_delay(
 ) -> Result<f64, EngineError> {
     controller.set_effect_kind(FIRST_UNIT, EffectKind::Echo)?;
     controller.set_effect_target(FIRST_UNIT, target)?;
-    controller.set_effect_beat(FIRST_UNIT, BeatLength::HALF)?;
+    controller.set_effect_parameter(FIRST_UNIT, ParameterValue::Beats(BeatLength::HALF))?;
     controller.set_effect_depth(FIRST_UNIT, 1.0)?;
     controller.set_effect_enabled(FIRST_UNIT, true)?;
     for deck in DeckId::ALL {
@@ -360,20 +361,27 @@ fn the_controller_reports_unit_settings_and_rejects_bad_values() {
     assert!(BeatGrid::new(5.0, 0.0).is_err());
 
     let unit = EffectUnitId::ALL[1];
-    controller.set_effect_kind(unit, EffectKind::Gate).unwrap();
+    controller.set_effect_kind(unit, EffectKind::Trans).unwrap();
     controller
         .set_effect_target(unit, EffectTarget::Deck(DeckId::B))
         .unwrap();
     controller
-        .set_effect_beat(unit, BeatLength::QUARTER)
+        .set_effect_parameter(unit, ParameterValue::Beats(BeatLength::QUARTER))
+        .unwrap();
+    controller
+        .set_effect_parameter(unit, ParameterValue::Percent(40))
         .unwrap();
     controller.set_effect_depth(unit, 0.75).unwrap();
     controller.toggle_effect(unit).unwrap();
     render_frames(&mut renderer, BLOCK, BLOCK);
     let state = controller.effect_unit(unit);
-    assert_eq!(state.kind, EffectKind::Gate);
+    assert_eq!(state.kind, EffectKind::Trans);
     assert_eq!(state.target, EffectTarget::Deck(DeckId::B));
-    assert_eq!(state.beat, BeatLength::QUARTER);
+    assert_eq!(
+        state.parameter,
+        Some(ParameterValue::Beats(BeatLength::QUARTER)),
+        "a gate keeps its beat and ignores a percentage"
+    );
     assert_eq!(state.depth, 0.75);
     assert!(state.enabled);
     assert!(state.sounding);
@@ -393,4 +401,63 @@ fn loading_a_track_clears_the_deck_beat_grid() {
         .load_track(DeckId::A, constant_track(0.1, 0.1, 1.0, SAMPLE_RATE))
         .unwrap();
     assert_eq!(controller.beat_grid(DeckId::A), None);
+}
+
+#[test]
+fn a_held_release_fx_cuts_the_beat_effect_and_the_music_and_letting_go_brings_the_music_back() {
+    for release in ReleaseFx::ALL {
+        let (mut controller, mut renderer) = two_decks_on_their_own_sides().unwrap();
+        controller
+            .set_effect_target(FIRST_UNIT, EffectTarget::Deck(DeckId::A))
+            .unwrap();
+        controller.set_effect_enabled(FIRST_UNIT, true).unwrap();
+        controller.set_release_fx(FIRST_UNIT, release).unwrap();
+        render_frames(&mut renderer, BLOCK * 100, BLOCK);
+        let playing = rms(&left_channel(&render_frames(
+            &mut renderer,
+            BLOCK * 20,
+            BLOCK,
+        )));
+
+        controller.hold_release_fx(FIRST_UNIT, true).unwrap();
+        let state = controller.effect_unit(FIRST_UNIT);
+        assert!(!state.enabled && state.releasing, "{release}: {state:?}");
+        render_frames(&mut renderer, seconds_to_frames(2.5), BLOCK);
+        let held = rms(&left_channel(&render_frames(
+            &mut renderer,
+            BLOCK * 20,
+            BLOCK,
+        )));
+        assert!(
+            held < playing * 0.3,
+            "{release} left deck A at {held} against {playing}"
+        );
+        let right = rms(&right_channel(&render_frames(
+            &mut renderer,
+            BLOCK * 20,
+            BLOCK,
+        )));
+        assert!(right > 0.2, "{release} cut deck B too");
+
+        controller.hold_release_fx(FIRST_UNIT, false).unwrap();
+        render_frames(&mut renderer, seconds_to_frames(3.0), BLOCK);
+        let back = rms(&left_channel(&render_frames(
+            &mut renderer,
+            BLOCK * 20,
+            BLOCK,
+        )));
+        assert!(
+            (back - playing).abs() < playing * 0.2,
+            "{release}: deck A came back at {back} against {playing}"
+        );
+        assert!(!controller.effect_unit(FIRST_UNIT).enabled);
+    }
+}
+
+fn rms(samples: &[f32]) -> f32 {
+    let energy: f64 = samples
+        .iter()
+        .map(|sample| f64::from(*sample).powi(2))
+        .sum();
+    (energy / samples.len().max(1) as f64).sqrt() as f32
 }

@@ -1,6 +1,6 @@
 //! The mixer and tempo sliders: their positions, and how a pointer on a slider becomes a value.
 
-use dubplate_engine::{DeckId, EqBand, TempoRange, decibels_to_gain};
+use dubplate_engine::{DeckId, EqBand, Stem, TempoRange, decibels_to_gain};
 use gpui::{Bounds, Pixels, Point};
 
 /// How much one tempo key press changes the tempo: 0.1%.
@@ -38,13 +38,15 @@ pub enum Control {
     HeadphoneLevel,
     /// The sampler's volume.
     SamplerVolume,
+    /// The level of one of a deck's stems, on the channel fader's curve.
+    StemLevel(DeckId, Stem),
 }
 
 impl Control {
     /// Where the control rests: a double-click puts it back there.
     pub fn resting(self) -> f32 {
         match self {
-            Control::ChannelFader(_) | Control::MasterLevel => 1.0,
+            Control::ChannelFader(_) | Control::MasterLevel | Control::StemLevel(..) => 1.0,
             Control::Crossfader
             | Control::Tempo(_)
             | Control::Trim(_)
@@ -215,6 +217,8 @@ pub struct MixerPositions {
     pub headphone_level: f32,
     /// The sampler's volume, on the channel fader's curve.
     pub sampler_volume: f32,
+    /// Each deck's stem levels, in the order of [`Stem::ALL`], on the channel fader's curve.
+    pub stem_levels: [[f32; Stem::COUNT]; 2],
 }
 
 impl MixerPositions {
@@ -231,6 +235,7 @@ impl MixerPositions {
             Control::HeadphoneMix => self.headphone_mix,
             Control::HeadphoneLevel => self.headphone_level,
             Control::SamplerVolume => self.sampler_volume,
+            Control::StemLevel(deck, stem) => self.stem_levels[deck.index()][stem.index()],
         }
     }
 }
@@ -248,6 +253,7 @@ impl Default for MixerPositions {
             headphone_mix: 0.5,
             headphone_level: 0.5,
             sampler_volume: DEFAULT_SAMPLER_VOLUME,
+            stem_levels: [[1.0; Stem::COUNT]; 2],
         }
     }
 }

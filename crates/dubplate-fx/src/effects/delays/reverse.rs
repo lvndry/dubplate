@@ -1,0 +1,114 @@
+use crate::beat::BeatLength;
+use crate::config::EffectConfig;
+use crate::context::BlockTiming;
+use crate::dsp::pitch_shift::PitchShifter;
+use crate::effect::EffectKind;
+use crate::unit::{Controls, Frame, Kernel, MixLaw, Unit, implement_effect};
+
+const BACKWARDS: f32 = -1.0;
+const DIP_SECONDS: f32 = 0.003;
+const TRAIL_MARGIN_SECONDS: f32 = 0.05;
+const DEFAULT_DEPTH: f32 = 0.5;
+
+/// A reverse delay: every beat length of music comes back played backwards, one beat length
+/// later, each reversed slice faded in and out so the seams never click. A new beat length
+/// comes in behind a dip of a few milliseconds, as jumping the heads would click.
+///
+/// The depth knob balances the music and the reversed sound, as on a DJ mixer.
+pub(crate) struct ReverseDelay {
+    unit: Unit<ReverseKernel>,
+}
+
+impl ReverseDelay {
+    pub(crate) fn new(config: &EffectConfig) -> Self {
+        Self {
+            unit: Unit::new(ReverseKernel::new(config), DEFAULT_DEPTH),
+        }
+    }
+}
+
+implement_effect!(ReverseDelay);
+
+impl Controls for ReverseDelay {
+    fn effect_kind(&self) -> EffectKind {
+        EffectKind::RevDelay
+    }
+
+    fn apply_depth(&mut self, depth: f32) {
+        self.unit.set_mix(depth);
+    }
+
+    fn apply_beat(&mut self, beat: BeatLength) {
+        self.unit.kernel.beat = beat;
+    }
+
+    fn current_beat(&self) -> Option<BeatLength> {
+        Some(self.unit.kernel.beat)
+    }
+}
+
+/// Plays the music backwards through rotating heads: run at -1 times normal speed, the pitch
+/// shifter's heads each read one window's worth of music in reverse.
+pub(crate) struct ReverseKernel {
+    heads: PitchShifter,
+    beat: BeatLength,
+    window_samples: f32,
+    wanted_window_samples: f32,
+    dip: f32,
+    dip_step: f32,
+    sample_rate: f32,
+}
+
+impl ReverseKernel {
+    fn new(config: &EffectConfig) -> Self {
+        Self {
+            heads: PitchShifter::new(config.max_delay_samples()),
+            beat: BeatLength::ONE,
+            window_samples: 0.0,
+            wanted_window_samples: 0.0,
+            dip: 1.0,
+            dip_step: 1.0,
+            sample_rate: 48_000.0,
+        }
+    }
+}
+
+impl Kernel for ReverseKernel {
+    const TRAILS: bool = true;
+    const MIX_LAW: MixLaw = MixLaw::Blend;
+
+    fn begin_block(&mut self, timing: &BlockTiming) {
+        self.sample_rate = timing.sample_rate;
+        self.dip_step = 1.0 / (DIP_SECONDS * timing.sample_rate);
+        self.wanted_window_samples = 2.0 * timing.beats_to_samples(self.beat.beats()) as f32;
+        if self.window_samples == 0.0 {
+            self.window_samples = self.wanted_window_samples;
+            self.heads.set_window_samples(self.window_samples);
+        }
+    }
+
+    #[inline]
+    fn tick(&mut self, input: Frame, _beat_position: f64) -> Frame {
+        if self.window_samples == self.wanted_window_samples {
+            self.dip = (self.dip + self.dip_step).min(1.0);
+        } else {
+            self.dip -= self.dip_step;
+            if self.dip <= 0.0 {
+                self.dip = 0.0;
+                self.window_samples = self.wanted_window_samples;
+                self.heads.set_window_samples(self.window_samples);
+            }
+        }
+        self.heads
+            .tick(input, BACKWARDS)
+            .map(|sample| sample * self.dip)
+    }
+
+    fn reset(&mut self) {
+        self.heads.clear();
+    }
+
+    fn tail_seconds(&self) -> f32 {
+        self.wanted_window_samples / self.sample_rate + TRAIL_MARGIN_SECONDS
+    }
+}
