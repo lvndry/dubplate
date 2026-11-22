@@ -199,13 +199,16 @@ impl EchoFilter {
 
 const FILTER_QUALITY: f32 = 0.9;
 const CUTOFF_SMOOTHING_SECONDS: f32 = 0.02;
-const FILTER_FULL_MIX_DEPTH: f32 = 0.5;
+const FILTER_FULL_MIX_DEPTH: f32 = 0.25;
+/// The mix that plays the echo at full level on top of the music.
+const ON_TOP: f32 = 0.5;
 
 /// Filters the music into the loop and every repeat on its way round, so each repeat comes back
 /// thinner, darker or narrower: Low Cut Echo, HPF Echo, LPF Echo and BPF Echo.
 ///
-/// The Low Cut Echo's knob balances the music and the echo. The other three blend the echo in
-/// over the first half of the knob and sweep their filter across the whole of it.
+/// The Low Cut Echo's knob balances the music and the echo. The other three bring the echo in
+/// on top of the music over the first quarter of the knob and sweep their filter across the
+/// whole of it, a build-up's sweep.
 pub(crate) struct Filtered {
     filter: EchoFilter,
     input_filters: [Svf; 2],
@@ -259,7 +262,7 @@ impl Voicing for Filtered {
         match self.filter {
             EchoFilter::LowCut => depth,
             EchoFilter::HighPass | EchoFilter::LowPass | EchoFilter::BandPass => {
-                engaged(depth, FILTER_FULL_MIX_DEPTH) * FILTER_FULL_MIX_DEPTH
+                engaged(depth, FILTER_FULL_MIX_DEPTH) * ON_TOP
             }
         }
     }

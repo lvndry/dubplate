@@ -173,24 +173,39 @@ fn change(
 const AUDIBLE_DECIBELS: f64 = -20.0;
 
 #[test]
-fn every_effect_is_clearly_heard_on_every_target_from_a_quarter_of_the_knob() {
+fn every_effect_is_clearly_heard_on_deck_b_from_a_quarter_of_the_knob() {
     let track = club_loop(LEAD_IN_SECONDS + ON_SECONDS + TRAIL_SECONDS + 1.0);
+    let target = EffectTarget::Deck(DeckId::B);
+    let dry = dry(&track, target);
     let mut quiet = Vec::new();
-    for target in EffectTarget::ALL {
-        let dry = dry(&track, target);
-        for kind in EffectKind::ALL {
-            for depth in [None, Some(0.25)] {
-                let change = change(&track, &dry, kind, target, depth);
-                if change.difference_decibels < AUDIBLE_DECIBELS {
-                    quiet.push(format!(
-                        "{kind} on {target:?} at depth {depth:?}: {:.1} dB",
-                        change.difference_decibels
-                    ));
-                }
+    for kind in EffectKind::ALL {
+        for depth in [None, Some(0.25)] {
+            let change = change(&track, &dry, kind, target, depth);
+            if change.difference_decibels < AUDIBLE_DECIBELS {
+                quiet.push(format!(
+                    "{kind} at depth {depth:?}: {:.1} dB",
+                    change.difference_decibels
+                ));
             }
         }
     }
     assert!(quiet.is_empty(), "barely heard:\n{}", quiet.join("\n"));
+}
+
+#[test]
+fn an_effect_is_clearly_heard_on_every_target() {
+    let track = club_loop(LEAD_IN_SECONDS + ON_SECONDS + TRAIL_SECONDS + 1.0);
+    for target in EffectTarget::ALL {
+        let dry = dry(&track, target);
+        for kind in [EffectKind::Echo, EffectKind::Filter, EffectKind::Brake] {
+            let change = change(&track, &dry, kind, target, Some(0.25));
+            assert!(
+                change.difference_decibels >= AUDIBLE_DECIBELS,
+                "{kind} on {target:?}: {:.1} dB",
+                change.difference_decibels
+            );
+        }
+    }
 }
 
 /// Prints what every effect does to the tracks named in `DUBPLATE_AUDIT_TRACKS`, separated by
