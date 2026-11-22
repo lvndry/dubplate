@@ -280,6 +280,8 @@ pub enum Command {
     LoadSet,
     /// Save the set as a rekordbox XML file for rekordbox to import.
     ExportSet,
+    /// Export the set to a USB stick or folder for CDJs and XDJs.
+    ExportSetToUsb,
     /// Show or hide the list of shortcuts.
     ToggleHelp,
     /// Show or hide the library's settings: the music folders and rekordbox.

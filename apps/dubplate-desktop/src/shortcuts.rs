@@ -59,6 +59,7 @@ const fn anywhere(keystroke: &'static str, command: Command) -> Shortcut {
             | Command::SwitchMode(_)
             | Command::LoadSet
             | Command::ExportSet
+            | Command::ExportSetToUsb
             | Command::AddMusicFolders => Scope::OutsideModal,
             _ => Scope::Window,
         },
@@ -83,7 +84,7 @@ const fn pad(keystroke: &'static str, deck: DeckId, pad: usize) -> Shortcut {
 }
 
 /// Every keyboard shortcut.
-pub const SHORTCUTS: [Shortcut; 90] = [
+pub const SHORTCUTS: [Shortcut; 91] = [
     outside_text("space", Command::TogglePlayOnAir),
     outside_text("shift-space", Command::TogglePlay(DeckId::B)),
     outside_text("c", Command::Cue(DeckId::A, Press::Tap)),
@@ -167,6 +168,7 @@ pub const SHORTCUTS: [Shortcut; 90] = [
     suggestion("alt-5", 4),
     anywhere("cmd-l", Command::LoadSet),
     anywhere("cmd-e", Command::ExportSet),
+    anywhere("cmd-shift-e", Command::ExportSetToUsb),
     outside_text("s", Command::AuditionSeam),
     anywhere("cmd-shift-r", Command::ToggleRecording),
     outside_text("t", Command::TapTempo(DeckId::A)),

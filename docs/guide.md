@@ -87,6 +87,18 @@ To bring it in, in rekordbox:
 
 From then on the set is an ordinary rekordbox playlist, ready to export to a USB stick for CDJs.
 
+## Play the set on CDJs
+
+**USB…** at the top of the Set panel, or Cmd+Shift+E, exports the set straight to a USB stick for CDJs and XDJs, without rekordbox. Choose the stick (or any folder) in the picker. Dubplate writes what rekordbox's Export mode writes:
+
+- the audio files, under `Contents/<artist>/<album>`; a file already on the stick, byte for byte, is not copied again;
+- for each track, the analysis files players read: the beat grid with your fixes, the hot cues A to H with their colours and names, memory cues, saved loops, and the blue, RGB and 3-band waveforms (rekordbox's own when rekordbox analysed the track, else drawn by Dubplate from the audio) and rekordbox's phrases;
+- the library players browse (`PIONEER/rekordbox/export.pdb`), with the set as a playlist and its backups as a second one, and the title, artist, album, genre, label, key, BPM, length and rating of every track.
+
+A notice follows the export track by track and says what it did. In the library, a chosen playlist or music folder shows **USB…** beside its name to export it the same way.
+
+A stick Dubplate exported to before is added to, and a playlist of the same name is replaced. A stick that already holds a library rekordbox wrote is refused, so nothing on it changes: use another stick, or a folder. Dubplate never replaces or deletes a file it did not write, and never writes inside rekordbox's folders. The CDJ-2000NXS2, CDJ-3000 and XDJs read this library; the newest players that read only rekordbox 7's OneLibrary (CDJ-3000X, XDJ-AZ, OPUS-QUAD) do not yet.
+
 ## 4. Mix
 
 Cmd+L loads the set's first two tracks onto deck A and deck B at their mix-in cues; Cmd+2 opens Perform. A set track whose file is missing is never loaded: its deck keeps what it had, and a notice names the track with a **Relink** button that looks for the file. The same goes for any track loaded from the library.

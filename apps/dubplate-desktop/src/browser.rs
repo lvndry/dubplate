@@ -90,6 +90,8 @@ pub enum BrowserEvent {
     RelinkAll,
     /// Find the moved file of one missing track.
     Relink(TrackIndex),
+    /// Export a playlist or music folder to a USB stick for CDJs.
+    ExportCrateToUsb(CrateIndex),
     /// Separate a track into stems, ahead of every other track waiting.
     SeparateStems(TrackIndex),
     /// Stop separating a track, or forget it if it waits.
@@ -724,7 +726,36 @@ impl Browser {
                         this.pane = BrowserPane::Crates;
                         this.choose_crate(crate_index, cx);
                     }))
-                    .child(div().truncate().child(entry.name.clone()))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .child(entry.name.clone()),
+                    )
+                    .when(
+                        chosen
+                            && matches!(entry.kind, CrateKind::Playlist | CrateKind::MusicFolder),
+                        |row| {
+                            row.child(
+                                div()
+                                    .id(("export-crate", crate_index.position()))
+                                    .accessible_button("Export to USB")
+                                    .flex_none()
+                                    .px(px(4.0))
+                                    .mr(px(4.0))
+                                    .rounded(theme::SMALL_RADIUS)
+                                    .text_size(theme::TINY_TEXT_SIZE)
+                                    .text_color(theme::MUTED)
+                                    .hover(|button| button.bg(theme::PANEL).text_color(theme::TEXT))
+                                    .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {
+                                        cx.stop_propagation();
+                                        cx.emit(BrowserEvent::ExportCrateToUsb(crate_index));
+                                    }))
+                                    .child("USB\u{2026}"),
+                            )
+                        },
+                    )
                     .child(
                         div()
                             .font_family(MONO_FAMILY)

@@ -39,6 +39,7 @@ mod smart;
 mod stems;
 mod stems_strip;
 mod track_check;
+mod usb_export;
 mod waveforms;
 
 use std::cell::{Cell, RefCell};
@@ -277,6 +278,9 @@ impl DubplateApp {
                 BrowserEvent::AddMusicFolders => this.add_music_folders(cx),
                 BrowserEvent::ImportRekordbox => this.set_rekordbox_import(true, cx),
                 BrowserEvent::RelinkAll => this.start_relink(None, cx),
+                BrowserEvent::ExportCrateToUsb(crate_index) => {
+                    this.export_crate_to_usb(crate_index, cx);
+                }
                 BrowserEvent::Relink(track) => this.start_relink(Some(track), cx),
                 BrowserEvent::SeparateStems(track) => {
                     if let Some(path) = this.track_file(track) {
@@ -1012,6 +1016,7 @@ impl DubplateApp {
             }
             Command::LoadSet => self.load_set(cx),
             Command::ExportSet => self.export_set(cx),
+            Command::ExportSetToUsb => self.export_set_to_usb(cx),
             Command::Browse(steps) => self
                 .browser
                 .update(cx, |browser, cx| browser.browse(steps, cx)),
