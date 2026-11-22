@@ -184,6 +184,10 @@ impl Dispatcher {
             (Button::Load(deck), Layer::Normal) if pressed => Some(self.load(deck_id(deck), now)),
             (Button::BrowsePush, _) if pressed => Some(Command::SwitchBrowserPane),
             (Button::JogTouch(deck), _) => Some(Command::JogTouch(deck_id(deck), pressed)),
+            (Button::HeadphoneCue(deck), Layer::Normal) if pressed => {
+                Some(Command::ToggleHeadphoneCue(deck_id(deck)))
+            }
+            (Button::MasterCue, Layer::Normal) if pressed => Some(Command::ToggleMasterCue),
             (Button::BeatFxSelect, layer) if pressed => {
                 let steps = if layer == Layer::Shift { -1 } else { 1 };
                 Some(Command::Effect(
@@ -290,9 +294,9 @@ impl Dispatcher {
                         .takes_over(fraction, surface.effect_depth, false);
                 return takes_over.then_some(Command::Effect(unit, EffectEdit::Depth(fraction)));
             }
-            Continuous::MicLevel | Continuous::HeadphoneMix | Continuous::HeadphoneLevel => {
-                return None;
-            }
+            Continuous::HeadphoneMix => Control::HeadphoneMix,
+            Continuous::HeadphoneLevel => Control::HeadphoneLevel,
+            Continuous::MicLevel => return None,
         };
         Some(Command::SetControl(control, fraction))
     }
@@ -735,6 +739,32 @@ mod tests {
                 Command::ToggleSync(DeckId::A),
                 Command::MakeTempoMaster(DeckId::B),
                 Command::CycleTempoRange(DeckId::B),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_headphone_section_cues_channels_and_the_master_and_sets_mix_and_level() {
+        let mut dispatcher = Dispatcher::default();
+        let commands = run(
+            &mut dispatcher,
+            &Surface::default(),
+            &[
+                press(Button::HeadphoneCue(Deck::B)),
+                release(Button::HeadphoneCue(Deck::B)),
+                press(Button::MasterCue),
+                moved(Continuous::HeadphoneMix, 1.0),
+                moved(Continuous::HeadphoneLevel, 0.0),
+                shift_press(Button::HeadphoneCue(Deck::A)),
+            ],
+        );
+        assert_eq!(
+            commands,
+            [
+                Command::ToggleHeadphoneCue(DeckId::B),
+                Command::ToggleMasterCue,
+                Command::SetControl(Control::HeadphoneMix, 1.0),
+                Command::SetControl(Control::HeadphoneLevel, 0.0),
             ]
         );
     }
