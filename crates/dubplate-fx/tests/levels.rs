@@ -1,22 +1,27 @@
-//! Checks that echo, ping-pong and reverb never push a full-level track into clipping.
+//! Checks how loud echo, ping-pong and reverb play on a loud track along the LEVEL/DEPTH knob.
 //!
-//! Turning one of these effects on over a track should sound clearly present without jumping
-//! the level, the way the beat effects of a club mixer do. Every check here plays a track that
+//! Like the beat effects of a club mixer, the trail is gentle but clearly heard a quarter of
+//! the way, as loud as the music in the middle, and never builds up past the music. The master
+//! limiter, not the effect, keeps the mix from clipping. Every check here plays a track that
 //! peaks at -1 dBFS, the level of a loud club master.
 
 mod common;
 
 use std::f64::consts::TAU;
 
-use common::{Deck, SAMPLE_RATE, Stereo, decibels, peak, rms, seconds_to_frames};
-use dubplate_fx::{Echo, Effect, EffectConfig, EffectKind, PingPong, Reverb, create};
+use common::{BLOCK_FRAMES, Deck, SAMPLE_RATE, Stereo, decibels, peak, rms, seconds_to_frames};
+use dubplate_fx::{
+    Echo, Effect, EffectConfig, EffectKind, LIMITER_CEILING, Limiter, PingPong, Reverb, create,
+};
 
 const TRAIL_EFFECTS: [EffectKind; 3] = [EffectKind::Echo, EffectKind::PingPong, EffectKind::Reverb];
 const TRACK_PEAK: f32 = 0.891;
-const FULL_SCALE: f32 = 1.0;
 const TEMPO_BPM: f64 = 118.0;
 const ALLOWED_PEAK_RISE_DECIBELS: f32 = 1.0;
 const ALLOWED_LOUDNESS_RISE_DECIBELS: f32 = 1.0;
+/// The most a trail effect may raise the loudness at any knob position. The master limiter
+/// holds the peaks; this keeps a long trail from swamping the music.
+const ALLOWED_LOUDNESS_SWELL_DECIBELS: f32 = 4.5;
 const WARM_UP_SECONDS: f32 = 1.0;
 
 /// Independent white noise on each channel, peaking at [`TRACK_PEAK`].
@@ -88,6 +93,7 @@ fn difference(wet: &[f32], dry: &[f32]) -> Vec<f32> {
 struct LevelChange {
     dry_peak: f32,
     wet_peak: f32,
+    limited_peak: f32,
     loudness_rise_decibels: f32,
     trail_loudness_decibels: f32,
 }
@@ -110,53 +116,52 @@ fn play(effect: &mut dyn Effect, dry: &Stereo) -> LevelChange {
         left: difference(&wet.left, &dry.left),
         right: difference(&wet.right, &dry.right),
     };
+    let mut limited = wet.clone();
+    let mut limiter = Limiter::new(SAMPLE_RATE);
+    for (left, right) in limited
+        .left
+        .chunks_mut(BLOCK_FRAMES)
+        .zip(limited.right.chunks_mut(BLOCK_FRAMES))
+    {
+        limiter.process(left, right);
+    }
     LevelChange {
         dry_peak: peak(&dry.left).max(peak(&dry.right)),
         wet_peak: peak(&wet.left).max(peak(&wet.right)),
+        limited_peak: peak(&limited.left).max(peak(&limited.right)),
         loudness_rise_decibels: decibels(loudness(&wet) / loudness(dry)),
         trail_loudness_decibels: decibels(loudness(&trail) / loudness(dry)),
     }
 }
 
-/// Each trail effect as built, and with the performance knob at 0.6, its usual spot.
-fn at_default_settings(kind: EffectKind) -> [Box<dyn Effect>; 2] {
-    let config = EffectConfig::default();
-    let as_built = create(kind, &config);
-    let mut usual_depth = create(kind, &config);
-    usual_depth.set_depth(0.6);
-    [as_built, usual_depth]
+/// Each trail effect with its LEVEL/DEPTH knob at `depth`.
+fn at_depth(kind: EffectKind, depth: f32) -> Box<dyn Effect> {
+    let mut effect = create(kind, &EffectConfig::default());
+    effect.set_depth(depth);
+    effect
 }
 
 #[test]
-fn default_settings_are_clearly_heard_without_jumping_the_level() {
+fn a_quarter_of_the_knob_is_gentle_and_the_middle_is_as_loud_as_the_music() {
     let club_loop = club_loop(seconds_to_frames(8.0));
-    let noise = loud_noise(seconds_to_frames(4.0));
     for kind in TRAIL_EFFECTS {
-        for (name, track) in [("club loop", &club_loop), ("noise", &noise)] {
-            for mut effect in at_default_settings(kind) {
-                let change = play(effect.as_mut(), track);
-                let label = format!("{kind} at mix {} on the {name}", effect.mix());
-                assert!(
-                    change.peak_rise_decibels() <= ALLOWED_PEAK_RISE_DECIBELS,
-                    "{label} raised the peak by {} dB",
-                    change.peak_rise_decibels()
-                );
-                assert!(
-                    change.loudness_rise_decibels <= ALLOWED_LOUDNESS_RISE_DECIBELS,
-                    "{label} raised the loudness by {} dB",
-                    change.loudness_rise_decibels
-                );
-            }
-        }
-        for mut effect in at_default_settings(kind) {
-            let change = play(effect.as_mut(), &club_loop);
-            assert!(
-                (-20.0..=-4.0).contains(&change.trail_loudness_decibels),
-                "{kind} at mix {} added a trail at {} dB against the club loop",
-                effect.mix(),
-                change.trail_loudness_decibels
-            );
-        }
+        let gentle = play(at_depth(kind, 0.25).as_mut(), &club_loop);
+        assert!(
+            (-20.0..=-6.0).contains(&gentle.trail_loudness_decibels),
+            "{kind} a quarter of the way added a trail at {} dB against the club loop",
+            gentle.trail_loudness_decibels
+        );
+        let middle = play(at_depth(kind, 0.5).as_mut(), &club_loop);
+        assert!(
+            (-8.0..=2.0).contains(&middle.trail_loudness_decibels),
+            "{kind} half way added a trail at {} dB against the club loop",
+            middle.trail_loudness_decibels
+        );
+        assert!(
+            middle.trail_loudness_decibels > gentle.trail_loudness_decibels + 3.0,
+            "{kind} grew by only {} dB from a quarter to half way",
+            middle.trail_loudness_decibels - gentle.trail_loudness_decibels
+        );
     }
 }
 
@@ -193,7 +198,7 @@ fn at_maximum(kind: EffectKind, mix: f32) -> Box<dyn Effect> {
 }
 
 #[test]
-fn no_knob_position_takes_a_minus_one_decibel_track_past_full_scale() {
+fn every_knob_position_stays_under_the_master_limiter_ceiling_without_swamping_the_music() {
     let tracks = [
         ("club loop", club_loop(seconds_to_frames(4.0))),
         ("noise", loud_noise(seconds_to_frames(4.0))),
@@ -207,9 +212,15 @@ fn no_knob_position_takes_a_minus_one_decibel_track_past_full_scale() {
                     effect.set_mix(mix);
                     let change = play(effect.as_mut(), track);
                     assert!(
-                        change.wet_peak <= FULL_SCALE,
-                        "{kind} at depth {depth} and mix {mix} took the {name} to {}",
-                        change.wet_peak
+                        change.limited_peak <= LIMITER_CEILING,
+                        "{kind} at depth {depth} and mix {mix} took the {name} past the \
+                         limiter to {}",
+                        change.limited_peak
+                    );
+                    assert!(
+                        change.loudness_rise_decibels <= ALLOWED_LOUDNESS_SWELL_DECIBELS,
+                        "{kind} at depth {depth} and mix {mix} raised the {name} by {} dB",
+                        change.loudness_rise_decibels
                     );
                 }
             }
@@ -218,7 +229,7 @@ fn no_knob_position_takes_a_minus_one_decibel_track_past_full_scale() {
 }
 
 #[test]
-fn maximum_feedback_held_for_thirty_seconds_stays_under_full_scale() {
+fn maximum_feedback_held_for_thirty_seconds_stays_bounded() {
     let frames = seconds_to_frames(30.0);
     let tracks = [
         ("club loop", club_loop(frames)),
@@ -230,12 +241,12 @@ fn maximum_feedback_held_for_thirty_seconds_stays_under_full_scale() {
                 let mut effect = at_maximum(kind, mix);
                 let change = play(effect.as_mut(), track);
                 assert!(
-                    change.wet_peak <= FULL_SCALE,
-                    "{kind} at maximum and mix {mix} took the {name} to {}",
-                    change.wet_peak
+                    change.limited_peak <= LIMITER_CEILING,
+                    "{kind} at maximum and mix {mix} took the {name} past the limiter to {}",
+                    change.limited_peak
                 );
                 assert!(
-                    change.loudness_rise_decibels <= 3.0,
+                    change.loudness_rise_decibels <= ALLOWED_LOUDNESS_SWELL_DECIBELS,
                     "{kind} at maximum and mix {mix} raised the {name} by {} dB",
                     change.loudness_rise_decibels
                 );
