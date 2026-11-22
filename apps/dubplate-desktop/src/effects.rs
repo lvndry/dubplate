@@ -17,26 +17,28 @@ pub struct EffectGroup {
     pub effects: &'static [EffectKind],
 }
 
-/// The effect picker's groups, in order. Every effect is in exactly one.
+/// The effect picker's groups, in order, each in rekordbox's Beat FX order. Every effect is in
+/// exactly one. Read group by group, this is the one order the picker shows and FX SELECT, the
+/// keys and the Pad FX editor step through: see [`effect_order`].
 pub const CATALOGUE: [EffectGroup; 6] = [
     EffectGroup {
         name: "Echo",
         effects: &[
             EffectKind::Delay,
             EffectKind::Echo,
-            EffectKind::PingPong,
             EffectKind::Spiral,
             EffectKind::RevDelay,
             EffectKind::MtDelay,
             EffectKind::UpEcho,
             EffectKind::DownEcho,
             EffectKind::LowCutEcho,
+            EffectKind::PingPong,
             EffectKind::Helix,
+            EffectKind::BpfEcho,
+            EffectKind::SpiralUp,
             EffectKind::HpfEcho,
             EffectKind::LpfEcho,
-            EffectKind::BpfEcho,
             EffectKind::CrushEcho,
-            EffectKind::SpiralUp,
             EffectKind::SpiralDown,
         ],
     },
@@ -53,8 +55,8 @@ pub const CATALOGUE: [EffectGroup; 6] = [
         effects: &[
             EffectKind::Trans,
             EffectKind::Pan,
-            EffectKind::Roll,
             EffectKind::SlipRoll,
+            EffectKind::Roll,
             EffectKind::RevRoll,
             EffectKind::Stretch,
         ],
@@ -74,8 +76,8 @@ pub const CATALOGUE: [EffectGroup; 6] = [
     EffectGroup {
         name: "Tone",
         effects: &[
-            EffectKind::Pitch,
             EffectKind::Robot,
+            EffectKind::Pitch,
             EffectKind::MobiusSaw,
             EffectKind::MobiusTriangle,
             EffectKind::Noise,
@@ -85,10 +87,10 @@ pub const CATALOGUE: [EffectGroup; 6] = [
     EffectGroup {
         name: "Release",
         effects: &[
-            EffectKind::EchoOut,
             EffectKind::VinylBrake,
             EffectKind::Brake,
             EffectKind::Backspin,
+            EffectKind::EchoOut,
         ],
     },
 ];
@@ -190,14 +192,25 @@ pub fn effect_pad_label(kind: EffectKind) -> &'static str {
     }
 }
 
-/// The effect `steps` places after `kind` in rekordbox's Beat FX order, which FX SELECT steps
-/// through, going round at either end.
+/// Every effect in the order the picker shows them, group by group: the one order FX SELECT,
+/// SHIFT + FX SELECT, the keys and the Pad FX editor step through.
+pub fn effect_order() -> impl Iterator<Item = EffectKind> {
+    CATALOGUE
+        .iter()
+        .flat_map(|group| group.effects.iter().copied())
+}
+
+/// The effect `steps` places after `kind` in [`effect_order`], going round at either end.
 pub fn step_effect(kind: EffectKind, steps: i32) -> EffectKind {
-    let count = i64::try_from(EffectKind::ALL.len()).unwrap_or(1);
-    let index = (i64::try_from(kind.index()).unwrap_or(0) + i64::from(steps)).rem_euclid(count);
+    let order: Vec<EffectKind> = effect_order().collect();
+    let Some(position) = order.iter().position(|effect| *effect == kind) else {
+        return kind;
+    };
+    let count = i64::try_from(order.len()).unwrap_or(1);
+    let index = (i64::try_from(position).unwrap_or(0) + i64::from(steps)).rem_euclid(count);
     usize::try_from(index)
         .ok()
-        .and_then(|index| EffectKind::ALL.get(index).copied())
+        .and_then(|index| order.get(index).copied())
         .unwrap_or(kind)
 }
 
@@ -473,13 +486,54 @@ mod tests {
     }
 
     #[test]
-    fn fx_select_steps_through_rekordboxs_beat_fx_order() {
+    fn fx_select_visits_every_effect_once_in_the_pickers_order_and_wraps_both_ways() {
+        let shown: Vec<EffectKind> = picker_rows(&search(""))
+            .into_iter()
+            .flat_map(|row| row.effects)
+            .collect();
+        assert_eq!(shown, effect_order().collect::<Vec<_>>());
+        let first = shown[0];
+        let mut forward = vec![first];
+        let mut kind = first;
+        for _ in 1..shown.len() {
+            kind = step_effect(kind, 1);
+            forward.push(kind);
+        }
+        assert_eq!(
+            forward, shown,
+            "FX SELECT reads the picker left to right, row by row"
+        );
+        assert_eq!(step_effect(kind, 1), first, "and wraps to the first");
+
+        let mut backward = vec![first];
+        let mut kind = first;
+        for _ in 1..shown.len() {
+            kind = step_effect(kind, -1);
+            backward.push(kind);
+        }
+        let mut reversed: Vec<EffectKind> = shown.iter().rev().copied().collect();
+        reversed.rotate_right(1);
+        assert_eq!(
+            backward, reversed,
+            "SHIFT + FX SELECT goes back through the same list"
+        );
+        assert_eq!(step_effect(first, -1), *shown.last().unwrap());
+    }
+
+    #[test]
+    fn each_group_keeps_rekordboxs_beat_fx_order() {
+        for group in CATALOGUE {
+            let indices: Vec<usize> = group.effects.iter().map(|kind| kind.index()).collect();
+            assert!(
+                indices.windows(2).all(|pair| pair[0] < pair[1]),
+                "{} is out of rekordbox's order",
+                group.name
+            );
+        }
         assert_eq!(step_effect(EffectKind::Delay, 1), EffectKind::Echo);
         assert_eq!(step_effect(EffectKind::Echo, 1), EffectKind::Spiral);
+        assert_eq!(step_effect(EffectKind::SpiralDown, 1), EffectKind::Reverb);
         assert_eq!(step_effect(EffectKind::Delay, -1), EffectKind::EchoOut);
-        assert_eq!(step_effect(EffectKind::EchoOut, 1), EffectKind::Delay);
-        assert_eq!(step_effect(EffectKind::Trans, 1), EffectKind::Pan);
-        assert_eq!(step_effect(EffectKind::ReverbDown, 1), EffectKind::LowPass);
     }
 
     #[test]
