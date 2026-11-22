@@ -1,4 +1,4 @@
-//! Small controls shared by the views, drawn the Graphite way.
+//! Small controls shared by the views, drawn in the active theme.
 
 use crate::controls::Control;
 use dubplate_engine::{DeckId, EqBand, Stem};
@@ -41,12 +41,12 @@ pub fn button(
         .child(label);
     match emphasis {
         Emphasis::Primary => base
-            .bg(theme::TEXT)
-            .text_color(theme::BACKGROUND)
+            .bg(theme::active().text)
+            .text_color(theme::active().background)
             .font_weight(gpui::FontWeight::MEDIUM)
             .focus_visible(|style| {
                 style.shadow(vec![
-                    gpui::BoxShadow::new(px(0.0), px(0.0), theme::BACKGROUND.into())
+                    gpui::BoxShadow::new(px(0.0), px(0.0), theme::active().background.into())
                         .spread_radius(px(2.0))
                         .inset(),
                 ])
@@ -54,10 +54,10 @@ pub fn button(
             .hover(|button| button.opacity(0.9)),
         Emphasis::Secondary => base
             .border_1()
-            .border_color(theme::LINE)
-            .bg(theme::PANEL)
-            .text_color(theme::TEXT)
-            .hover(|button| button.bg(theme::RAISED)),
+            .border_color(theme::active().line)
+            .bg(theme::active().panel)
+            .text_color(theme::active().text)
+            .hover(|button| button.bg(theme::active().raised)),
     }
 }
 
@@ -83,7 +83,7 @@ impl InteractiveControl for Stateful<Div> {
             .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
             .focus_visible(|style| {
                 style.shadow(vec![
-                    gpui::BoxShadow::new(px(0.0), px(0.0), theme::TEXT.into())
+                    gpui::BoxShadow::new(px(0.0), px(0.0), theme::active().text.into())
                         .spread_radius(px(2.0))
                         .inset(),
                 ])
@@ -232,9 +232,9 @@ impl Render for Tooltip {
             .py(px(5.0))
             .rounded(theme::SMALL_RADIUS)
             .border_1()
-            .border_color(theme::LINE)
-            .bg(theme::RAISED)
-            .text_color(theme::TEXT)
+            .border_color(theme::active().line)
+            .bg(theme::active().raised)
+            .text_color(theme::active().text)
             .text_size(theme::SMALL_TEXT_SIZE)
             .child(self.0.clone())
     }

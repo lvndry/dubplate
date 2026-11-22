@@ -11,6 +11,7 @@ use dubplate_prep::GridEdit;
 
 use crate::controls::Control;
 use crate::pad_fx::{PadFxLayer, PadFxPreset};
+use crate::theme::ThemeId;
 
 /// Which way a control moves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,6 +42,27 @@ pub enum Press {
     Up,
     /// The button went down and up.
     Tap,
+}
+
+/// Which channels the Sound Color FX picker sets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CfxScope {
+    /// Both channels at once.
+    #[default]
+    Both,
+    /// One channel.
+    Deck(DeckId),
+}
+
+impl CfxScope {
+    /// The channels it sets.
+    pub fn decks(self) -> &'static [DeckId] {
+        match self {
+            CfxScope::Both => &DeckId::ALL,
+            CfxScope::Deck(DeckId::A) => &[DeckId::A],
+            CfxScope::Deck(DeckId::B) => &[DeckId::B],
+        }
+    }
 }
 
 /// A change in the Pad FX editor.
@@ -278,8 +300,16 @@ pub enum Command {
     NextSmartCfx,
     /// Pick a Smart CFX preset, from the screen.
     ChooseSmartCfx(SmartCfx),
+    /// Open or close the Sound Color FX picker of the CFX knobs.
+    ToggleCfxMenu,
+    /// Choose which channels the Sound Color FX picker sets.
+    SetCfxScope(CfxScope),
+    /// Give the channels of the picker's scope a Sound Color FX; `None` is the plain filter.
+    ChooseCfxColour(Option<SmartCfx>),
     /// SMART FADER: the crossfader moves a shared tempo and swaps the bass.
     ToggleSmartFader,
+    /// Play the track selected in the browser in the headphones, or stop it.
+    PreviewSelected,
     /// Load the track selected in the browser.
     LoadSelected(DeckId),
     /// Load the track playing on the other deck at the same place, as pressing LOAD twice does.
@@ -360,6 +390,8 @@ pub enum Command {
     PadFx(PadFxEdit),
     /// Show or hide the library's settings: the music folders and rekordbox.
     ToggleLibrary,
+    /// Wear a theme, from Settings.
+    ChooseTheme(ThemeId),
     /// Bring the rekordbox collection into the library.
     ImportRekordbox,
     /// Look for the files of the tracks that moved, in the music folders.

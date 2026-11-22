@@ -33,7 +33,6 @@ mod pad_fx_editor;
 mod pad_grid;
 mod pads;
 mod pickup;
-mod played;
 mod prepare;
 mod recording;
 mod relink;
@@ -45,6 +44,7 @@ mod smart;
 mod stems;
 mod stems_strip;
 mod track_check;
+mod track_preview;
 mod usb_export;
 mod waveforms;
 
@@ -56,9 +56,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
 use dubplate_engine::{
-    AudioOutput, Controller, DECK_COUNT, DeckId, DeckState, EFFECT_UNIT_COUNT, EffectTarget,
-    EffectUnitId, EffectUnitState, EngineError, HeadphoneSettings, MasterTempo, OutputDevice,
-    SyncMode, TempoRange, TempoState,
+    AudioOutput, Controller, DECK_COUNT, DeckId, DeckState, EFFECT_UNIT_COUNT, EffectKind,
+    EffectTarget, EffectUnitId, EffectUnitState, EngineError, HeadphoneSettings, MasterTempo,
+    OutputDevice, SyncMode, TempoRange, TempoState,
 };
 use dubplate_midi::{Feedback, PadMode};
 use dubplate_prep::{AnalysisQueue, GridCorrection, TrackGrid, TrackIdentity};
@@ -73,7 +73,9 @@ use gpui::{
 use crate::analysis::{AnalysisPriority, TrackAnalyser, TrackAnalyses};
 use crate::browser::{Browser, BrowserEvent, LibraryStatus};
 use crate::collection::{Collection, CollectionTrack, TrackIndex};
-use crate::commands::{AutoCueChoice, Command, Direction, EffectEdit, JogMotion, Mode, Press};
+use crate::commands::{
+    AutoCueChoice, CfxScope, Command, Direction, EffectEdit, JogMotion, Mode, Press,
+};
 use crate::controls::{
     CROSSFADER_STEP, Control, MixerPositions, Orientation, Slider, fraction_at, master_gain_at,
     nudged_tempo_slider, tempo_fader, trim_gain_at,
@@ -84,12 +86,15 @@ use crate::deck::{
     prepare_track,
 };
 use crate::devices::{BufferSize, DeviceAccess};
-use crate::effects::{EffectUnitSetting, search, step_effect, step_parameter};
+use crate::effects::{
+    EffectUnitSetting, PickerMove, PickerRow, picker_position, picker_rows, search, step_effect,
+    step_highlight, step_parameter,
+};
 use crate::fonts::UI_FAMILY;
 use crate::frame_stats::FrameStats;
 use crate::glitches::GlitchWatch;
 use crate::hardware::{
-    DeckLights, Hardware, Lights, LinkEvent, Surface, controller_deck, meter_level,
+    DeckLights, Hardware, HeldControl, Lights, LinkEvent, Surface, controller_deck, meter_level,
 };
 use crate::history::{PlayHistory, PlayWatch, SessionRecord};
 use crate::library::{LibrarySources, RekordboxSource};
@@ -116,9 +121,10 @@ use cues::new_cue_span;
 use notice::{NoticePlace, Notices};
 use overview::DeckOverview;
 use pad_fx_editor::PadFxEditing;
-use pads::HeldPad;
+use pads::{HeldPad, PadNote};
 use prepare::PrepareFocus;
 use relink::RelinkReview;
+use track_preview::TrackPreview;
 
 /// How far a pinch goes to zoom the lanes one level: a quarter more or less.
 const PINCH_STEP: f32 = 0.25;
@@ -153,6 +159,7 @@ struct HitAreas {
     overviews: [Cell<Option<Bounds<Pixels>>>; DECK_COUNT],
     check_overview: Cell<Option<Bounds<Pixels>>>,
     effect_levels: [Cell<Option<Bounds<Pixels>>>; EFFECT_UNIT_COUNT],
+    effect_strip: Cell<Option<Bounds<Pixels>>>,
 }
 
 /// What the pointer is turning or sliding while the button is held.
@@ -250,13 +257,14 @@ pub struct DubplateApp {
     catalogue: Arc<Catalogue>,
     /// What the library's Match column was last worked out for.
     match_source: Option<library_matches::MatchSource>,
-    /// The tracks a deck played this session, by file.
-    played_tracks: Arc<HashSet<PathBuf>>,
     missing: Arc<Vec<Missing>>,
     relinking: bool,
     relink_review: Option<RelinkReview>,
     audition: Option<Audition>,
     audition_generation: u64,
+    /// The library track playing in the headphones.
+    track_preview: Option<TrackPreview>,
+    preview_generation: u64,
     analyses: TrackAnalyses,
     analysis_collecting: bool,
     stems: TrackStems,
@@ -267,7 +275,12 @@ pub struct DubplateApp {
     play_watches: [PlayWatch<SessionRecord>; DECK_COUNT],
     time_zone: jiff::tz::TimeZone,
     smart_cfx_menu: bool,
+    /// The Sound Color FX picker, when it is open, and the channels it sets.
+    cfx_menu: Option<CfxScope>,
     effect_menu: Option<EffectMenu>,
+    /// The effect the picker's arrow keys and Enter are on, when moved from the unit's own.
+    effect_highlight: Option<EffectKind>,
+    effect_picker_scroll: ScrollHandle,
     fx_select_presses: u64,
     refocus_window: bool,
     effect_search: Entity<InputState>,
@@ -281,6 +294,8 @@ pub struct DubplateApp {
     focus_handle: FocusHandle,
     last_frame: Instant,
     frame_stats: Option<Rc<RefCell<FrameStats>>>,
+    /// What each deck's last pad press did, shown over its lane.
+    pad_notes: [Option<PadNote>; DECK_COUNT],
     /// The scrolling waveforms' zoom, shared by both lanes so they keep one time axis.
     lane_zoom: Zoom,
     /// How far a pinch on the lanes has gone since it last changed the zoom.
@@ -364,11 +379,8 @@ impl DubplateApp {
                 InputEvent::Change => cx.notify(),
                 InputEvent::PressEnter { .. } => {
                     let query = input.read(cx).value().to_string();
-                    let first = search(&query)
-                        .into_iter()
-                        .flat_map(|(_, effects)| effects)
-                        .next();
-                    if let (Some(menu), Some(kind)) = (this.effect_menu, first) {
+                    let picked = this.effect_highlighted(&picker_rows(&search(&query)));
+                    if let (Some(menu), Some(kind)) = (this.effect_menu, picked) {
                         this.edit_effect(menu.unit, EffectEdit::Kind(kind), cx);
                     }
                     this.close_effect_menu(cx);
@@ -397,6 +409,7 @@ impl DubplateApp {
             ..MixerPositions::default()
         });
         let mode = settings.screen();
+        theme::wear(settings.theme(), cx);
         let lane_zoom = Zoom::from_setting(settings.lane_zoom);
         let (mut engine, audio_problem) = audio::start_engine(
             &mixer,
@@ -516,12 +529,13 @@ impl DubplateApp {
             check_cursor_seconds: 0.0,
             catalogue: Arc::default(),
             match_source: None,
-            played_tracks: Arc::default(),
             missing: Arc::default(),
             relinking: false,
             relink_review: None,
             audition: None,
             audition_generation: 0,
+            track_preview: None,
+            preview_generation: 0,
             analyses: TrackAnalyses::new(
                 analysis_queue.map(|queue| Box::new(queue) as Box<dyn TrackAnalyser>),
             ),
@@ -534,7 +548,10 @@ impl DubplateApp {
             play_watches: Default::default(),
             time_zone: jiff::tz::TimeZone::system(),
             smart_cfx_menu: false,
+            cfx_menu: None,
             effect_menu: None,
+            effect_highlight: None,
+            effect_picker_scroll: ScrollHandle::new(),
             fx_select_presses: 0,
             refocus_window: false,
             effect_search,
@@ -551,6 +568,7 @@ impl DubplateApp {
             focus_handle,
             last_frame: Instant::now(),
             frame_stats: FrameStats::from_environment().map(|stats| Rc::new(RefCell::new(stats))),
+            pad_notes: Default::default(),
             lane_zoom,
             pinch: 0.0,
             menu_state: None,
@@ -626,6 +644,14 @@ impl DubplateApp {
     /// keeps some rows.
     pub(super) fn short_window(&self) -> bool {
         self.window_size.height < SHORT_WINDOW_HEIGHT
+    }
+
+    /// Whether `control`'s twin on the controller is pressed, or was tapped a moment ago, so the
+    /// control on screen shows the press.
+    pub(super) fn shows_pressed(&self, control: HeldControl) -> bool {
+        self.hardware
+            .as_ref()
+            .is_some_and(|hardware| hardware.dispatcher.held.shows(control, Instant::now()))
     }
 
     /// Turns Lock playing deck on or off and remembers it.
@@ -1051,6 +1077,17 @@ impl DubplateApp {
                 self.choose_smart_cfx(next, cx);
             }
             Command::ChooseSmartCfx(preset) => self.choose_smart_cfx(preset, cx),
+            Command::ToggleCfxMenu => {
+                self.cfx_menu = match self.cfx_menu {
+                    Some(_) => None,
+                    None => Some(CfxScope::default()),
+                };
+            }
+            Command::SetCfxScope(scope) => self.cfx_menu = Some(scope),
+            Command::ChooseCfxColour(colour) => {
+                let scope = self.cfx_menu.take().unwrap_or_default();
+                self.choose_cfx_colour(scope.decks(), colour, cx);
+            }
             Command::ToggleSmartFader => self.toggle_smart_fader(cx),
             Command::ToggleMasterCue => {
                 let cued = self
@@ -1058,6 +1095,7 @@ impl DubplateApp {
                     .is_some_and(|headphones| headphones.master_cue);
                 self.engine_command(cx, |controller| controller.set_master_cue(!cued));
             }
+            Command::PreviewSelected => self.toggle_track_preview(cx),
             Command::LoadSelected(deck) => {
                 if let Some(track) = self.browser.read(cx).selected() {
                     self.load(deck, LoadSource::Collection(track), cx);
@@ -1186,6 +1224,11 @@ impl DubplateApp {
             Command::ToggleHelp => {
                 self.help_open = !self.help_open;
                 self.library_open = false;
+            }
+            Command::ChooseTheme(choice) => {
+                theme::wear(choice, cx);
+                self.settings.set_theme(choice);
+                self.save_settings(cx);
             }
             Command::ToggleAutoCue(choice) => {
                 let setting = &mut self.settings.auto_cue;
@@ -1704,6 +1747,10 @@ impl DubplateApp {
             unit,
             opening: MenuOpening::FxSelect,
         });
+        self.scroll_picker_to(
+            self.effect_unit(unit).map(|state| state.kind),
+            &picker_rows(&search("")),
+        );
         cx.spawn(async move |this, cx| {
             cx.background_executor().timer(FX_SELECT_GLANCE).await;
             this.update(cx, |this, cx| {
@@ -1738,6 +1785,11 @@ impl DubplateApp {
             unit,
             opening: MenuOpening::Pointer,
         });
+        self.effect_highlight = None;
+        self.scroll_picker_to(
+            self.effect_unit(unit).map(|state| state.kind),
+            &picker_rows(&search("")),
+        );
         self.effect_search.update(cx, |input, cx| {
             input.set_value("", window, cx);
             input.focus(window, cx);
@@ -1746,6 +1798,42 @@ impl DubplateApp {
     }
 
     /// Closes the effect picker and gives the keys back to the window.
+    /// The effect the picker's highlight is on among `rows`: the one the arrows moved to, else
+    /// the unit's own, else the first shown.
+    pub(super) fn effect_highlighted(&self, rows: &[PickerRow]) -> Option<EffectKind> {
+        let shown = |kind: &EffectKind| picker_position(rows, *kind).is_some();
+        let own = self
+            .effect_menu
+            .and_then(|menu| self.effect_unit(menu.unit))
+            .map(|state| state.kind);
+        self.effect_highlight
+            .filter(shown)
+            .or(own.filter(shown))
+            .or_else(|| rows.first().and_then(|row| row.effects.first().copied()))
+    }
+
+    /// Moves the picker's highlight with an arrow key and scrolls it into view.
+    pub(super) fn move_effect_highlight(
+        &mut self,
+        direction: PickerMove,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let query = self.effect_search.read(cx).value().to_string();
+        let rows = picker_rows(&search(&query));
+        if let Some(from) = self.effect_highlighted(&rows) {
+            self.effect_highlight = step_highlight(&rows, from, direction);
+            self.scroll_picker_to(self.effect_highlight, &rows);
+            cx.notify();
+        }
+    }
+
+    /// Scrolls the picker's list so `kind`'s row shows.
+    fn scroll_picker_to(&self, kind: Option<EffectKind>, rows: &[PickerRow]) {
+        if let Some((row, _)) = kind.and_then(|kind| picker_position(rows, kind)) {
+            self.effect_picker_scroll.scroll_to_item(row);
+        }
+    }
+
     pub(super) fn close_effect_menu(&mut self, cx: &mut Context<'_, Self>) {
         if let Some(menu) = self.effect_menu.take() {
             if menu.opening == MenuOpening::Pointer {
@@ -2036,7 +2124,12 @@ impl DubplateApp {
         for (side, frame) in self.decks.iter_mut().zip(&frames) {
             notice_new_cue(side, frame.state.cue_point_seconds, now);
         }
-        let pulsing = self.decks.iter().any(|side| side.marker_pulse.is_some());
+        let pulsing = self.decks.iter().any(|side| side.marker_pulse.is_some())
+            || self
+                .hardware
+                .as_ref()
+                .is_some_and(|hardware| hardware.dispatcher.held.any_shown(now))
+            || self.pad_notes.iter().flatten().any(|note| note.shows(now));
         let moving = pulsing
             || frames.iter().any(|frame| frame.state.playing)
             || self.master_meter.is_moving()
@@ -2199,7 +2292,6 @@ impl Render for DubplateApp {
         if self.glitches.observe(self.dropouts(), Instant::now()) {
             self.show_notice(NoticePlace::Window, GLITCH_NOTICE, cx);
         }
-        self.mark_played(&frames, cx);
         self.follow_library_matches(cx);
         let root = div()
             .key_context(WINDOW_CONTEXT)
@@ -2217,8 +2309,8 @@ impl Render for DubplateApp {
             .flex()
             .flex_col()
             .size_full()
-            .bg(theme::BACKGROUND)
-            .text_color(theme::TEXT)
+            .bg(theme::active().background)
+            .text_color(theme::active().text)
             .font_family(UI_FAMILY)
             .text_size(theme::TEXT_SIZE)
             .child(header::render(self, cx))
@@ -2230,7 +2322,7 @@ impl Render for DubplateApp {
                             .flex()
                             .flex_none()
                             .border_b_1()
-                            .border_color(theme::LINE)
+                            .border_color(theme::active().line)
                             .child(deck_panel::render(self, DeckId::A, &frames[0], cx))
                             .child(mixer::render(self, cx))
                             .child(deck_panel::render(self, DeckId::B, &frames[1], cx)),

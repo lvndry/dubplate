@@ -26,6 +26,8 @@ Dubplate analyses every track in the background and keeps what it found for the 
 
 In Settings, choose **DDJ-FLX4** as the sound card so the master goes to the FLX4's master output and the headphones to its headphone jack. Turn the master down before the first track, then check the headphones with the channel CUE buttons. Dubplate remembers the master and headphone levels and the screen you were on, and opens no louder than it closed: if the FLX4's MASTER LEVEL knob reports a louder level when it connects, it waits until you turn it down through the level on screen, while turning it down always works at once.
 
+Settings also picks the theme, which changes at once and is remembered: Graphite (Dubplate's own), the darker Booth, Club, Console, Glass, Groove, Platter, Spectral and Cobalt, Midnight (after rekordbox's blue-grey and its waveform colours) and Ember (after Traktor's charcoal with orange and blue), and the light Chassis, Instrument and Paper for bright rooms. Every theme keeps text, states and the deck colours readable against its surfaces.
+
 Settings > Audio also has the buffer size: 256 frames (about 5 ms) by default, smaller to answer the controller sooner, larger to give a busy Mac more time. If the audio drops out three times within a minute, Dubplate says so once, with that hint; the count since launch is under the buffer size.
 
 ## 3. Prepare the set
@@ -49,7 +51,7 @@ Each set track has a **ready badge**: Ready, or what is missing (Grid unconfirme
 
 - Click a column header to sort by it, again to reverse it, and a third time to go back to the crate's own order. Prepare and Perform each remember their sort.
 - The search field matches titles, artists, genres, comments and the folders a track is filed in, so `amapiano warmup` finds the tracks in your amapiano/warmup folder. The Genre column shows the genre tag, or those folders when the track has none.
-- Type filters in the same field, mixed with words: `bpm:120-124` (or `bpm:120`, `bpm:120+`), `key:8A` (any notation) or `key:fits` (what mixes after the reference track, as Key fits), `genre:amapiano`, `artist:kabza`, `energy:6+` (or `energy:4-6`), `played:no` (not played on a deck this session) and `rated:4+` (rekordbox stars). While the search field has the keyboard, chips under the filter bar suggest them from the track you are mixing from; click one to put it in.
+- Type filters in the same field, mixed with words: `bpm:120-124` (or `bpm:120`, `bpm:120+`), `key:8A` (any notation) or `key:fits` (what mixes after the reference track, as Key fits), `genre:amapiano`, `artist:kabza`, `energy:6+` (or `energy:4-6`), `played:no` (not played for a minute or more on a deck this session; the Hide played chip next to Key fits puts it in or takes it out) and `rated:4+` (rekordbox stars). While the search field has the keyboard, chips under the filter bar suggest them from the track you are mixing from; click one to put it in.
 - **BPM** keeps a tempo range, a few BPM either side of the selected set track (or the playing deck); the arrows move each end.
 - **Key fits** keeps the tracks whose key mixes well after the selected set track in Prepare, or the deck playing in Perform: the same key, one step on the wheel, or the relative key, as the Next suggestions choose.
 - The **Match** column says how each track mixes after the track you mix from, which its heading names ("vs A: Kukaya"): the deck with MASTER pressed, even stopped, else the deck the room hears, else the deck loaded last, so it works before anything plays: the key move with a coloured dot (green for a smooth move such as one step on the wheel, blue for a lift such as an energy boost, red for a clash), the tempo change (amber beyond 6%) and the energy change. Sort by it and the library becomes a ranked list of what to play next, best first, in the Next suggestions' order. **Matches master** keeps only those suggestions. The master's own track says so, and tracks a deck already played this session are dimmed.
@@ -103,11 +105,15 @@ A stick Dubplate exported to before is added to, and a playlist of the same name
 
 ## 4. Mix
 
+P plays the track selected in the library in the headphones, from its first memory or hot cue, without loading it: the headphone MIX and LEVEL knobs set how loud, the header shows "Preview" with its title (click to stop), and P again stops it. It never reaches the master or a deck, and stops by itself after 30 seconds.
+
 Cmd+L loads the set's first two tracks onto deck A and deck B at their mix-in cues; Cmd+2 opens Perform. A set track whose file is missing is never loaded: its deck keeps what it had, and a notice names the track with a **Relink** button that looks for the file. The same goes for any track loaded from the library.
 
 A track loaded from the library waits at its earliest memory or hot cue, or, when it has none, at its first sound on the beat it starts with, never at 0:00 in silence, as rekordbox's Auto Cue does. Settings > Decks switches either off.
 
 On the keyboard, **Space** plays or pauses the deck you can hear: the one whose channel fader is up past 20% and that the crossfader lets through. With both up it acts on the tempo master, else the louder one, and with neither it is deck A. A small **Space** label beside a deck's letter shows which one it will be. Shift+Space is always deck B, and the FLX4's PLAY buttons always their own deck.
+
+Every press on the FLX4 shows on screen too: a pad, CUE, PLAY, BEAT SYNC, the loop buttons, the channel CUE, BEAT FX ON, SMART CFX and SMART FADER light on screen while held, and a quick tap flashes for a moment. A Beat Jump pad shows how far it jumped over the deck's lane ("−4 beats") with a mark where the deck jumped from, a Beat Loop pad the loop it set, and a Pad FX pad its effect while held.
 
 On the FLX4, everything works as in rekordbox's FLX4 layout:
 
@@ -116,7 +122,7 @@ On the FLX4, everything works as in rekordbox's FLX4 layout:
 - The pad modes: Hot Cue, Pad FX 1 and 2 (hold for rolls and effects), Beat Jump, Beat Loop, Sampler, Keyboard, Key Shift; the loop section IN, OUT, 4 BEAT/EXIT.
 - CUE/LOOP CALL ◀ ▶ calls the memory cue before or after the playhead: the deck pauses there with its cue point on it, as on a CDJ. With a loop on, they halve and double it. SHIFT + ▶ keeps the cue point (or the loop that is on) as a memory cue, up to 10 per track; SHIFT + ◀ deletes the memory cue at the cue point. Memory cues show as red triangles along the top of the scrolling waveforms and are kept with the track. On the keyboard: H and J call, N keeps, ⌥N deletes (with ⇧ for deck B).
 - BEAT FX: FX SELECT, BEAT left and right, the CH SELECT lever, LEVEL/DEPTH and ON/OFF.
-- SMART CFX turns both filter knobs into the chosen preset (Space, Dub echo, Crush, Chop, Jet, Phase; SHIFT + SMART CFX steps through them). SMART FADER makes the crossfader glide a shared tempo and swap the bass for you; a LOW knob you turn takes over.
+- SMART CFX turns both CFX knobs into the chosen preset (Space, Dub echo, Sweep, Noise, Crush, Pitch, Chop, Jet, Phase; SHIFT + SMART CFX steps through them). With SMART CFX off, each CFX knob plays its channel's Sound Color FX: the filter, or one of the same colours, picked from the CFX name between the mixer's knobs for both channels or one (**A and B**, **A**, **B**) and remembered. Sweep gates the music to the left and narrows it to a band-pass to the right, without the filter; Noise lays white noise over the music through the filter. SMART FADER makes the crossfader glide a shared tempo and swap the bass for you; a LOW knob you turn takes over.
 
 SHIFT never turns pages of pads on the FLX4; it gives each pad a second job, as rekordbox's FLX4 layout does. The FLX4 has 8 hot cues per track, A to H, with no banks or pages. While SHIFT is held the pads on screen show their SHIFT job:
 

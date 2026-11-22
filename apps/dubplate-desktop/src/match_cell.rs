@@ -53,7 +53,7 @@ impl MatchCell {
         match self {
             Self::Reference => div()
                 .text_size(theme::TINY_TEXT_SIZE)
-                .text_color(theme::MUTED)
+                .text_color(theme::active().muted)
                 .child("On deck \u{b7} matched against")
                 .into_any_element(),
             Self::Track(found) => track_match(found).into_any_element(),
@@ -79,7 +79,7 @@ fn track_match(found: TrackMatch) -> impl IntoElement {
         .min_w_0()
         .font_family(MONO_FAMILY)
         .text_size(theme::TINY_TEXT_SIZE)
-        .text_color(theme::MUTED)
+        .text_color(theme::active().muted)
         .child(div().flex_none().w(RANK_WIDTH).child(rank))
         .children(found.key.map(|key| {
             div()
@@ -89,7 +89,7 @@ fn track_match(found: TrackMatch) -> impl IntoElement {
                 .gap(px(5.0))
                 .min_w_0()
                 .font_family(crate::fonts::UI_FAMILY)
-                .text_color(theme::TEXT)
+                .text_color(theme::active().text)
                 .child(
                     div()
                         .flex_none()
@@ -106,7 +106,7 @@ fn track_match(found: TrackMatch) -> impl IntoElement {
                 .flex()
                 .justify_end()
                 .when(found.is_far_in_tempo(), |tempo| {
-                    tempo.text_color(theme::ATTENTION)
+                    tempo.text_color(theme::active().attention)
                 })
                 .child(tempo),
         )
@@ -115,8 +115,8 @@ fn track_match(found: TrackMatch) -> impl IntoElement {
 
 fn tone_colour(tone: KeyTone) -> Rgba {
     match tone {
-        KeyTone::Smooth => theme::KEY_SMOOTH,
-        KeyTone::Lift => theme::KEY_LIFT,
-        KeyTone::Clash => theme::KEY_CLASH,
+        KeyTone::Smooth => theme::active().key_smooth,
+        KeyTone::Lift => theme::active().key_lift,
+        KeyTone::Clash => theme::active().key_clash,
     }
 }

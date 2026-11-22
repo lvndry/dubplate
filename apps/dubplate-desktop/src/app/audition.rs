@@ -58,6 +58,7 @@ impl DubplateApp {
     }
 
     fn start_audition(&mut self, after: usize, cx: &mut Context<'_, Self>) {
+        self.stop_track_preview(cx);
         match self.audition_request(after) {
             Ok((paths, plan)) => {
                 self.audition_generation += 1;
@@ -281,11 +282,11 @@ fn seam_preview(outgoing: Track, incoming: Track, plan: AuditionPlan) -> Preview
             start_seconds: plan.outgoing_start_seconds,
             tempo: 1.0,
         },
-        second: PreviewTrack {
+        second: Some(PreviewTrack {
             track: incoming,
             start_seconds: plan.incoming_start_seconds,
             tempo: plan.incoming_tempo,
-        },
+        }),
         second_offset_seconds: plan.incoming_offset_seconds,
         key_lock: true,
     }

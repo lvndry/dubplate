@@ -103,7 +103,7 @@ pub(super) fn render(
         .flex()
         .items_center()
         .justify_center()
-        .bg(theme::SCRIM)
+        .bg(theme::active().scrim)
         .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
             this.perform(Command::PadFx(PadFxEdit::Close), window, cx);
         }))
@@ -123,8 +123,8 @@ pub(super) fn render(
                 .p(px(20.0))
                 .rounded(px(10.0))
                 .border_1()
-                .border_color(theme::LINE)
-                .bg(theme::PANEL)
+                .border_color(theme::active().line)
+                .bg(theme::active().panel)
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_click(|_, _, cx| cx.stop_propagation())
                 .child(
@@ -141,7 +141,7 @@ pub(super) fn render(
                         .child(
                             div()
                                 .text_size(theme::SMALL_TEXT_SIZE)
-                                .text_color(theme::MUTED)
+                                .text_color(theme::active().muted)
                                 .child(format!(
                                     "{summary} \u{b7} PAD FX1 and FX2, SHIFT for the second eight \u{b7} Esc closes"
                                 )),
@@ -175,7 +175,7 @@ fn presets(current: PadFxPreset, cx: &mut Context<'_, DubplateApp>) -> impl Into
         .child(
             div()
                 .text_size(theme::TINY_TEXT_SIZE)
-                .text_color(theme::MUTED)
+                .text_color(theme::active().muted)
                 .child("Start from"),
         )
         .children(PadFxPreset::ALL.map(|preset| {
@@ -229,14 +229,14 @@ fn layers(
                     .px(px(6.0))
                     .rounded(theme::SMALL_RADIUS)
                     .border_1()
-                    .bg(theme::RAISED)
+                    .bg(theme::active().raised)
                     .cursor_pointer()
                     .map(|slot| {
                         if chosen {
-                            slot.border_color(theme::TEXT)
+                            slot.border_color(theme::active().text)
                         } else {
-                            slot.border_color(theme::LINE)
-                                .hover(|slot| slot.border_color(theme::MUTED))
+                            slot.border_color(theme::active().line)
+                                .hover(|slot| slot.border_color(theme::active().muted))
                         }
                     })
                     .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
@@ -252,7 +252,7 @@ fn layers(
                         div()
                             .font_family(MONO_FAMILY)
                             .text_size(theme::TINY_TEXT_SIZE)
-                            .text_color(theme::MUTED)
+                            .text_color(theme::active().muted)
                             .child(if latched {
                                 format!("{parameter} latch")
                             } else {
@@ -271,7 +271,7 @@ fn layers(
                 .child(
                     div()
                         .text_size(theme::TINY_TEXT_SIZE)
-                        .text_color(theme::MUTED)
+                        .text_color(theme::active().muted)
                         .child(format!("{}  \u{b7}  {}", layer.label(), layer.numbers())),
                 )
                 .child(div().flex().gap(px(3.0)).children(top))
@@ -355,7 +355,7 @@ fn field(name: &'static str) -> impl IntoElement {
         .w(px(70.0))
         .flex_none()
         .text_size(theme::TINY_TEXT_SIZE)
-        .text_color(theme::MUTED)
+        .text_color(theme::active().muted)
         .child(name)
 }
 
@@ -377,9 +377,13 @@ fn stepper(
             .w(px(24.0))
             .h(px(24.0))
             .rounded(px(5.0))
-            .text_color(theme::MUTED)
+            .text_color(theme::active().muted)
             .cursor_pointer()
-            .hover(|arrow| arrow.bg(theme::RAISED).text_color(theme::TEXT))
+            .hover(|arrow| {
+                arrow
+                    .bg(theme::active().raised)
+                    .text_color(theme::active().text)
+            })
             .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                 this.perform(Command::PadFx(edit(steps)), window, cx)
             }))
@@ -421,19 +425,19 @@ fn toggle(
             .justify_center()
             .rounded(px(5.0))
             .border_1()
-            .border_color(theme::LINE)
+            .border_color(theme::active().line)
             .font_family(MONO_FAMILY)
             .text_size(theme::SMALL_TEXT_SIZE)
             .map(|toggle| {
                 if enabled {
                     toggle
                         .cursor_pointer()
-                        .hover(|toggle| toggle.bg(theme::RAISED))
+                        .hover(|toggle| toggle.bg(theme::active().raised))
                         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                             this.perform(Command::PadFx(edit), window, cx)
                         }))
                 } else {
-                    toggle.text_color(theme::MUTED)
+                    toggle.text_color(theme::active().muted)
                 }
             })
             .child(value),

@@ -206,7 +206,7 @@ fn milliseconds(value: i64) -> Option<u32> {
 mod tests {
     use rusqlite::Connection;
 
-    use super::super::{MIGRATIONS, SetId};
+    use super::super::{MIGRATIONS, SCHEMA_VERSION, SetId};
     use super::*;
 
     #[test]
@@ -231,7 +231,7 @@ mod tests {
             .connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, i64::from(crate::store::SCHEMA_VERSION));
+        assert_eq!(version, i64::from(SCHEMA_VERSION));
         let set = store.load_set(SetId(1)).unwrap();
         assert_eq!(set.main_entries().count(), 1);
         assert!(store.track_cues().unwrap().is_empty());

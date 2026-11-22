@@ -16,11 +16,11 @@ fn preview(first: Track, second: Track, offset: f64, tempo: f64, key_lock: bool)
             start_seconds: 0.5,
             tempo,
         },
-        second: PreviewTrack {
+        second: Some(PreviewTrack {
             track: second,
             start_seconds: 0.0,
             tempo,
-        },
+        }),
         second_offset_seconds: offset,
         key_lock,
     }
@@ -115,6 +115,37 @@ fn the_second_track_comes_in_at_the_overlap_and_the_preview_ends_by_itself() {
     assert!(!ended.playing, "both tracks ended at 3 s");
     let after = render(&mut renderer, 0.1);
     assert!(after.iter().all(|frame| frame[2] == 0.0));
+}
+
+#[test]
+fn a_single_track_plays_alone_in_the_headphones() {
+    let (mut controller, mut renderer) = offline_engine(SAMPLE_RATE);
+    controller.set_headphone_level(1.0).unwrap();
+    controller
+        .preview(Some(Preview {
+            first: PreviewTrack {
+                track: constant_track(0.25, 0.25, 1.0, SAMPLE_RATE),
+                start_seconds: 0.0,
+                tempo: 1.0,
+            },
+            second: None,
+            second_offset_seconds: 0.0,
+            key_lock: false,
+        }))
+        .unwrap();
+    let frames = render(&mut renderer, 0.5);
+    let rate = SAMPLE_RATE as usize;
+    assert_close(f64::from(frames[rate / 4][2]), 0.25, 1e-4);
+    assert!(
+        frames
+            .iter()
+            .all(|frame| frame[0] == 0.0 && frame[1] == 0.0)
+    );
+    render(&mut renderer, 1.0);
+    assert!(
+        !controller.preview_state().playing,
+        "it ends with its track"
+    );
 }
 
 #[test]

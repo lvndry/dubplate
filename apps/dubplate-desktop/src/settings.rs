@@ -15,6 +15,7 @@ use crate::controls::{DEFAULT_MASTER_LEVEL, DEFAULT_SAMPLER_VOLUME, MixerPositio
 use crate::effects::EffectUnitSetting;
 use crate::library_view::SortSetting;
 use crate::pad_fx::PadFxSetting;
+use crate::theme::ThemeId;
 
 /// Why the settings could not be read or written.
 #[derive(Debug, thiserror::Error)]
@@ -70,6 +71,9 @@ pub struct Settings {
     pub smart_cfx_preset: Option<String>,
     /// Whether SMART CFX was on, so the channels' CFX knobs play the preset from launch.
     pub smart_cfx_on: bool,
+    /// The Sound Color FX each channel's CFX knob plays with SMART CFX off, deck A first:
+    /// `filter`, or a colour such as `space` or `dub echo`.
+    pub cfx_colours: Vec<String>,
     /// The sampler's volume and the sample in each slot.
     pub sampler: SamplerSetting,
     /// The 32 Pad FX pads and the preset they started from.
@@ -86,6 +90,8 @@ pub struct Settings {
     pub mixer: MixerSetting,
     /// How the library's tracks are sorted on each screen.
     pub library_sort: LibrarySortSetting,
+    /// The theme Dubplate wears, by name.
+    pub theme: Option<String>,
     /// Whether a track loaded on a deck starts with key lock on, as rekordbox's Master Tempo
     /// default: the deck's Key lock button still changes it for the track on the deck.
     pub key_lock_on_new_tracks: bool,
@@ -238,6 +244,20 @@ impl Settings {
     pub fn set_screen(&mut self, screen: Mode) {
         self.screen = Some(screen_name(screen).to_owned());
     }
+
+    /// The theme to wear: the one the DJ chose, Graphite the first time or for a theme this
+    /// version does not know.
+    pub fn theme(&self) -> ThemeId {
+        self.theme
+            .as_deref()
+            .and_then(ThemeId::named)
+            .unwrap_or_default()
+    }
+
+    /// Remembers the theme the DJ chose.
+    pub fn set_theme(&mut self, theme: ThemeId) {
+        self.theme = Some(theme.name().to_owned());
+    }
 }
 
 /// How the library's tracks are sorted on each screen, when the DJ sorted them. A screen
@@ -322,6 +342,7 @@ impl Default for Settings {
             effect_units: Vec::new(),
             smart_cfx_preset: None,
             smart_cfx_on: false,
+            cfx_colours: Vec::new(),
             sampler: SamplerSetting::default(),
             pad_fx: PadFxSetting::default(),
             screen: None,
@@ -330,6 +351,7 @@ impl Default for Settings {
             auto_cue: AutoCueSetting::default(),
             mixer: MixerSetting::default(),
             library_sort: LibrarySortSetting::default(),
+            theme: None,
             key_lock_on_new_tracks: true,
         }
     }
@@ -456,6 +478,7 @@ mod tests {
             }],
             smart_cfx_preset: Some("dub echo".to_owned()),
             smart_cfx_on: true,
+            cfx_colours: vec!["filter".to_owned(), "noise".to_owned()],
             sampler: SamplerSetting {
                 volume: 0.6,
                 slots: vec![SampleSlotSetting {
@@ -481,6 +504,7 @@ mod tests {
                 headphones: 0.3,
                 headphone_mix: 0.7,
             },
+            theme: Some("midnight".to_owned()),
             lane_zoom: Some(75.0),
             auto_cue: AutoCueSetting {
                 saved_cues_first: false,
@@ -506,6 +530,7 @@ mod tests {
         };
         settings.save(&path).unwrap();
         assert_eq!(Settings::load(&path).unwrap(), settings);
+        assert_eq!(settings.theme(), ThemeId::Midnight);
         assert_eq!(
             LibrarySettings::load(&path).unwrap(),
             settings.library,
