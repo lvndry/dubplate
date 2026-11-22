@@ -16,6 +16,7 @@ use gpui::{App, Context};
 use super::{DubplateApp, NoticePlace};
 use crate::collection::{TrackIndex, TrackOrigin};
 use crate::commands::{Direction, SetEdit};
+use crate::energy::{direction_toward_target, set_curve};
 use crate::loading::LoadSource;
 use crate::prep::{
     GridCorrection, SeamSummary, TrackCheck, accept_proposal, check_track, nearest_bar_ms,
@@ -62,6 +63,17 @@ pub(super) struct NextTrack {
     pub artist: String,
     /// Why it fits, such as "One step on the wheel · +1.6%".
     pub reason: String,
+}
+
+/// The Next panel's suggestions.
+#[derive(Default)]
+pub(super) struct NextSuggestions {
+    /// The title of the track they follow, when there is one.
+    pub after: Option<String>,
+    /// Where they take the energy, once the track they follow is rated.
+    pub direction: Option<EnergyDirection>,
+    /// The suggestions, best first.
+    pub tracks: Vec<NextTrack>,
 }
 
 impl DubplateApp {
@@ -277,6 +289,7 @@ impl DubplateApp {
         });
         self.check_set_tracks(cx);
         self.ensure_track_detail(cx);
+        self.request_set_energy(cx);
         cx.notify();
     }
 
@@ -434,37 +447,45 @@ impl DubplateApp {
             .collect()
     }
 
-    /// Five tracks from the library that would follow the selected set track, or the last one.
-    pub(super) fn next_tracks(&self) -> (Option<String>, Vec<NextTrack>) {
+    /// Five tracks from the library that would follow the selected set track, or the last one,
+    /// taking the energy toward the target.
+    pub(super) fn next_tracks(&self, rows: &[SetRow]) -> NextSuggestions {
         let Some(editor) = &self.set_editor else {
-            return (None, Vec::new());
+            return NextSuggestions::default();
         };
-        let tracks = editor.tracks();
-        let reference = self
+        let Some((position, reference)) = self
             .set_selection
-            .or_else(|| tracks.len().checked_sub(1))
-            .and_then(|position| tracks.get(position))
-            .and_then(|entry| self.catalogue.get(&entry.track_path));
-        let Some(reference) = reference else {
-            return (None, Vec::new());
+            .or_else(|| rows.len().checked_sub(1))
+            .and_then(|position| Some((position, rows.get(position)?.track.as_ref()?)))
+        else {
+            return NextSuggestions::default();
         };
-        let suggestions = suggest_next(
+        let lengths: Vec<(Option<Duration>, Option<f32>)> =
+            rows.iter().map(|row| (row.duration, None)).collect();
+        let reference_end = set_curve(&lengths, editor.target())
+            .get(position)
+            .map_or(1.0, |step| step.end);
+        let direction = direction_toward_target(reference.energy, reference_end);
+        let tracks = suggest_next(
             reference,
             &self.catalogue.tracks,
-            EnergyDirection::default(),
+            direction,
             |candidate| editor.position(&candidate.track_path).is_some(),
             SUGGESTIONS,
-        );
-        let next = suggestions
-            .into_iter()
-            .map(|suggestion| NextTrack {
-                path: suggestion.track.track_path.clone(),
-                title: suggestion.track.title.clone(),
-                artist: suggestion.track.artist.clone(),
-                reason: suggestion.reason(),
-            })
-            .collect();
-        (Some(reference.title.clone()), next)
+        )
+        .into_iter()
+        .map(|suggestion| NextTrack {
+            path: suggestion.track.track_path.clone(),
+            title: suggestion.track.title.clone(),
+            artist: suggestion.track.artist.clone(),
+            reason: suggestion.reason(),
+        })
+        .collect();
+        NextSuggestions {
+            after: Some(reference.title.clone()),
+            direction: reference.energy.map(|_| direction),
+            tracks,
+        }
     }
 
     /// Puts the set's first track on deck A and its second on deck B, each cued at its mix-in.
