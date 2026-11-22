@@ -34,6 +34,7 @@ use dubplate_engine::{
     TempoRange, TempoState,
 };
 use dubplate_midi::{Feedback, PadMode};
+use dubplate_prep::EnergyQueue;
 use dubplate_rekordbox::HotCuePad;
 use gpui::component::input::{InputEvent, InputState};
 use gpui::prelude::*;
@@ -53,7 +54,7 @@ use crate::deck::{
     Deck, DeckContent, HotCues, LoadError, PreparedTrack, TrackVisuals, prepare_track,
 };
 use crate::effects::{EffectUnitSetting, search, step_beat, step_effect};
-use crate::energy::EnergyRatings;
+use crate::energy::{EnergyAnalyser, EnergyRatings};
 use crate::fonts::UI_FAMILY;
 use crate::frame_stats::FrameStats;
 use crate::hardware::{
@@ -264,6 +265,11 @@ impl DubplateApp {
             .and_then(|path| SetEditor::open(&path).map_err(|error| error.to_string()))
             .map_err(|problem| problems.push(format!("Sets cannot be kept: {problem}")))
             .ok();
+        let energy_queue = Settings::energy_cache_path()
+            .map_err(|error| error.to_string())
+            .and_then(|path| EnergyQueue::start(path).map_err(|error| error.to_string()))
+            .map_err(|problem| problems.push(format!("Energy cannot be rated: {problem}")))
+            .ok();
         let sources =
             LibrarySources::new(settings.music_folders.clone(), settings.import_rekordbox);
         let mut app = Self {
@@ -299,7 +305,9 @@ impl DubplateApp {
             detail_pending: None,
             check_cursor_seconds: 0.0,
             catalogue: Arc::default(),
-            energy: EnergyRatings::new(None),
+            energy: EnergyRatings::new(
+                energy_queue.map(|queue| Box::new(queue) as Box<dyn EnergyAnalyser>),
+            ),
             energy_collecting: false,
             effect_menu: None,
             refocus_window: false,

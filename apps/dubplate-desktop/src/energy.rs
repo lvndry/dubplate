@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use dubplate_prep::EnergyDirection;
+use dubplate_prep::{EnergyDirection, EnergyQueue, Priority};
 
 /// How soon a track is rated: the set's tracks before the rest of the library.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -35,10 +35,33 @@ pub struct AnalysedTrack {
 /// What rates tracks off the interface thread. Kept this small so the analyser's own types stay
 /// behind it.
 pub trait EnergyAnalyser {
-    /// Asks for the track at `path` to be rated, sooner for an earlier `priority`.
-    fn request(&self, path: PathBuf, bpm: Option<f32>, priority: EnergyPriority);
+    /// Asks for each track, by its file and tempo, to be rated, sooner for an earlier
+    /// `priority`.
+    fn request(&self, tracks: Vec<(PathBuf, Option<f32>)>, priority: EnergyPriority);
     /// The next answer that has arrived, without waiting.
     fn next_result(&self) -> Option<AnalysedTrack>;
+}
+
+impl EnergyAnalyser for EnergyQueue {
+    fn request(&self, tracks: Vec<(PathBuf, Option<f32>)>, priority: EnergyPriority) {
+        let priority = match priority {
+            EnergyPriority::Set => Priority::Set,
+            EnergyPriority::Library => Priority::Library,
+        };
+        self.request_all(tracks.into_iter().map(|(path, bpm)| (path, bpm, priority)));
+    }
+
+    fn next_result(&self) -> Option<AnalysedTrack> {
+        let result = self.results().try_recv().ok()?;
+        Some(AnalysedTrack {
+            path: result.path,
+            outcome: result.outcome.map(|energy| {
+                energy.map(|energy| EnergyReading {
+                    rating: energy.rating,
+                })
+            }),
+        })
+    }
 }
 
 /// The energies known so far and the tracks still waiting for one.
@@ -72,23 +95,32 @@ impl EnergyRatings {
         self.waiting.len()
     }
 
-    /// Asks for the track at `path` to be rated, unless it was already or is waiting at the
-    /// same priority or an earlier one.
-    pub fn request(&mut self, path: &Path, bpm: Option<f32>, priority: EnergyPriority) {
+    /// Asks for each track, by its file and tempo, to be rated at `priority`, leaving out the
+    /// ones rated already or waiting at the same priority or an earlier one.
+    pub fn request<'tracks>(
+        &mut self,
+        tracks: impl IntoIterator<Item = (&'tracks Path, Option<f32>)>,
+        priority: EnergyPriority,
+    ) {
         let Some(analyser) = &self.analyser else {
             return;
         };
-        if self.readings.contains_key(path)
-            || self.unrated.contains(path)
-            || self
+        let mut wanted = Vec::new();
+        for (path, bpm) in tracks {
+            let asked = self
                 .waiting
                 .get(path)
-                .is_some_and(|waiting| *waiting <= priority)
-        {
+                .is_some_and(|waiting| *waiting <= priority);
+            if asked || self.readings.contains_key(path) || self.unrated.contains(path) {
+                continue;
+            }
+            self.waiting.insert(path.to_path_buf(), priority);
+            wanted.push((path.to_path_buf(), bpm));
+        }
+        if wanted.is_empty() {
             return;
         }
-        self.waiting.insert(path.to_path_buf(), priority);
-        analyser.request(path.to_path_buf(), bpm, priority);
+        analyser.request(wanted, priority);
     }
 
     /// How many tracks could not be read to rate them.
@@ -218,8 +250,10 @@ mod tests {
     }
 
     impl EnergyAnalyser for Rc<Analyser> {
-        fn request(&self, path: PathBuf, _: Option<f32>, priority: EnergyPriority) {
-            self.requests.borrow_mut().push((path, priority));
+        fn request(&self, tracks: Vec<(PathBuf, Option<f32>)>, priority: EnergyPriority) {
+            self.requests
+                .borrow_mut()
+                .extend(tracks.into_iter().map(|(path, _)| (path, priority)));
         }
 
         fn next_result(&self) -> Option<AnalysedTrack> {
@@ -241,10 +275,13 @@ mod tests {
         let analyser = Rc::new(Analyser::default());
         let mut ratings = EnergyRatings::new(Some(Box::new(Rc::clone(&analyser))));
         let path = Path::new("/Music/a.mp3");
-        ratings.request(path, Some(124.0), EnergyPriority::Library);
-        ratings.request(path, Some(124.0), EnergyPriority::Library);
-        ratings.request(path, Some(124.0), EnergyPriority::Set);
-        ratings.request(path, Some(124.0), EnergyPriority::Library);
+        ratings.request([(path, Some(124.0))], EnergyPriority::Library);
+        ratings.request(
+            [(path, Some(124.0)), (path, Some(124.0))],
+            EnergyPriority::Library,
+        );
+        ratings.request([(path, Some(124.0))], EnergyPriority::Set);
+        ratings.request([(path, Some(124.0))], EnergyPriority::Library);
         assert_eq!(
             *analyser.requests.borrow(),
             [
@@ -259,9 +296,10 @@ mod tests {
     fn answers_are_kept_and_tracks_answered_are_not_asked_again() {
         let analyser = Rc::new(Analyser::default());
         let mut ratings = EnergyRatings::new(Some(Box::new(Rc::clone(&analyser))));
-        for name in ["/a.mp3", "/b.mp3", "/c.mp3"] {
-            ratings.request(Path::new(name), None, EnergyPriority::Library);
-        }
+        ratings.request(
+            ["/a.mp3", "/b.mp3", "/c.mp3"].map(|name| (Path::new(name), None)),
+            EnergyPriority::Library,
+        );
         analyser.answers.borrow_mut().extend([
             answer("/a.mp3", Ok(Some(7))),
             answer("/b.mp3", Ok(None)),
@@ -284,16 +322,17 @@ mod tests {
             [(Path::new("/a.mp3"), EnergyReading { rating: 7 })]
         );
         analyser.requests.borrow_mut().clear();
-        for name in ["/a.mp3", "/b.mp3", "/c.mp3"] {
-            ratings.request(Path::new(name), None, EnergyPriority::Set);
-        }
+        ratings.request(
+            ["/a.mp3", "/b.mp3", "/c.mp3"].map(|name| (Path::new(name), None)),
+            EnergyPriority::Set,
+        );
         assert!(analyser.requests.borrow().is_empty());
     }
 
     #[test]
     fn without_an_analyser_nothing_waits() {
         let mut ratings = EnergyRatings::new(None);
-        ratings.request(Path::new("/a.mp3"), None, EnergyPriority::Set);
+        ratings.request([(Path::new("/a.mp3"), None)], EnergyPriority::Set);
         assert_eq!(ratings.waiting(), 0);
         assert!(ratings.collect().is_empty());
     }

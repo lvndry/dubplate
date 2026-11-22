@@ -594,6 +594,8 @@ fn header_row(energy_status: Option<SharedString>) -> impl IntoElement {
         .child(
             header("Title")
                 .flex_1()
+                .min_w_0()
+                .overflow_hidden()
                 .gap(px(8.0))
                 .pl(px(22.0))
                 .pr(theme::GUTTER)

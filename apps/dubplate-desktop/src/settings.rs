@@ -10,6 +10,7 @@ use crate::effects::EffectUnitSetting;
 const FILE_NAME: &str = "settings.toml";
 const LIBRARY_CACHE_NAME: &str = "library-cache.json";
 const SETS_NAME: &str = "sets.sqlite";
+const ENERGY_CACHE_NAME: &str = "energy.sqlite";
 
 /// Why the settings could not be read or written.
 #[derive(Debug, thiserror::Error)]
@@ -76,6 +77,11 @@ impl Settings {
     /// Where the sets are kept.
     pub fn sets_path() -> Result<PathBuf, SettingsError> {
         Ok(configuration_directory()?.join(SETS_NAME))
+    }
+
+    /// Where the tracks' energy ratings are kept between launches.
+    pub fn energy_cache_path() -> Result<PathBuf, SettingsError> {
+        Ok(configuration_directory()?.join(ENERGY_CACHE_NAME))
     }
 
     /// Where the scans of the music folders are kept between launches.

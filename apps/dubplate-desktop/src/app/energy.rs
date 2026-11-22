@@ -28,20 +28,27 @@ impl DubplateApp {
                     .collect()
             })
             .unwrap_or_default();
-        for path in &set_tracks {
-            let bpm = self.catalogue.get(path).and_then(|track| track.bpm);
-            self.energy.request(path, bpm, EnergyPriority::Set);
-        }
+        let catalogue = &self.catalogue;
+        self.energy.request(
+            set_tracks.iter().map(|path| {
+                let bpm = catalogue.get(path).and_then(|track| track.bpm);
+                (path.as_path(), bpm)
+            }),
+            EnergyPriority::Set,
+        );
         self.show_energy_waiting(cx);
         self.collect_energy_while_waiting(cx);
     }
 
     /// Asks for the energy of every other track of the library not rated yet.
     pub(super) fn request_library_energy(&mut self, cx: &mut Context<'_, Self>) {
-        for track in &self.catalogue.tracks {
-            self.energy
-                .request(&track.track_path, track.bpm, EnergyPriority::Library);
-        }
+        self.energy.request(
+            self.catalogue
+                .tracks
+                .iter()
+                .map(|track| (track.track_path.as_path(), track.bpm)),
+            EnergyPriority::Library,
+        );
         self.show_energy_waiting(cx);
         self.collect_energy_while_waiting(cx);
     }
