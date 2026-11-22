@@ -19,10 +19,12 @@ mod fonts;
 mod frame_stats;
 mod hardware;
 mod library;
+mod library_match;
 mod library_view;
 mod loading;
 #[cfg(target_os = "macos")]
 mod macos_identity;
+mod match_cell;
 mod meter;
 mod pads;
 mod phrases;

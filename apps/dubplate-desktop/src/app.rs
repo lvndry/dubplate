@@ -18,6 +18,7 @@ mod knob;
 mod lane_drag;
 mod lanes;
 mod library;
+mod library_matches;
 mod library_panel;
 mod mixer;
 mod notice;
@@ -216,6 +217,8 @@ pub struct DubplateApp {
     waveform_cache: WaveformCache,
     check_cursor_seconds: f64,
     catalogue: Arc<Catalogue>,
+    /// What the library's Match column was last worked out for.
+    match_source: Option<library_matches::MatchSource>,
     /// The tracks a deck played this session, by file.
     played_tracks: Arc<HashSet<PathBuf>>,
     missing: Arc<Vec<Missing>>,
@@ -415,6 +418,7 @@ impl DubplateApp {
             waveform_cache: WaveformCache::default(),
             check_cursor_seconds: 0.0,
             catalogue: Arc::default(),
+            match_source: None,
             played_tracks: Arc::default(),
             missing: Arc::default(),
             relinking: false,
@@ -1965,6 +1969,7 @@ impl Render for DubplateApp {
         self.modal_active = modal_open;
         let frames = self.advance_frame(window);
         self.mark_played(&frames, cx);
+        self.follow_library_matches(cx);
         let root = div()
             .key_context(WINDOW_CONTEXT)
             .track_focus(&self.focus_handle)

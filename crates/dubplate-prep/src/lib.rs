@@ -33,7 +33,7 @@ pub use analysis_queue::{AnalysisQueue, AnalysisResult, Priority};
 pub use cue_proposal::{ProposalSource, ProposedCue, ProposedCues, propose_mix_cues};
 pub use editor::{SetEditor, SetTrackRef};
 pub use energy::{EnergyWindow, TrackEnergy};
-pub use euphoria_core::harmony::EnergyDirection;
+pub use euphoria_core::harmony::{EnergyDirection, Relation};
 pub use euphoria_core::key::Key;
 pub use export::{
     ExportError, ExportLibrary, ExportTrack, MIX_IN_CUE_NAME, MIX_OUT_CUE_NAME,
