@@ -14,6 +14,7 @@ use crate::pad_effects::{PadEffect, PadEffects};
 use crate::processor::{AudioProcessor, ProcessContext, StereoBlock};
 use crate::slip::Slip;
 use crate::smart_cfx::SmartCfx;
+use crate::stems::{StemMix, StemSettings};
 use crate::sync::{MasterBeat, PhaseAction, SyncFollow, SyncMode, phase_action, sync_multiple};
 use crate::tempo::{BeatClock, TempoFader, TempoRange};
 use crate::track::{MAX_TRACK_SECONDS, TrackBuffer};
@@ -87,6 +88,7 @@ pub(crate) struct Deck {
     steps: Vec<f64>,
     key_lock: KeyLock,
     key_lock_enabled: bool,
+    stem_mix: StemMix,
     strip: ChannelStrip,
     pub(crate) inserts: [Option<Box<dyn AudioProcessor>>; INSERT_SLOTS],
     pub(crate) block: StereoBlock,
@@ -120,8 +122,9 @@ impl Deck {
             fader_position: 1.0,
             platter: Platter::new(output_rate),
             steps: vec![0.0; max_block_frames],
-            key_lock: KeyLock::new(output_rate, declick_frames),
+            key_lock: KeyLock::with_stems(output_rate, declick_frames),
             key_lock_enabled: false,
+            stem_mix: StemMix::new(output_rate),
             strip: ChannelStrip::new(output_rate),
             inserts: std::array::from_fn(|_| None),
             block: StereoBlock::with_capacity(max_block_frames),
@@ -266,8 +269,36 @@ impl Deck {
             retire.beat_grid(previous);
         }
         self.sync.multiple = None;
+        self.stem_mix.settle();
         self.platter.stop();
         self.update_rate();
+    }
+
+    /// Sets the level of each stem and which are muted. Each stem glides to its new gain over
+    /// 20 ms; a track without stems plays as it is until they are attached.
+    pub(crate) fn set_stem_settings(&mut self, settings: StemSettings) {
+        self.stem_mix.set(settings);
+    }
+
+    /// Plays the track's stems instead of the track once they are attached, with a crossfade.
+    /// While key lock stretches an untouched track, the switch waits for the stretcher to
+    /// start again anyway, at the next jump, pause or stem move, so the stretched sound never
+    /// restarts for nothing.
+    fn engage_stems(&mut self, retire: &mut RetireQueue) {
+        let has_stems = self
+            .voice
+            .track
+            .as_ref()
+            .is_some_and(|track| track.stems().is_some());
+        if has_stems == self.voice.reads_stems() {
+            return;
+        }
+        let stretcher_busy = self.key_lock.is_engaged() && self.voice.transport.current() > 0.0;
+        if has_stems && stretcher_busy && self.stem_mix.settings().is_untouched() {
+            return;
+        }
+        self.voice
+            .set_reads_stems(has_stems, self.platter.last_step(), retire);
     }
 
     pub(crate) fn play(&mut self) {
@@ -952,6 +983,7 @@ impl Deck {
             self.platter.drop_carry();
             self.land(retire);
         }
+        self.engage_stems(retire);
         let holding = self.platter.is_holding();
         let transport_target = if self.playing || holding { 1.0 } else { 0.0 };
         if self.voice.transport.target() != transport_target {
@@ -990,6 +1022,7 @@ impl Deck {
                 frames: frame_count,
                 unit_step,
                 active_loop,
+                stems: self.voice.reads_stems(),
             },
             retire,
             &mut result.starved,
@@ -997,6 +1030,7 @@ impl Deck {
         let fully_stretched = stretched && self.key_lock.is_fully_in();
         let voice = &mut self.voice;
         let key_lock = &mut self.key_lock;
+        let stem_mix = &mut self.stem_mix;
         let trim = &mut self.trim;
         let (left_channel, right_channel) = self.block.channels_mut();
         for (index, ((left, right), step)) in left_channel
@@ -1008,14 +1042,16 @@ impl Deck {
             let step = *step;
             let stylus_gain = (step.abs() / audible_step).min(1.0) as f32;
             let gain = voice.transport.next_value() * stylus_gain;
+            let stem_gains = stem_mix.next_gains();
             let (playhead_left, playhead_right) = if stretched {
-                key_lock.playhead_frame(index, voice, step, &mut result.starved)
+                key_lock.playhead_frame(index, voice, step, &stem_gains, &mut result.starved)
             } else if gain > 0.0 {
-                voice.read_playhead(step, &mut result.starved)
+                voice.read_playhead(step, &stem_gains, &mut result.starved)
             } else {
                 (0.0, 0.0)
             };
-            let (tail_left, tail_right) = voice.next_tails(retire, &mut result.starved);
+            let (tail_left, tail_right) =
+                voice.next_tails(&stem_gains, retire, &mut result.starved);
             if step != 0.0 {
                 let previous = voice.position;
                 voice.position = (previous + step).max(0.0);
