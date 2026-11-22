@@ -91,6 +91,8 @@ From then on the set is an ordinary rekordbox playlist, ready to export to a USB
 
 Cmd+L loads the set's first two tracks onto deck A and deck B at their mix-in cues; Cmd+2 opens Perform. A set track whose file is missing is never loaded: its deck keeps what it had, and a notice names the track with a **Relink** button that looks for the file. The same goes for any track loaded from the library.
 
+On the keyboard, **Space** plays or pauses the deck you can hear: the one whose channel fader is up past 20% and that the crossfader lets through. With both up it acts on the tempo master, else the louder one, and with neither it is deck A. A small **Space** label beside a deck's letter shows which one it will be. Shift+Space is always deck B, and the FLX4's PLAY buttons always their own deck.
+
 On the FLX4, everything works as in rekordbox's FLX4 layout:
 
 - PLAY, CUE (CDJ style), hot cue pads, TEMPO, BEAT SYNC (hold for tempo master, SHIFT for the tempo range), the jogs (touch to scratch, side to nudge, SHIFT to search).
