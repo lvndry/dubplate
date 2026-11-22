@@ -9,6 +9,7 @@ use gpui::{Context, MouseButton, MouseDownEvent, Pixels, Rgba, canvas, div, px, 
 use super::{DubplateApp, HitAreas};
 use crate::controls::{Control, Orientation, Slider};
 use crate::theme;
+use crate::widgets::{InteractiveControl, adjusted_value, control_label};
 
 const TRACK_THICKNESS: Pixels = px(3.0);
 const GRAB_THICKNESS: Pixels = px(16.0);
@@ -107,6 +108,21 @@ pub(super) fn render(
     };
     let base = div()
         .id(("slider", slider.index()))
+        .accessible_slider(control_label(Control::from(slider)), fraction)
+        .map(|element| accessible_adjustments(element, Control::from(slider), cx))
+        .aria_orientation(match orientation {
+            Orientation::Horizontal => gpui::Orientation::Horizontal,
+            Orientation::Vertical => gpui::Orientation::Vertical,
+        })
+        .on_key_down(cx.listener(move |this, event, _, cx| {
+            let control = Control::from(slider);
+            if let Some(value) =
+                adjusted_value(event, this.control_fraction(control), control.resting())
+            {
+                this.set_control(control, value, cx);
+                cx.stop_propagation();
+            }
+        }))
         .relative()
         .flex_none()
         .cursor_pointer()
@@ -125,4 +141,15 @@ pub(super) fn render(
         Orientation::Horizontal => base.h(GRAB_THICKNESS),
         Orientation::Vertical => base.w(GRAB_THICKNESS.max(thumb.across)),
     }
+}
+
+/// Assistive technologies adjust the same control state as the keyboard and pointer.
+pub(super) fn accessible_adjustments(
+    element: gpui::Stateful<gpui::Div>,
+    control: Control,
+    cx: &mut Context<'_, DubplateApp>,
+) -> gpui::Stateful<gpui::Div> {
+    crate::widgets::numeric_actions(element, cx, move |this, change, cx| {
+        this.set_control(control, change.apply(this.control_fraction(control)), cx);
+    })
 }

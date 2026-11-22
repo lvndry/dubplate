@@ -219,6 +219,31 @@ impl Deck {
         self.cue_point / self.source_rate()
     }
 
+    pub(crate) fn playback_snapshot(&self) -> crate::controller::DeckPlayback {
+        crate::controller::DeckPlayback {
+            position_seconds: self.position_seconds(),
+            cue_seconds: self.cue_point_seconds(),
+            tempo: self.tempo,
+            fader_position: self.fader.position(),
+            range: self.fader.range(),
+            waits_for_pickup: self.fader_waits_for_pickup(),
+            sync: self.sync.mode,
+            key_lock: self.key_lock_enabled,
+            key_shift: self.key_shift,
+            slip: self.slip.enabled,
+            vinyl_mode: self.platter.vinyl_mode(),
+            playing: self.playing,
+        }
+    }
+
+    pub(crate) fn track_handle(&self) -> Option<Arc<TrackBuffer>> {
+        self.voice.track.clone()
+    }
+
+    pub(crate) fn grid_handle(&self) -> Option<BeatGrid> {
+        self.beat_grid.clone()
+    }
+
     fn update_rate(&mut self) {
         self.rate = self.tempo * (1.0 + self.phase_bend) * self.source_rate() / self.output_rate;
         self.platter.set_track_rate(self.source_rate());
@@ -504,6 +529,7 @@ impl Deck {
         }
         {
             let start = region.start;
+            self.start_slipping_loop();
             let target = if self.playing {
                 self.in_phase(start)
             } else {
@@ -628,6 +654,23 @@ impl Deck {
         self.update_rate();
     }
 
+    /// Restores effective tempo separately from the physical fader and its pickup state.
+    pub(crate) fn restore_tempo(
+        &mut self,
+        tempo: f64,
+        position: f64,
+        range: TempoRange,
+        waits_for_pickup: bool,
+    ) {
+        self.stop_following();
+        self.fader = TempoFader::restored(position, range, waits_for_pickup);
+        self.apply_tempo(tempo);
+    }
+
+    pub(crate) fn tempo_fader_position(&self) -> f64 {
+        self.fader.position()
+    }
+
     /// Sets the tempo the fader asks for directly, where 1.0 is the track's own tempo.
     pub(crate) fn set_tempo(&mut self, tempo: f64) {
         if let Some(tempo) = self.fader.move_to_tempo(tempo, self.tempo) {
@@ -724,13 +767,14 @@ impl Deck {
         force_beat_lock: bool,
         retire: &mut RetireQueue,
     ) {
+        let Some(grid) = &self.beat_grid else {
+            self.stop_following();
+            return;
+        };
         if !self.sync.following {
             self.sync.following = true;
             self.fader.hand_over();
         }
-        let Some(grid) = &self.beat_grid else {
-            return;
-        };
         let seconds = self.position_seconds();
         let own_bpm = grid.bpm_at(seconds);
         let multiple = match self.sync.multiple {
@@ -969,9 +1013,9 @@ impl Deck {
             let gain = voice.transport.next_value() * stylus_gain;
             let stem_gains = stem_mix.next_gains();
             let (playhead_left, playhead_right) = if stretched {
-                key_lock.playhead_frame(index, voice, &stem_gains, &mut result.starved)
+                key_lock.playhead_frame(index, voice, step, &stem_gains, &mut result.starved)
             } else if gain > 0.0 {
-                voice.read_playhead(&stem_gains, &mut result.starved)
+                voice.read_playhead(step, &stem_gains, &mut result.starved)
             } else {
                 (0.0, 0.0)
             };

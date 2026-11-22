@@ -4,22 +4,26 @@ use std::sync::Arc;
 
 use crate::error::EngineError;
 use crate::stems::Stem;
-use crate::track::{MAX_TRACK_SECONDS, check_sample_rate};
-use crate::voice::catmull_rom;
+use crate::track::{FrameRead, MAX_TRACK_SECONDS, check_sample_rate};
+use crate::voice::StereoFrames;
 
 /// Channels of one stem frame: left and right of each stem, in the order of [`Stem::ALL`].
-pub(crate) const STEM_CHANNELS: usize = Stem::COUNT * 2;
+const STEM_CHANNELS: usize = Stem::COUNT * 2;
 
-/// One frame of every stem, left and right of each in the order of [`Stem::ALL`].
-pub(crate) type StemFrame = [f32; STEM_CHANNELS];
+/// Channels of one part frame: every stem side by side, then the track itself.
+pub(crate) const PART_CHANNELS: usize = STEM_CHANNELS + 2;
+
+/// One frame of every stem and of the track, as key lock stretches them together.
+pub(crate) type PartFrame = [f32; PART_CHANNELS];
 
 const SAMPLE_SCALE: f32 = 1.0 / 32_768.0;
 
 /// The four stems of a track, ready for a deck to play.
 ///
 /// The stems are kept as 16-bit samples, as the separation writes them, so they take a quarter
-/// of the memory of four decoded tracks: about 300 MB for seven minutes. Each frame holds every
-/// stem side by side, so reading the four stems at one position touches one cache line.
+/// of the memory of four decoded tracks: about 320 MB for seven minutes at 48 kHz. Each frame
+/// holds every stem side by side, so reading the four stems at one position touches one cache
+/// line.
 #[derive(Clone)]
 pub struct StemTracks {
     buffer: Arc<StemBuffer>,
@@ -71,7 +75,7 @@ impl StemTracks {
         })
     }
 
-    /// The sample rate of the stems in Hz, which may differ from the track's.
+    /// The sample rate of the stems in Hz.
     pub fn sample_rate(&self) -> u32 {
         self.buffer.sample_rate
     }
@@ -79,11 +83,6 @@ impl StemTracks {
     /// Length in seconds.
     pub fn duration_seconds(&self) -> f64 {
         self.buffer.frames.len() as f64 / f64::from(self.buffer.sample_rate)
-    }
-
-    #[cfg(test)]
-    fn buffer(&self) -> &Arc<StemBuffer> {
-        &self.buffer
     }
 }
 
@@ -97,36 +96,73 @@ impl std::fmt::Debug for StemTracks {
     }
 }
 
-/// A track's stems as the track holds them, read by the track's frame positions.
+/// A track's stems as the track holds them, at the track's own sample rate, so they are read at
+/// the very positions the track is.
 pub(crate) struct AttachedStems {
     stems: StemTracks,
-    position_scale: f64,
 }
 
 impl AttachedStems {
-    /// The stems of a track decoded at `track_rate`.
-    pub(crate) fn new(stems: StemTracks, track_rate: u32) -> Self {
-        let position_scale = f64::from(stems.sample_rate()) / f64::from(track_rate.max(1));
-        Self {
-            stems,
-            position_scale,
-        }
+    pub(crate) fn new(stems: StemTracks) -> Self {
+        Self { stems }
     }
 
-    /// Every stem at `track_position`, a frame index of the track.
+    /// The left and right channels of `stem`, for the resampling kernel.
     #[inline]
-    pub(crate) fn read(&self, track_position: f64) -> StemFrame {
-        self.stems
-            .buffer
-            .read_interpolated(track_position * self.position_scale)
+    pub(crate) fn channel(&self, stem: Stem) -> StemChannel<'_> {
+        StemChannel {
+            frames: &self.stems.buffer.frames,
+            offset: stem.index() * 2,
+        }
     }
 }
 
-/// Channels of one part frame: every stem side by side, then the track itself.
-pub(crate) const PART_CHANNELS: usize = STEM_CHANNELS + 2;
+/// One stem's left and right channels inside the frames of every stem.
+pub(crate) struct StemChannel<'stems> {
+    frames: &'stems [[i16; STEM_CHANNELS]],
+    offset: usize,
+}
 
-/// One frame of every stem and of the track, as key lock stretches them together.
-pub(crate) type PartFrame = [f32; PART_CHANNELS];
+impl StemChannel<'_> {
+    #[inline]
+    fn sample(&self, frame: &[i16; STEM_CHANNELS], channel: usize) -> f32 {
+        f32::from(frame[self.offset + channel]) * SAMPLE_SCALE
+    }
+}
+
+impl StereoFrames for StemChannel<'_> {
+    #[inline]
+    fn read_frame(&self, index: i64) -> FrameRead {
+        match usize::try_from(index)
+            .ok()
+            .and_then(|index| self.frames.get(index))
+        {
+            Some(frame) => FrameRead::Frame(self.sample(frame, 0), self.sample(frame, 1)),
+            None => FrameRead::Outside,
+        }
+    }
+
+    #[inline]
+    fn visit_frames<const N: usize>(
+        &self,
+        first: i64,
+        mut visit: impl FnMut(usize, f32, f32),
+    ) -> bool {
+        let start = first.clamp(0, self.frames.len() as i64);
+        let end = first
+            .saturating_add(N as i64)
+            .clamp(start, self.frames.len() as i64);
+        for index in start..end {
+            let frame = &self.frames[index as usize];
+            visit(
+                (index - first) as usize,
+                self.sample(frame, 0),
+                self.sample(frame, 1),
+            );
+        }
+        false
+    }
+}
 
 /// The gain of what the separation left out of every stem, the track minus the sum of its
 /// stems. It sits mostly in the low end, where the network does not make the stems add up to
@@ -163,41 +199,6 @@ pub(crate) fn all_full(gains: &[f32; Stem::COUNT]) -> bool {
     gains.iter().all(|gain| *gain == 1.0)
 }
 
-impl StemBuffer {
-    /// Every stem at `position`, a frame index of the stems that may fall between two frames,
-    /// read with the Catmull-Rom interpolation the deck reads its track with. Frames before the
-    /// start or after the end are silent. Never waits: the stems are complete before a deck
-    /// gets them.
-    #[inline]
-    fn read_interpolated(&self, position: f64) -> StemFrame {
-        let base = position.floor();
-        let fraction = (position - base) as f32;
-        let base_index = base as i64;
-        let points = [-1, 0, 1, 2].map(|offset| self.frame(base_index.saturating_add(offset)));
-        std::array::from_fn(|channel| {
-            catmull_rom(
-                [
-                    points[0][channel],
-                    points[1][channel],
-                    points[2][channel],
-                    points[3][channel],
-                ],
-                fraction,
-            )
-        })
-    }
-
-    #[inline]
-    fn frame(&self, index: i64) -> StemFrame {
-        usize::try_from(index)
-            .ok()
-            .and_then(|index| self.frames.get(index))
-            .map_or([0.0; STEM_CHANNELS], |frame| {
-                frame.map(|sample| f32::from(sample) * SAMPLE_SCALE)
-            })
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -219,26 +220,46 @@ mod tests {
 
     #[test]
     fn each_stem_reads_back_on_its_own_channels() {
-        let stems = stems(8);
-        let frame = stems.buffer().read_interpolated(3.0);
+        let attached = AttachedStems::new(stems(8));
         for stem in Stem::ALL {
             let first = (stem.index() as f32 + 1.0) * 1000.0;
-            assert_eq!(frame[stem.index() * 2], (first + 6.0) * SAMPLE_SCALE);
-            assert_eq!(frame[stem.index() * 2 + 1], (first + 7.0) * SAMPLE_SCALE);
+            assert_eq!(
+                attached.channel(stem).read_frame(3),
+                FrameRead::Frame((first + 6.0) * SAMPLE_SCALE, (first + 7.0) * SAMPLE_SCALE)
+            );
+            let mut visited = Vec::new();
+            attached
+                .channel(stem)
+                .visit_frames::<4>(-2, |offset, left, _| visited.push((offset, left)));
+            assert_eq!(
+                visited,
+                [(2, first * SAMPLE_SCALE), (3, (first + 2.0) * SAMPLE_SCALE)]
+            );
         }
     }
 
     #[test]
-    fn outside_the_stems_is_silence() {
-        let stems = stems(4);
+    fn outside_the_stems_is_outside() {
+        let attached = AttachedStems::new(stems(4));
         assert_eq!(
-            stems.buffer().read_interpolated(-10.0),
-            [0.0; STEM_CHANNELS]
+            attached.channel(Stem::Bass).read_frame(-1),
+            FrameRead::Outside
         );
         assert_eq!(
-            stems.buffer().read_interpolated(100.0),
-            [0.0; STEM_CHANNELS]
+            attached.channel(Stem::Bass).read_frame(4),
+            FrameRead::Outside
         );
+    }
+
+    #[test]
+    fn every_gain_full_mixes_back_the_track() {
+        let stems = [0.1, -0.1, 0.2, 0.3, -0.4, 0.0, 0.05, 0.5];
+        assert_eq!(
+            mix_parts((0.7, -0.2), &stems, &[1.0; Stem::COUNT]),
+            (0.7, -0.2)
+        );
+        let (left, right) = mix_parts((0.7, -0.2), &stems, &[0.0, 0.0, 0.0, 1.0]);
+        assert!((left - 0.05).abs() < 1e-6 && (right - 0.5).abs() < 1e-6);
     }
 
     #[test]

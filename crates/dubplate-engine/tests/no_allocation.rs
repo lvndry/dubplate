@@ -7,7 +7,6 @@ mod common;
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 use common::{SAMPLE_RATE, constant_track, stems_like, wait_until_decoded, write_wav};
 use dubplate_engine::cpal::{OutputCallbackInfo, OutputStreamTimestamp, StreamInstant};
@@ -20,8 +19,12 @@ use dubplate_engine::{
 
 struct CountingAllocator;
 
-static ALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
-static DEALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
+thread_local! {
+    static ALLOCATIONS: Cell<usize> = const { Cell::new(0) };
+}
+thread_local! {
+    static DEALLOCATIONS: Cell<usize> = const { Cell::new(0) };
+}
 
 thread_local! {
     static COUNTING: Cell<bool> = const { Cell::new(false) };
@@ -36,7 +39,7 @@ fn counting() -> bool {
 unsafe impl GlobalAlloc for CountingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         if counting() {
-            ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
+            ALLOCATIONS.with(|count| count.set(count.get() + 1));
         }
         // SAFETY: the caller upholds `GlobalAlloc::alloc`'s contract, which `System` shares.
         unsafe { System.alloc(layout) }
@@ -44,7 +47,7 @@ unsafe impl GlobalAlloc for CountingAllocator {
 
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
         if counting() {
-            ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
+            ALLOCATIONS.with(|count| count.set(count.get() + 1));
         }
         // SAFETY: the caller upholds `GlobalAlloc::alloc_zeroed`'s contract.
         unsafe { System.alloc_zeroed(layout) }
@@ -52,7 +55,7 @@ unsafe impl GlobalAlloc for CountingAllocator {
 
     unsafe fn realloc(&self, pointer: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
         if counting() {
-            ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
+            ALLOCATIONS.with(|count| count.set(count.get() + 1));
         }
         // SAFETY: the caller upholds `GlobalAlloc::realloc`'s contract.
         unsafe { System.realloc(pointer, layout, new_size) }
@@ -60,7 +63,7 @@ unsafe impl GlobalAlloc for CountingAllocator {
 
     unsafe fn dealloc(&self, pointer: *mut u8, layout: Layout) {
         if counting() {
-            DEALLOCATIONS.fetch_add(1, Ordering::Relaxed);
+            DEALLOCATIONS.with(|count| count.set(count.get() + 1));
         }
         // SAFETY: the caller upholds `GlobalAlloc::dealloc`'s contract.
         unsafe { System.dealloc(pointer, layout) }
@@ -72,14 +75,21 @@ static GLOBAL: CountingAllocator = CountingAllocator;
 
 /// Runs `body` with counting armed on this thread and returns the allocations and frees it made.
 fn count_allocations(body: impl FnOnce()) -> (usize, usize) {
-    let allocations_before = ALLOCATIONS.load(Ordering::Relaxed);
-    let deallocations_before = DEALLOCATIONS.load(Ordering::Relaxed);
-    COUNTING.with(|flag| flag.set(true));
+    let allocations_before = ALLOCATIONS.with(Cell::get);
+    let deallocations_before = DEALLOCATIONS.with(Cell::get);
+    let was_counting = COUNTING.with(|flag| flag.replace(true));
+    struct ResetCounting(bool);
+    impl Drop for ResetCounting {
+        fn drop(&mut self) {
+            COUNTING.with(|flag| flag.set(self.0));
+        }
+    }
+    let guard = ResetCounting(was_counting);
     body();
-    COUNTING.with(|flag| flag.set(false));
+    drop(guard);
     (
-        ALLOCATIONS.load(Ordering::Relaxed) - allocations_before,
-        DEALLOCATIONS.load(Ordering::Relaxed) - deallocations_before,
+        ALLOCATIONS.with(Cell::get) - allocations_before,
+        DEALLOCATIONS.with(Cell::get) - deallocations_before,
     )
 }
 
@@ -90,6 +100,35 @@ fn the_counter_sees_allocations_on_the_armed_thread() {
         drop(boxed);
     });
     assert_eq!((allocations, deallocations), (1, 1));
+}
+
+#[test]
+fn concurrent_measurements_are_independent() {
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+    let workers: Vec<_> = (0..2)
+        .map(|_| {
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                // Warm the barrier's thread-local bookkeeping outside the measurement.
+                barrier.wait();
+                count_allocations(|| {
+                    let boxed = std::hint::black_box(Box::new(7_u64));
+                    barrier.wait();
+                    drop(boxed);
+                    barrier.wait();
+                })
+            })
+        })
+        .collect();
+    for worker in workers {
+        assert_eq!(worker.join().unwrap(), (1, 1));
+    }
+}
+
+#[test]
+fn unwinding_disarms_the_counter() {
+    let _ = std::panic::catch_unwind(|| count_allocations(|| panic!("test panic")));
+    assert!(!counting());
 }
 
 struct Echo {
@@ -187,7 +226,7 @@ fn run_session(
     controller.set_sync(DeckId::A, SyncMode::Beat)?;
     render_armed(renderer, &mut output[..9600], 2);
 
-    let steps: [Step; 81] = [
+    let steps: &[Step] = &[
         |controller| controller.set_smart_fader(true),
         |controller| controller.set_crossfader(0.6),
         |controller| controller.set_crossfader(0.9),
@@ -315,6 +354,22 @@ fn run_session(
         },
         |controller| controller.set_stems(DeckId::A, StemSettings::UNTOUCHED),
         |controller| controller.load_track(DeckId::B, constant_track(0.3, 0.3, 2.0, SAMPLE_RATE)),
+        |controller| {
+            controller.load_prepared_track(
+                DeckId::B,
+                constant_track(0.2, 0.2, 2.0, SAMPLE_RATE),
+                Some(BeatGrid::new(120.0, 0.0)?),
+            )
+        },
+        |controller| controller.duplicate_deck(DeckId::B, DeckId::A).map(|_| ()),
+        |controller| {
+            let snapshot = controller.snapshot_deck(DeckId::B)?;
+            controller.restore_deck(
+                DeckId::A,
+                &snapshot,
+                dubplate_engine::DeckRestorePolicy::DeviceChange,
+            )
+        },
         |controller| controller.play(DeckId::B),
         |controller| controller.eject(DeckId::A),
     ];
@@ -336,14 +391,14 @@ fn run_session(
     Ok(())
 }
 
-/// Gives the track on `deck` stems as long as it, made at 44.1 kHz whatever the track's rate.
+/// Gives the track on `deck` stems as long as it, at its rate.
 fn attach_stems(controller: &mut Controller, deck: DeckId) -> Result<(), EngineError> {
     let track = controller
         .track(deck)
         .cloned()
         .ok_or(EngineError::NoOutputDevice)?;
     let seconds = track.duration_seconds().unwrap_or_default();
-    track.attach_stems(stems_like(seconds, 44_100))
+    track.attach_stems(stems_like(seconds, track.sample_rate()))
 }
 
 fn generated_files(directory: &Path) -> Vec<PathBuf> {

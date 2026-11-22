@@ -25,6 +25,10 @@ pub enum EngineError {
     #[error("the audio thread is not keeping up with commands; the command was dropped")]
     CommandQueueFull,
 
+    /// The audio thread has not published the latest control changes yet.
+    #[error("the deck is still applying a change; try again in a moment")]
+    DeckStatePending,
+
     /// A parameter was out of range or not a finite number.
     #[error("invalid {name}: {value}")]
     InvalidParameter {
@@ -68,6 +72,15 @@ pub enum EngineError {
         track_seconds: f64,
         /// Length of the stems in seconds.
         stems_seconds: f64,
+    },
+
+    /// The stems are not at the track's sample rate.
+    #[error("the stems are at {stems} Hz but the track is at {track} Hz")]
+    StemsSampleRate {
+        /// The track's sample rate in Hz.
+        track: u32,
+        /// The stems' sample rate in Hz.
+        stems: u32,
     },
 
     /// The track has its stems already.

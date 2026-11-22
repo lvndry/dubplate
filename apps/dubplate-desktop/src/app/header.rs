@@ -14,6 +14,7 @@ use crate::commands::{Command, Mode};
 use crate::fonts::MONO_FAMILY;
 use crate::set::running_time;
 use crate::theme;
+use crate::widgets::InteractiveControl;
 
 /// The search field never gets narrower than this: the status beside it gives way first.
 const SEARCH_MIN_WIDTH: Pixels = px(170.0);
@@ -93,6 +94,7 @@ fn mode(
     let current = mode == shown;
     div()
         .id(label)
+        .accessible_toggle(label, current)
         .flex()
         .items_center()
         .h(px(28.0))
@@ -174,6 +176,7 @@ fn status(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoElem
         .child(
             div()
                 .id("library-status")
+                .accessible_button("Music library settings")
                 .flex()
                 .flex_shrink(1.0)
                 .min_w_0()
@@ -225,6 +228,7 @@ fn status(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoElem
         .child(
             div()
                 .id("lock-playing-deck")
+                .accessible_toggle("Lock playing deck", app.lock_playing_deck)
                 .flex()
                 .items_center()
                 .gap(px(6.0))
@@ -254,6 +258,7 @@ fn status(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoElem
         .child(
             div()
                 .id("help-button")
+                .accessible_button("Keys: keyboard shortcuts")
                 .flex()
                 .items_center()
                 .gap(px(6.0))
@@ -302,6 +307,7 @@ fn record_button(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl I
     };
     div()
         .id("record")
+        .accessible_toggle("Record mix", app.is_recording())
         .flex()
         .items_center()
         .gap(px(6.0))

@@ -8,7 +8,7 @@ use crate::looping::LoopRegion;
 use crate::mixer::RetireQueue;
 use crate::stems::{PART_CHANNELS, mix_parts};
 use crate::track::TrackBuffer;
-use crate::voice::{StemGains, UNITY_STEM_GAINS, Voice};
+use crate::voice::{StemGains, Voice};
 
 const CHANNELS: usize = 2;
 /// The most input one block can take: a deck at four times its tempo with a full nudge.
@@ -304,6 +304,7 @@ impl KeyLock {
         &mut self,
         index: usize,
         voice: &Voice,
+        step: f64,
         stem_gains: &StemGains,
         starved: &mut bool,
     ) -> (f32, f32) {
@@ -320,7 +321,7 @@ impl KeyLock {
             ),
         };
         let (plain_left, plain_right) = if mix < 1.0 {
-            voice.read_playhead(stem_gains, starved)
+            voice.read_playhead(step, stem_gains, starved)
         } else {
             (0.0, 0.0)
         };
@@ -346,9 +347,9 @@ fn read_ahead(
     let channels = if stems { PART_CHANNELS } else { CHANNELS };
     for frame in input.chunks_exact_mut(channels) {
         if stems {
-            frame.copy_from_slice(&feeder.next_part_frame(retire, starved));
+            frame.copy_from_slice(&feeder.next_part_frame(unit_step, retire, starved));
         } else {
-            (frame[0], frame[1]) = feeder.next_frame(1.0, &UNITY_STEM_GAINS, retire, starved);
+            (frame[0], frame[1]) = feeder.next_frame(1.0, unit_step, false, retire, starved);
         }
         let previous = feeder.position;
         feeder.position += unit_step;

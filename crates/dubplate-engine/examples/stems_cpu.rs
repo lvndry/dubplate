@@ -11,7 +11,7 @@ use dubplate_engine::{DeckId, Stem, StemSettings, StemTracks, Track, offline_eng
 
 const OUTPUT_RATE: u32 = 48_000;
 const TRACK_RATE: u32 = 48_000;
-const STEM_RATE: u32 = 44_100;
+const STEM_RATE: u32 = TRACK_RATE;
 const BLOCK: usize = 256;
 const TRACK_SECONDS: f64 = 60.0;
 

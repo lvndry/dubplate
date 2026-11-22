@@ -222,13 +222,14 @@ impl PreviewBus {
                     preview_voice.key_lock.playhead_frame(
                         index,
                         &preview_voice.voice,
+                        step,
                         &UNITY_STEM_GAINS,
                         starved,
                     )
                 } else if gain > 0.0 {
                     preview_voice
                         .voice
-                        .read_playhead(&UNITY_STEM_GAINS, starved)
+                        .read_playhead(step, &UNITY_STEM_GAINS, starved)
                 } else {
                     (0.0, 0.0)
                 };

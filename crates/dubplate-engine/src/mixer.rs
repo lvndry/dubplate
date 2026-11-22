@@ -28,11 +28,32 @@ use dubplate_fx::{BeatLength, EqBand, Limiter};
 const DECLICK_SECONDS: f64 = 0.005;
 const MAX_COMMANDS_PER_CALLBACK: usize = 256;
 
+/// One ordered control request; publication acknowledges it only after state is written.
+pub(crate) struct QueuedCommand {
+    pub(crate) sequence: u64,
+    pub(crate) command: Command,
+}
+
 /// A change the control side asks the audio thread to make.
 pub(crate) enum Command {
     Load {
         deck: DeckId,
         track: Option<Arc<TrackBuffer>>,
+    },
+    RestoreDeck {
+        deck: DeckId,
+        track: Option<Arc<TrackBuffer>>,
+        grid: Option<BeatGrid>,
+        state: crate::controller::DeckPlayback,
+    },
+    CopyDeck {
+        source: DeckId,
+        target: DeckId,
+    },
+    LoadPrepared {
+        deck: DeckId,
+        track: Arc<TrackBuffer>,
+        grid: Option<BeatGrid>,
     },
     Play(DeckId),
     Pause(DeckId),
@@ -239,6 +260,7 @@ impl RetireQueue {
 /// locks, blocks or does I/O.
 pub struct Renderer {
     decks: [Deck; DECK_COUNT],
+    applied_command: u64,
     master_inserts: [Option<Box<dyn AudioProcessor>>; INSERT_SLOTS],
     effects: EffectRack,
     tempo_master: TempoMaster,
@@ -254,7 +276,7 @@ pub struct Renderer {
     sync_half_and_double: bool,
     smart_fader: bool,
     smart_bpm: Option<f64>,
-    commands: Consumer<Command>,
+    commands: Consumer<QueuedCommand>,
     retire: RetireQueue,
     shared: Arc<SharedState>,
     sample_rate: u32,
@@ -264,7 +286,7 @@ pub struct Renderer {
 impl Renderer {
     pub(crate) fn new(
         sample_rate: u32,
-        commands: Consumer<Command>,
+        commands: Consumer<QueuedCommand>,
         retire: RetireQueue,
         shared: Arc<SharedState>,
     ) -> Self {
@@ -273,6 +295,7 @@ impl Renderer {
             decks: std::array::from_fn(|_| {
                 Deck::new(sample_rate, MAX_BLOCK_FRAMES, declick_frames)
             }),
+            applied_command: 0,
             master_inserts: std::array::from_fn(|_| None),
             effects: EffectRack::new(sample_rate),
             tempo_master: TempoMaster::default(),
@@ -534,7 +557,8 @@ impl Renderer {
             let Ok(command) = self.commands.pop() else {
                 return;
             };
-            self.apply(command);
+            self.applied_command = command.sequence;
+            self.apply(command.command);
         }
     }
 
@@ -542,6 +566,27 @@ impl Renderer {
         match command {
             Command::Load { deck, track } => {
                 self.decks[deck.index()].load(track, &mut self.retire);
+            }
+            Command::RestoreDeck {
+                deck,
+                track,
+                grid,
+                state,
+            } => {
+                self.restore_deck(deck, track, grid, state);
+            }
+            Command::CopyDeck { source, target } => {
+                let source = &self.decks[source.index()];
+                let track = source.track_handle();
+                let grid = source.grid_handle();
+                let state = source.playback_snapshot();
+                self.restore_deck(target, track, grid, state);
+            }
+            Command::LoadPrepared { deck, track, grid } => {
+                let target = &mut self.decks[deck.index()];
+                target.load(Some(track), &mut self.retire);
+                target.set_beat_grid(grid, &mut self.retire);
+                target.set_key_shift(0.0);
             }
             Command::Play(deck) => self.decks[deck.index()].play(),
             Command::Pause(deck) => self.decks[deck.index()].pause(&mut self.retire),
@@ -688,6 +733,34 @@ impl Renderer {
         }
     }
 
+    fn restore_deck(
+        &mut self,
+        deck: DeckId,
+        track: Option<Arc<TrackBuffer>>,
+        grid: Option<BeatGrid>,
+        state: crate::controller::DeckPlayback,
+    ) {
+        let target = &mut self.decks[deck.index()];
+        target.load(track, &mut self.retire);
+        target.set_beat_grid(grid, &mut self.retire);
+        target.set_cue_point(state.cue_seconds);
+        target.seek(state.position_seconds, &mut self.retire);
+        target.restore_tempo(
+            state.tempo,
+            state.fader_position,
+            state.range,
+            state.waits_for_pickup,
+        );
+        target.set_key_lock(state.key_lock);
+        target.set_key_shift(state.key_shift);
+        target.set_slip(state.slip);
+        target.set_vinyl_mode(state.vinyl_mode);
+        target.set_sync(state.sync);
+        if state.playing {
+            target.play();
+        }
+    }
+
     fn update_channel_gain(&mut self, deck: DeckId) {
         let (left_gain, right_gain) = crossfader_gains(self.crossfader);
         let side_gain = match deck {
@@ -700,6 +773,7 @@ impl Renderer {
 
     fn publish_state(&self) {
         for (deck, shared) in self.decks.iter().zip(&self.shared.decks) {
+            shared.publication.fetch_add(1, Ordering::AcqRel);
             shared.loaded.store(deck.is_loaded(), Ordering::Relaxed);
             shared.playing.store(deck.is_playing(), Ordering::Relaxed);
             shared.position_seconds.store(deck.position_seconds());
@@ -707,6 +781,9 @@ impl Renderer {
             shared.tempo.store(deck.tempo());
             shared.speed.store(deck.speed());
             shared.bpm.store(deck.bpm().unwrap_or(f64::NAN));
+            shared
+                .tempo_fader_position
+                .store(deck.tempo_fader_position());
             shared
                 .tempo_range
                 .store(deck.tempo_range().index(), Ordering::Relaxed);
@@ -751,7 +828,11 @@ impl Renderer {
             shared
                 .vinyl_mode
                 .store(deck.vinyl_mode(), Ordering::Relaxed);
+            shared.publication.fetch_add(1, Ordering::Release);
         }
+        self.shared
+            .applied_command
+            .store(self.applied_command, Ordering::Release);
         for (sounding, shared) in self
             .effects
             .sounding()

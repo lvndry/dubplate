@@ -105,11 +105,20 @@ fn stems_at_full_level_sound_like_the_track() {
         "stems at the track's rate: {residual:.1} dB"
     );
 
-    let (track, stems) = track_and_stems(44_100, SAMPLE_RATE as usize * 2, |_| {});
+    let (track, stems) = track_and_stems(SAMPLE_RATE, SAMPLE_RATE as usize * 2, |controller| {
+        controller
+            .set_stems(
+                DeckId::A,
+                StemSettings::UNTOUCHED.with_level(Stem::Melody, StemLevel::new(0.999)),
+            )
+            .expect("touch the stems");
+    });
+    let melody_at_level = 0.999_f64;
     let residual = residual_decibels(&track, &stems);
+    let expected = 20.0 * (1.0 - melody_at_level).log10();
     assert!(
-        residual < -50.0,
-        "stems at 44.1 kHz on a 48 kHz track: {residual:.1} dB"
+        residual < expected + 3.0,
+        "every stem read and mixed: {residual:.1} dB, the melody's step alone is {expected:.1} dB"
     );
 }
 
@@ -312,7 +321,7 @@ fn with_key_lock_every_stem_up_sounds_like_the_track() {
         let track = track_with_more_than_its_stems();
         if stems {
             track
-                .attach_stems(stems_like(SECONDS, 44_100))
+                .attach_stems(stems_like(SECONDS, SAMPLE_RATE))
                 .expect("attach");
         }
         let (mut controller, mut renderer) = playing_deck(track);
@@ -345,21 +354,26 @@ fn with_key_lock_every_stem_up_sounds_like_the_track() {
 }
 
 #[test]
-fn stems_of_another_length_are_refused() {
+fn stems_of_another_length_or_rate_are_refused() {
     let track = mix_of_stems(SECONDS, SAMPLE_RATE);
     let error = track
-        .attach_stems(stems_like(SECONDS + 1.0, 44_100))
+        .attach_stems(stems_like(SECONDS + 1.0, SAMPLE_RATE))
         .unwrap_err();
     assert!(
         matches!(error, EngineError::StemsDoNotMatch { .. }),
         "{error}"
     );
+    let error = track.attach_stems(stems_like(SECONDS, 44_100)).unwrap_err();
+    assert!(
+        matches!(error, EngineError::StemsSampleRate { .. }),
+        "{error}"
+    );
     track
-        .attach_stems(stems_like(SECONDS, 44_100))
+        .attach_stems(stems_like(SECONDS, SAMPLE_RATE))
         .expect("attach");
     assert!(track.has_stems());
     assert!(matches!(
-        track.attach_stems(stems_like(SECONDS, 44_100)),
+        track.attach_stems(stems_like(SECONDS, SAMPLE_RATE)),
         Err(EngineError::StemsAlreadyAttached)
     ));
 }
