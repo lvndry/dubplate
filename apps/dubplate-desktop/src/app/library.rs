@@ -10,9 +10,11 @@ use dubplate_library::{FolderScan, LibraryCache};
 use dubplate_prep::ExportLibrary;
 use gpui::{Context, PathPromptOptions};
 
-use super::{DubplateApp, NoticePlace, error_chain};
+use super::notice::NoticePlace;
+use super::{DubplateApp, error_chain};
 use crate::browser::LibraryStatus;
 use crate::collection::{Collection, RekordboxLibrary, folder_name};
+use crate::commands::Mode;
 use crate::library::{RekordboxSource, ScanRequest};
 use crate::prep;
 use crate::relink::missing_tracks;
@@ -22,6 +24,17 @@ use crate::settings::Settings;
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(200);
 
 impl DubplateApp {
+    /// Sorts each screen's tracks as the DJ left them.
+    pub(super) fn restore_library_sorts(&mut self, cx: &mut Context<'_, Self>) {
+        let saved = self.settings.library_sort.clone();
+        self.browser.update(cx, |browser, cx| {
+            for screen in [Mode::Prepare, Mode::Perform] {
+                let sort = saved.of(screen).and_then(|setting| setting.sort());
+                browser.restore_sort(screen, sort, cx);
+            }
+        });
+    }
+
     /// Opens the library the DJ chose: the last scans from the cache at once, then rekordbox and
     /// a rescan of every folder in the background to pick up what changed.
     pub(super) fn start_library(&mut self, cx: &mut Context<'_, Self>) {
@@ -231,7 +244,7 @@ impl DubplateApp {
         };
         let scans = self.sources.chosen_scans();
         let relinks = self.settings.library.relink_map();
-        let set = self.set_editor.as_ref().map(|editor| editor.set().clone());
+        let set = self.set_editor.as_ref().map(|editor| editor.snapshot());
         cx.spawn(async move |this, cx| {
             let (collection, catalogue, missing, moved_files) = cx
                 .background_executor()
@@ -260,7 +273,9 @@ impl DubplateApp {
                 if this.library_generation == generation {
                     this.follow_moved_set_files(&moved_files, cx);
                     this.catalogue = Arc::new(catalogue);
-                    this.restore_analyses();
+                    this.analyses.refresh();
+                    this.browser
+                        .update(cx, |browser, cx| browser.clear_analyses(cx));
                     this.show_library(LibraryStatus::Ready(Arc::new(collection)), cx);
                     this.show_missing(missing, cx);
                     this.forget_track_checks();
@@ -283,16 +298,14 @@ impl DubplateApp {
         if moved_files.is_empty() {
             return;
         }
-        let Some(editor) = &mut self.set_editor else {
-            return;
-        };
-        if let Err(error) = editor.follow_files(moved_files) {
-            self.show_notice(
-                NoticePlace::Window,
-                format!("The set could not follow a moved file: {error}"),
-                cx,
-            );
-        }
+        let moved_files = moved_files.clone();
+        self.queue_set_edit(
+            move |editor| editor.follow_files(&moved_files),
+            |this, (), _| {
+                this.forget_track_checks();
+            },
+            cx,
+        );
     }
 
     fn show_library(&mut self, status: LibraryStatus, cx: &mut Context<'_, Self>) {

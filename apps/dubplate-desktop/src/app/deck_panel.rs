@@ -23,6 +23,7 @@ use crate::deck::{DeckContent, pad_position};
 use crate::fonts::MONO_FAMILY;
 use crate::pads::semitones_label;
 use crate::theme;
+use crate::widgets::{InteractiveControl, adjusted_value};
 
 const OVERVIEW_HEIGHT: Pixels = px(22.0);
 const OVERVIEW_BAR_SPACING: f32 = 3.0;
@@ -129,6 +130,9 @@ fn title_row(
         None => SharedString::default(),
     };
     div()
+        .id(("deck-metadata", deck.index()))
+        .role(gpui::Role::Group)
+        .aria_label(format!("Deck {}: {title}. {subtitle}. {bpm} BPM. Key {key}. Pitch {pitch}. Remaining {remaining}.", deck_letter(deck)))
         .flex()
         .justify_between()
         .items_start()
@@ -150,10 +154,9 @@ fn title_row(
                             div()
                                 .text_size(px(14.0))
                                 .font_weight(FontWeight::MEDIUM)
-                                .truncate()
                                 .child(title),
                         )
-                        .child(div().truncate().text_color(subtitle_colour).child(subtitle)),
+                        .child(div().text_color(subtitle_colour).child(subtitle)),
                 ),
         )
         .child(
@@ -228,6 +231,32 @@ fn overview(
     let hit_areas: Rc<HitAreas> = Rc::clone(&app.hit_areas);
     div()
         .id(("overview", deck.index()))
+        .accessible_slider(
+            format!("Deck {} track position", deck_letter(deck)),
+            progress.unwrap_or_default(),
+        )
+        .aria_orientation(gpui::Orientation::Horizontal)
+        .map(|element| {
+            crate::widgets::numeric_actions(element, cx, move |this, change, cx| {
+                if let Some(duration) = this
+                    .duration_seconds(deck)
+                    .filter(|duration| *duration > 0.0)
+                {
+                    let fraction = (this.deck_state(deck).position_seconds / duration) as f32;
+                    this.seek_to_fraction(deck, change.apply(fraction), cx);
+                }
+            })
+        })
+        .on_key_down(cx.listener(move |this, event, _, cx| {
+            let duration = this.duration_seconds(deck).unwrap_or(0.0);
+            if duration > 0.0 {
+                let current = (this.deck_state(deck).position_seconds / duration) as f32;
+                if let Some(fraction) = adjusted_value(event, current, 0.0) {
+                    this.seek_to_fraction(deck, fraction, cx);
+                    cx.stop_propagation();
+                }
+            }
+        }))
         .relative()
         .h(OVERVIEW_HEIGHT)
         .px(px(3.0))
@@ -313,6 +342,7 @@ fn transport(
         )
         .child(
             button(("play", deck.index()))
+                .accessible_toggle(format!("Deck {} Play or pause", deck_letter(deck)), playing)
                 .w(px(44.0))
                 .when(playing, |play| play.bg(colour).text_color(theme::ON_DECK))
                 .when(!playing, |play| {
@@ -420,6 +450,13 @@ fn toggle(
     cx: &mut Context<'_, DubplateApp>,
 ) -> impl IntoElement + use<> {
     button(id)
+        .accessible_toggle(
+            format!(
+                "Deck {} {label}",
+                deck_letter(if id.1 == 0 { DeckId::A } else { DeckId::B })
+            ),
+            on,
+        )
         .px(px(10.0))
         .border_1()
         .map(|toggle| {
@@ -441,6 +478,11 @@ fn toggle(
 fn button(id: (&'static str, usize)) -> gpui::Stateful<gpui::Div> {
     div()
         .id(id)
+        .accessible_button(format!(
+            "Deck {} {}",
+            if id.1 == 0 { "A" } else { "B" },
+            id.0
+        ))
         .flex()
         .flex_none()
         .items_center()

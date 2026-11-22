@@ -14,6 +14,7 @@ const NO_LATENCY: u64 = u64::MAX;
 /// State the audio thread publishes and the control side reads, all through atomics so neither
 /// side ever waits for the other.
 pub(crate) struct SharedState {
+    pub(crate) applied_command: AtomicU64,
     pub(crate) decks: [DeckShared; DECK_COUNT],
     pub(crate) master_peak: AtomicU32,
     pub(crate) headphone_peak: AtomicU32,
@@ -30,6 +31,7 @@ pub(crate) struct SharedState {
 
 #[derive(Default)]
 pub(crate) struct DeckShared {
+    pub(crate) publication: AtomicU64,
     pub(crate) loaded: AtomicBool,
     pub(crate) playing: AtomicBool,
     pub(crate) position_seconds: AtomicF64,
@@ -38,6 +40,7 @@ pub(crate) struct DeckShared {
     pub(crate) speed: AtomicF64,
     pub(crate) bpm: AtomicF64,
     pub(crate) tempo_range: AtomicU8,
+    pub(crate) tempo_fader_position: AtomicF64,
     pub(crate) sync_mode: AtomicU8,
     pub(crate) following: AtomicBool,
     pub(crate) fader_waits_for_pickup: AtomicBool,
@@ -128,6 +131,7 @@ pub(crate) fn take_peak(meter: &AtomicU32) -> f32 {
 impl SharedState {
     pub(crate) fn new(sample_rate: u32) -> Self {
         Self {
+            applied_command: AtomicU64::new(0),
             decks: std::array::from_fn(|_| {
                 let deck = DeckShared::default();
                 deck.tempo.store(1.0);

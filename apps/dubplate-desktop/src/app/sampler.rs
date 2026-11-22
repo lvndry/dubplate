@@ -8,7 +8,8 @@ use std::path::{Path, PathBuf};
 use dubplate_engine::{DeckId, SAMPLER_SLOTS, SampleMode, SampleSettings, SamplerState};
 use gpui::{Context, SharedString};
 
-use super::{DubplateApp, NoticePlace};
+use super::DubplateApp;
+use super::notice::NoticePlace;
 use crate::commands::{PadPress, Press};
 use crate::pads::PAD_COUNT;
 use crate::settings::SampleSlotSetting;

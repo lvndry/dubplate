@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use dubplate_prep::{EnergyDirection, Key, PrepTrack, suggest_next};
+use dubplate_prep::{EnergyDirection, Key, KeyFit, PrepTrack, suggest_next};
 
 fn track(id: &str, key: &str, bpm: f32, energy: f32) -> PrepTrack {
     PrepTrack {
@@ -80,4 +80,21 @@ fn lifting_the_energy_puts_the_more_energetic_track_first() {
         suggestions[0].reason(),
         "One step on the wheel · +0.4% · energy +2"
     );
+}
+
+#[test]
+fn the_key_fit_accepts_the_moves_the_suggestions_make() {
+    let key = |text: &str| Key::parse_file_key(text).unwrap();
+    let fit = KeyFit::new(key("8A"));
+    assert_eq!(fit.reference(), key("8A"));
+    assert_eq!(fit.key_move(&key("8A")), Some("Same key"));
+    assert_eq!(fit.key_move(&key("9A")), Some("One step on the wheel"));
+    assert_eq!(fit.key_move(&key("7A")), Some("One step on the wheel"));
+    assert_eq!(fit.key_move(&key("C")), Some("Relative"));
+    assert_eq!(
+        fit.key_move(&key("10A")),
+        None,
+        "an energy boost is not a suggestion"
+    );
+    assert_eq!(fit.key_move(&key("3B")), None);
 }
