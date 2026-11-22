@@ -48,6 +48,11 @@ impl Voice {
         }
     }
 
+    /// Whether a tail from an earlier position is still fading out.
+    pub(crate) fn has_tails(&self) -> bool {
+        self.tails.iter().any(Option::is_some)
+    }
+
     /// The last frame of the track, once it is fully decoded.
     pub(crate) fn end_frame(&self) -> Option<f64> {
         self.track

@@ -96,8 +96,9 @@ impl Headphones {
         }
     }
 
-    /// Mixes the cue bus with `master` into the headphone block.
-    pub(crate) fn finish(&mut self, master: &StereoBlock) {
+    /// Mixes the cue bus with `master` into the headphone block, with `preview` added after
+    /// the cue mix and before the level.
+    pub(crate) fn finish(&mut self, master: &StereoBlock, preview: &StereoBlock) {
         if self.settings.master_cue {
             self.cue_block.add(master);
         }
@@ -106,13 +107,19 @@ impl Headphones {
             .iter_mut()
             .zip(right_out.iter_mut())
             .zip(self.cue_block.left().iter().zip(self.cue_block.right()))
-            .zip(master.left().iter().zip(master.right()));
-        for (((left, right), (cue_left, cue_right)), (master_left, master_right)) in frames {
+            .zip(master.left().iter().zip(master.right()))
+            .zip(preview.left().iter().zip(preview.right()));
+        for (
+            (((left, right), (cue_left, cue_right)), (master_left, master_right)),
+            preview_frame,
+        ) in frames
+        {
+            let (preview_left, preview_right) = preview_frame;
             let cue_gain = self.cue_gain.next_value();
             let master_gain = self.master_gain.next_value();
             let level = self.level.next_value();
-            *left = (cue_left * cue_gain + master_left * master_gain) * level;
-            *right = (cue_right * cue_gain + master_right * master_gain) * level;
+            *left = (cue_left * cue_gain + master_left * master_gain + preview_left) * level;
+            *right = (cue_right * cue_gain + master_right * master_gain + preview_right) * level;
         }
     }
 }

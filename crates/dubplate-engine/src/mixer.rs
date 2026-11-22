@@ -11,6 +11,7 @@ use crate::grid::BeatGrid;
 use crate::headphones::Headphones;
 use crate::jog::JogInput;
 use crate::pad_effects::PadEffect;
+use crate::preview::{PreviewBus, PreviewPlan};
 use crate::processor::{AudioProcessor, ProcessContext, StereoBlock};
 use crate::recording::RecordingSink;
 use crate::state::{GapDetector, SharedState, encode_loop_length, raise_peak};
@@ -140,6 +141,7 @@ pub(crate) enum Command {
         deck: DeckId,
         enabled: bool,
     },
+    Preview(Option<PreviewPlan>),
     SetRecording(Option<RecordingSink>),
     SetSlip {
         deck: DeckId,
@@ -216,6 +218,7 @@ pub struct Renderer {
     master_block: StereoBlock,
     master_gain: Ramp,
     headphones: Headphones,
+    preview: PreviewBus,
     master_limiter: Limiter,
     recording: Option<RecordingSink>,
     headphone_limiter: Limiter,
@@ -246,6 +249,7 @@ impl Renderer {
             master_block: StereoBlock::with_capacity(MAX_BLOCK_FRAMES),
             master_gain: Ramp::new(1.0, declick_frames),
             headphones: Headphones::new(MAX_BLOCK_FRAMES, declick_frames),
+            preview: PreviewBus::new(sample_rate, MAX_BLOCK_FRAMES, declick_frames),
             master_limiter: Limiter::new(sample_rate as f32),
             recording: None,
             headphone_limiter: Limiter::new(sample_rate as f32),
@@ -379,7 +383,9 @@ impl Renderer {
             &mut self.master_block,
             &master_context,
         );
-        self.headphones.finish(&self.master_block);
+        starved |= self.render_preview(frame_count);
+        self.headphones
+            .finish(&self.master_block, &self.preview.block);
         let (headphones_left, headphones_right) = self.headphones.block.channels_mut();
         self.headphone_limiter
             .process(headphones_left, headphones_right);
@@ -399,6 +405,13 @@ impl Renderer {
             &self.shared.master_limiting,
             1.0 - self.master_limiter.take_gain_reduction(),
         );
+        starved
+    }
+
+    fn render_preview(&mut self, frame_count: usize) -> bool {
+        let mut starved = false;
+        self.preview
+            .render(frame_count, &mut self.retire, &mut starved);
         starved
     }
 
@@ -525,6 +538,7 @@ impl Renderer {
             Command::SetKeyLock { deck, enabled } => {
                 self.decks[deck.index()].set_key_lock(enabled);
             }
+            Command::Preview(plan) => self.preview.set(plan, &mut self.retire),
             Command::SetRecording(sink) => {
                 if let Some(previous) = std::mem::replace(&mut self.recording, sink) {
                     self.retire.recording(previous);
@@ -637,6 +651,12 @@ impl Renderer {
             shared.store(sounding, Ordering::Relaxed);
         }
         self.shared.tempo_master.store(self.tempo_master.current());
+        self.shared
+            .preview_playing
+            .store(self.preview.is_playing(), Ordering::Relaxed);
+        self.shared
+            .preview_position_seconds
+            .store(self.preview.position_seconds());
     }
 }
 
