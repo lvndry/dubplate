@@ -94,6 +94,20 @@ const MAX_BACKUPS: usize = 7;
 /// A path component that marks a folder as belonging to rekordbox.
 const REKORDBOX_FOLDER_NAMES: &[&str] = &["Pioneer", "rekordbox"];
 
+/// Whether any component of `path` is a rekordbox folder, as every
+/// Dubplate-owned file is refused inside one.
+pub(crate) fn is_inside_rekordbox(path: &Path) -> bool {
+    path.components().any(|component| {
+        matches!(
+            component,
+            std::path::Component::Normal(name)
+                if REKORDBOX_FOLDER_NAMES
+                    .iter()
+                    .any(|known| name.eq_ignore_ascii_case(known))
+        )
+    })
+}
+
 /// Errors opening or using Dubplate's own set database.
 #[derive(Debug, Error)]
 pub enum StoreError {
@@ -147,15 +161,7 @@ impl SetStore {
     /// path is a rekordbox folder, and with `StoreError::NewerSchema` when the
     /// file's `user_version` is newer than this build knows.
     pub fn open(path: &Path) -> Result<Self, StoreError> {
-        if path.components().any(|component| {
-            matches!(
-                component,
-                std::path::Component::Normal(name)
-                    if REKORDBOX_FOLDER_NAMES
-                        .iter()
-                        .any(|known| name.eq_ignore_ascii_case(known))
-            )
-        }) {
+        if is_inside_rekordbox(path) {
             return Err(StoreError::InsideRekordbox(path.to_path_buf()));
         }
 
