@@ -1,7 +1,7 @@
 //! `dubplate analyse`: Dubplate's own analysis of audio files (tempo, beat grid, key and
 //! energy), optionally compared with rekordbox's for the tracks it also holds.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -85,7 +85,7 @@ pub(crate) fn run(arguments: AnalyseArgs) -> Result<()> {
         }
     }
     println!();
-    print_summary(&analysed);
+    print_summary(&analysed, &arguments.paths);
     if rekordbox.is_some() {
         comparison.print();
     }
@@ -403,8 +403,8 @@ fn share(count: usize, total: usize) -> String {
     )
 }
 
-/// How many tracks were analysed, and the tempos found in each folder.
-fn print_summary(analysed: &[Analysed]) {
+/// How many tracks were analysed, and the tempos found in each folder under `roots`.
+fn print_summary(analysed: &[Analysed], roots: &[PathBuf]) {
     let failed = analysed
         .iter()
         .filter(|track| track.outcome.is_err())
@@ -421,33 +421,49 @@ fn print_summary(analysed: &[Analysed]) {
         "Analysed {} files: {failed} failed, {without_tempo} without a tempo, {without_key} without a key",
         analysed.len()
     );
-    let mut by_folder: HashMap<&Path, Vec<f32>> = HashMap::new();
+    let mut by_folder: BTreeMap<String, Vec<f32>> = BTreeMap::new();
     for track in analysed {
-        if let (Ok(analysis), Some(folder)) = (&track.outcome, track.path.parent()) {
+        if let Ok(analysis) = &track.outcome {
             by_folder
-                .entry(folder)
+                .entry(top_folder(&track.path, roots))
                 .or_default()
-                .extend(analysis.bpm.iter());
+                .extend(analysis.bpm);
         }
     }
-    let mut folders: Vec<(&Path, Vec<f32>)> = by_folder.into_iter().collect();
-    folders.sort_by(|first, second| first.0.cmp(second.0));
-    for (folder, mut tempos) in folders {
+    for (folder, mut tempos) in by_folder {
         if tempos.is_empty() {
             continue;
         }
         tempos.sort_by(f32::total_cmp);
-        let name = folder
-            .file_name()
-            .unwrap_or(folder.as_os_str())
-            .to_string_lossy();
         println!(
-            "  {name}: {} tracks, BPM {:.1} to {:.1}, median {:.1}",
+            "  {folder}: {} tracks, BPM {:.1} to {:.1}, median {:.1}",
             tempos.len(),
             tempos[0],
             tempos[tempos.len() - 1],
             tempos[tempos.len() / 2]
         );
+    }
+}
+
+/// The folder a track is counted in: the first folder under the folder it was found in, such
+/// as a genre, or that folder itself for a track directly in it.
+fn top_folder(path: &Path, roots: &[PathBuf]) -> String {
+    let name = |folder: &Path| {
+        folder
+            .file_name()
+            .unwrap_or(folder.as_os_str())
+            .to_string_lossy()
+            .into_owned()
+    };
+    let inside = roots
+        .iter()
+        .find_map(|root| Some((root, path.strip_prefix(root).ok()?)));
+    match inside {
+        Some((root, relative)) => match relative.parent().and_then(|parent| parent.iter().next()) {
+            Some(first) => first.to_string_lossy().into_owned(),
+            None => name(root),
+        },
+        None => path.parent().map(name).unwrap_or_default(),
     }
 }
 
@@ -457,6 +473,18 @@ mod tests {
 
     fn key(camelot: &str) -> Key {
         Key::parse_file_key(camelot).unwrap()
+    }
+
+    #[test]
+    fn a_track_is_counted_in_the_first_folder_under_where_it_was_found() {
+        let roots = [PathBuf::from("/Music/DJ tracks")];
+        let folder = |path: &str| top_folder(Path::new(path), &roots);
+        assert_eq!(
+            folder("/Music/DJ tracks/amapiano/build/One.m4a"),
+            "amapiano"
+        );
+        assert_eq!(folder("/Music/DJ tracks/Loose.mp3"), "DJ tracks");
+        assert_eq!(folder("/Elsewhere/Set/Other.mp3"), "Set");
     }
 
     #[test]
