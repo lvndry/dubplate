@@ -1,4 +1,5 @@
 pub(crate) mod backspin;
+pub(crate) mod beat_filter;
 pub(crate) mod brake;
 pub(crate) mod crusher;
 pub(crate) mod echo;

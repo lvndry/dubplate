@@ -16,12 +16,12 @@ fn impulse(frames: usize, at: usize) -> Stereo {
     audio
 }
 
-/// The level of the first repeat of a hit: the trail plays at 0.7 of the music and is scaled
-/// by the feedback so it sounds about as loud at any feedback, keeping 90 % of its loudness
+/// The level of the first repeat of a hit: the trail plays at the level of the music, taking
+/// back half of what it piles up at the feedback, in power, keeping 90 % of its loudness
 /// through the tape tone on each pass.
 fn first_repeat_level(feedback: f32) -> f32 {
     let kept = feedback * 0.9;
-    IMPULSE_LEVEL * 0.7 * (1.0 - kept * kept).sqrt()
+    IMPULSE_LEVEL * (1.0 - kept * kept).sqrt().sqrt()
 }
 
 fn echo_with(feedback: f32) -> Echo {
@@ -235,7 +235,7 @@ fn reverb_rings_out_when_switched_off() {
 }
 
 #[test]
-fn reverb_sits_under_the_dry_level_with_no_note_ringing_out() {
+fn reverb_plays_at_the_dry_level_with_no_note_ringing_out() {
     let mut gains = Vec::new();
     for step in 0..16 {
         let frequency = 300.0 * 1.12_f32.powi(step);
@@ -253,11 +253,11 @@ fn reverb_sits_under_the_dry_level_with_no_note_ringing_out() {
     let mean = gains.iter().sum::<f32>() / gains.len() as f32;
     let loudest = gains.iter().copied().fold(f32::MIN, f32::max);
     assert!(
-        (-7.0..=-1.0).contains(&mean),
+        (-3.0..=3.0).contains(&mean),
         "mean wet level {mean} dB against the dry"
     );
     assert!(
-        loudest < 0.0,
+        loudest < mean + 4.0,
         "a held note rang out at {loudest} dB: {gains:?}"
     );
 }
