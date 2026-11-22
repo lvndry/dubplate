@@ -7,17 +7,20 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use dubplate_engine::DeckId;
 use dubplate_prep::{
     AudioAnalysis, EnergyDirection, GridCorrection, PrepTrack, ReadyProblem, ReadyReport, SetEntry,
     SetTrack, SetWarning, StoreError, WarningPosition, set_warnings, suggest_next,
 };
 use gpui::{App, Context};
 
-use super::{DubplateApp, NoticePlace};
+use super::DubplateApp;
+use super::notice::NoticePlace;
 use crate::collection::{TrackIndex, TrackOrigin};
 use crate::commands::{Direction, Mode, SetEdit};
+use crate::deck::deck_letter;
 use crate::energy::{EnergyRange, direction_toward_target, set_curve};
-use crate::loading::LoadSource;
+use crate::loading::{LoadSource, check_present};
 use crate::prep::{
     SeamSummary, TrackCheck, accept_proposal, check_track, nearest_bar_ms, readiness,
 };
@@ -65,6 +68,12 @@ pub(super) struct SetRow {
     /// Whether the seam into the next track is left to the moment.
     pub free_into_next: bool,
 }
+
+/// How long the suggestions wait for the selection to settle before ranking the library again,
+/// so moving through the set with the arrows ranks once, not at every step.
+const RANKING_DEBOUNCE: Duration = Duration::from_millis(80);
+/// How many suggestion inserts may wait for the set to save and the suggestions to follow.
+const MAX_QUEUED_SUGGESTIONS: usize = 8;
 
 /// A suggestion of the Next panel.
 #[derive(Clone)]
@@ -190,8 +199,12 @@ impl DubplateApp {
                     }
                 }
                 match completion.outcome {
-                    Ok(value) if applied => complete(this, value, cx),
-                    Ok(_) => {}
+                    Ok(value) => {
+                        this.quit_refused = false;
+                        if applied {
+                            complete(this, value, cx);
+                        }
+                    }
                     Err(error) => this.report_set_save_failure(error, cx),
                 }
                 if applied {
@@ -320,13 +333,13 @@ impl DubplateApp {
     }
 
     /// Inserts exactly the suggestion currently shown at this rank, without ranking again.
+    /// While the set saves or the suggestions are ranked again, the insert waits for them and
+    /// then goes in, so Enter, Enter, Enter builds a run however fast it is pressed.
     fn insert_suggestion_ranked(&mut self, rank: usize, cx: &mut Context<'_, Self>) {
         if self.set_edits_pending > 0 || self.prepare_view.next.pending {
-            self.show_notice(
-                NoticePlace::Window,
-                "Updating the set and its suggestions. Try again in a moment.",
-                cx,
-            );
+            if self.queued_suggestions.len() < MAX_QUEUED_SUGGESTIONS {
+                self.queued_suggestions.push_back(rank);
+            }
             return;
         }
         let path = match self.prepare_view.next.suggestion(rank) {
@@ -339,13 +352,9 @@ impl DubplateApp {
         self.insert_suggestion(&path, cx);
     }
 
-    /// Moves through the cached suggestions. Pending rankings have no selectable rows.
+    /// Moves through the suggestions shown, which stay while the next ranking runs.
     pub(super) fn move_next_cursor(&mut self, direction: Direction) {
-        let count = if self.prepare_view.next.pending {
-            0
-        } else {
-            self.prepare_view.next.tracks.len()
-        };
+        let count = self.prepare_view.next.tracks.len();
         if count == 0 {
             self.next_cursor = 0;
             return;
@@ -356,9 +365,20 @@ impl DubplateApp {
         };
     }
 
+    /// Inserts the next queued suggestion, once the set is saved and the suggestions follow
+    /// the track inserted before it.
+    fn insert_queued_suggestion(&mut self, cx: &mut Context<'_, Self>) {
+        if self.set_edits_pending > 0 || self.prepare_view.next.pending {
+            return;
+        }
+        if let Some(rank) = self.queued_suggestions.pop_front() {
+            self.insert_suggestion_ranked(rank, cx);
+        }
+    }
+
     /// Inserts a suggestion right after the selected set track, or the last one.
     pub(super) fn insert_suggestion(&mut self, path: &Path, cx: &mut Context<'_, Self>) {
-        if self.prepare_view.next.pending || self.set_edits_pending > 0 {
+        if self.set_edits_pending > 0 {
             self.show_notice(
                 NoticePlace::Window,
                 "Updating the set and its suggestions. Try again in a moment.",
@@ -391,6 +411,7 @@ impl DubplateApp {
         self.set_selection_generation += 1;
         self.set_selection = Some(position);
         self.prepare_focus = PrepareFocus::Set;
+        self.queued_suggestions.clear();
         self.next_cursor = 0;
         self.refresh_prepare_view(cx);
         self.refresh_filter_reference(cx);
@@ -412,6 +433,7 @@ impl DubplateApp {
         self.set_selection_generation += 1;
         self.set_selection = Some(next);
         self.next_cursor = 0;
+        self.queued_suggestions.clear();
         self.reveal_set_selection();
         self.refresh_prepare_view(cx);
         self.refresh_filter_reference(cx);
@@ -714,9 +736,11 @@ impl DubplateApp {
             .set_selection
             .or_else(|| view.rows.len().checked_sub(1))
             .and_then(|position| Some((position, view.rows.get(position)?.track.clone()?)));
-        if let Some((_, reference)) = &reference {
-            view.next.after = Some(reference.title.clone());
-            view.next.pending = true;
+        if reference.is_some() {
+            view.next = NextSuggestions {
+                pending: true,
+                ..self.prepare_view.next.clone()
+            };
         }
         let target = self
             .set_editor
@@ -738,6 +762,13 @@ impl DubplateApp {
         let catalogue = Arc::clone(&self.catalogue);
         self.prepare_view = Arc::new(view.clone());
         cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(RANKING_DEBOUNCE).await;
+            let still_current = this
+                .update(cx, |this, _| this.prepare_generation == generation)
+                .unwrap_or(false);
+            if !still_current {
+                return;
+            }
             let view = cx
                 .background_executor()
                 .spawn(async move {
@@ -765,6 +796,7 @@ impl DubplateApp {
                         .next_cursor
                         .min(view.next.tracks.len().saturating_sub(1));
                     this.prepare_view = view;
+                    this.insert_queued_suggestion(cx);
                     cx.notify();
                 }
             })
@@ -784,8 +816,18 @@ impl DubplateApp {
             self.show_notice(NoticePlace::Window, "The set is empty.", cx);
             return;
         }
-        for (deck, entry) in dubplate_engine::DeckId::ALL.into_iter().zip(&entries) {
-            let Some(index) = collection.find_path(&entry.track_path) else {
+        let mut unloaded: Vec<(DeckId, String)> = Vec::new();
+        let mut missing_tracks: Vec<TrackIndex> = Vec::new();
+        for (deck, entry) in DeckId::ALL.into_iter().zip(&entries) {
+            let index = collection.find_path(&entry.track_path);
+            let present = index.is_some_and(|index| check_present(collection.track(index)).is_ok());
+            let Some(index) = index.filter(|_| present) else {
+                let title = index.map_or_else(
+                    || file_title(&entry.track_path),
+                    |index| collection.track(index).row.title.to_string(),
+                );
+                unloaded.push((deck, title));
+                missing_tracks.extend(index);
                 continue;
             };
             let mix_in = entry.mix_in_ms.or_else(|| {
@@ -796,6 +838,9 @@ impl DubplateApp {
             });
             let cue = mix_in.map(|milliseconds| f64::from(milliseconds) / 1000.0);
             self.load_cued(deck, LoadSource::Collection(index), cue, cx);
+        }
+        if let Some(text) = unloaded_notice(&unloaded) {
+            self.report_missing_file(text, &missing_tracks, cx);
         }
     }
 }
@@ -935,6 +980,22 @@ fn apply_edit(
         | SetEdit::InsertSuggestion(_) => {}
     }
     Ok(selection)
+}
+
+/// What the DJ is told when set tracks were kept off their decks because their files are
+/// missing, such as "Deck A was not loaded: Uthando's file is missing.", or `None` when every
+/// deck was loaded.
+fn unloaded_notice(unloaded: &[(DeckId, String)]) -> Option<String> {
+    match unloaded {
+        [] => None,
+        [(deck, title)] => Some(format!(
+            "Deck {} was not loaded: {title}'s file is missing.",
+            deck_letter(*deck)
+        )),
+        [(_, first), (_, second), ..] => Some(format!(
+            "Neither deck was loaded: the files of {first} and {second} are missing."
+        )),
+    }
 }
 
 /// Whether the proposal could fill a cue the entry lacks.
@@ -1078,5 +1139,22 @@ mod tests {
         next.pending = false;
         assert_eq!(next.suggestion(0).unwrap().path, track("a").path);
         assert!(next.suggestion(1).is_err());
+    }
+
+    #[test]
+    fn the_notice_names_each_track_kept_off_its_deck() {
+        assert_eq!(unloaded_notice(&[]), None);
+        assert_eq!(
+            unloaded_notice(&[(DeckId::B, "Amalobolo".to_owned())]).as_deref(),
+            Some("Deck B was not loaded: Amalobolo's file is missing.")
+        );
+        assert_eq!(
+            unloaded_notice(&[
+                (DeckId::A, "Uthando".to_owned()),
+                (DeckId::B, "Amalobolo".to_owned())
+            ])
+            .as_deref(),
+            Some("Neither deck was loaded: the files of Uthando and Amalobolo are missing.")
+        );
     }
 }

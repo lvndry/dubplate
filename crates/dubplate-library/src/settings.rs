@@ -11,6 +11,8 @@ const SETTINGS_NAME: &str = "settings.toml";
 const LIBRARY_CACHE_NAME: &str = "library-cache.json";
 const SETS_NAME: &str = "sets.sqlite";
 const ANALYSIS_CACHE_NAME: &str = "analysis.sqlite";
+const STEMS_NAME: &str = "stems";
+const MODELS_NAME: &str = "models";
 const INSTANCE_LOCK_NAME: &str = "dubplate.lock";
 
 /// Dubplate's own folder in the user's configuration, never one of rekordbox's:
@@ -51,6 +53,17 @@ impl DataFolder {
     /// between launches.
     pub fn analysis_cache(&self) -> PathBuf {
         self.root.join(ANALYSIS_CACHE_NAME)
+    }
+
+    /// The folder of separated stems: four WAV files per track, kept between launches.
+    pub fn stems(&self) -> PathBuf {
+        self.root.join(STEMS_NAME)
+    }
+
+    /// The folder of the neural network weights Dubplate downloads, such as the stem
+    /// separation model's.
+    pub fn models(&self) -> PathBuf {
+        self.root.join(MODELS_NAME)
     }
 
     /// The file the running Dubplate holds locked, so a second one knows it is not alone.
@@ -180,6 +193,8 @@ mod tests {
             folder.library_cache(),
             folder.sets(),
             folder.analysis_cache(),
+            folder.stems(),
+            folder.models(),
         ] {
             assert_eq!(path.parent(), Some(Path::new("/Config/dubplate")));
         }

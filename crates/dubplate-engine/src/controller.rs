@@ -102,22 +102,13 @@ pub struct Controller {
     smart_fader: bool,
 }
 
-/// Playback state shared by track replacement, instant-double and device restoration.
-/// Mixer channel settings and transient gestures deliberately belong to the destination.
+/// A deck's track, grid and playback state, captured to put back on a new engine after a change
+/// of sound card. Mixer channel settings and transient gestures belong to the destination.
 #[derive(Debug, Clone)]
 pub struct DeckSnapshot {
     track: Option<Track>,
     grid: Option<BeatGrid>,
     playback: DeckPlayback,
-}
-
-/// The transport policy used when applying a deck snapshot.
-#[derive(Debug, Clone, Copy)]
-pub enum DeckRestorePolicy {
-    /// Copy the source's playing/stopped state, tempo, grid and cue point.
-    InstantDouble,
-    /// Restore a deck after changing devices, leaving it stopped.
-    DeviceChange,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -141,61 +132,89 @@ impl Controller {
     /// This runs on the control thread; loops and held gestures are not copied.
     /// Returns `DeckStatePending` until preceding commands have been published.
     pub fn snapshot_deck(&self, deck: DeckId) -> Result<DeckSnapshot, EngineError> {
+        if self.shared.applied_command.load(Ordering::Acquire) != self.command_sequence {
+            return Err(EngineError::DeckStatePending);
+        }
+        self.consistent_snapshot(deck)
+            .ok_or(EngineError::DeckStatePending)
+    }
+
+    /// The deck as the audio thread last published it, whether or not it has carried out the
+    /// commands sent since: what can still be known of a deck whose audio stream stopped, as
+    /// when its sound card went away.
+    pub fn last_published_deck(&self, deck: DeckId) -> DeckSnapshot {
+        self.consistent_snapshot(deck)
+            .unwrap_or_else(|| self.read_snapshot(deck))
+    }
+
+    /// A snapshot read between two publications of the audio thread, or `None` when it kept
+    /// publishing while it was read.
+    fn consistent_snapshot(&self, deck: DeckId) -> Option<DeckSnapshot> {
         let shared = &self.shared.decks[deck.index()];
         for _ in 0..8 {
             let publication = shared.publication.load(Ordering::Acquire);
             if !publication.is_multiple_of(2) {
+                std::hint::spin_loop();
                 continue;
             }
-            if self.shared.applied_command.load(Ordering::Acquire) != self.command_sequence {
-                return Err(EngineError::DeckStatePending);
-            }
-            let state = self.deck_state(deck);
-            let tempo = self.tempo_state(deck);
-            let snapshot = DeckSnapshot {
-                track: self.track(deck).cloned(),
-                grid: self.beat_grid(deck),
-                playback: DeckPlayback {
-                    position_seconds: state.position_seconds,
-                    cue_seconds: state.cue_point_seconds,
-                    tempo: if state.loaded { state.tempo } else { 1.0 },
-                    fader_position: self.shared.decks[deck.index()].tempo_fader_position.load(),
-                    range: tempo.tempo_range,
-                    waits_for_pickup: tempo.fader_waits_for_pickup,
-                    sync: tempo.sync,
-                    key_lock: self.key_lock(deck),
-                    key_shift: self.key_shift(deck),
-                    slip: self.slip_state(deck).enabled,
-                    vinyl_mode: self.platter_state(deck).vinyl_mode,
-                    playing: state.playing,
-                },
-            };
+            let snapshot = self.read_snapshot(deck);
             std::sync::atomic::fence(Ordering::Acquire);
             if shared.publication.load(Ordering::Relaxed) == publication {
-                return Ok(snapshot);
+                return Some(snapshot);
             }
         }
-        Err(EngineError::DeckStatePending)
+        None
     }
 
-    /// Restores playback in one queue command, preserving effective tempo separately from
-    /// the physical fader and its pickup state. Queue exhaustion leaves the deck unchanged.
+    fn read_snapshot(&self, deck: DeckId) -> DeckSnapshot {
+        let state = self.deck_state(deck);
+        let tempo = self.tempo_state(deck);
+        DeckSnapshot {
+            track: self.track(deck).cloned(),
+            grid: self.beat_grid(deck),
+            playback: DeckPlayback {
+                position_seconds: state.position_seconds,
+                cue_seconds: state.cue_point_seconds,
+                tempo: if state.loaded { state.tempo } else { 1.0 },
+                fader_position: self.shared.decks[deck.index()].tempo_fader_position.load(),
+                range: tempo.tempo_range,
+                waits_for_pickup: tempo.fader_waits_for_pickup,
+                sync: tempo.sync,
+                key_lock: self.key_lock(deck),
+                key_shift: self.key_shift(deck),
+                slip: self.slip_state(deck).enabled,
+                vinyl_mode: self.platter_state(deck).vinyl_mode,
+                playing: state.playing,
+            },
+        }
+    }
+
+    /// Puts `snapshot` back on `deck`, stopped, in one queue command, as after a change of
+    /// sound card. The effective tempo is restored separately from the physical fader and its
+    /// pickup state. Queue exhaustion leaves the deck unchanged.
     pub fn restore_deck(
         &mut self,
         deck: DeckId,
         snapshot: &DeckSnapshot,
-        policy: DeckRestorePolicy,
     ) -> Result<(), EngineError> {
-        let mut playback = snapshot.playback;
-        if matches!(policy, DeckRestorePolicy::DeviceChange) {
-            playback.playing = false;
-        }
-        self.install_deck(
+        let state = DeckPlayback {
+            playing: false,
+            ..snapshot.playback
+        };
+        let track = snapshot.track.clone();
+        let grid = snapshot.grid.clone();
+        self.send(Command::RestoreDeck {
             deck,
-            snapshot.track.clone(),
-            snapshot.grid.clone(),
-            playback,
-        )
+            track: track.as_ref().map(|track| Arc::clone(track.buffer())),
+            grid: grid.clone(),
+            state,
+        })?;
+        self.replace_track(deck, track);
+        self.beat_grids[deck.index()] = grid;
+        self.key_locks[deck.index()] = state.key_lock;
+        self.key_shifts[deck.index()] = state.key_shift;
+        self.pad_effects[deck.index()] = None;
+        Ok(())
     }
 
     /// Commits a prepared track, grid and reset cue/key shift as a single queue command.
@@ -214,27 +233,6 @@ impl Controller {
         self.replace_track(deck, Some(track));
         self.beat_grids[deck.index()] = grid;
         self.key_shifts[deck.index()] = 0.0;
-        self.pad_effects[deck.index()] = None;
-        Ok(())
-    }
-
-    fn install_deck(
-        &mut self,
-        deck: DeckId,
-        track: Option<Track>,
-        grid: Option<BeatGrid>,
-        state: DeckPlayback,
-    ) -> Result<(), EngineError> {
-        self.send(Command::RestoreDeck {
-            deck,
-            track: track.as_ref().map(|track| Arc::clone(track.buffer())),
-            grid: grid.clone(),
-            state,
-        })?;
-        self.replace_track(deck, track);
-        self.beat_grids[deck.index()] = grid;
-        self.key_locks[deck.index()] = state.key_lock;
-        self.key_shifts[deck.index()] = state.key_shift;
         self.pad_effects[deck.index()] = None;
         Ok(())
     }

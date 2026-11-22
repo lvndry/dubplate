@@ -10,10 +10,12 @@ use dubplate_library::{FolderScan, LibraryCache};
 use dubplate_prep::ExportLibrary;
 use gpui::{Context, PathPromptOptions};
 
-use super::{DubplateApp, NoticePlace, error_chain};
+use super::notice::NoticePlace;
+use super::{DubplateApp, error_chain};
 use crate::browser::LibraryStatus;
 use crate::collection::{Collection, RekordboxLibrary, folder_name};
 use crate::commands::Mode;
+use crate::folder_picker::{music_start_folder, open_next_picker_in};
 use crate::library::{RekordboxSource, ScanRequest};
 use crate::prep;
 use crate::relink::missing_tracks;
@@ -68,6 +70,9 @@ impl DubplateApp {
 
     /// Opens the system's folder picker and adds the folders chosen to the library.
     pub(super) fn add_music_folders(&mut self, cx: &mut Context<'_, Self>) {
+        if let Some(start) = music_start_folder(self.sources.folders()) {
+            open_next_picker_in(&start);
+        }
         let chosen = cx.prompt_for_paths(PathPromptOptions {
             files: false,
             directories: true,
@@ -273,8 +278,7 @@ impl DubplateApp {
                     this.follow_moved_set_files(&moved_files, cx);
                     this.catalogue = Arc::new(catalogue);
                     this.analyses.refresh();
-                    this.browser
-                        .update(cx, |browser, cx| browser.clear_analyses(cx));
+                    this.restore_analyses();
                     this.show_library(LibraryStatus::Ready(Arc::new(collection)), cx);
                     this.show_missing(missing, cx);
                     this.forget_track_checks();

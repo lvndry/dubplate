@@ -17,8 +17,10 @@ mod lanes;
 mod library;
 mod library_panel;
 mod mixer;
+mod notice;
 mod pad_grid;
 mod pads;
+mod pickup;
 mod prepare;
 mod recording;
 mod relink;
@@ -30,7 +32,7 @@ mod track_check;
 mod waveforms;
 
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -48,19 +50,20 @@ use gpui::component::input::{InputEvent, InputState};
 use gpui::prelude::*;
 use gpui::{
     Bounds, Context, Entity, FocusHandle, MouseButton, MouseMoveEvent, MouseUpEvent, Pixels, Point,
-    ScrollHandle, SharedString, StyleRefinement, Subscription, Task, Window, div, px,
+    ScrollHandle, SharedString, StyleRefinement, Subscription, Task, Window, div,
 };
 
 use crate::analysis::{AnalysisPriority, TrackAnalyser, TrackAnalyses};
 use crate::browser::{Browser, BrowserEvent, LibraryStatus};
-use crate::collection::{Collection, CollectionTrack};
+use crate::collection::{Collection, CollectionTrack, TrackIndex};
 use crate::commands::{Command, EffectEdit, JogMotion, Mode, Press};
 use crate::controls::{
     CROSSFADER_STEP, Control, MixerPositions, Orientation, Slider, fraction_at, master_gain_at,
     nudged_tempo_slider, tempo_fader, trim_gain_at,
 };
 use crate::deck::{
-    Deck, DeckContent, GridSource, HotCues, LoadError, PreparedTrack, TrackVisuals, prepare_track,
+    Deck, DeckContent, GridSource, HotCues, LoadError, PreparedTrack, TrackVisuals, deck_letter,
+    prepare_track,
 };
 use crate::effects::{EffectUnitSetting, search, step_effect, step_parameter};
 use crate::fonts::UI_FAMILY;
@@ -70,29 +73,27 @@ use crate::hardware::{
 };
 use crate::library::LibrarySources;
 use crate::library_view::SortSetting;
-use crate::loading::{LoadRefusal, LoadSource, check_deck_free, check_file};
+use crate::loading::{LoadRefusal, LoadSource, check_deck_free, check_file, check_present};
 use crate::meter::PeakMeter;
 use crate::pads::next_mode;
 use crate::prep::{Catalogue, TrackCheck, TrackDetail};
 use crate::recording::Recording;
 use crate::relink::Missing;
 use crate::set::SetEditor;
-use crate::settings::Settings;
+use crate::settings::{LevelsSetting, Settings};
 use crate::shortcuts::{Perform, WINDOW_CONTEXT};
 use crate::theme;
 use crate::transport::{self, CueDown, is_at_cue, other_deck};
 use crate::waveform::Zoom;
+use crate::waveform_cache::WaveformCache;
 use audition::Audition;
+use notice::{NoticePlace, Notices};
 use pads::HeldPad;
 use prepare::PrepareFocus;
 use relink::RelinkReview;
 
 /// Frames per device buffer: about 5 ms at 48 kHz.
 const BUFFER_FRAMES: u32 = 256;
-/// How long a notice stays on screen.
-const NOTICE_DURATION: Duration = Duration::from_secs(6);
-/// How wide a notice grows before its text wraps.
-const NOTICE_MAX_WIDTH: Pixels = px(560.0);
 /// How often the controller lights follow the decks while nothing else updates them, for the
 /// blinking lights and the level meters.
 const LIGHTS_INTERVAL: Duration = Duration::from_millis(30);
@@ -106,22 +107,6 @@ const LIGHTS_SETTLE: Duration = Duration::from_millis(12);
 struct Engine {
     controller: Controller,
     output: AudioOutput,
-}
-
-/// Where a notice shows.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum NoticePlace {
-    /// At the bottom of the window.
-    Window,
-    /// On a deck.
-    Deck(DeckId),
-}
-
-/// A short message about something the DJ asked for that did not happen.
-struct Notice {
-    id: u64,
-    place: NoticePlace,
-    text: SharedString,
 }
 
 /// Where the sliders and overviews were last drawn, so a pointer can be turned into a value.
@@ -196,10 +181,11 @@ pub struct DubplateApp {
     quit_requested: bool,
     quit_barrier_ready: bool,
     set_edits_pending: usize,
-    set_save_failed: bool,
     set_save_problem: Option<String>,
+    quit_refused: bool,
     prepare_focus: PrepareFocus,
     next_cursor: usize,
+    queued_suggestions: VecDeque<usize>,
     set_scroll: ScrollHandle,
     prepare_view: Arc<prepare::PrepareViewModel>,
     prepare_generation: u64,
@@ -208,6 +194,7 @@ pub struct DubplateApp {
     check_generation: u64,
     track_detail: Option<(PathBuf, Arc<TrackDetail>)>,
     detail_pending: Option<PathBuf>,
+    waveform_cache: WaveformCache,
     check_cursor_seconds: f64,
     catalogue: Arc<Catalogue>,
     missing: Arc<Vec<Missing>>,
@@ -228,8 +215,7 @@ pub struct DubplateApp {
     hit_areas: Rc<HitAreas>,
     browser: Entity<Browser>,
     help_open: bool,
-    notice: Option<Notice>,
-    notice_count: u64,
+    notices: Notices,
     focus_handle: FocusHandle,
     last_frame: Instant,
     frame_stats: Option<Rc<RefCell<FrameStats>>>,
@@ -314,10 +300,11 @@ impl DubplateApp {
                 })
             })
             .unwrap_or_default();
-        let mixer = MixerPositions {
+        let mixer = settings.levels.apply(MixerPositions {
             sampler_volume: settings.sampler.volume.clamp(0.0, 1.0),
             ..MixerPositions::default()
-        };
+        });
+        let mode = settings.screen();
         let (engine, audio_problem) = audio::start_engine(&mixer, settings.audio_device.as_deref());
         problems.extend(audio_problem);
         let hardware = match Hardware::start() {
@@ -360,7 +347,7 @@ impl DubplateApp {
             edited_hot_cues: HashMap::new(),
             lights_settling: false,
             effect_focus: EffectUnitId::ALL[0],
-            mode: Mode::Perform,
+            mode,
             pad_modes: [PadMode::HotCue; DECK_COUNT],
             beat_jump_scales: [0; DECK_COUNT],
             held_pads: [None; DECK_COUNT],
@@ -376,10 +363,11 @@ impl DubplateApp {
             quit_requested: false,
             quit_barrier_ready: false,
             set_edits_pending: 0,
-            set_save_failed: false,
             set_save_problem: None,
+            quit_refused: false,
             prepare_focus: PrepareFocus::Library,
             next_cursor: 0,
+            queued_suggestions: VecDeque::new(),
             set_scroll: ScrollHandle::new(),
             prepare_view: Arc::default(),
             prepare_generation: 0,
@@ -388,6 +376,7 @@ impl DubplateApp {
             check_generation: 0,
             track_detail: None,
             detail_pending: None,
+            waveform_cache: WaveformCache::default(),
             check_cursor_seconds: 0.0,
             catalogue: Arc::default(),
             missing: Arc::default(),
@@ -410,13 +399,14 @@ impl DubplateApp {
             hit_areas: Rc::default(),
             browser,
             help_open: false,
-            notice: None,
-            notice_count: 0,
+            notices: Notices::default(),
             focus_handle,
             last_frame: Instant::now(),
             frame_stats: FrameStats::from_environment().map(|stats| Rc::new(RefCell::new(stats))),
             _subscriptions: vec![subscription, search_subscription, quit_subscription],
         };
+        app.browser
+            .update(cx, |browser, cx| browser.show_screen(mode, cx));
         app.restore_effect_units(cx);
         app.restore_sampler(cx);
         app.restore_library_sorts(cx);
@@ -489,7 +479,6 @@ impl DubplateApp {
         error: impl std::fmt::Display,
         cx: &mut Context<'_, Self>,
     ) {
-        self.set_save_failed = true;
         self.set_save_problem = Some(error.to_string());
         self.show_notice(
             NoticePlace::Window,
@@ -499,23 +488,28 @@ impl DubplateApp {
     }
 
     /// A worker barrier is not enough: every submitted edit's UI callback must also report
-    /// its outcome before a successful barrier can allow the application to exit.
+    /// its outcome before a successful barrier can allow the application to exit. A failed save
+    /// keeps Dubplate open once, to be reviewed; quitting again then quits even if saving still
+    /// fails, so a set store that broke for good never leaves the app impossible to quit.
     fn finish_quit_if_saved(&mut self, cx: &mut Context<'_, Self>) {
         if !self.quit_requested || !self.quit_barrier_ready || self.set_edits_pending != 0 {
             return;
         }
-        if self.set_save_failed {
-            self.quit_requested = false;
-            self.quit_barrier_ready = false;
-            self.set_save_failed = false;
-            let problem = self
-                .set_save_problem
-                .take()
-                .unwrap_or_else(|| "a set edit failed".to_owned());
-            self.show_notice(NoticePlace::Window,
-                format!("The set was not saved: {problem}. Dubplate stayed open; review the set before quitting again."), cx);
-        } else {
-            cx.quit();
+        match self.set_save_problem.take() {
+            Some(problem) if !self.quit_refused => {
+                self.quit_requested = false;
+                self.quit_barrier_ready = false;
+                self.quit_refused = true;
+                self.show_notice(
+                    NoticePlace::Window,
+                    format!(
+                        "The set was not saved: {problem}. Dubplate stayed open; review the set \
+                         before quitting again."
+                    ),
+                    cx,
+                );
+            }
+            Some(_) | None => cx.quit(),
         }
     }
 
@@ -628,8 +622,17 @@ impl DubplateApp {
         cue: Option<f64>,
         cx: &mut Context<'_, Self>,
     ) {
+        let track_index = match &source {
+            LoadSource::Collection(index) => Some(*index),
+            LoadSource::File(_) => None,
+        };
         let (track, generation) = match self.begin_load(deck, source) {
             Ok(started) => started,
+            Err(refusal @ LoadRefusal::FileMissing(_)) => {
+                let tracks: Vec<TrackIndex> = track_index.into_iter().collect();
+                self.report_missing_file(refusal.to_string(), &tracks, cx);
+                return;
+            }
             Err(refusal) => {
                 self.show_notice(NoticePlace::Deck(deck), refusal.to_string(), cx);
                 return;
@@ -677,11 +680,15 @@ impl DubplateApp {
         source: LoadSource,
     ) -> Result<(Arc<CollectionTrack>, u64), LoadRefusal> {
         let track = match source {
-            LoadSource::Collection(index) => Arc::clone(
-                self.collection()
-                    .ok_or(LoadRefusal::LibraryNotReady)?
-                    .track(index),
-            ),
+            LoadSource::Collection(index) => {
+                let track = Arc::clone(
+                    self.collection()
+                        .ok_or(LoadRefusal::LibraryNotReady)?
+                        .track(index),
+                );
+                check_present(&track)?;
+                track
+            }
             LoadSource::File(path) => {
                 check_file(&path)?;
                 Arc::new(CollectionTrack::from_file(&path))
@@ -825,7 +832,7 @@ impl DubplateApp {
             Command::InstantDouble(deck) => self.instant_double(deck, cx),
             Command::NudgeTempo(deck, direction) => {
                 let slider = nudged_tempo_slider(
-                    self.mixer.tempo_sliders[deck.index()],
+                    self.control_fraction(Control::Tempo(deck)),
                     direction.sign(),
                     self.tempo_range(deck),
                 );
@@ -841,6 +848,20 @@ impl DubplateApp {
                     SyncMode::Beat
                 };
                 self.engine_command(cx, |controller| controller.set_sync(deck, mode));
+                let nothing_to_follow = DeckId::ALL
+                    .into_iter()
+                    .all(|other| !self.deck_state(other).playing);
+                if mode != SyncMode::Off && nothing_to_follow {
+                    self.show_notice(
+                        NoticePlace::Deck(deck),
+                        format!(
+                            "Sync armed: deck {} locks to the tempo master as soon as a deck \
+                             with a beat grid plays.",
+                            deck_letter(deck)
+                        ),
+                        cx,
+                    );
+                }
             }
             Command::MakeTempoMaster(deck) => self.engine_command(cx, |controller| {
                 controller.set_master_tempo(MasterTempo::Deck(deck))
@@ -870,6 +891,8 @@ impl DubplateApp {
             },
             Command::SwitchMode(mode) => {
                 self.mode = mode;
+                self.settings.set_screen(mode);
+                self.save_settings(cx);
                 self.browser
                     .update(cx, |browser, cx| browser.show_screen(mode, cx));
             }
@@ -928,8 +951,8 @@ impl DubplateApp {
                 } else if self.help_open || self.library_open {
                     self.help_open = false;
                     self.library_open = false;
-                } else if self.notice.is_some() {
-                    self.notice = None;
+                } else if self.notices.is_showing() {
+                    self.notices.dismiss();
                 } else if self.browser.read(cx).search_has_focus(window, cx) {
                     self.browser
                         .update(cx, |browser, cx| browser.focus_table(window, cx));
@@ -1105,49 +1128,6 @@ impl DubplateApp {
         }
     }
 
-    fn show_notice(
-        &mut self,
-        place: NoticePlace,
-        text: impl Into<SharedString>,
-        cx: &mut Context<'_, Self>,
-    ) {
-        self.show_notice_for(place, text, NOTICE_DURATION, cx);
-    }
-
-    /// Shows a notice for `duration`, or until Escape closes it.
-    fn show_notice_for(
-        &mut self,
-        place: NoticePlace,
-        text: impl Into<SharedString>,
-        duration: Duration,
-        cx: &mut Context<'_, Self>,
-    ) {
-        self.notice_count += 1;
-        let id = self.notice_count;
-        self.notice = Some(Notice {
-            id,
-            place,
-            text: text.into(),
-        });
-        cx.notify();
-        cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(duration).await;
-            this.update(cx, |this, cx| {
-                if this.notice.as_ref().is_some_and(|notice| notice.id == id) {
-                    this.notice = None;
-                    cx.notify();
-                }
-            })
-            .ok();
-        })
-        .detach();
-    }
-
-    /// Where a fader or knob is, from 0.0 to 1.0.
-    pub(super) fn control_fraction(&self, control: Control) -> f32 {
-        self.mixer.fraction(control)
-    }
-
     fn set_control(&mut self, control: Control, fraction: f32, cx: &mut Context<'_, Self>) {
         let fraction = fraction.clamp(0.0, 1.0);
         match control {
@@ -1169,6 +1149,7 @@ impl DubplateApp {
             }
             Control::MasterLevel => {
                 self.mixer.master_level = fraction;
+                self.remember_levels(cx);
                 self.engine_command(cx, |controller| {
                     controller.set_master_gain(master_gain_at(fraction))
                 });
@@ -1189,17 +1170,19 @@ impl DubplateApp {
             }
             Control::HeadphoneMix => {
                 self.mixer.headphone_mix = fraction;
+                self.remember_levels(cx);
                 self.engine_command(cx, |controller| controller.set_headphone_mix(fraction));
             }
             Control::HeadphoneLevel => {
                 self.mixer.headphone_level = fraction;
+                self.remember_levels(cx);
                 self.engine_command(cx, |controller| controller.set_headphone_level(fraction));
             }
             Control::SamplerVolume => {
                 self.mixer.sampler_volume = fraction;
                 self.settings.sampler.volume = fraction;
                 self.engine_command(cx, |controller| controller.set_sampler_volume(fraction));
-                self.save_settings(cx);
+                self.save_settings_soon(cx);
             }
         }
         cx.notify();
@@ -1237,7 +1220,7 @@ impl DubplateApp {
                 }
                 LinkEvent::Control { control, received } => {
                     let surface = Surface {
-                        positions: self.mixer,
+                        positions: self.shown_positions(),
                         playing: DeckId::ALL.map(|deck| self.deck_state(deck).playing),
                         focused_effect: Some(self.effect_focus),
                         effect_depth: self
@@ -1434,8 +1417,7 @@ impl DubplateApp {
         }
     }
 
-    /// Saves the effect units' settings a moment after the last change, so turning the level
-    /// knob writes the file once rather than on every step.
+    /// Remembers the effect units' settings.
     fn remember_effect_units(&mut self, cx: &mut Context<'_, Self>) {
         let units: Vec<EffectUnitSetting> = EffectUnitId::ALL
             .into_iter()
@@ -1445,6 +1427,18 @@ impl DubplateApp {
         if units.len() == EFFECT_UNIT_COUNT {
             self.settings.effect_units = units;
         }
+        self.save_settings_soon(cx);
+    }
+
+    /// Remembers the master and headphone levels, so the next launch opens no louder.
+    fn remember_levels(&mut self, cx: &mut Context<'_, Self>) {
+        self.settings.levels = LevelsSetting::of(&self.mixer);
+        self.save_settings_soon(cx);
+    }
+
+    /// Saves the settings a moment after the last change, so turning a knob writes the file
+    /// once rather than on every step.
+    fn save_settings_soon(&mut self, cx: &mut Context<'_, Self>) {
         if std::mem::replace(&mut self.settings_save_pending, true) {
             return;
         }
@@ -1667,14 +1661,6 @@ impl DubplateApp {
         frames
     }
 
-    /// The message showing on `deck`, if any.
-    fn deck_notice(&self, deck: DeckId) -> Option<&SharedString> {
-        self.notice
-            .as_ref()
-            .filter(|notice| notice.place == NoticePlace::Deck(deck))
-            .map(|notice| &notice.text)
-    }
-
     fn dropouts(&self) -> u64 {
         self.engine
             .as_ref()
@@ -1813,12 +1799,7 @@ impl Render for DubplateApp {
                         .child(set_panel::render(self, cx)),
                 ),
             })
-            .children(
-                self.notice
-                    .as_ref()
-                    .filter(|notice| notice.place == NoticePlace::Window)
-                    .map(|notice| notice_toast(notice.text.clone())),
-            )
+            .children(notice::render_toast(self, cx))
             .when(
                 self.help_open && !self.library_open && self.relink_review.is_none(),
                 |root| root.child(help::render(self, cx)),
@@ -1835,26 +1816,4 @@ impl Render for DubplateApp {
         }
         root
     }
-}
-
-fn notice_toast(text: SharedString) -> impl IntoElement {
-    div()
-        .absolute()
-        .bottom(px(16.0))
-        .left_0()
-        .right_0()
-        .flex()
-        .justify_center()
-        .child(
-            div()
-                .max_w(NOTICE_MAX_WIDTH)
-                .px(px(12.0))
-                .py(px(8.0))
-                .rounded(px(8.0))
-                .border_1()
-                .border_color(theme::LINE)
-                .bg(theme::RAISED)
-                .text_color(theme::TEXT)
-                .child(text),
-        )
 }

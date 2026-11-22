@@ -360,6 +360,36 @@ mod tests {
     }
 
     #[test]
+    fn a_44_1_khz_and_a_48_khz_file_line_up_column_for_column() {
+        let burst_seconds = 2.0;
+        let length_and_onset = |sample_rate: u32| {
+            let frame_count = (4.0 * sample_rate as f32) as usize;
+            let burst = (burst_seconds * sample_rate as f32) as usize..;
+            let samples: Vec<f32> = (0..frame_count)
+                .flat_map(|frame| {
+                    let tone = 0.5 * (TAU * 900.0 * frame as f32 / sample_rate as f32).sin();
+                    let value = if burst.contains(&frame) { tone } else { 0.0 };
+                    [value, value]
+                })
+                .collect();
+            let track = Track::from_interleaved_stereo(&samples, sample_rate).unwrap();
+            let columns = columns(&track);
+            let first_loud = columns.iter().position(|column| column.mid > 0);
+            (columns.len(), first_loud)
+        };
+        let (cd_columns, cd_onset) = length_and_onset(44_100);
+        let (studio_columns, studio_onset) = length_and_onset(48_000);
+        assert_eq!(cd_columns, 600);
+        assert_eq!(studio_columns, 600);
+        let onset = |column: Option<usize>| column.unwrap() as i64;
+        assert!(
+            (onset(cd_onset) - onset(studio_onset)).abs() <= 1,
+            "{cd_onset:?} {studio_onset:?}"
+        );
+        assert!((onset(cd_onset) - 300).abs() <= 1, "{cd_onset:?}");
+    }
+
+    #[test]
     fn a_track_rekordbox_never_analysed_gets_both_waveforms_from_its_audio() {
         let waveforms = three_band_waveforms(&track(2.0, |frame| sine(120.0, frame)));
         let zoomed = ZoomedWaveform::from_waveforms(&waveforms, Zoom::DEFAULT).unwrap();

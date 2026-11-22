@@ -1,7 +1,7 @@
 //! Deck transfer and prepared-load regressions across the control/audio boundary.
 
 use dubplate_engine::{
-    BeatGrid, DeckId, DeckRestorePolicy, EngineError, MasterTempo, SyncMode, Track, offline_engine,
+    BeatGrid, DeckId, EngineError, MasterTempo, SyncMode, Track, offline_engine,
 };
 
 fn track(rate: u32) -> Track {
@@ -41,9 +41,7 @@ fn copies_effective_tempo_and_fader_pickup_without_copying_mixer_settings() {
     assert!(source.tempo_state(DeckId::B).fader_waits_for_pickup);
     let snapshot = source.snapshot_deck(DeckId::A).unwrap();
     let (mut target, mut target_renderer) = offline_engine(44_100);
-    target
-        .restore_deck(DeckId::A, &snapshot, DeckRestorePolicy::DeviceChange)
-        .unwrap();
+    target.restore_deck(DeckId::A, &snapshot).unwrap();
     flush(&mut target_renderer);
     assert!((target.deck_state(DeckId::A).tempo - tempo).abs() < 1e-8);
     assert!(target.tempo_state(DeckId::A).fader_waits_for_pickup);
@@ -83,6 +81,30 @@ fn snapshots_also_reject_unpublished_tempo_commands() {
     ));
     flush(&mut renderer);
     assert!(controller.snapshot_deck(DeckId::A).is_ok());
+}
+
+#[test]
+fn a_deck_whose_audio_stopped_still_gives_what_it_last_published() {
+    let (mut controller, mut renderer) = offline_engine(48_000);
+    controller.load_track(DeckId::A, track(48_000)).unwrap();
+    controller.seek(DeckId::A, 3.0).unwrap();
+    flush(&mut renderer);
+    controller.seek(DeckId::A, 7.0).unwrap();
+    drop(renderer);
+    assert!(matches!(
+        controller.snapshot_deck(DeckId::A),
+        Err(EngineError::DeckStatePending)
+    ));
+    let known = controller.last_published_deck(DeckId::A);
+    let (mut target, mut target_renderer) = offline_engine(48_000);
+    target.restore_deck(DeckId::A, &known).unwrap();
+    flush(&mut target_renderer);
+    let restored = target.deck_state(DeckId::A);
+    assert!(restored.loaded);
+    assert!(
+        (restored.position_seconds - 3.0).abs() < 1e-6,
+        "the place it last published: {restored:?}"
+    );
 }
 
 #[test]
