@@ -479,7 +479,7 @@ fn toggle(
                 "Deck {} {label}",
                 deck_letter(if id.1 == 0 { DeckId::A } else { DeckId::B })
             ),
-            on,
+            lit != Lit::Off,
         )
         .px(px(10.0))
         .border_1()
