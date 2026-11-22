@@ -88,7 +88,7 @@ impl StemsIndex {
         if FileStamp::of(track).ok()? != entry.stamp {
             return None;
         }
-        StemFiles::complete_in(self.cache.join(&entry.entry))
+        StemFiles::in_folder(self.cache.join(&entry.entry))
     }
 
     /// Remembers that the stems of `track` are `files`, and saves the index.
@@ -142,7 +142,7 @@ mod tests {
         for name in ["drums", "bass", "other", "vocals"] {
             std::fs::write(directory.join(format!("{name}.wav")), b"").unwrap();
         }
-        StemFiles::complete_in(directory).unwrap()
+        StemFiles::in_folder(directory).unwrap()
     }
 
     #[test]
