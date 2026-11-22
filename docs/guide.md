@@ -26,6 +26,8 @@ Dubplate analyses every track in the background and keeps what it found for the 
 
 In Settings, choose **DDJ-FLX4** as the sound card so the master goes to the FLX4's master output and the headphones to its headphone jack. Turn the master down before the first track, then check the headphones with the channel CUE buttons. Dubplate remembers the master and headphone levels and the screen you were on, and opens no louder than it closed: if the FLX4's MASTER LEVEL knob reports a louder level when it connects, it waits until you turn it down through the level on screen, while turning it down always works at once.
 
+Settings > Audio also has the buffer size: 256 frames (about 5 ms) by default, smaller to answer the controller sooner, larger to give a busy Mac more time. If the audio drops out three times within a minute, Dubplate says so once, with that hint; the count since launch is under the buffer size.
+
 ## 3. Prepare the set
 
 Cmd+1 opens Prepare: the library on the left, your set on the right.

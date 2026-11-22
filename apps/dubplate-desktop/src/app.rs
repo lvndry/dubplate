@@ -81,10 +81,11 @@ use crate::deck::{
     Deck, DeckContent, GridSource, LoadError, PreparedTrack, TrackVisuals, deck_letter,
     prepare_track,
 };
-use crate::devices::DeviceAccess;
+use crate::devices::{BufferSize, DeviceAccess};
 use crate::effects::{EffectUnitSetting, search, step_effect, step_parameter};
 use crate::fonts::UI_FAMILY;
 use crate::frame_stats::FrameStats;
+use crate::glitches::GlitchWatch;
 use crate::hardware::{
     DeckLights, Hardware, Lights, LinkEvent, Surface, controller_deck, meter_level,
 };
@@ -116,8 +117,8 @@ use pads::HeldPad;
 use prepare::PrepareFocus;
 use relink::RelinkReview;
 
-/// Frames per device buffer: about 5 ms at 48 kHz.
-const BUFFER_FRAMES: u32 = 256;
+/// What the window says when the audio drops out often.
+const GLITCH_NOTICE: &str = "Audio is glitching. A larger buffer in Settings > Audio can help.";
 /// Below this width the header shows the controller and the sound card as dots.
 const NARROW_WINDOW_WIDTH: Pixels = px(1320.0);
 /// Below this height the lanes are lower.
@@ -278,6 +279,8 @@ pub struct DubplateApp {
     window_size: gpui::Size<Pixels>,
     /// Whether the sound cards and controllers may be opened.
     devices: DeviceAccess,
+    /// Whether the audio glitches often enough to tell the DJ.
+    glitches: GlitchWatch,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -375,8 +378,12 @@ impl DubplateApp {
             ..MixerPositions::default()
         });
         let mode = settings.screen();
-        let (mut engine, audio_problem) =
-            audio::start_engine(&mixer, settings.audio_device.as_deref(), &devices);
+        let (mut engine, audio_problem) = audio::start_engine(
+            &mixer,
+            settings.audio_device.as_deref(),
+            BufferSize::from_setting(settings.buffer_frames),
+            &devices,
+        );
         if let Ok(engine) = &mut engine {
             for deck in DeckId::ALL {
                 if let Err(problem) = engine
@@ -523,6 +530,7 @@ impl DubplateApp {
             menu_state: None,
             window_size: window.viewport_size(),
             devices,
+            glitches: GlitchWatch::default(),
             _subscriptions: vec![subscription, search_subscription, quit_subscription],
         };
         app.browser
@@ -1988,12 +1996,6 @@ impl DubplateApp {
         }
         frames
     }
-
-    fn dropouts(&self) -> u64 {
-        self.engine
-            .as_ref()
-            .map_or(0, |engine| engine.controller.stats().overruns())
-    }
 }
 
 /// Starts a pulse where a cue was just set on `side`, and ends a pulse that is over.
@@ -2140,6 +2142,9 @@ impl Render for DubplateApp {
         self.refresh_menus(cx);
         self.window_size = window.viewport_size();
         let frames = self.advance_frame(window);
+        if self.glitches.observe(self.dropouts(), Instant::now()) {
+            self.show_notice(NoticePlace::Window, GLITCH_NOTICE, cx);
+        }
         self.mark_played(&frames, cx);
         self.follow_library_matches(cx);
         let root = div()

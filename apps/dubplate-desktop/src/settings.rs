@@ -59,6 +59,8 @@ pub struct Settings {
     pub vinyl_mode: [bool; DECK_COUNT],
     /// The sound card last used, by name.
     pub audio_device: Option<String>,
+    /// Frames per buffer of the sound card.
+    pub buffer_frames: Option<u32>,
     /// The music folders, whether rekordbox is in the library, and the relinked files.
     #[serde(flatten)]
     pub library: LibrarySettings,
@@ -313,6 +315,7 @@ impl Default for Settings {
             quantize: true,
             vinyl_mode: [true; DECK_COUNT],
             audio_device: None,
+            buffer_frames: None,
             library: LibrarySettings::default(),
             effect_units: Vec::new(),
             smart_cfx_preset: None,
@@ -429,6 +432,7 @@ mod tests {
             quantize: false,
             vinyl_mode: [true, false],
             audio_device: Some("Studio Speakers".to_owned()),
+            buffer_frames: Some(512),
             library: LibrarySettings {
                 music_folders: vec![
                     PathBuf::from("/Music/House"),

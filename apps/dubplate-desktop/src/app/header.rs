@@ -151,7 +151,6 @@ fn status(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoElem
         }
         Err(_) => (theme::ALERT, "No audio output".into()),
     };
-    let dropouts = app.dropouts();
     let controllers = app.controller_names();
     let (controller_colour, controller_text): (Rgba, SharedString) = if controllers.is_empty() {
         (theme::MUTED, "No controller".into())
@@ -219,17 +218,6 @@ fn status(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoElem
                                 .child(audio_text.clone()),
                         )
                 })
-        })
-        .when(dropouts > 0, |status| {
-            status.child(
-                div()
-                    .font_family(MONO_FAMILY)
-                    .text_color(theme::ALERT)
-                    .child(format!(
-                        "{dropouts} dropout{}",
-                        if dropouts == 1 { "" } else { "s" }
-                    )),
-            )
         })
         .child(record_button(app, cx))
         .child(header_switch(
