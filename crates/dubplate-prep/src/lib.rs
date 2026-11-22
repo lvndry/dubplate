@@ -17,6 +17,7 @@ mod energy;
 mod export;
 mod grid;
 mod ready;
+mod sql;
 mod store;
 mod suggestion;
 mod track;

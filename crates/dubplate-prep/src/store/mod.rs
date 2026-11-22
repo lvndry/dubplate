@@ -14,6 +14,8 @@ use thiserror::Error;
 
 mod types;
 
+use crate::sql::{execute_cached, query_row_cached};
+
 pub use types::{CueSource, EqIntent, Seam, SeamStatus, Set, SetEntry, SetId, SetList};
 
 /// The highest schema version `MIGRATIONS` can bring a database to.
@@ -229,7 +231,8 @@ impl SetStore {
     pub fn create_set(&mut self, name: &str, target_minutes: u32) -> Result<SetId, StoreError> {
         let transaction = self.transaction()?;
         let timestamp = now_unix_millis();
-        transaction.execute(
+        execute_cached(
+            &transaction,
             "INSERT INTO sets (name, target_minutes, created_at, updated_at) VALUES (?1, ?2, ?3, ?3)",
             (name, target_minutes as i64, timestamp),
         )?;
@@ -250,7 +253,11 @@ impl SetStore {
     /// snapshots and play history.
     pub fn delete_set(&mut self, set: SetId) -> Result<(), StoreError> {
         let transaction = self.transaction()?;
-        let deleted = transaction.execute("DELETE FROM sets WHERE id = ?1", (set.as_i64(),))?;
+        let deleted = execute_cached(
+            &transaction,
+            "DELETE FROM sets WHERE id = ?1",
+            (set.as_i64(),),
+        )?;
         if deleted == 0 {
             return Err(StoreError::SetNotFound(set));
         }
@@ -359,18 +366,30 @@ impl SetStore {
         }
         touch_set(&mut transaction, set)?;
 
-        transaction.execute(
+        execute_cached(
+            &transaction,
             "UPDATE set_entry SET position = ?4 WHERE set_id = ?1 AND is_backup = ?3 AND position = ?2",
-            (set.as_i64(), from as i64, list.is_backup(), MOVE_SENTINEL_POSITION),
+            (
+                set.as_i64(),
+                from as i64,
+                list.is_backup(),
+                MOVE_SENTINEL_POSITION,
+            ),
         )?;
         if from < to {
             shift_entry_positions(&mut transaction, set, list, from + 1, to + 1, -1)?;
         } else {
             shift_entry_positions(&mut transaction, set, list, to, from, 1)?;
         }
-        transaction.execute(
+        execute_cached(
+            &transaction,
             "UPDATE set_entry SET position = ?4 WHERE set_id = ?1 AND is_backup = ?3 AND position = ?2",
-            (set.as_i64(), MOVE_SENTINEL_POSITION, list.is_backup(), to as i64),
+            (
+                set.as_i64(),
+                MOVE_SENTINEL_POSITION,
+                list.is_backup(),
+                to as i64,
+            ),
         )?;
         transaction.commit()?;
         Ok(())
@@ -389,7 +408,8 @@ impl SetStore {
             return Err(StoreError::PositionNotFound(position));
         }
         touch_set(&mut transaction, set)?;
-        transaction.execute(
+        execute_cached(
+            &transaction,
             "DELETE FROM set_entry WHERE set_id = ?1 AND is_backup = ?2 AND position = ?3",
             (set.as_i64(), list.is_backup(), position as i64),
         )?;
@@ -411,7 +431,8 @@ impl SetStore {
             return Err(StoreError::PositionNotFound(position));
         }
         touch_set(&mut transaction, set)?;
-        transaction.execute(
+        execute_cached(
+            &transaction,
             "UPDATE set_entry
              SET track_path = ?3, rekordbox_id = ?4, mix_in_ms = ?5, mix_out_ms = ?6, cue_source = ?7,
                  grid_confirmed = ?8, energy_override = ?9, vocal_in_ms = ?10,
@@ -446,7 +467,8 @@ impl SetStore {
     pub fn set_seam(&mut self, set: SetId, seam: Seam) -> Result<(), StoreError> {
         let mut transaction = self.transaction()?;
         touch_set(&mut transaction, set)?;
-        transaction.execute(
+        execute_cached(
+            &transaction,
             "INSERT INTO seam (set_id, from_track_path, to_track_path, overlap_bars, eq_intent, status, note)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
              ON CONFLICT (set_id, from_track_path, to_track_path) DO UPDATE SET
@@ -474,7 +496,8 @@ impl SetStore {
         let json = serde_json::to_string(&loaded)?;
         let mut transaction = self.transaction()?;
         touch_set(&mut transaction, set)?;
-        transaction.execute(
+        execute_cached(
+            &transaction,
             "INSERT INTO set_revision (set_id, saved_at, reason, json) VALUES (?1, ?2, ?3, ?4)",
             (set.as_i64(), now_unix_millis(), reason, json),
         )?;
@@ -494,7 +517,8 @@ impl SetStore {
     ) -> Result<(), StoreError> {
         let mut transaction = self.transaction()?;
         touch_set(&mut transaction, set)?;
-        transaction.execute(
+        execute_cached(
+            &transaction,
             "INSERT INTO play_history (set_id, track_path, rekordbox_id, played_at, deck, off_plan)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             (
@@ -545,7 +569,8 @@ fn trim_backups(backups_folder: &Path, max_backups: usize) -> Result<(), StoreEr
 
 /// Refreshes a set's `updated_at`, failing if the set is gone.
 fn touch_set(transaction: &mut Transaction<'_>, set: SetId) -> Result<(), StoreError> {
-    let deleted = transaction.execute(
+    let deleted = execute_cached(
+        transaction,
         "UPDATE sets SET updated_at = ?2 WHERE id = ?1",
         (set.as_i64(), now_unix_millis()),
     )?;
@@ -561,7 +586,8 @@ fn update_set_name(
     set: SetId,
     name: &str,
 ) -> Result<(), StoreError> {
-    let updated = transaction.execute(
+    let updated = execute_cached(
+        transaction,
         "UPDATE sets SET name = ?2, updated_at = ?3 WHERE id = ?1",
         (set.as_i64(), name, now_unix_millis()),
     )?;
@@ -578,7 +604,8 @@ fn entry_at(
     list: SetList,
     position: usize,
 ) -> Result<usize, StoreError> {
-    let count: i64 = transaction.query_row(
+    let count: i64 = query_row_cached(
+        transaction,
         "SELECT COUNT(*) FROM set_entry
          WHERE set_id = ?1 AND is_backup = ?2 AND position = ?3",
         (set.as_i64(), list.is_backup(), position as i64),
@@ -605,12 +632,14 @@ fn shift_entry_positions(
     // SQLite checks a unique index row by row during an UPDATE, so shifting in place collides
     // with the neighbour not yet moved. The rows go to negative positions first, where no
     // entry sits, then back.
-    transaction.execute(
+    execute_cached(
+        transaction,
         "UPDATE set_entry SET position = -(position + ?5) - 1
          WHERE set_id = ?1 AND is_backup = ?2 AND position >= ?3 AND position < ?4",
         (set.as_i64(), list.is_backup(), start as i64, end, delta),
     )?;
-    transaction.execute(
+    execute_cached(
+        transaction,
         "UPDATE set_entry SET position = -position - 1
          WHERE set_id = ?1 AND is_backup = ?2 AND position < 0",
         (set.as_i64(), list.is_backup()),
@@ -627,7 +656,8 @@ fn insert_entry_row(
     position: usize,
     entry: &SetEntry,
 ) -> Result<(), StoreError> {
-    transaction.execute(
+    execute_cached(
+        transaction,
         "INSERT INTO set_entry
             (set_id, position, track_path, rekordbox_id, mix_in_ms, mix_out_ms, cue_source,
              grid_confirmed, energy_override, vocal_in_ms, vocal_out_ms, note, is_backup,
