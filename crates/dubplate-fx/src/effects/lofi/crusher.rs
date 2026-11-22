@@ -1,4 +1,5 @@
 use crate::context::BlockTiming;
+use crate::dsp::crush::SampleCrush;
 use crate::dsp::smoothing::Smoothed;
 use crate::effect::EffectKind;
 use crate::unit::{Controls, Frame, Kernel, MixLaw, Unit, implement_effect, knob};
@@ -71,8 +72,7 @@ impl Controls for Crusher {
 pub(crate) struct CrusherKernel {
     bits: Smoothed,
     rate_octaves: Smoothed,
-    hold_phase: f32,
-    held: Frame,
+    crush: SampleCrush,
     sample_rate: f32,
 }
 
@@ -81,8 +81,7 @@ impl CrusherKernel {
         Self {
             bits: Smoothed::new(DEFAULT_BITS, CONTROL_SMOOTHING_SECONDS),
             rate_octaves: Smoothed::new(DEFAULT_RATE_HZ.log2(), CONTROL_SMOOTHING_SECONDS),
-            hold_phase: 1.0,
-            held: [0.0; 2],
+            crush: SampleCrush::default(),
             sample_rate: 48_000.0,
         }
     }
@@ -102,17 +101,11 @@ impl Kernel for CrusherKernel {
     fn tick(&mut self, input: Frame, _beat_position: f64) -> Frame {
         let levels = (self.bits.next() - 1.0).exp2();
         let rate = self.rate_octaves.next().exp2();
-        self.hold_phase += rate / self.sample_rate;
-        if self.hold_phase >= 1.0 {
-            self.hold_phase = (self.hold_phase - 1.0).min(1.0);
-            self.held = input;
-        }
-        self.held.map(|sample| (sample * levels).round() / levels)
+        self.crush.tick(input, levels, rate / self.sample_rate)
     }
 
     fn reset(&mut self) {
-        self.hold_phase = 1.0;
-        self.held = [0.0; 2];
+        self.crush = SampleCrush::default();
         self.bits.snap_to_target();
         self.rate_octaves.snap_to_target();
     }

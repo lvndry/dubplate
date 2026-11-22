@@ -2,8 +2,6 @@
 //! Dubplate's database through the set worker, and saving a page of it as a tracklist where
 //! the DJ chooses in the system's save dialog.
 
-use std::collections::HashSet;
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
@@ -214,16 +212,8 @@ impl DubplateApp {
     /// Shows the history as it now stands in the browser.
     fn history_changed(&mut self, cx: &mut Context<'_, Self>) {
         let shelf = Arc::new(self.play_history.shelf(&self.time_zone));
-        let played: HashSet<PathBuf> = self
-            .play_history
-            .played_paths()
-            .map(Path::to_path_buf)
-            .collect();
-        let played = Arc::new(played);
-        self.browser.update(cx, |browser, cx| {
-            browser.set_history(shelf, cx);
-            browser.set_played(played, cx);
-        });
+        self.browser
+            .update(cx, |browser, cx| browser.set_history(shelf, cx));
     }
 
     /// Asks where to save a page of the history as a tracklist, starting in

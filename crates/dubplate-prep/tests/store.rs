@@ -129,7 +129,7 @@ fn refuses_a_database_newer_than_this_build() {
         result,
         Err(StoreError::NewerSchema {
             found: 99,
-            known: 4
+            known: 5
         })
     ));
 }
@@ -673,7 +673,7 @@ fn a_failed_migration_rolls_back_alone() {
     let user_version: i64 = connection
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .unwrap();
-    assert_eq!(user_version, 3, "the migration before it stays applied");
+    assert_eq!(user_version, 4, "the migration before it stays applied");
     let off_plan: i64 = connection
         .query_row("SELECT off_plan FROM play_history", [], |row| row.get(0))
         .unwrap();

@@ -1,10 +1,10 @@
 //! The effects strip under the decks: one compact row per effect unit with its effect, which
-//! opens the effect picker, its beat length, where it sits, its level and its On button. It
+//! opens the effect picker, its parameter, where it sits, its level and its On button. It
 //! shows what the controller's BEAT FX section changes as it changes.
 
 use std::rc::Rc;
 
-use dubplate_engine::{DeckId, EffectTarget, EffectUnitId, EffectUnitState};
+use dubplate_engine::{DeckId, EffectTarget, EffectUnitId, EffectUnitState, ReleaseFx};
 use gpui::component::input::Input;
 use gpui::prelude::*;
 use gpui::{
@@ -15,7 +15,7 @@ use gpui::{
 use super::{DubplateApp, HitAreas, Lever, MenuOpening};
 use crate::assets::CHEVRON_DOWN_PATH;
 use crate::commands::{Command, Direction, EffectEdit};
-use crate::effects::{effect_label, search, target_letter};
+use crate::effects::{effect_label, parameter_label, search, target_letter};
 use crate::fonts::MONO_FAMILY;
 use crate::theme;
 use crate::widgets::{InteractiveControl, adjusted_value};
@@ -75,11 +75,12 @@ fn unit_row(
         .bg(theme::PANEL)
         .child(unit_label(unit, focused))
         .child(effect_button(unit, &state, menu_open, cx))
-        .child(beat_stepper(unit, &state, cx))
+        .child(parameter_stepper(unit, &state, cx))
         .child(targets(unit, &state, cx))
         .when_some(lever, |row, lever| row.child(lever_reading(lever)))
         .child(level_bar(app, unit, state.depth, cx))
         .child(on_button(unit, state.enabled, accent, cx))
+        .child(release_button(unit, &state, cx))
         .when_some(menu, |row, menu| {
             row.child(picker(app, unit, &state, menu.opening, cx))
         })
@@ -138,15 +139,24 @@ fn effect_button(
         )
 }
 
-fn beat_stepper(
+fn parameter_stepper(
     unit: EffectUnitId,
     state: &EffectUnitState,
     cx: &mut Context<'_, DubplateApp>,
 ) -> impl IntoElement + use<> {
+    let name = state
+        .kind
+        .parameter()
+        .map_or("parameter", |spec| spec.name)
+        .to_lowercase();
     let arrow = |id: &'static str, glyph: &'static str, direction: Direction| {
+        let label = match direction {
+            Direction::Up => format!("Effect {} {name} up", unit.index() + 1),
+            Direction::Down => format!("Effect {} {name} down", unit.index() + 1),
+        };
         div()
             .id((id, unit.index()))
-            .accessible_button(format!("Effect {} {id}", unit.index() + 1))
+            .accessible_button(label)
             .flex()
             .items_center()
             .justify_center()
@@ -159,7 +169,7 @@ fn beat_stepper(
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                 this.perform(
-                    Command::Effect(unit, EffectEdit::Beat(direction)),
+                    Command::Effect(unit, EffectEdit::Parameter(direction)),
                     window,
                     cx,
                 );
@@ -177,7 +187,7 @@ fn beat_stepper(
                 .justify_center()
                 .font_family(MONO_FAMILY)
                 .text_size(theme::SMALL_TEXT_SIZE)
-                .child(state.beat.to_string()),
+                .child(parameter_label(state.parameter)),
         )
         .child(arrow("beat-longer", "\u{203a}", Direction::Up))
 }
@@ -339,6 +349,49 @@ fn on_button(
             this.perform(Command::Effect(unit, EffectEdit::Toggle), window, cx);
         }))
         .child("On")
+}
+
+/// The Release FX that SHIFT + BEAT FX ON plays on this unit; a click picks the next one. It
+/// lights while the release is held.
+fn release_button(
+    unit: EffectUnitId,
+    state: &EffectUnitState,
+    cx: &mut Context<'_, DubplateApp>,
+) -> impl IntoElement + use<> {
+    let name = release_label(state.release);
+    div()
+        .id(("effect-release", unit.index()))
+        .accessible_button(format!("Effect {} release: {name}", unit.index() + 1))
+        .flex()
+        .items_center()
+        .h(px(24.0))
+        .px(px(6.0))
+        .rounded(px(5.0))
+        .text_size(theme::TINY_TEXT_SIZE)
+        .cursor_pointer()
+        .map(|button| {
+            if state.releasing {
+                button.bg(theme::ATTENTION).text_color(theme::ON_DECK)
+            } else {
+                button
+                    .text_color(theme::MUTED)
+                    .hover(|button| button.bg(theme::RAISED).text_color(theme::TEXT))
+            }
+        })
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+            this.perform(Command::Effect(unit, EffectEdit::NextRelease), window, cx);
+        }))
+        .child(name)
+}
+
+/// A Release FX's name on the strip.
+fn release_label(release: ReleaseFx) -> &'static str {
+    match release {
+        ReleaseFx::Echo => "Echo out",
+        ReleaseFx::BackSpin => "Back spin",
+        ReleaseFx::VinylBrake => "Vinyl brake",
+    }
 }
 
 /// Where the controller's CH SELECT lever sits, next to the targets of the unit it drives, so

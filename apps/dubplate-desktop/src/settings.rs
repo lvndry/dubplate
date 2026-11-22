@@ -3,13 +3,18 @@
 
 use std::path::{Path, PathBuf};
 
+use dubplate_engine::{
+    ChannelFaderCurve, Crossfader, CrossfaderAssign, CrossfaderCurve, DECK_COUNT, DeckId,
+};
 use dubplate_library::{DataFolder, LibrarySettings};
+use dubplate_stems::StemsLocation;
 use serde::{Deserialize, Serialize};
 
 use crate::commands::Mode;
 use crate::controls::{DEFAULT_MASTER_LEVEL, DEFAULT_SAMPLER_VOLUME, MixerPositions};
 use crate::effects::EffectUnitSetting;
 use crate::library_view::SortSetting;
+use crate::pad_fx::PadFxSetting;
 
 /// Why the settings could not be read or written.
 #[derive(Debug, thiserror::Error)]
@@ -48,8 +53,14 @@ pub enum SettingsError {
 pub struct Settings {
     /// Whether a playing deck refuses a new track.
     pub lock_playing_deck: bool,
+    /// Whether cues, loops and jumps land on the beat grid.
+    pub quantize: bool,
+    /// Whether each deck's jog top holds the record, deck A first.
+    pub vinyl_mode: [bool; DECK_COUNT],
     /// The sound card last used, by name.
     pub audio_device: Option<String>,
+    /// Frames per buffer of the sound card.
+    pub buffer_frames: Option<u32>,
     /// The music folders, whether rekordbox is in the library, and the relinked files.
     #[serde(flatten)]
     pub library: LibrarySettings,
@@ -61,12 +72,105 @@ pub struct Settings {
     pub smart_cfx_on: bool,
     /// The sampler's volume and the sample in each slot.
     pub sampler: SamplerSetting,
+    /// The 32 Pad FX pads and the preset they started from.
+    pub pad_fx: PadFxSetting,
     /// The screen Dubplate was on, `prepare` or `perform`.
     pub screen: Option<String>,
     /// The master and headphone levels.
     pub levels: LevelsSetting,
+    /// The scrolling waveforms' zoom, in pixels a second.
+    pub lane_zoom: Option<f64>,
+    /// Where a track is cued when it loads.
+    pub auto_cue: AutoCueSetting,
+    /// The fader curves and the crossfader assign switches.
+    pub mixer: MixerSetting,
     /// How the library's tracks are sorted on each screen.
     pub library_sort: LibrarySortSetting,
+    /// Whether a track loaded on a deck starts with key lock on, as rekordbox's Master Tempo
+    /// default: the deck's Key lock button still changes it for the track on the deck.
+    pub key_lock_on_new_tracks: bool,
+}
+
+/// Where a track is cued when it loads, as rekordbox's Preferences > Controller > Deck.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AutoCueSetting {
+    /// Load Setting: cue at the track's earliest memory or hot cue when it has one.
+    pub saved_cues_first: bool,
+    /// Auto Cue: otherwise cue at the first sound, on the beat it starts with.
+    pub first_sound: bool,
+}
+
+impl Default for AutoCueSetting {
+    fn default() -> Self {
+        Self {
+            saved_cues_first: true,
+            first_sound: true,
+        }
+    }
+}
+
+/// The mixer's curves and switches as the DJ left them, by name: `blend`, `constant` or
+/// `scratch` for the crossfader curve, `slow`, `standard` or `fast` for the channel faders,
+/// and `A`, `THRU` or `B` for each deck's crossfader assign, deck A first. A name this
+/// version does not know takes the default.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MixerSetting {
+    /// Whether the crossfader changes the sound; off, both channels play as if on THRU.
+    pub crossfader_on: bool,
+    /// The crossfader curve.
+    pub crossfader_curve: String,
+    /// The channel fader curve.
+    pub channel_fader_curve: String,
+    /// Each deck's side of the crossfader.
+    pub crossfader_assign: [String; DECK_COUNT],
+}
+
+impl Default for MixerSetting {
+    fn default() -> Self {
+        Self::of(&Crossfader::default(), ChannelFaderCurve::default())
+    }
+}
+
+impl MixerSetting {
+    /// The setting that keeps `crossfader`'s switches and curve, its position aside, and
+    /// the channel fader curve.
+    pub fn of(crossfader: &Crossfader, channel_fader_curve: ChannelFaderCurve) -> Self {
+        Self {
+            crossfader_on: crossfader.enabled,
+            crossfader_curve: crossfader.curve.to_string(),
+            channel_fader_curve: channel_fader_curve.to_string(),
+            crossfader_assign: crossfader.assign.map(|assign| assign.to_string()),
+        }
+    }
+
+    /// The crossfader curve kept, or the default.
+    pub fn crossfader_curve(&self) -> CrossfaderCurve {
+        named(&CrossfaderCurve::ALL, &self.crossfader_curve).unwrap_or_default()
+    }
+
+    /// The channel fader curve kept, or the default.
+    pub fn channel_fader_curve(&self) -> ChannelFaderCurve {
+        named(&ChannelFaderCurve::ALL, &self.channel_fader_curve).unwrap_or_default()
+    }
+
+    /// The side kept for `deck`, or its default side.
+    pub fn crossfader_assign(&self, deck: DeckId) -> CrossfaderAssign {
+        named(
+            &CrossfaderAssign::ALL,
+            &self.crossfader_assign[deck.index()],
+        )
+        .unwrap_or_else(|| CrossfaderAssign::default_for(deck))
+    }
+}
+
+/// The value of `values` written as `name`.
+fn named<T: Copy + std::fmt::Display>(values: &[T], name: &str) -> Option<T> {
+    values
+        .iter()
+        .copied()
+        .find(|value| value.to_string() == name)
 }
 
 /// The output levels as the DJ left them, so Dubplate never opens louder than it closed.
@@ -210,15 +314,23 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             lock_playing_deck: true,
+            quantize: true,
+            vinyl_mode: [true; DECK_COUNT],
             audio_device: None,
+            buffer_frames: None,
             library: LibrarySettings::default(),
             effect_units: Vec::new(),
             smart_cfx_preset: None,
             smart_cfx_on: false,
             sampler: SamplerSetting::default(),
+            pad_fx: PadFxSetting::default(),
             screen: None,
             levels: LevelsSetting::default(),
+            lane_zoom: None,
+            auto_cue: AutoCueSetting::default(),
+            mixer: MixerSetting::default(),
             library_sort: LibrarySortSetting::default(),
+            key_lock_on_new_tracks: true,
         }
     }
 }
@@ -237,6 +349,11 @@ impl Settings {
     /// Where what Dubplate's analysis found in each track is kept between launches.
     pub fn analysis_cache_path() -> Result<PathBuf, SettingsError> {
         Ok(data_folder()?.analysis_cache())
+    }
+
+    /// Where separated stems and the separation model are kept.
+    pub fn stems_location() -> Result<StemsLocation, SettingsError> {
+        Ok(StemsLocation::in_data_folder(&data_folder()?))
     }
 
     /// The file that keeps a second Dubplate from starting beside this one.
@@ -315,7 +432,10 @@ mod tests {
         let path = directory.path().join("nested").join(FILE_NAME);
         let settings = Settings {
             lock_playing_deck: false,
+            quantize: false,
+            vinyl_mode: [true, false],
             audio_device: Some("Studio Speakers".to_owned()),
+            buffer_frames: Some(512),
             library: LibrarySettings {
                 music_folders: vec![
                     PathBuf::from("/Music/House"),
@@ -330,8 +450,9 @@ mod tests {
             effect_units: vec![EffectUnitSetting {
                 effect: "reverb".to_owned(),
                 target: "M".to_owned(),
-                beat: "2".to_owned(),
+                parameter: "2".to_owned(),
                 depth: 0.25,
+                release: "vinyl brake".to_owned(),
             }],
             smart_cfx_preset: Some("dub echo".to_owned()),
             smart_cfx_on: true,
@@ -346,12 +467,34 @@ mod tests {
                     sync: false,
                 }],
             },
+            pad_fx: {
+                let mut banks =
+                    crate::pad_fx::PadFxBanks::from_preset(crate::pad_fx::PadFxPreset::Amapiano);
+                banks.edit(crate::pad_fx::PadFxLayer::Fx2, 2, |slot| {
+                    slot.toggle_trigger().step_parameter(1)
+                });
+                banks.setting()
+            },
             screen: Some("prepare".to_owned()),
             levels: LevelsSetting {
                 master: 0.4,
                 headphones: 0.3,
                 headphone_mix: 0.7,
             },
+            lane_zoom: Some(75.0),
+            auto_cue: AutoCueSetting {
+                saved_cues_first: false,
+                first_sound: true,
+            },
+            mixer: MixerSetting::of(
+                &Crossfader {
+                    enabled: false,
+                    position: 0.5,
+                    curve: CrossfaderCurve::Scratch,
+                    assign: [CrossfaderAssign::Thru, CrossfaderAssign::A],
+                },
+                ChannelFaderCurve::Fast,
+            ),
             library_sort: LibrarySortSetting {
                 prepare: Some(SortSetting {
                     column: "bpm".to_owned(),
@@ -359,6 +502,7 @@ mod tests {
                 }),
                 perform: None,
             },
+            key_lock_on_new_tracks: false,
         };
         settings.save(&path).unwrap();
         assert_eq!(Settings::load(&path).unwrap(), settings);
@@ -395,6 +539,46 @@ mod tests {
     }
 
     #[test]
+    fn mixer_switches_come_back_by_name_and_unknown_names_take_the_default() {
+        let kept = MixerSetting::of(
+            &Crossfader {
+                curve: CrossfaderCurve::Constant,
+                assign: [CrossfaderAssign::B, CrossfaderAssign::Thru],
+                ..Crossfader::default()
+            },
+            ChannelFaderCurve::Slow,
+        );
+        assert!(kept.crossfader_on);
+        assert_eq!(kept.crossfader_curve(), CrossfaderCurve::Constant);
+        assert_eq!(kept.channel_fader_curve(), ChannelFaderCurve::Slow);
+        assert_eq!(kept.crossfader_assign(DeckId::A), CrossfaderAssign::B);
+        assert_eq!(kept.crossfader_assign(DeckId::B), CrossfaderAssign::Thru);
+        let unknown = MixerSetting {
+            crossfader_on: true,
+            crossfader_curve: "wobbly".to_owned(),
+            channel_fader_curve: String::new(),
+            crossfader_assign: ["left".to_owned(), "right".to_owned()],
+        };
+        assert_eq!(unknown.crossfader_curve(), CrossfaderCurve::Blend);
+        assert_eq!(unknown.channel_fader_curve(), ChannelFaderCurve::Standard);
+        assert_eq!(unknown.crossfader_assign(DeckId::A), CrossfaderAssign::A);
+        assert_eq!(unknown.crossfader_assign(DeckId::B), CrossfaderAssign::B);
+    }
+
+    #[test]
+    fn key_lock_on_new_tracks_is_kept_off_once_turned_off() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join(FILE_NAME);
+        let mut settings = Settings::default();
+        assert!(settings.key_lock_on_new_tracks);
+        settings.key_lock_on_new_tracks = false;
+        settings.save(&path).unwrap();
+        let saved = std::fs::read_to_string(&path).unwrap();
+        assert!(saved.contains("key_lock_on_new_tracks = false"), "{saved}");
+        assert!(!Settings::load(&path).unwrap().key_lock_on_new_tracks);
+    }
+
+    #[test]
     fn a_missing_file_or_setting_takes_the_default() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join(FILE_NAME);
@@ -402,6 +586,10 @@ mod tests {
         std::fs::write(&path, "audio_device = \"Headphones\"\n").unwrap();
         let settings = Settings::load(&path).unwrap();
         assert!(settings.lock_playing_deck);
+        assert!(
+            settings.key_lock_on_new_tracks,
+            "key lock is on for new tracks unless the DJ turned it off"
+        );
         assert_eq!(settings.audio_device.as_deref(), Some("Headphones"));
         assert!(settings.library.music_folders.is_empty());
         assert!(
