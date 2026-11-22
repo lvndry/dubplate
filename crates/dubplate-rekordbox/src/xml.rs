@@ -187,7 +187,7 @@ fn write_track(out: &mut String, track: &XmlTrack) {
         attribute(out, "Inizio", &seconds(tempo.start_ms));
         attribute(out, "Bpm", &bpm(tempo.tempo_hundredths));
         attribute(out, "Metro", FOUR_FOUR);
-        attribute(out, "Battito", &tempo.beat_in_bar.to_string());
+        attribute(out, "Battito", &battito(tempo.beat_in_bar).to_string());
         out.push_str("/>\n");
     }
     for mark in &track.position_marks {
@@ -289,6 +289,12 @@ fn is_xml_character(character: char) -> bool {
     )
 }
 
+/// The place in a 4/4 bar rekordbox reads, from 1 to 4, whatever count a grid carries: a beat
+/// numbered 0 or past the bar after a downbeat shift would otherwise be dropped on import.
+fn battito(beat_in_bar: u16) -> u16 {
+    beat_in_bar.saturating_sub(1) % 4 + 1
+}
+
 /// The `Location` of an audio file as rekordbox writes it: `file://localhost` and the absolute
 /// path with forward slashes, each byte of a character outside the set rekordbox leaves as it
 /// is written as `%` and two lowercase hex digits, so `/Music/Café Del Mar.mp3` becomes
@@ -342,6 +348,11 @@ fn path_bytes(path: &Path) -> std::borrow::Cow<'_, [u8]> {
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
+
+    #[test]
+    fn battito_stays_in_the_bar() {
+        assert_eq!([0, 1, 4, 5, 8].map(battito), [1, 1, 4, 1, 4]);
+    }
 
     use super::*;
 
