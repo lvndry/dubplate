@@ -18,5 +18,10 @@ thiserror = "2.0.21"
 workspace = true
 
 [dev-dependencies]
+criterion = "0.8.2"
 crossterm = "0.29.0"
 tempfile = "3.27.0"
+
+[[bench]]
+name = "render"
+harness = false
