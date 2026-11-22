@@ -28,14 +28,8 @@ impl DubplateApp {
                     .collect()
             })
             .unwrap_or_default();
-        let catalogue = &self.catalogue;
-        self.energy.request(
-            set_tracks.iter().map(|path| {
-                let bpm = catalogue.get(path).and_then(|track| track.bpm);
-                (path.as_path(), bpm)
-            }),
-            EnergyPriority::Set,
-        );
+        self.energy
+            .request(set_tracks.iter().map(PathBuf::as_path), EnergyPriority::Set);
         cx.notify();
         self.collect_energy_while_waiting(cx);
     }
@@ -46,7 +40,7 @@ impl DubplateApp {
             self.catalogue
                 .tracks
                 .iter()
-                .map(|track| (track.track_path.as_path(), track.bpm)),
+                .map(|track| track.track_path.as_path()),
             EnergyPriority::Library,
         );
         cx.notify();
