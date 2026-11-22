@@ -13,6 +13,7 @@ use crate::browser::LibraryStatus;
 use crate::collection::{Collection, RekordboxLibrary, folder_name};
 use crate::library::{RekordboxSource, ScanRequest};
 use crate::prep;
+use crate::relink::{missing_tracks, relink_map};
 use crate::settings::Settings;
 
 /// How often the scan progress is redrawn while a scan runs.
@@ -215,7 +216,7 @@ impl DubplateApp {
     }
 
     /// Builds the collection again from the sources, on a background thread, and shows it.
-    fn rebuild_collection(&mut self, cx: &mut Context<'_, Self>) {
+    pub(super) fn rebuild_collection(&mut self, cx: &mut Context<'_, Self>) {
         self.library_generation += 1;
         let generation = self.library_generation;
         if self.sources.is_unchosen() {
@@ -227,13 +228,16 @@ impl DubplateApp {
             RekordboxSource::Off | RekordboxSource::Reading | RekordboxSource::Failed(_) => None,
         };
         let scans = self.sources.chosen_scans();
+        let relinks = relink_map(&self.settings.relinks);
         cx.spawn(async move |this, cx| {
-            let (collection, catalogue) = cx
+            let (collection, catalogue, missing) = cx
                 .background_executor()
                 .spawn(async move {
-                    let collection = Collection::build(rekordbox.as_deref(), &scans);
+                    let collection =
+                        Collection::build_relinked(rekordbox.as_deref(), &scans, &relinks);
                     let catalogue = prep::Catalogue::build(&collection);
-                    (collection, catalogue)
+                    let missing = missing_tracks(&collection, &relinks);
+                    (collection, catalogue, missing)
                 })
                 .await;
             this.update(cx, |this, cx| {
@@ -241,6 +245,7 @@ impl DubplateApp {
                     this.catalogue = Arc::new(catalogue);
                     this.restore_energy();
                     this.show_library(LibraryStatus::Ready(Arc::new(collection)), cx);
+                    this.show_missing(missing, cx);
                     this.forget_track_checks();
                     this.set_changed(cx);
                     this.request_library_energy(cx);

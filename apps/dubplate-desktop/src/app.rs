@@ -19,6 +19,7 @@ mod pad_grid;
 mod pads;
 mod prepare;
 mod recording;
+mod relink;
 mod sampler;
 mod set_panel;
 mod slider;
@@ -69,6 +70,7 @@ use crate::meter::PeakMeter;
 use crate::pads::{PadFx, next_mode};
 use crate::prep::{Catalogue, GridCorrection, TrackCheck, TrackDetail};
 use crate::recording::Recording;
+use crate::relink::Missing;
 use crate::set::SetEditor;
 use crate::settings::Settings;
 use crate::shortcuts::{Perform, WINDOW_CONTEXT};
@@ -78,6 +80,7 @@ use crate::waveform::Zoom;
 use audition::Audition;
 use pads::HeldPad;
 use prepare::PrepareFocus;
+use relink::RelinkReview;
 
 /// Frames per device buffer: about 5 ms at 48 kHz.
 const BUFFER_FRAMES: u32 = 256;
@@ -187,6 +190,9 @@ pub struct DubplateApp {
     detail_pending: Option<PathBuf>,
     check_cursor_seconds: f64,
     catalogue: Arc<Catalogue>,
+    missing: Arc<Vec<Missing>>,
+    relinking: bool,
+    relink_review: Option<RelinkReview>,
     audition: Option<Audition>,
     audition_generation: u64,
     energy: EnergyRatings,
@@ -225,6 +231,8 @@ impl DubplateApp {
                 },
                 BrowserEvent::AddMusicFolders => this.add_music_folders(cx),
                 BrowserEvent::ImportRekordbox => this.set_rekordbox_import(true, cx),
+                BrowserEvent::RelinkAll => this.start_relink(None, cx),
+                BrowserEvent::Relink(track) => this.start_relink(Some(track), cx),
             });
         let effect_search = cx.new(|cx| InputState::new(window, cx).placeholder("Find an effect"));
         let quit_subscription = cx.on_app_quit(|this: &mut Self, _| {
@@ -330,6 +338,9 @@ impl DubplateApp {
             detail_pending: None,
             check_cursor_seconds: 0.0,
             catalogue: Arc::default(),
+            missing: Arc::default(),
+            relinking: false,
+            relink_review: None,
             audition: None,
             audition_generation: 0,
             energy: EnergyRatings::new(
@@ -706,6 +717,8 @@ impl DubplateApp {
             Command::Dismiss => {
                 if self.effect_menu.is_some() {
                     self.close_effect_menu(cx);
+                } else if self.relink_review.is_some() {
+                    self.close_relink_review(cx);
                 } else if self.help_open || self.library_open {
                     self.help_open = false;
                     self.library_open = false;
@@ -1563,6 +1576,9 @@ impl Render for DubplateApp {
                     .map(|notice| notice_toast(notice.text.clone())),
             )
             .when(self.help_open, |root| root.child(help::render(cx)))
+            .when_some(self.relink_review.as_ref(), |root, review| {
+                root.child(relink::render(self, review, cx))
+            })
             .when(self.library_open, |root| {
                 root.child(library_panel::render(self, cx))
             });
