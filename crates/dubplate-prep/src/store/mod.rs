@@ -152,6 +152,10 @@ pub struct SetStore {
     database_path: PathBuf,
 }
 
+/// Room for every statement the store runs, so none is compiled again because another pushed
+/// it out of the cache.
+const STATEMENT_CACHE_CAPACITY: usize = 32;
+
 /// The folder next to the database that keeps pre-migration backups.
 const BACKUPS_FOLDER_NAME: &str = "backups";
 
@@ -174,6 +178,7 @@ impl SetStore {
         let existing = path.exists();
         let connection = Connection::open(path)?;
         connection.pragma_update(None, "journal_mode", "wal")?;
+        connection.set_prepared_statement_cache_capacity(STATEMENT_CACHE_CAPACITY);
 
         let user_version: i64 =
             connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
