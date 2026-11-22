@@ -1694,8 +1694,12 @@ fn export_crate_button(
         .mr(px(4.0))
         .rounded(theme::SMALL_RADIUS)
         .text_size(theme::TINY_TEXT_SIZE)
-        .text_color(theme::MUTED)
-        .hover(|button| button.bg(theme::PANEL).text_color(theme::TEXT))
+        .text_color(theme::active().muted)
+        .hover(|button| {
+            button
+                .bg(theme::active().panel)
+                .text_color(theme::active().text)
+        })
         .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {
             cx.stop_propagation();
             cx.emit(BrowserEvent::ExportCrateToUsb(crate_index));

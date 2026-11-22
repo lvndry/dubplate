@@ -228,7 +228,11 @@ fn usb_button(cx: &mut Context<'_, DubplateApp>) -> impl IntoElement + use<> {
         .px(px(6.0))
         .rounded(theme::SMALL_RADIUS)
         .cursor_pointer()
-        .hover(|button| button.bg(theme::RAISED).text_color(theme::TEXT))
+        .hover(|button| {
+            button
+                .bg(theme::active().raised)
+                .text_color(theme::active().text)
+        })
         .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.export_set_to_usb(cx)))
         .child("USB\u{2026}")
 }
