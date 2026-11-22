@@ -77,7 +77,7 @@ Statuses are as audited on 22 November 2026, on `main` with a second Dubplate ru
 
 **T2 Tempo range.** SHIFT + BEAT SYNC steps ±6, ±10, ±16, WIDE. See: the range beside the tempo. Status: **Done.**
 
-**T3 Fine tempo by key.** Must: 0.02% steps, a CDJ's finest at ±6. Status: **Gap** (0.1% a press).
+**T3 Fine tempo by key.** Must: 0.02% steps, a CDJ's finest at ±6. Status: **Done**: each press moves the range's finest step, 0.02% at ±6, 0.04% at ±10 and ±16, 0.5% at WIDE.
 
 **T4 BEAT SYNC.** Must: takes the master's BPM and beat phase at once and follows it. See: SYNC lit (armed while it waits for a master); the beat lines line up. FLX4: BEAT SYNC lit. Status: **Done.**
 
