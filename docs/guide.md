@@ -94,6 +94,7 @@ On the FLX4, everything works as in rekordbox's FLX4 layout:
 - PLAY, CUE (CDJ style), hot cue pads (a cue you set or delete is kept with the track, for the next time it loads and for the export), TEMPO, BEAT SYNC (hold for tempo master, SHIFT for the tempo range), the jogs (touch to scratch, side to nudge, SHIFT to search).
 - The mixer: TRIM, HI/MID/LOW, the filter knobs, channel faders, crossfader, headphone CUE, MIX and LEVEL.
 - The pad modes: Hot Cue, Pad FX 1 and 2 (hold for rolls and effects), Beat Jump, Beat Loop, Sampler, Keyboard, Key Shift; the loop section IN, OUT, 4 BEAT/EXIT.
+- CUE/LOOP CALL ◀ ▶ calls the memory cue before or after the playhead: the deck pauses there with its cue point on it, as on a CDJ. With a loop on, they halve and double it. SHIFT + ▶ keeps the cue point (or the loop that is on) as a memory cue, up to 10 per track; SHIFT + ◀ deletes the memory cue at the cue point. Memory cues show as red triangles along the top of the scrolling waveforms and are kept with the track. On the keyboard: H and J call, N keeps, ⌥N deletes (with ⇧ for deck B).
 - BEAT FX: FX SELECT, BEAT left and right, the CH SELECT lever, LEVEL/DEPTH and ON/OFF.
 - SMART CFX turns both filter knobs into the chosen preset (Space, Dub echo, Crush, Chop, Jet, Phase; SHIFT + SMART CFX steps through them). SMART FADER makes the crossfader glide a shared tempo and swap the bass for you; a LOW knob you turn takes over.
 

@@ -266,11 +266,17 @@ impl Dispatcher {
                 Some(Command::Loop(deck_id(deck), LoopAction::FourBeatOrExit))
             }
             (Button::CueLoopCall { deck, direction }, Layer::Normal) if pressed => {
-                let action = match direction {
-                    Arrow::Left => LoopAction::Halve,
-                    Arrow::Right => LoopAction::Double,
+                let direction = match direction {
+                    Arrow::Left => Direction::Down,
+                    Arrow::Right => Direction::Up,
                 };
-                Some(Command::Loop(deck_id(deck), action))
+                Some(Command::CueLoopCall(deck_id(deck), direction))
+            }
+            (Button::CueLoopCall { deck, direction }, Layer::Shift) if pressed => {
+                Some(match direction {
+                    Arrow::Left => Command::DeleteMemoryCue(deck_id(deck)),
+                    Arrow::Right => Command::StoreMemoryCue(deck_id(deck)),
+                })
             }
             _ => None,
         }
@@ -466,6 +472,43 @@ mod tests {
     }
 
     #[test]
+    fn the_flx4_cue_loop_call_arrows_call_store_and_delete_memory_cues() {
+        let mapping = dubplate_midi::Mapping::built_in_for_port("DDJ-FLX4")
+            .expect("the built-in mappings parse")
+            .expect("the FLX4 has a built-in mapping");
+        let mut decoder = dubplate_midi::Decoder::new(std::sync::Arc::new(mapping));
+        let mut dispatcher = Dispatcher::default();
+        let surface = Surface::default();
+        let messages: [[u8; 3]; 8] = [
+            [0x90, 0x51, 0x7F],
+            [0x90, 0x51, 0x00],
+            [0x90, 0x53, 0x7F],
+            [0x91, 0x51, 0x7F],
+            [0x91, 0x53, 0x7F],
+            [0x90, 0x3D, 0x7F],
+            [0x90, 0x3E, 0x7F],
+            [0x91, 0x3D, 0x7F],
+        ];
+        let events: Vec<ControlEvent> = messages
+            .iter()
+            .filter_map(|message| decoder.decode(message))
+            .collect();
+        assert_eq!(
+            run(&mut dispatcher, &surface, &events),
+            [
+                Command::CueLoopCall(DeckId::A, Direction::Down),
+                Command::CueLoopCall(DeckId::A, Direction::Up),
+                Command::CueLoopCall(DeckId::B, Direction::Down),
+                Command::CueLoopCall(DeckId::B, Direction::Up),
+                Command::StoreMemoryCue(DeckId::A),
+                Command::DeleteMemoryCue(DeckId::A),
+                Command::StoreMemoryCue(DeckId::B),
+            ],
+            "◀ and ▶ call, SHIFT + ▶ stores and SHIFT + ◀ deletes, as in rekordbox's FLX4 layout"
+        );
+    }
+
+    #[test]
     fn the_loop_section_follows_rekordbox() {
         let mut dispatcher = Dispatcher::default();
         let surface = Surface::default();
@@ -493,8 +536,8 @@ mod tests {
                 Command::Loop(DeckId::A, LoopAction::In),
                 Command::Loop(DeckId::A, LoopAction::Out),
                 Command::Loop(DeckId::B, LoopAction::FourBeatOrExit),
-                Command::Loop(DeckId::B, LoopAction::Halve),
-                Command::Loop(DeckId::B, LoopAction::Double),
+                Command::CueLoopCall(DeckId::B, Direction::Down),
+                Command::CueLoopCall(DeckId::B, Direction::Up),
             ]
         );
     }

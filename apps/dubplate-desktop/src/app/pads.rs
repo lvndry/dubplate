@@ -225,7 +225,7 @@ impl DubplateApp {
     }
 
     /// A loop button, as on rekordbox: 4 BEAT/EXIT starts a four-beat loop or leaves the one
-    /// that is on, and the CUE/LOOP CALL arrows halve or double a loop that is on.
+    /// that is on.
     pub(super) fn loop_button(
         &mut self,
         deck: DeckId,
@@ -241,9 +241,6 @@ impl DubplateApp {
             LoopAction::Out => controller.loop_out(deck),
             LoopAction::FourBeatOrExit if looping => controller.reloop_or_exit(deck),
             LoopAction::FourBeatOrExit => controller.beat_loop(deck, AUTO_BEAT_LOOP),
-            LoopAction::Halve if looping => controller.halve_loop(deck),
-            LoopAction::Double if looping => controller.double_loop(deck),
-            LoopAction::Halve | LoopAction::Double => Ok(()),
         });
     }
 
