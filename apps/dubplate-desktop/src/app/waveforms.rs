@@ -53,7 +53,9 @@ impl DubplateApp {
             while !decoded(&audio) {
                 cx.background_executor().timer(DECODE_CHECK_INTERVAL).await;
                 let still_loaded = this
-                    .update(cx, |this, _| this.deck(deck).is_current_load(generation))
+                    .update(cx, |this, _| {
+                        this.deck(deck).is_loaded_generation(generation)
+                    })
                     .unwrap_or(false);
                 if !still_loaded {
                     this.update(cx, |this, _| this.waveform_cache.abandon(&path))

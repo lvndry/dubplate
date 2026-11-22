@@ -203,19 +203,22 @@ pub fn prepare_track(
     })
 }
 
-/// rekordbox's grid as the engine keeps it: the tempo at the first downbeat, and where that
-/// downbeat falls, so effects land on the beat and the bar.
+/// Preserves every tempo segment and anchors beat zero at the first downbeat.
 fn engine_beat_grid(grid: &BeatGrid) -> Option<dubplate_engine::BeatGrid> {
-    let first = grid
+    let downbeat = grid
         .beats
         .iter()
-        .find(|beat| beat.beat_in_bar == 1)
-        .or_else(|| grid.beats.first())?;
-    dubplate_engine::BeatGrid::new(
-        f64::from(first.tempo_hundredths) / 100.0,
-        f64::from(first.time_ms) / 1000.0,
-    )
-    .ok()
+        .position(|beat| beat.beat_in_bar == 1)
+        .unwrap_or(0);
+    let beats: Vec<_> = grid
+        .beats
+        .iter()
+        .map(|beat| dubplate_engine::GridBeat {
+            seconds: f64::from(beat.time_ms) / 1000.0,
+            bpm: f64::from(beat.tempo_hundredths) / 100.0,
+        })
+        .collect();
+    dubplate_engine::BeatGrid::from_beats_with_downbeat(&beats, downbeat).ok()
 }
 
 /// The letter of a deck, as printed on it.
@@ -305,6 +308,8 @@ pub struct Deck {
     /// Where the deck's beat grid comes from, when it has one.
     pub grid_source: Option<GridSource>,
     load_generation: u64,
+    committed_generation: u64,
+    pending: Option<(Arc<CollectionTrack>, HotCues)>,
 }
 
 impl Deck {
@@ -312,18 +317,56 @@ impl Deck {
     /// result must bring back, so a slower earlier load never replaces a later one.
     pub fn begin_load(&mut self, track: Arc<CollectionTrack>, hot_cues: HotCues) -> u64 {
         self.load_generation += 1;
+        self.pending = Some((track, hot_cues));
+        if self.track.is_none() {
+            self.content = DeckContent::Loading;
+        }
+        self.load_generation
+    }
+
+    /// Makes a successfully committed engine load visible; stale completions do nothing.
+    pub fn commit_load(
+        &mut self,
+        generation: u64,
+        visuals: TrackVisuals,
+        grid_source: Option<GridSource>,
+    ) -> bool {
+        if !self.is_current_load(generation) {
+            return false;
+        }
+        let Some((track, hot_cues)) = self.pending.take() else {
+            return false;
+        };
+        self.committed_generation = generation;
         self.track = Some(track);
-        self.content = DeckContent::Loading;
         self.hot_cues = hot_cues;
+        self.content = DeckContent::Loaded(visuals);
         self.cue_preview = false;
         self.tap_tempo = TapTempo::default();
-        self.grid_source = None;
-        self.load_generation
+        self.grid_source = grid_source;
+        true
+    }
+
+    /// Abandons a failed replacement while keeping the previous loaded track usable.
+    pub fn fail_load(&mut self, generation: u64, problem: String) {
+        if !self.is_current_load(generation) {
+            return;
+        }
+        self.pending = None;
+        if self.track.is_none() {
+            self.content = DeckContent::Failed(problem);
+        }
     }
 
     /// Whether a load result with `generation` is the latest one asked for.
     pub fn is_current_load(&self, generation: u64) -> bool {
         self.load_generation == generation
+    }
+
+    /// Whether a background visual still belongs to the committed track. A pending or
+    /// failed replacement must not cancel work for the track that remains on the deck.
+    pub fn is_loaded_generation(&self, generation: u64) -> bool {
+        self.track.is_some() && self.committed_generation == generation
     }
 
     /// The waveforms and beat grid, once loaded.
@@ -352,8 +395,79 @@ mod tests {
         );
         assert!(!deck.is_current_load(first));
         assert!(deck.is_current_load(second));
-        let title = deck.track.as_ref().map(|track| track.row.title.to_string());
-        assert_eq!(title.as_deref(), Some("two"));
+        assert!(
+            deck.track.is_none(),
+            "pending requests must not replace the loaded identity"
+        );
+        assert_eq!(deck.pending.as_ref().unwrap().0.row.title.as_ref(), "two");
+    }
+
+    fn visuals() -> TrackVisuals {
+        TrackVisuals {
+            zoomed: None,
+            overview: None,
+            beats: Arc::default(),
+            analysis_problem: None,
+        }
+    }
+
+    #[test]
+    fn failed_replacement_retains_identity_cues_grid_and_visuals() {
+        let mut deck = Deck::default();
+        let mut cues = HotCues::default();
+        cues.set(HotCuePad::B, 2.0);
+        let first = deck.begin_load(
+            Arc::new(CollectionTrack::from_file(Path::new("old.mp3"))),
+            cues,
+        );
+        assert!(deck.commit_load(first, visuals(), Some(GridSource::Tapped)));
+        let failed = deck.begin_load(
+            Arc::new(CollectionTrack::from_file(Path::new("missing.mp3"))),
+            HotCues::default(),
+        );
+        assert_eq!(deck.track.as_ref().unwrap().row.title.as_ref(), "old");
+        assert!(deck.is_loaded_generation(first));
+        assert!(!deck.is_current_load(first));
+        deck.fail_load(failed, "missing".into());
+        assert!(deck.is_loaded_generation(first));
+        assert_eq!(deck.track.as_ref().unwrap().row.title.as_ref(), "old");
+        assert_eq!(deck.hot_cues.get(HotCuePad::B), Some(2.0));
+        assert_eq!(deck.grid_source, Some(GridSource::Tapped));
+        assert!(deck.visuals().is_some());
+        assert!(!deck.commit_load(first, visuals(), None));
+    }
+
+    #[test]
+    fn variable_grid_keeps_tempo_changes_and_the_downbeat_anchor() {
+        use dubplate_rekordbox::analysis::Beat;
+        let grid = BeatGrid {
+            beats: vec![
+                Beat {
+                    time_ms: 0,
+                    tempo_hundredths: 12000,
+                    beat_in_bar: 4,
+                },
+                Beat {
+                    time_ms: 500,
+                    tempo_hundredths: 12000,
+                    beat_in_bar: 1,
+                },
+                Beat {
+                    time_ms: 1000,
+                    tempo_hundredths: 10000,
+                    beat_in_bar: 2,
+                },
+                Beat {
+                    time_ms: 1600,
+                    tempo_hundredths: 10000,
+                    beat_in_bar: 3,
+                },
+            ],
+        };
+        let engine = engine_beat_grid(&grid).unwrap();
+        assert!((engine.bpm_at(3.0) - 100.0).abs() < 1e-8);
+        assert!((engine.beat_at(0.5)).abs() < 1e-8);
+        assert!((engine.beat_at(0.0) + 1.0).abs() < 1e-8);
     }
 
     #[test]

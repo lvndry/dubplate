@@ -8,7 +8,8 @@ use dubplate_engine::{
 };
 use gpui::{Context, SharedString};
 
-use super::{BUFFER_FRAMES, DubplateApp, Engine, NoticePlace, error_chain};
+use super::notice::NoticePlace;
+use super::{BUFFER_FRAMES, DubplateApp, Engine, error_chain};
 use crate::controls::{MixerPositions, master_gain_at, tempo_fader, trim_gain_at};
 
 /// Starts the engine on the sound card called `device`, or on the system's default one when
@@ -66,19 +67,13 @@ fn apply_mixer(controller: &mut Controller, mixer: &MixerPositions) -> Result<()
 /// cue points and grids, the headphone buttons, the effect units, the tempo ranges and sync.
 fn carry_over(source: &Controller, target: &mut Controller) -> Result<(), EngineError> {
     for deck in DeckId::ALL {
-        if let Some(track) = source.track(deck).cloned() {
-            let state = source.deck_state(deck);
-            target.load_track(deck, track)?;
-            target.set_beat_grid(deck, source.beat_grid(deck))?;
-            target.set_cue_point(deck, state.cue_point_seconds)?;
-            target.seek(deck, state.position_seconds)?;
-        }
-        target.set_key_lock(deck, source.key_lock(deck))?;
-        target.set_key_shift(deck, source.key_shift(deck))?;
-        target.set_slip(deck, source.slip_state(deck).enabled)?;
+        let snapshot = source.snapshot_deck(deck)?;
+        target.restore_deck(
+            deck,
+            &snapshot,
+            dubplate_engine::DeckRestorePolicy::DeviceChange,
+        )?;
         let tempo = source.tempo_state(deck);
-        target.set_tempo_range(deck, tempo.tempo_range)?;
-        target.set_sync(deck, tempo.sync)?;
         if tempo.is_master {
             target.set_master_tempo(MasterTempo::Deck(deck))?;
         }
