@@ -8,14 +8,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use dubplate_prep::{
-    EnergyDirection, GridCorrection, PrepTrack, ReadyProblem, ReadyReport, SetEntry, SetTrack,
-    SetWarning, StoreError, WarningPosition, set_warnings, suggest_next,
+    AudioAnalysis, EnergyDirection, GridCorrection, PrepTrack, ReadyProblem, ReadyReport, SetEntry,
+    SetTrack, SetWarning, StoreError, WarningPosition, set_warnings, suggest_next,
 };
 use gpui::{App, Context};
 
 use super::{DubplateApp, NoticePlace};
 use crate::collection::{TrackIndex, TrackOrigin};
-use crate::commands::{Direction, SetEdit};
+use crate::commands::{Direction, Mode, SetEdit};
 use crate::energy::{EnergyRange, direction_toward_target, set_curve};
 use crate::loading::LoadSource;
 use crate::prep::{
@@ -26,7 +26,7 @@ use crate::set::{SetEditor, SetTrackRef};
 /// How many tracks the Next panel suggests.
 const SUGGESTIONS: usize = 5;
 
-/// Which side of the Prepare screen the arrow keys move through.
+/// Which part of the Prepare screen the arrow keys and Enter work on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(super) enum PrepareFocus {
     /// The library's tracks.
@@ -34,6 +34,19 @@ pub(super) enum PrepareFocus {
     Library,
     /// The set's tracks.
     Set,
+    /// The Next suggestions.
+    Next,
+}
+
+impl PrepareFocus {
+    /// The part Tab moves to, or Shift-Tab with [`Direction::Up`].
+    pub(super) fn step(self, direction: Direction) -> Self {
+        match (self, direction) {
+            (Self::Library, Direction::Down) | (Self::Next, Direction::Up) => Self::Set,
+            (Self::Set, Direction::Down) | (Self::Library, Direction::Up) => Self::Next,
+            (Self::Next, Direction::Down) | (Self::Set, Direction::Up) => Self::Library,
+        }
+    }
 }
 
 /// A set track as the panel shows it.
@@ -78,6 +91,18 @@ pub(super) struct NextSuggestions {
 impl DubplateApp {
     /// Carries out a change to the set.
     pub(super) fn edit_set(&mut self, edit: SetEdit, cx: &mut Context<'_, Self>) {
+        let edit = match edit {
+            SetEdit::Add | SetEdit::InsertAfterSelection
+                if self.mode == Mode::Prepare && self.prepare_focus == PrepareFocus::Next =>
+            {
+                SetEdit::InsertSuggestion(self.next_cursor)
+            }
+            edit => edit,
+        };
+        if let SetEdit::InsertSuggestion(rank) = edit {
+            self.insert_suggestion_ranked(rank, cx);
+            return;
+        }
         let selected = self.library_selection(cx);
         let Some(editor) = self.set_editor.as_mut() else {
             return;
@@ -144,6 +169,33 @@ impl DubplateApp {
         self.set_changed(cx);
     }
 
+    /// Inserts the Next suggestion at `rank`, 0 for the first, as a click on it does. The
+    /// suggestions then follow the track just inserted, so pressing it again builds a run.
+    fn insert_suggestion_ranked(&mut self, rank: usize, cx: &mut Context<'_, Self>) {
+        let rows = self.set_rows();
+        let next = self.next_tracks(&rows);
+        let Some(suggestion) = next.tracks.get(rank) else {
+            let message = if next.after.is_none() {
+                "Select a set track first: the suggestions follow it."
+            } else {
+                "There is no such suggestion: nothing else in the library mixes well after it."
+            };
+            self.show_notice(NoticePlace::Window, message, cx);
+            return;
+        };
+        let path = suggestion.path.clone();
+        self.insert_suggestion(&path, cx);
+    }
+
+    /// Moves the highlight through the Next suggestions.
+    pub(super) fn move_next_cursor(&mut self, direction: Direction) {
+        let count = self.next_tracks(&self.set_rows()).tracks.len();
+        self.next_cursor = match direction {
+            Direction::Up => self.next_cursor.saturating_sub(1),
+            Direction::Down => (self.next_cursor + 1).min(count.saturating_sub(1)),
+        };
+    }
+
     /// Inserts a suggestion right after the selected set track, or the last one.
     pub(super) fn insert_suggestion(&mut self, path: &Path, cx: &mut Context<'_, Self>) {
         let Some(track) = self
@@ -155,6 +207,7 @@ impl DubplateApp {
         let after = self
             .set_selection
             .or_else(|| self.set_track_count().checked_sub(1));
+        self.next_cursor = 0;
         self.insert_into_set(track, after, cx);
     }
 
@@ -169,6 +222,7 @@ impl DubplateApp {
     pub(super) fn select_set_track(&mut self, position: usize, cx: &mut Context<'_, Self>) {
         self.set_selection = Some(position);
         self.prepare_focus = PrepareFocus::Set;
+        self.next_cursor = 0;
         self.ensure_track_detail(cx);
         cx.notify();
     }
@@ -185,6 +239,16 @@ impl DubplateApp {
             (Some(position), Direction::Down) => (position + 1).min(count - 1),
         };
         self.set_selection = Some(next);
+        self.next_cursor = 0;
+        self.reveal_set_selection();
+    }
+
+    /// Scrolls the set list to the selected track, which a key or an insertion may have moved
+    /// out of sight. Each track row is followed by its seam row.
+    fn reveal_set_selection(&self) {
+        if let Some(position) = self.set_selection {
+            self.set_scroll.scroll_to_item(position * 2);
+        }
     }
 
     /// The track selected in the library, as a set names it.
@@ -255,7 +319,7 @@ impl DubplateApp {
             Some(_) => {
                 self.show_notice(
                     NoticePlace::Window,
-                    "No cues to propose: rekordbox has no beat grid for this track.",
+                    "No cues to propose: this track has no beat grid yet.",
                     cx,
                 );
                 Ok(())
@@ -288,19 +352,20 @@ impl DubplateApp {
             browser.set_marked(Arc::clone(&in_set), cx)
         });
         self.check_set_tracks(cx);
+        self.reveal_set_selection();
         self.ensure_track_detail(cx);
-        self.request_set_energy(cx);
+        self.request_set_analysis(cx);
         cx.notify();
     }
 
     /// Reads the file and analysis of every set track and backup not checked yet, off the
     /// interface thread.
-    fn check_set_tracks(&mut self, cx: &mut Context<'_, Self>) {
+    pub(super) fn check_set_tracks(&mut self, cx: &mut Context<'_, Self>) {
         let (Some(collection), Some(editor)) = (self.collection().cloned(), &self.set_editor)
         else {
             return;
         };
-        let unchecked: Vec<(PathBuf, GridCorrection)> = editor
+        let unchecked: Vec<(PathBuf, GridCorrection, Option<Arc<AudioAnalysis>>)> = editor
             .set()
             .entries
             .iter()
@@ -308,13 +373,19 @@ impl DubplateApp {
                 !self.track_checks.contains_key(&entry.track_path)
                     && !self.checks_pending.contains(&entry.track_path)
             })
-            .map(|entry| (entry.track_path.clone(), GridCorrection::of(entry)))
+            .map(|entry| {
+                (
+                    entry.track_path.clone(),
+                    GridCorrection::of(entry),
+                    self.analyses.get(&entry.track_path).cloned(),
+                )
+            })
             .collect();
         if unchecked.is_empty() {
             return;
         }
         self.checks_pending
-            .extend(unchecked.iter().map(|(path, _)| path.clone()));
+            .extend(unchecked.iter().map(|(path, _, _)| path.clone()));
         let generation = self.check_generation;
         cx.spawn(async move |this, cx| {
             let checks = cx
@@ -322,12 +393,13 @@ impl DubplateApp {
                 .spawn(async move {
                     unchecked
                         .into_iter()
-                        .map(|(path, correction)| {
+                        .map(|(path, correction, analysis)| {
                             let check = match collection.find_path(&path) {
                                 Some(index) => check_track(
                                     collection.track(index),
                                     collection.share_directory(),
                                     correction,
+                                    analysis.as_deref(),
                                 ),
                                 None => TrackCheck::not_in_library(&path),
                             };
@@ -589,7 +661,10 @@ fn apply_edit(
                 editor.shift_downbeat(position, beats)?;
             }
         }
-        SetEdit::AcceptProposedCues | SetEdit::MixInAtPlayhead | SetEdit::MixOutAtPlayhead => {}
+        SetEdit::AcceptProposedCues
+        | SetEdit::MixInAtPlayhead
+        | SetEdit::MixOutAtPlayhead
+        | SetEdit::InsertSuggestion(_) => {}
     }
     Ok(())
 }
