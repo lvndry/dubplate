@@ -260,12 +260,12 @@ impl DubplateApp {
                 if this.library_generation == generation {
                     this.follow_moved_set_files(&moved_files, cx);
                     this.catalogue = Arc::new(catalogue);
-                    this.restore_energy();
+                    this.restore_analyses();
                     this.show_library(LibraryStatus::Ready(Arc::new(collection)), cx);
                     this.show_missing(missing, cx);
                     this.forget_track_checks();
                     this.set_changed(cx);
-                    this.request_library_energy(cx);
+                    this.request_library_analysis(cx);
                 }
             })
             .ok();

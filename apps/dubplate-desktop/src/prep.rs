@@ -1,17 +1,20 @@
 //! What set preparation knows about each track: its key, tempo and energy for suggestions and
-//! seams, and what its file and rekordbox's analysis say about whether it is ready to mix.
+//! seams, and what its file and its analysis (rekordbox's, or Dubplate's for a track rekordbox
+//! never analysed) say about whether it is ready to mix.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use dubplate_prep::{
-    GridCorrection, Key, PrepTrack, ProposedCues, ReadyReport, SetEntry, TrackReadiness,
-    propose_mix_cues, ready_report,
+    AudioAnalysis, GridCorrection, Key, PrepTrack, ProposedCues, ReadyReport, SetEntry,
+    TrackReadiness, propose_mix_cues, ready_report,
 };
 use dubplate_rekordbox::TrackAnalysis;
 use dubplate_rekordbox::analysis::{BeatGrid, SongStructure};
 
+use crate::analysis::preferred;
 use crate::collection::{Collection, CollectionTrack, TrackOrigin};
+use crate::deck::GridSource;
 
 /// The suggestion engine's view of every track that has an audio file, found by its file.
 #[derive(Debug, Clone, Default)]
@@ -42,14 +45,24 @@ impl Catalogue {
         self.tracks.get(*self.by_path.get(path)?)
     }
 
-    /// Gives the track whose audio file is `path` its energy, from 1 to 10.
-    pub fn set_energy(&mut self, path: &Path, rating: u8) {
-        if let Some(track) = self
+    /// Gives the track whose audio file is `path` what Dubplate's analysis found: its energy,
+    /// and its tempo and key where they are the ones the track shows (see [`preferred`]).
+    pub fn set_analysis(&mut self, path: &Path, analysis: &AudioAnalysis) {
+        let Some(track) = self
             .by_path
             .get(path)
             .and_then(|position| self.tracks.get_mut(*position))
-        {
-            track.energy = Some(f32::from(rating));
+        else {
+            return;
+        };
+        let origin = match track.rekordbox_id {
+            Some(_) => TrackOrigin::Rekordbox,
+            None => TrackOrigin::Folder,
+        };
+        track.bpm = preferred(origin, track.bpm, analysis.bpm);
+        track.key = preferred(origin, track.key, analysis.key);
+        if let Some(energy) = &analysis.energy {
+            track.energy = Some(f32::from(energy.rating));
         }
     }
 }
@@ -72,7 +85,7 @@ fn prep_track(entry: &CollectionTrack) -> Option<PrepTrack> {
 /// waveforms. Read off the interface thread.
 #[derive(Debug, Clone)]
 pub struct TrackDetail {
-    /// rekordbox's grid, before the DJ's correction.
+    /// The track's grid, rekordbox's or Dubplate's, before the DJ's correction.
     pub grid: Option<BeatGrid>,
     /// rekordbox's phrases.
     pub structure: Option<SongStructure>,
@@ -82,13 +95,16 @@ pub struct TrackDetail {
     pub zoomed: Option<std::sync::Arc<crate::waveform::ZoomedWaveform>>,
 }
 
-/// Reads a track's analysis for the track check. Disk work: run it off the interface thread.
-pub fn track_detail(entry: &CollectionTrack, share_directory: Option<&Path>) -> TrackDetail {
+/// Reads a track's analysis for the track check, taking the grid of Dubplate's `analyses` when
+/// rekordbox has none. Disk work: run it off the interface thread.
+pub fn track_detail(
+    entry: &CollectionTrack,
+    share_directory: Option<&Path>,
+    analysed: Option<&AudioAnalysis>,
+) -> TrackDetail {
     let analysis = read_analysis(entry, share_directory);
     TrackDetail {
-        grid: analysis
-            .as_ref()
-            .and_then(|analysis| analysis.beat_grid.clone()),
+        grid: chosen_grid(analysis.as_ref(), analysed).map(|(grid, _)| grid),
         structure: analysis
             .as_ref()
             .and_then(|analysis| analysis.song_structure.clone()),
@@ -123,6 +139,25 @@ fn read_analysis(entry: &CollectionTrack, share_directory: Option<&Path>) -> Opt
     }
 }
 
+/// The beat grid a track is mixed on, with where it comes from: rekordbox's when its analysis
+/// has one, otherwise the grid of Dubplate's analysis. A grid without beats counts as none.
+pub fn chosen_grid(
+    rekordbox: Option<&TrackAnalysis>,
+    analysed: Option<&AudioAnalysis>,
+) -> Option<(BeatGrid, GridSource)> {
+    let has_beats = |grid: &BeatGrid| !grid.beats.is_empty();
+    let from_rekordbox = rekordbox
+        .and_then(|analysis| analysis.beat_grid.clone())
+        .filter(has_beats)
+        .map(|grid| (grid, GridSource::Rekordbox));
+    from_rekordbox.or_else(|| {
+        analysed
+            .and_then(AudioAnalysis::rekordbox_grid)
+            .filter(has_beats)
+            .map(|grid| (grid, GridSource::Analysis))
+    })
+}
+
 /// The downbeat nearest to `seconds` on `grid`: where I and O put a mix cue.
 pub fn nearest_bar_ms(grid: &BeatGrid, seconds: f64) -> Option<u32> {
     let target = seconds * 1000.0;
@@ -142,7 +177,7 @@ pub fn nearest_bar_ms(grid: &BeatGrid, seconds: f64) -> Option<u32> {
 pub struct TrackCheck {
     /// The audio file is where the library says.
     pub file_found: bool,
-    /// rekordbox analysed a beat grid for it.
+    /// It has a beat grid, rekordbox's or Dubplate's.
     pub has_grid: bool,
     /// The mix-in and mix-out Dubplate proposes from the grid and phrases.
     pub proposal: ProposedCues,
@@ -162,23 +197,23 @@ impl TrackCheck {
     }
 }
 
-/// Looks at a track's file and rekordbox's analysis of it. Disk work: run it off the interface
-/// thread.
+/// Looks at a track's file and its analysis: rekordbox's, or for its grid Dubplate's
+/// `analysed` one when rekordbox has none. Disk work: run it off the interface thread.
 pub fn check_track(
     entry: &CollectionTrack,
     share_directory: Option<&Path>,
     correction: GridCorrection,
+    analysed: Option<&AudioAnalysis>,
 ) -> TrackCheck {
     let file_found = entry.track.file_path.as_deref().is_some_and(Path::is_file);
     let analysis = read_analysis(entry, share_directory);
-    let grid = analysis
+    let grid = chosen_grid(analysis.as_ref(), analysed).map(|(grid, _)| correction.apply(&grid));
+    let structure = analysis
         .as_ref()
-        .and_then(|analysis| analysis.beat_grid.as_ref())
-        .filter(|grid| !grid.beats.is_empty())
-        .map(|grid| correction.apply(grid));
-    let proposal = match (&grid, &analysis) {
-        (Some(grid), Some(analysis)) => propose_mix_cues(grid, analysis.song_structure.as_ref()),
-        _ => ProposedCues {
+        .and_then(|analysis| analysis.song_structure.as_ref());
+    let proposal = match &grid {
+        Some(grid) => propose_mix_cues(grid, structure),
+        None => ProposedCues {
             mix_in: None,
             mix_out: None,
         },
@@ -347,6 +382,85 @@ mod tests {
         assert_eq!(
             readiness(&track(None, None), None, &cues).badge(),
             "Key unknown"
+        );
+    }
+
+    fn analysed(bpm: f32) -> AudioAnalysis {
+        AudioAnalysis {
+            duration_seconds: 10.0,
+            bpm: Some(bpm),
+            beat_grid: Some(dubplate_prep::AnalysedGrid {
+                bpm: f64::from(bpm),
+                first_downbeat_seconds: 0.25,
+            }),
+            key: Key::parse_file_key("4A"),
+            energy: Some(dubplate_prep::TrackEnergy {
+                rating: 6,
+                score: 0.5,
+                curve: Vec::new(),
+            }),
+        }
+    }
+
+    fn rekordbox_analysis(beats: Vec<Beat>) -> TrackAnalysis {
+        let mut analysis = TrackAnalysis::from_files(Vec::new());
+        analysis.beat_grid = Some(BeatGrid { beats });
+        analysis
+    }
+
+    #[test]
+    fn rekordbox_grid_comes_first_and_the_analysis_fills_in() {
+        let beat = Beat {
+            beat_in_bar: 1,
+            tempo_hundredths: 12_400,
+            time_ms: 100,
+        };
+        let rekordbox = rekordbox_analysis(vec![beat]);
+        let analysis = analysed(120.0);
+        let (grid, source) = chosen_grid(Some(&rekordbox), Some(&analysis)).unwrap();
+        assert_eq!((grid.beats, source), (vec![beat], GridSource::Rekordbox));
+        let (grid, source) = chosen_grid(None, Some(&analysis)).unwrap();
+        assert_eq!(source, GridSource::Analysis);
+        assert_eq!(
+            grid.beats.len(),
+            20,
+            "every beat of the 10 seconds at 120 BPM"
+        );
+        assert_eq!(grid.first_downbeat().map(|beat| beat.time_ms), Some(250));
+        let (_, source) = chosen_grid(Some(&rekordbox_analysis(Vec::new())), Some(&analysis))
+            .expect("an empty rekordbox grid counts as none");
+        assert_eq!(source, GridSource::Analysis);
+        assert!(chosen_grid(None, None).is_none());
+    }
+
+    #[test]
+    fn a_folder_track_takes_the_analysed_tempo_and_key_and_a_rekordbox_track_keeps_its_own() {
+        let mut folder = track(Some("8A"), Some(118.0));
+        folder.track_path = PathBuf::from("/Music/folder.mp3");
+        let mut rekordbox = track(Some("8A"), Some(118.0));
+        rekordbox.track_path = PathBuf::from("/Music/rekordbox.mp3");
+        rekordbox.rekordbox_id = Some("1".to_owned());
+        let mut catalogue = Catalogue {
+            by_path: [
+                (folder.track_path.clone(), 0),
+                (rekordbox.track_path.clone(), 1),
+            ]
+            .into_iter()
+            .collect(),
+            tracks: vec![folder.clone(), rekordbox.clone()],
+        };
+        let analysis = analysed(113.0);
+        catalogue.set_analysis(&folder.track_path, &analysis);
+        catalogue.set_analysis(&rekordbox.track_path, &analysis);
+        let folder = catalogue.get(&folder.track_path).unwrap();
+        assert_eq!(
+            (folder.bpm, folder.key, folder.energy),
+            (Some(113.0), Key::parse_file_key("4A"), Some(6.0))
+        );
+        let rekordbox = catalogue.get(&rekordbox.track_path).unwrap();
+        assert_eq!(
+            (rekordbox.bpm, rekordbox.key, rekordbox.energy),
+            (Some(118.0), Key::parse_file_key("8A"), Some(6.0))
         );
     }
 
