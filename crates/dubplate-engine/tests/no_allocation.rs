@@ -184,7 +184,7 @@ fn run_session(
     controller.set_beat_grid(DeckId::B, Some(BeatGrid::new(128.0, 0.0)?))?;
     let targets = [
         EffectTarget::Deck(DeckId::A),
-        EffectTarget::Deck(DeckId::B),
+        EffectTarget::BothDecks,
         EffectTarget::Master,
     ];
     for (unit, target) in EffectUnitId::ALL.into_iter().zip(targets) {

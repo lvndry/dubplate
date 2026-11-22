@@ -26,8 +26,40 @@ pub struct Surface {
     pub playing: [bool; DECK_COUNT],
     /// The effect unit the BEAT FX section drives.
     pub focused_effect: Option<EffectUnitId>,
-    /// That unit's level and depth, from 0.0 to 1.0.
-    pub effect_depth: f32,
+}
+
+/// Where the controls of the controller's BEAT FX section physically sit, as far as the
+/// controller has reported them. Both are absolute: the unit the section drives always takes
+/// the lever's target and the knob's level, as rekordbox does with its single Beat FX unit.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct BeatFxSection {
+    /// The target the CH SELECT lever points at, once the lever has reported.
+    pub lever: Option<EffectTarget>,
+    /// The LEVEL/DEPTH knob, from 0.0 to 1.0, once the knob has reported.
+    pub level: Option<f32>,
+}
+
+impl BeatFxSection {
+    /// The commands that give `unit` the lever's target and the knob's level.
+    pub fn commands_for(self, unit: EffectUnitId) -> impl Iterator<Item = Command> {
+        let target = self
+            .lever
+            .map(|target| Command::Effect(unit, EffectEdit::Target(target)));
+        let level = self
+            .level
+            .map(|level| Command::Effect(unit, EffectEdit::Depth(level)));
+        target.into_iter().chain(level)
+    }
+}
+
+/// The target of the CH SELECT lever from its two contacts: 1 alone, 2 alone, or 1&2, which
+/// the controller reports as both or neither.
+fn lever_target(contacts: [bool; DECK_COUNT]) -> EffectTarget {
+    match contacts {
+        [true, false] => EffectTarget::Deck(DeckId::A),
+        [false, true] => EffectTarget::Deck(DeckId::B),
+        [false, false] | [true, true] => EffectTarget::BothDecks,
+    }
 }
 
 /// The engine's deck for a controller deck.
@@ -62,6 +94,8 @@ pub fn controller_deck(deck: DeckId) -> Deck {
 
 /// A hardware control that only takes over the value on screen once it reaches it, so a slider
 /// left elsewhere does not make the tempo jump. This is the pick-up of rekordbox's tempo slider.
+/// The BEAT FX LEVEL/DEPTH knob has none: like rekordbox's, it sets the level the moment it
+/// reports.
 #[derive(Debug, Clone, Copy, Default)]
 struct Pickup {
     last_hardware: Option<f32>,
@@ -82,15 +116,14 @@ impl Pickup {
     }
 }
 
-/// The controller's side of the conversation: LOAD presses for instant doubles, where the BEAT
-/// FX channel lever sits, and the pick-up of the tempo sliders and the effect level knob.
+/// The controller's side of the conversation: LOAD presses for instant doubles, the pick-up of
+/// the tempo sliders, and where the BEAT FX section's lever and knob sit.
 #[derive(Debug)]
 pub struct Dispatcher {
     last_load: [Option<Instant>; DECK_COUNT],
     tempo_pickups: [Pickup; DECK_COUNT],
-    fx_lever: [bool; DECK_COUNT],
-    depth_pickup: Pickup,
-    depth_unit: Option<EffectUnitId>,
+    lever_contacts: [bool; DECK_COUNT],
+    beat_fx: BeatFxSection,
 }
 
 impl Default for Dispatcher {
@@ -98,14 +131,23 @@ impl Default for Dispatcher {
         Self {
             last_load: [None; DECK_COUNT],
             tempo_pickups: [Pickup::default(); DECK_COUNT],
-            fx_lever: [false; DECK_COUNT],
-            depth_pickup: Pickup::default(),
-            depth_unit: None,
+            lever_contacts: [false; DECK_COUNT],
+            beat_fx: BeatFxSection::default(),
         }
     }
 }
 
 impl Dispatcher {
+    /// Where the BEAT FX section's lever and knob sit, as far as the controller has said.
+    pub fn beat_fx_section(&self) -> BeatFxSection {
+        self.beat_fx
+    }
+
+    /// Forgets where the controller's controls sit, when it is unplugged or plugged in again.
+    pub fn forget_positions(&mut self) {
+        *self = Self::default();
+    }
+
     /// What `event`, which arrived at `now`, asks of the app, if anything.
     pub fn dispatch(
         &mut self,
@@ -138,12 +180,9 @@ impl Dispatcher {
                 switch: Switch::BeatFxChannel(deck),
                 on,
             } => {
-                self.fx_lever[deck_id(deck).index()] = on;
-                let target = match self.fx_lever {
-                    [true, false] => EffectTarget::Deck(DeckId::A),
-                    [false, true] => EffectTarget::Deck(DeckId::B),
-                    [false, false] | [true, true] => EffectTarget::Master,
-                };
+                self.lever_contacts[deck_id(deck).index()] = on;
+                let target = lever_target(self.lever_contacts);
+                self.beat_fx.lever = Some(target);
                 Some(Command::Effect(
                     surface.focused_effect?,
                     EffectEdit::Target(target),
@@ -291,14 +330,11 @@ impl Dispatcher {
             Continuous::Eq { deck, band } => Control::Eq(deck_id(deck), eq_band(band)),
             Continuous::Filter(deck) => Control::Filter(deck_id(deck)),
             Continuous::BeatFxLevelDepth => {
-                let unit = surface.focused_effect?;
-                if self.depth_unit.replace(unit) != Some(unit) {
-                    self.depth_pickup = Pickup::default();
-                }
-                let takes_over =
-                    self.depth_pickup
-                        .takes_over(fraction, surface.effect_depth, false);
-                return takes_over.then_some(Command::Effect(unit, EffectEdit::Depth(fraction)));
+                self.beat_fx.level = Some(fraction);
+                return Some(Command::Effect(
+                    surface.focused_effect?,
+                    EffectEdit::Depth(fraction),
+                ));
             }
             Continuous::HeadphoneMix => Control::HeadphoneMix,
             Continuous::HeadphoneLevel => Control::HeadphoneLevel,
@@ -590,7 +626,6 @@ mod tests {
     fn fx_surface() -> Surface {
         Surface {
             focused_effect: Some(EffectUnitId::ALL[1]),
-            effect_depth: 0.5,
             ..Surface::default()
         }
     }
@@ -679,8 +714,8 @@ mod tests {
                 press(Button::BeatFxBeat(Arrow::Left)),
                 shift_press(Button::BeatFxBeat(Arrow::Right)),
                 lever(Deck::A, true),
-                lever(Deck::A, false),
                 lever(Deck::B, true),
+                lever(Deck::A, false),
                 press(Button::BeatFxOn),
                 release(Button::BeatFxOn),
                 press(Button::SmartCfx),
@@ -699,7 +734,7 @@ mod tests {
                 Command::Effect(unit, EffectEdit::Beat(Direction::Down)),
                 Command::FocusEffectUnit(1),
                 Command::Effect(unit, EffectEdit::Target(EffectTarget::Deck(DeckId::A))),
-                Command::Effect(unit, EffectEdit::Target(EffectTarget::Master)),
+                Command::Effect(unit, EffectEdit::Target(EffectTarget::BothDecks)),
                 Command::Effect(unit, EffectEdit::Target(EffectTarget::Deck(DeckId::B))),
                 Command::Effect(unit, EffectEdit::Toggle),
                 Command::ToggleSmartCfx,
@@ -710,27 +745,36 @@ mod tests {
     }
 
     #[test]
-    fn the_level_knob_picks_up_the_focused_units_depth() {
+    fn the_level_knob_sets_the_focused_units_depth_from_its_first_report() {
         let mut dispatcher = Dispatcher::default();
         let surface = fx_surface();
+        let unit = EffectUnitId::ALL[1];
+        assert_eq!(dispatcher.beat_fx_section().level, None);
         let level = |fraction| moved(Continuous::BeatFxLevelDepth, fraction);
-        assert!(run(&mut dispatcher, &surface, &[level(0.9), level(0.8)]).is_empty());
-        let commands = run(&mut dispatcher, &surface, &[level(0.4)]);
+        let commands = run(&mut dispatcher, &surface, &[level(0.9), level(0.4)]);
+        let depths: Vec<f32> = commands
+            .iter()
+            .map(|command| match command {
+                Command::Effect(target_unit, EffectEdit::Depth(depth)) if *target_unit == unit => {
+                    *depth
+                }
+                other => panic!("{other:?} is not the unit's depth"),
+            })
+            .collect();
+        assert_eq!(depths.len(), 2);
+        assert!((depths[0] - 0.9).abs() < 1e-3 && (depths[1] - 0.4).abs() < 1e-3);
+        let section = dispatcher.beat_fx_section();
         assert!(
-            matches!(
-                commands[..],
-                [Command::Effect(_, EffectEdit::Depth(depth))] if (depth - 0.4).abs() < 1e-3
-            ),
-            "{commands:?}"
+            section
+                .level
+                .is_some_and(|level| (level - 0.4).abs() < 1e-3)
         );
-        let other_unit = Surface {
-            focused_effect: Some(EffectUnitId::ALL[2]),
-            effect_depth: 0.1,
-            ..surface
-        };
+        let other_unit = EffectUnitId::ALL[2];
         assert!(
-            run(&mut dispatcher, &other_unit, &[level(0.4)]).is_empty(),
-            "a newly focused unit waits for the knob to reach its depth"
+            section
+                .commands_for(other_unit)
+                .any(|command| matches!(command, Command::Effect(unit, EffectEdit::Depth(_)) if unit == other_unit)),
+            "a newly focused unit takes the knob's level"
         );
     }
 
@@ -797,5 +841,151 @@ mod tests {
             ],
         );
         assert!(commands.is_empty(), "{commands:?}");
+    }
+}
+
+#[cfg(test)]
+mod lever_routing {
+    use std::sync::Arc;
+    use std::time::Instant;
+
+    use dubplate_engine::{
+        BeatGrid, Controller, DeckId, EffectKind, EffectTarget, EffectUnitId, Renderer, Track,
+        offline_engine,
+    };
+    use dubplate_midi::{Decoder, Mapping};
+
+    use super::{Dispatcher, Surface};
+    use crate::commands::{Command, EffectEdit};
+
+    const SAMPLE_RATE: u32 = 48_000;
+    const BLOCK: usize = 256;
+    const UNIT: EffectUnitId = EffectUnitId::ALL[0];
+    /// The CH SELECT lever's two contacts, CH1 on 94 10 and CH2 on 95 11, as the DDJ-FLX4 sends
+    /// them at each position.
+    const LEVER_AT_1: [[u8; 3]; 2] = [[0x94, 0x10, 0x7F], [0x95, 0x11, 0x00]];
+    const LEVER_AT_2: [[u8; 3]; 2] = [[0x94, 0x10, 0x00], [0x95, 0x11, 0x7F]];
+    const LEVER_AT_BOTH: [[u8; 3]; 2] = [[0x94, 0x10, 0x7F], [0x95, 0x11, 0x7F]];
+
+    fn decoder() -> Decoder {
+        Decoder::new(Arc::new(
+            Mapping::built_in_for_port("DDJ-FLX4")
+                .expect("the built-in mappings parse")
+                .expect("the DDJ-FLX4 has a mapping"),
+        ))
+    }
+
+    /// Feeds raw controller messages through the FLX4 mapping and the dispatcher into the
+    /// engine, as the app does.
+    fn replay(dispatcher: &mut Dispatcher, controller: &mut Controller, messages: &[[u8; 3]]) {
+        let mut decoder = decoder();
+        let surface = Surface {
+            focused_effect: Some(UNIT),
+            ..Surface::default()
+        };
+        for message in messages {
+            let event = decoder
+                .decode(message)
+                .expect("the mapping knows the lever");
+            if let Some(Command::Effect(unit, EffectEdit::Target(target))) =
+                dispatcher.dispatch(event, Instant::now(), &surface)
+            {
+                controller
+                    .set_effect_target(unit, target)
+                    .expect("set the target");
+            }
+        }
+    }
+
+    fn chord_track() -> Track {
+        let samples: Vec<f32> = (0..SAMPLE_RATE as usize * 4)
+            .flat_map(|frame| {
+                let seconds = frame as f64 / f64::from(SAMPLE_RATE);
+                let value = [220.0, 277.18, 329.63, 1_760.0]
+                    .iter()
+                    .map(|hertz| (std::f64::consts::TAU * hertz * seconds).sin() * 0.15)
+                    .sum::<f64>() as f32;
+                [value, value]
+            })
+            .collect();
+        Track::from_interleaved_stereo(&samples, SAMPLE_RATE).expect("valid track")
+    }
+
+    /// Deck B playing alone, a crusher on the unit at full depth, switched on.
+    fn deck_b_alone() -> (Controller, Renderer) {
+        let (mut controller, renderer) = offline_engine(SAMPLE_RATE);
+        controller
+            .load_track(DeckId::B, chord_track())
+            .expect("load");
+        controller
+            .set_beat_grid(DeckId::B, Some(BeatGrid::new(120.0, 0.0).expect("grid")))
+            .expect("grid");
+        controller.play(DeckId::B).expect("play");
+        controller
+            .set_effect_kind(UNIT, EffectKind::Crusher)
+            .expect("kind");
+        controller.set_effect_depth(UNIT, 1.0).expect("depth");
+        (controller, renderer)
+    }
+
+    fn render(renderer: &mut Renderer, frames: usize) -> Vec<f32> {
+        let mut output = vec![0.0; frames * 2];
+        for block in output.chunks_mut(BLOCK * 2) {
+            renderer.render(block, 2);
+        }
+        output
+    }
+
+    /// Whether deck B sounds processed after `messages`, against the same deck without them.
+    fn deck_b_is_processed_after(saved: EffectTarget, messages: &[[u8; 3]]) -> bool {
+        let (_reference_controller, mut reference) = deck_b_alone();
+        let (mut controller, mut renderer) = deck_b_alone();
+        controller.set_effect_target(UNIT, saved).expect("target");
+        let mut dispatcher = Dispatcher::default();
+        replay(&mut dispatcher, &mut controller, messages);
+        controller.set_effect_enabled(UNIT, true).expect("on");
+        let frames = SAMPLE_RATE as usize;
+        let dry = render(&mut reference, frames);
+        let wet = render(&mut renderer, frames);
+        let changed = dry
+            .iter()
+            .zip(&wet)
+            .filter(|(dry, wet)| (*dry - *wet).abs() > 1e-3)
+            .count();
+        changed > frames / 4
+    }
+
+    #[test]
+    fn deck_b_alone_is_processed_where_the_lever_points() {
+        for saved in EffectTarget::ALL {
+            assert!(
+                !deck_b_is_processed_after(saved, &LEVER_AT_1),
+                "lever on 1 processed deck B (saved target {saved:?})"
+            );
+            assert!(
+                deck_b_is_processed_after(saved, &LEVER_AT_2),
+                "lever on 2 left deck B dry (saved target {saved:?})"
+            );
+            assert!(
+                deck_b_is_processed_after(saved, &LEVER_AT_BOTH),
+                "lever on 1&2 left deck B dry (saved target {saved:?})"
+            );
+        }
+    }
+
+    #[test]
+    fn a_launch_then_the_connect_time_report_follows_the_lever_not_the_saved_target() {
+        let (mut controller, _renderer) = offline_engine(SAMPLE_RATE);
+        controller
+            .set_effect_target(UNIT, EffectTarget::Deck(DeckId::A))
+            .expect("restore the saved target");
+        let mut dispatcher = Dispatcher::default();
+        assert_eq!(dispatcher.beat_fx_section().lever, None);
+        replay(&mut dispatcher, &mut controller, &LEVER_AT_BOTH);
+        assert_eq!(controller.effect_unit(UNIT).target, EffectTarget::BothDecks);
+        assert_eq!(
+            dispatcher.beat_fx_section().lever,
+            Some(EffectTarget::BothDecks)
+        );
     }
 }
