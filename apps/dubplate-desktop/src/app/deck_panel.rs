@@ -4,6 +4,7 @@
 use std::rc::Rc;
 
 use dubplate_engine::{DeckId, SyncMode};
+use dubplate_prep::Key;
 use gpui::prelude::*;
 use gpui::{
     ClickEvent, Context, FontWeight, MouseButton, MouseDownEvent, Pixels, SharedString, canvas,
@@ -20,6 +21,7 @@ use crate::controls::{Orientation, Slider, fraction_at, tempo_range_label};
 use crate::deck::deck_letter;
 use crate::deck::{DeckContent, pad_position};
 use crate::fonts::MONO_FAMILY;
+use crate::pads::semitones_label;
 use crate::theme;
 
 const OVERVIEW_HEIGHT: Pixels = px(22.0);
@@ -107,7 +109,21 @@ fn title_row(
             )
         },
     );
-    let key = entry.map(|entry| entry.row.key.clone()).unwrap_or_default();
+    let key_shift = app.key_shift(deck);
+    let key: SharedString = match entry {
+        Some(entry) if key_shift != 0 => {
+            let shifted = entry
+                .track
+                .key
+                .as_deref()
+                .and_then(Key::parse_file_key)
+                .map(|key| key.transposed(key_shift as i8).camelot())
+                .unwrap_or_default();
+            format!("{shifted} {}", semitones_label(key_shift)).into()
+        }
+        Some(entry) => entry.row.key.clone(),
+        None => SharedString::default(),
+    };
     div()
         .flex()
         .justify_between()
@@ -334,6 +350,14 @@ fn transport(
             app.key_lock(deck),
             colour,
             Command::ToggleKeyLock(deck),
+            cx,
+        ))
+        .child(toggle(
+            ("slip", deck.index()),
+            "Slip",
+            app.slip(deck),
+            colour,
+            Command::ToggleSlip(deck),
             cx,
         ))
         .child(

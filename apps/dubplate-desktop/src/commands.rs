@@ -152,6 +152,8 @@ pub enum Command {
     SetPadMode(DeckId, PadMode),
     /// Put a deck's pads in the next pad mode.
     CyclePadMode(DeckId),
+    /// SLIP: scratches and loops let the track play on underneath, and the deck lands back on it.
+    ToggleSlip(DeckId),
     /// A loop button.
     Loop(DeckId, LoopAction),
     /// A channel's headphone CUE button: hear the channel in the headphones, before its fader.
