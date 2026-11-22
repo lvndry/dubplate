@@ -13,16 +13,20 @@ use gpui::{Context, SharedString};
 use super::notice::NoticePlace;
 use super::{BUFFER_FRAMES, DubplateApp, Engine, error_chain};
 use crate::controls::{MixerPositions, master_gain_at, tempo_fader, trim_gain_at};
+use crate::devices::DeviceAccess;
 
 /// Starts the engine on the sound card called `device`, or on the system's default one when
-/// none is chosen. Returns the engine, and why the chosen card was not used if it was not.
+/// none is chosen, or on the silent output when the devices are offline. Returns the engine,
+/// and why the chosen card was not used if it was not.
 pub(super) fn start_engine(
     mixer: &MixerPositions,
     device: Option<&str>,
+    devices: &DeviceAccess,
 ) -> (Result<Engine, SharedString>, Option<String>) {
-    match (device, engine_on(mixer, device)) {
+    let device = device.filter(|_| !devices.is_offline());
+    match (device, engine_on(mixer, device, devices)) {
         (Some(name), Err(problem)) => (
-            engine_on(mixer, None),
+            engine_on(mixer, None, devices),
             Some(format!(
                 "{name} is not available, so Dubplate plays on the default output: {problem}"
             )),
@@ -31,14 +35,20 @@ pub(super) fn start_engine(
     }
 }
 
-/// The engine on the sound card called `device`, or the default one, with the mixer set.
-fn engine_on(mixer: &MixerPositions, device: Option<&str>) -> Result<Engine, SharedString> {
+/// The engine on the sound card called `device`, or the default one, or the silent output
+/// when the devices are offline, with the mixer set.
+fn engine_on(
+    mixer: &MixerPositions,
+    device: Option<&str>,
+    devices: &DeviceAccess,
+) -> Result<Engine, SharedString> {
     let config = OutputConfig {
         buffer_frames: Some(BUFFER_FRAMES),
     };
-    let started = match device {
-        Some(name) => AudioOutput::start_on(name, &config),
-        None => AudioOutput::start(&config),
+    let started = match (devices, device) {
+        (DeviceAccess::Offline { .. }, _) => AudioOutput::start_silent(&config),
+        (DeviceAccess::Real, Some(name)) => AudioOutput::start_on(name, &config),
+        (DeviceAccess::Real, None) => AudioOutput::start(&config),
     };
     let (mut controller, output) =
         started.map_err(|error| SharedString::from(error_chain(&error)))?;
@@ -123,8 +133,25 @@ fn carry_over(source: &Controller, target: &mut Controller) -> Result<(), Engine
 }
 
 impl DubplateApp {
-    /// Reads the sound cards on a background thread, for the settings.
+    /// Reads the sound cards on a background thread, for the settings. With the devices
+    /// offline, the silent output is the only one.
     pub(super) fn refresh_output_devices(&mut self, cx: &mut Context<'_, Self>) {
+        if self.devices.is_offline() {
+            self.output_devices = self
+                .engine
+                .as_ref()
+                .ok()
+                .map(|engine| OutputDevice {
+                    name: engine.output.device_name().to_owned(),
+                    channel_count: engine.output.channel_count(),
+                    sample_rate: engine.output.sample_rate(),
+                    is_default: true,
+                })
+                .into_iter()
+                .collect();
+            cx.notify();
+            return;
+        }
         cx.spawn(async move |this, cx| {
             let devices = cx
                 .background_executor()
@@ -187,7 +214,7 @@ impl DubplateApp {
             );
             return;
         }
-        let mut engine = match engine_on(&self.mixer, Some(&name)) {
+        let mut engine = match engine_on(&self.mixer, Some(&name), &self.devices) {
             Ok(engine) => engine,
             Err(problem) => {
                 self.show_notice(
