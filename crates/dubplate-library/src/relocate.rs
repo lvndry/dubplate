@@ -53,6 +53,7 @@ fn find_one(missing: &MissingTrack, candidates: &[LibraryTrack]) -> Option<Reloc
     let wanted_name = lowercase_name(&missing.path)?;
     let mut same_size: Option<&Path> = None;
     let mut same_length: Option<&Path> = None;
+    let mut length_is_ambiguous = false;
     for candidate in candidates {
         if candidate.path == missing.path {
             continue;
@@ -75,17 +76,16 @@ fn find_one(missing: &MissingTrack, candidates: &[LibraryTrack]) -> Option<Reloc
             _ => false,
         };
         if length_matches {
-            if same_length.is_some() {
-                return None;
-            }
+            length_is_ambiguous |= same_length.is_some();
             same_length = Some(candidate.path.as_path());
         }
     }
     let (found, confidence) = if let Some(found) = same_size {
         (found, RelocationConfidence::SameSize)
+    } else if length_is_ambiguous {
+        return None;
     } else {
-        let found = same_length?;
-        (found, RelocationConfidence::SameLength)
+        (same_length?, RelocationConfidence::SameLength)
     };
     Some(Relocation {
         missing: missing.path.clone(),
@@ -241,6 +241,23 @@ mod tests {
         let decoy = Path::new("/Music/afro house/peak/Moved.mp3");
         let candidates = vec![
             candidate(decoy, 999_000, Some(300.0)),
+            candidate(&new_home(), 1_000_000, Some(299.9)),
+        ];
+
+        let found = find_relocations(&[moved_track()], &candidates);
+
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].found, new_home());
+        assert_eq!(found[0].confidence, RelocationConfidence::SameSize);
+    }
+
+    #[test]
+    fn a_size_match_wins_even_after_two_length_matches() {
+        let first_decoy = Path::new("/Music/afro house/peak/Moved.mp3");
+        let second_decoy = Path::new("/Music/afro house/closing/Moved.mp3");
+        let candidates = vec![
+            candidate(first_decoy, 990_000, Some(300.0)),
+            candidate(second_decoy, 980_000, Some(300.2)),
             candidate(&new_home(), 1_000_000, Some(299.9)),
         ];
 
