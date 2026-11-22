@@ -67,11 +67,7 @@ fn apply_mixer(controller: &mut Controller, mixer: &MixerPositions) -> Result<()
 fn carry_over(source: &Controller, target: &mut Controller) -> Result<(), EngineError> {
     for deck in DeckId::ALL {
         let snapshot = source.snapshot_deck(deck)?;
-        target.restore_deck(
-            deck,
-            &snapshot,
-            dubplate_engine::DeckRestorePolicy::DeviceChange,
-        )?;
+        target.restore_deck(deck, &snapshot)?;
         let tempo = source.tempo_state(deck);
         if tempo.is_master {
             target.set_master_tempo(MasterTempo::Deck(deck))?;
