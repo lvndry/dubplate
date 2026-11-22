@@ -732,14 +732,14 @@ impl Controller {
         self.stem_settings[deck.index()]
     }
 
-    /// Auditions a seam in the headphones, or stops the audition with `None`: two tracks, each
-    /// from its own start at its own tempo, the second coming in at the planned overlap, with
-    /// key lock if asked. The preview plays on the headphone bus only, after the cue mix and
+    /// Plays a track or a seam in the headphones, or stops it with `None`: one track, or two,
+    /// each from its own start at its own tempo, the second coming in at the planned overlap,
+    /// with key lock if asked. The preview plays on the headphone bus only, after the cue mix and
     /// before the headphone level, and never touches the decks or the master output. It stops
     /// itself when both tracks end, or after [`crate::MAX_PREVIEW_SECONDS`].
     pub fn preview(&mut self, preview: Option<Preview>) -> Result<(), EngineError> {
         if let Some(preview) = &preview {
-            for preview_track in [&preview.first, &preview.second] {
+            for preview_track in std::iter::once(&preview.first).chain(&preview.second) {
                 check_range(
                     "preview start",
                     preview_track.start_seconds,

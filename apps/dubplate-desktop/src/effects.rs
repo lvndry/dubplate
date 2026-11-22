@@ -219,6 +219,84 @@ pub fn search(query: &str) -> Vec<(&'static str, Vec<EffectKind>)> {
         .collect()
 }
 
+/// How many effects the picker lays side by side.
+pub const PICKER_COLUMNS: usize = 3;
+
+/// One row of the effect picker: up to [`PICKER_COLUMNS`] effects of a group, with the group's
+/// name beside its first row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PickerRow {
+    /// The group's name, on the group's first row only.
+    pub group: Option<&'static str>,
+    /// The effects on the row, left to right.
+    pub effects: Vec<EffectKind>,
+}
+
+/// A move of the picker's highlight with the arrow keys.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PickerMove {
+    /// To the row above, in the same column or the nearest one.
+    Up,
+    /// To the row below.
+    Down,
+    /// To the effect before, across rows.
+    Left,
+    /// To the effect after.
+    Right,
+}
+
+/// The picker's rows for what `search` found: each group's effects three to a row.
+pub fn picker_rows(found: &[(&'static str, Vec<EffectKind>)]) -> Vec<PickerRow> {
+    found
+        .iter()
+        .flat_map(|(group, effects)| {
+            effects
+                .chunks(PICKER_COLUMNS)
+                .enumerate()
+                .map(move |(row, chunk)| PickerRow {
+                    group: (row == 0).then_some(*group),
+                    effects: chunk.to_vec(),
+                })
+        })
+        .collect()
+}
+
+/// The row and column of `kind` among `rows`.
+pub fn picker_position(rows: &[PickerRow], kind: EffectKind) -> Option<(usize, usize)> {
+    rows.iter().enumerate().find_map(|(row, picker_row)| {
+        picker_row
+            .effects
+            .iter()
+            .position(|effect| *effect == kind)
+            .map(|column| (row, column))
+    })
+}
+
+/// The effect the highlight lands on when it moves from `from`, stopping at either end; from
+/// an effect not shown it lands on the first one shown.
+pub fn step_highlight(
+    rows: &[PickerRow],
+    from: EffectKind,
+    direction: PickerMove,
+) -> Option<EffectKind> {
+    let first = rows.first()?.effects.first().copied();
+    let Some((row, column)) = picker_position(rows, from) else {
+        return first;
+    };
+    let flat: Vec<EffectKind> = rows.iter().flat_map(|row| row.effects.clone()).collect();
+    let index = flat.iter().position(|effect| *effect == from)?;
+    let at = |row: usize| {
+        let effects = &rows[row].effects;
+        effects.get(column.min(effects.len() - 1)).copied()
+    };
+    match direction {
+        PickerMove::Left => flat.get(index.saturating_sub(1)).copied(),
+        PickerMove::Right => flat.get(index + 1).or(flat.last()).copied(),
+        PickerMove::Up => at(row.saturating_sub(1)),
+        PickerMove::Down => at((row + 1).min(rows.len() - 1)),
+    }
+}
+
 /// The value one BEAT button press up or down from `value` gives `kind`'s parameter, stopping
 /// at either end, or `None` for an effect without a parameter.
 pub fn step_parameter(
@@ -325,6 +403,53 @@ mod tests {
     use dubplate_engine::BeatLength;
 
     use super::*;
+
+    #[test]
+    fn the_picker_lays_each_group_three_to_a_row_and_the_arrows_walk_it() {
+        let rows = picker_rows(&search(""));
+        assert!(
+            rows.iter()
+                .all(|row| (1..=PICKER_COLUMNS).contains(&row.effects.len()))
+        );
+        let shown: usize = rows.iter().map(|row| row.effects.len()).sum();
+        assert_eq!(
+            shown,
+            EffectKind::ALL.len(),
+            "every effect is in the picker"
+        );
+        assert_eq!(rows[0].group, Some("Echo"));
+        assert_eq!(
+            rows[1].group, None,
+            "the name sits on a group's first row only"
+        );
+
+        let first = rows[0].effects[0];
+        let below = rows[1].effects[0];
+        assert_eq!(step_highlight(&rows, first, PickerMove::Down), Some(below));
+        assert_eq!(step_highlight(&rows, below, PickerMove::Up), Some(first));
+        assert_eq!(step_highlight(&rows, first, PickerMove::Up), Some(first));
+        assert_eq!(step_highlight(&rows, first, PickerMove::Left), Some(first));
+        assert_eq!(
+            step_highlight(&rows, rows[0].effects[2], PickerMove::Right),
+            Some(below),
+            "right runs on to the next row"
+        );
+        let last_row = rows.last().unwrap();
+        let last = *last_row.effects.last().unwrap();
+        assert_eq!(
+            step_highlight(&rows, last, PickerMove::Down),
+            Some(last_row.effects[last_row.effects.len() - 1])
+        );
+        assert_eq!(step_highlight(&rows, last, PickerMove::Right), Some(last));
+
+        let reverbs = picker_rows(&search("reverb"));
+        assert_eq!(
+            step_highlight(&reverbs, EffectKind::Echo, PickerMove::Down),
+            Some(EffectKind::Reverb),
+            "from an effect not shown the highlight lands on the first one"
+        );
+        assert_eq!(picker_position(&reverbs, EffectKind::Echo), None);
+    }
 
     #[test]
     fn pad_labels_leave_room_for_the_beat_length() {

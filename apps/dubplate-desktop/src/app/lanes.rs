@@ -102,9 +102,9 @@ pub(super) fn render(
         .gap(px(6.0))
         .px(theme::GUTTER)
         .py(px(8.0))
-        .bg(theme::BACKGROUND)
+        .bg(theme::active().background)
         .border_b_1()
-        .border_color(theme::LINE)
+        .border_color(theme::active().line)
         .id("lanes")
         .on_pinch(cx.listener(|this, event: &PinchEvent, _, cx| {
             this.pinch_lanes(event.delta, cx);
@@ -120,7 +120,7 @@ pub(super) fn render(
                 .left(relative(0.5))
                 .ml(-PLAYHEAD_WIDTH / 2.0)
                 .w(PLAYHEAD_WIDTH)
-                .bg(theme::PLAYHEAD),
+                .bg(theme::active().playhead),
         )
 }
 
@@ -146,9 +146,9 @@ fn zoom_label(zoom: Zoom) -> impl IntoElement {
         .gap(px(2.0))
         .children((0..Zoom::LEVELS.len()).map(move |level| {
             div().size(px(3.0)).rounded_full().bg(if level <= current {
-                theme::MUTED
+                theme::active().muted
             } else {
-                theme::METER_OFF
+                theme::active().meter_off
             })
         }))
 }
@@ -216,19 +216,19 @@ fn beat_counter(reading: BeatReading) -> impl IntoElement {
         .px(px(4.0))
         .py(px(1.0))
         .rounded(px(3.0))
-        .bg(theme::faded(theme::BACKGROUND, 0.7))
+        .bg(theme::faded(theme::active().background, 0.7))
         .font_family(MONO_FAMILY)
         .text_size(px(10.0))
-        .text_color(theme::MUTED)
+        .text_color(theme::active().muted)
         .child(SharedString::from(format!(
             "{}.{}",
             reading.position.bar, reading.position.beat
         )))
         .children(reading.phase.map(|phase| {
             let colour = if in_phase {
-                theme::OK
+                theme::active().ok
             } else {
-                theme::ATTENTION
+                theme::active().attention
             };
             let offset = (phase.beats as f32 * 2.0).clamp(-1.0, 1.0) * PHASE_TRACK_WIDTH / 2.0;
             div()
@@ -241,7 +241,7 @@ fn beat_counter(reading: BeatReading) -> impl IntoElement {
                         .w(px(PHASE_TRACK_WIDTH))
                         .h(px(6.0))
                         .rounded(px(3.0))
-                        .bg(theme::TRACK)
+                        .bg(theme::active().track)
                         .child(
                             div()
                                 .absolute()
@@ -249,7 +249,7 @@ fn beat_counter(reading: BeatReading) -> impl IntoElement {
                                 .bottom_0()
                                 .left(px(PHASE_TRACK_WIDTH / 2.0))
                                 .w(px(1.0))
-                                .bg(theme::MUTED),
+                                .bg(theme::active().muted),
                         )
                         .child(
                             div()
@@ -262,15 +262,36 @@ fn beat_counter(reading: BeatReading) -> impl IntoElement {
                         ),
                 )
                 .when(phase.bar_offset != 0, |meter| {
-                    meter.child(div().text_color(theme::ATTENTION).child(SharedString::from(
-                        format!(
+                    meter.child(div().text_color(theme::active().attention).child(
+                        SharedString::from(format!(
                             "{:+} beat{}",
                             phase.bar_offset,
                             if phase.bar_offset.abs() == 1 { "" } else { "s" }
-                        ),
-                    )))
+                        )),
+                    ))
                 })
         }))
+}
+
+/// What a pad press just did, just right of the playhead at the top of the lane: the jump, the
+/// loop length or the effect held, in the deck's colour.
+fn pad_note(text: SharedString, colour: Rgba) -> impl IntoElement {
+    div()
+        .absolute()
+        .top(px(2.0))
+        .left(relative(0.5))
+        .ml(px(8.0))
+        .px(px(5.0))
+        .py(px(1.0))
+        .rounded(px(3.0))
+        .bg(theme::faded(colour, 0.22))
+        .border_1()
+        .border_color(theme::faded(colour, 0.6))
+        .text_color(theme::active().text)
+        .font_family(MONO_FAMILY)
+        .text_size(px(10.0))
+        .font_weight(FontWeight::SEMIBOLD)
+        .child(text)
 }
 
 fn lane(
@@ -308,9 +329,9 @@ fn lane(
     let stats = app.frame_stats.clone();
     let notice = app.deck_notice(deck).map(|notice| notice.to_string());
     let hint_colour = if notice.is_some() {
-        theme::ALERT
+        theme::active().alert
     } else {
-        theme::MUTED
+        theme::active().muted
     };
     let hint = notice.or_else(|| match content {
         DeckContent::Empty => Some(format!(
@@ -419,7 +440,7 @@ fn lane(
                 .px(px(3.0))
                 .rounded(px(3.0))
                 .bg(colour)
-                .text_color(theme::ON_DECK)
+                .text_color(theme::active().on_deck)
                 .font_family(MONO_FAMILY)
                 .text_size(px(10.0))
                 .line_height(px(14.0))
@@ -438,7 +459,7 @@ fn lane(
                 .px(px(4.0))
                 .rounded(px(3.0))
                 .bg(lane_colour)
-                .text_color(theme::ON_DECK)
+                .text_color(theme::active().on_deck)
                 .font_family(MONO_FAMILY)
                 .text_size(px(10.0))
                 .line_height(px(14.0))
@@ -465,13 +486,19 @@ fn lane(
                 .py(px(1.0))
                 .rounded(px(3.0))
                 .bg(theme::deck_colour(deck))
-                .text_color(theme::ON_DECK)
+                .text_color(theme::active().on_deck)
                 .font_family(MONO_FAMILY)
                 .text_size(px(10.0))
                 .font_weight(FontWeight::SEMIBOLD)
                 .child(deck_letter(deck)),
         )
-        .children(reading.map(beat_counter));
+        .children(reading.map(beat_counter))
+        .children(
+            app.pad_notes[deck.index()]
+                .as_ref()
+                .filter(|note| note.shows(Instant::now()))
+                .map(|note| pad_note(note.text.clone(), theme::deck_colour(deck))),
+        );
     accept_drops(lane, deck, cx)
 }
 
@@ -491,9 +518,9 @@ struct BandColours {
 impl BandColours {
     fn at_opacity(opacity: f32) -> Self {
         Self {
-            low: theme::faded(theme::BAND_LOW, opacity),
-            mid: theme::faded(theme::BAND_MID, opacity),
-            high: theme::faded(theme::BAND_HIGH, opacity),
+            low: theme::faded(theme::active().band_low, opacity),
+            mid: theme::faded(theme::active().band_mid, opacity),
+            high: theme::faded(theme::active().band_high, opacity),
         }
     }
 }
@@ -527,9 +554,9 @@ pub(super) fn paint_lane(
     if let Some(beats) = beats {
         for mark in beats.within(view.seconds_on_screen()) {
             let colour = if mark.downbeat {
-                theme::DOWNBEAT_LINE
+                theme::active().downbeat_line
             } else {
-                theme::BEAT_LINE
+                theme::active().beat_line
             };
             let line = Bounds::new(
                 bounds.origin + point(px(view.x_of(mark.seconds).floor()), px(0.0)),
@@ -560,7 +587,7 @@ pub(super) fn paint_lane(
             );
             window.paint_quad(fill(
                 line,
-                theme::faded(theme::PLAYHEAD, SLIP_SHADOW_OPACITY),
+                theme::faded(theme::active().playhead, SLIP_SHADOW_OPACITY),
             ));
         }
     }
@@ -573,14 +600,14 @@ pub(super) fn paint_cue_point(bounds: Bounds<Pixels>, x: f32, window: &mut Windo
         bounds.origin + point(px(x.floor()), px(0.0)),
         size(px(1.0), bounds.size.height),
     );
-    window.paint_quad(fill(line, theme::faded(theme::CUE_POINT, 0.55)));
+    window.paint_quad(fill(line, theme::faded(theme::active().cue_point, 0.55)));
     let mut triangle = PathBuilder::fill();
     triangle.move_to(bounds.origin + point(px(x - 5.0), px(height)));
     triangle.line_to(bounds.origin + point(px(x + 5.0), px(height)));
     triangle.line_to(bounds.origin + point(px(x), px(height - 7.0)));
     triangle.close();
     if let Ok(path) = triangle.build() {
-        window.paint_path(path, theme::CUE_POINT);
+        window.paint_path(path, theme::active().cue_point);
     }
 }
 
@@ -636,7 +663,10 @@ pub(super) fn paint_pulse(bounds: Bounds<Pixels>, x: f32, strength: f32, window:
         bounds.origin + point(px(x - half_width), px(0.0)),
         size(px(half_width * 2.0), bounds.size.height),
     );
-    window.paint_quad(fill(glow, theme::faded(theme::TEXT, 0.45 * strength)));
+    window.paint_quad(fill(
+        glow,
+        theme::faded(theme::active().text, 0.45 * strength),
+    ));
 }
 
 /// The tint behind an active loop or one waiting for LOOP OUT, under the waveform.
@@ -834,7 +864,10 @@ mod tests {
         let marks: Vec<(f32, Rgba)> = memory_cue_marks(&cues, &view).collect();
         assert_eq!(
             marks,
-            [(600.0, theme::MEMORY_CUE), (800.0, theme::SAVED_LOOP)],
+            [
+                (600.0, theme::active().memory_cue),
+                (800.0, theme::active().saved_loop)
+            ],
             "five seconds either side of the playhead fit; a memory loop takes the loop colour"
         );
         let mut coloured = cues.clone();

@@ -116,11 +116,11 @@ fn status_label(
         .w(px(84.0))
         .flex_none()
         .truncate()
-        .text_color(theme::MUTED)
+        .text_color(theme::active().muted)
         .when_some(path.filter(|_| separable), |label, path| {
             label
                 .cursor_pointer()
-                .hover(|label| label.text_color(theme::TEXT))
+                .hover(|label| label.text_color(theme::active().text))
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     this.separate_stems_now(path.clone(), cx);
@@ -159,16 +159,16 @@ fn toggle(
             if !enabled {
                 button
                     .border_dashed()
-                    .border_color(theme::LINE)
-                    .text_color(theme::MUTED)
+                    .border_color(theme::active().line)
+                    .text_color(theme::active().muted)
             } else if on {
-                button.border_color(colour).text_color(theme::TEXT)
+                button.border_color(colour).text_color(theme::active().text)
             } else {
                 button
-                    .border_color(theme::LINE)
-                    .text_color(theme::MUTED)
+                    .border_color(theme::active().line)
+                    .text_color(theme::active().muted)
                     .line_through()
-                    .hover(|button| button.text_color(theme::TEXT))
+                    .hover(|button| button.text_color(theme::active().text))
             }
         })
         .when(enabled, |button| {

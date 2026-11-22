@@ -229,9 +229,9 @@ pub(super) fn render_toast(
                     .py(px(8.0))
                     .rounded(px(8.0))
                     .border_1()
-                    .border_color(theme::LINE)
-                    .bg(theme::RAISED)
-                    .text_color(theme::TEXT)
+                    .border_color(theme::active().line)
+                    .bg(theme::active().raised)
+                    .text_color(theme::active().text)
                     .child(div().flex_1().min_w_0().child(notice.text.clone()))
                     .children(action.map(|action| {
                         button("notice-action", action.label(), Emphasis::Primary).on_click(

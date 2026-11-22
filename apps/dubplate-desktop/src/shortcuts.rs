@@ -113,6 +113,7 @@ pub const SHORTCUTS: &[Shortcut] = &[
     outside_text("shift-z", Command::CycleCrossfaderAssign(DeckId::B)),
     outside_text("left", Command::MoveCrossfader(Direction::Down)),
     outside_text("right", Command::MoveCrossfader(Direction::Up)),
+    outside_text("p", Command::PreviewSelected),
     outside_text("shift-left", Command::LoadSelected(DeckId::A)),
     outside_text("shift-right", Command::LoadSelected(DeckId::B)),
     outside_text("up", Command::MoveSelection(Direction::Up)),
@@ -446,6 +447,10 @@ pub fn help_sections() -> Vec<HelpSection> {
                     &["shift-left", "shift-right"],
                     "Load the selected track on deck A / deck B",
                 ),
+                line(
+                    &["p"],
+                    "Preview the selected track in the headphones, or stop",
+                ),
             ],
         },
         HelpSection {
@@ -496,7 +501,10 @@ pub fn help_sections() -> Vec<HelpSection> {
                 line(&["cmd-1", "cmd-2"], "Prepare / Perform"),
                 line(&["cmd-shift-r"], "Record the mix, or stop recording"),
                 line(&["cmd-o"], "Add music folders to the library"),
-                line(&["cmd-,"], "Settings: music folders, rekordbox, sound card"),
+                line(
+                    &["cmd-,"],
+                    "Settings: music folders, rekordbox, sound card, theme",
+                ),
                 line(&["?", "escape"], "Show / close this help"),
             ],
         },

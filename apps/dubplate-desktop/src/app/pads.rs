@@ -1,22 +1,69 @@
 //! The performance pads and loop buttons on the decks: what each pad does in its deck's pad
 //! mode, the loop section, and what the pads and loop buttons light.
 
+use std::time::{Duration, Instant};
+
 use dubplate_engine::DeckId;
 use dubplate_midi::PadMode;
 use dubplate_rekordbox::{HotCue, HotCuePad};
-use gpui::Context;
+use gpui::{Context, SharedString};
 
 use super::DubplateApp;
 use super::notice::NoticePlace;
 use super::sampler::sampler_slot;
 use super::stems::stem_pad_action;
 use crate::commands::{LoopAction, PadPress, Press};
+use crate::cue_marks::MarkerPulse;
 use crate::pad_fx::{PadFxLayer, PadFxSlot, PadTrigger};
 use crate::pads::{
     AUTO_BEAT_LOOP, BEAT_JUMP_SCALE_RANGE, BEAT_LOOP_LENGTHS, KEY_PADS_DOWN_PAD, KEY_PADS_UP_PAD,
-    LONGER_JUMPS_PAD, PAD_COUNT, PadFx, SHORTER_JUMPS_PAD, beat_jump_beats, clamp_key_pad_offset,
-    key_pad_semitones,
+    LONGER_JUMPS_PAD, PAD_COUNT, PadFx, SHORTER_JUMPS_PAD, beat_jump_beats, beats_label,
+    clamp_key_pad_offset, key_pad_semitones,
 };
+
+/// What a pad just did, shown over its deck's lane so a press on the controller is seen: the
+/// jump, the loop length, or the effect while it is held.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct PadNote {
+    /// What the press did, such as `−4 beats`.
+    pub text: SharedString,
+    started: Instant,
+    held: bool,
+}
+
+/// How long a jump or a loop length stays shown.
+const PAD_NOTE_DURATION: Duration = Duration::from_millis(900);
+
+impl PadNote {
+    fn flash(text: impl Into<SharedString>, now: Instant) -> Self {
+        Self {
+            text: text.into(),
+            started: now,
+            held: false,
+        }
+    }
+
+    fn held(text: impl Into<SharedString>, now: Instant) -> Self {
+        Self {
+            text: text.into(),
+            started: now,
+            held: true,
+        }
+    }
+
+    /// Whether the note still shows at `now`: while its pad is held, or for a moment after a
+    /// jump or a loop.
+    pub fn shows(&self, now: Instant) -> bool {
+        self.held || now.saturating_duration_since(self.started) < PAD_NOTE_DURATION
+    }
+}
+
+/// A beat jump as the deck shows it: `+4 beats`, `−1/2 beat`.
+pub(super) fn jump_note(beats: f64) -> String {
+    let sign = if beats < 0.0 { '\u{2212}' } else { '+' };
+    let unit = if beats.abs() > 1.0 { "beats" } else { "beat" };
+    format!("{sign}{} {unit}", beats_label(beats))
+}
 
 /// A Pad FX pad being held, or latched.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -151,7 +198,14 @@ impl DubplateApp {
             PadMode::BeatJump => {
                 let scale = self.beat_jump_scales[deck.index()];
                 if let Some(beats) = beat_jump_beats(press.pad, scale) {
+                    let now = Instant::now();
+                    let from = self.deck_state(deck).position_seconds;
                     self.engine_command(cx, |controller| controller.beat_jump(deck, beats));
+                    self.pad_notes[deck.index()] = Some(PadNote::flash(jump_note(beats), now));
+                    self.decks[deck.index()].marker_pulse = Some(MarkerPulse {
+                        seconds: from,
+                        started: now,
+                    });
                 }
             }
             PadMode::BeatLoop if !press.shift => {
@@ -168,6 +222,12 @@ impl DubplateApp {
                         controller.beat_loop(deck, length)
                     }
                 });
+                let note = if same {
+                    "Loop off".to_owned()
+                } else {
+                    format!("Loop {length}")
+                };
+                self.pad_notes[deck.index()] = Some(PadNote::flash(note, Instant::now()));
             }
             PadMode::BeatLoop => {
                 if let Some(action) = stem_pad_action(press.pad) {
@@ -198,6 +258,13 @@ impl DubplateApp {
             PadFxAction::Release => self.release_held_pad(deck, cx),
             PadFxAction::Start(held) => {
                 self.release_held_pad(deck, cx);
+                self.pad_notes[deck.index()] = slot.map(|slot| {
+                    let (name, parameter) = slot.label();
+                    PadNote::held(
+                        format!("{name} {parameter}").trim_end().to_owned(),
+                        Instant::now(),
+                    )
+                });
                 self.engine_command(cx, |controller| match held.fx {
                     PadFx::Roll(length) => controller.beat_roll(deck, length),
                     PadFx::Effect(effect) => controller.hold_pad_effect(deck, effect),
@@ -209,6 +276,12 @@ impl DubplateApp {
 
     /// Lets go of the pad effect or roll held on a deck.
     pub(super) fn release_held_pad(&mut self, deck: DeckId, cx: &mut Context<'_, Self>) {
+        if self.pad_notes[deck.index()]
+            .as_ref()
+            .is_some_and(|note| note.held)
+        {
+            self.pad_notes[deck.index()] = None;
+        }
         if let Some(held) = self.held_pads[deck.index()].take() {
             self.engine_command(cx, |controller| match held.fx {
                 PadFx::Roll(_) => controller.release_roll(deck),
@@ -376,6 +449,24 @@ mod tests {
     use dubplate_engine::{BeatLength, EffectKind};
 
     use super::*;
+
+    #[test]
+    fn a_beat_jump_shows_how_far_and_which_way() {
+        assert_eq!(jump_note(-4.0), "\u{2212}4 beats");
+        assert_eq!(jump_note(8.0), "+8 beats");
+        assert_eq!(jump_note(1.0), "+1 beat");
+        assert_eq!(jump_note(-0.5), "\u{2212}1/2 beat");
+    }
+
+    #[test]
+    fn a_pad_note_shows_while_held_and_briefly_after_a_jump() {
+        let now = Instant::now();
+        let jump = PadNote::flash("+4 beats", now);
+        assert!(jump.shows(now + Duration::from_millis(500)));
+        assert!(!jump.shows(now + PAD_NOTE_DURATION));
+        let effect = PadNote::held("Echo 1/2", now);
+        assert!(effect.shows(now + Duration::from_secs(30)));
+    }
     use crate::pad_fx::PadFxBanks;
 
     fn press(pad: usize, press: Press, shift: bool) -> PadPress {

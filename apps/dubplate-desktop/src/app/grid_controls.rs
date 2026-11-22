@@ -92,9 +92,9 @@ fn confirm_button(
         .cursor_pointer()
         .map(|button| {
             let colour = if confirmed {
-                theme::OK
+                theme::active().ok
             } else {
-                theme::ATTENTION
+                theme::active().attention
             };
             button.border_color(colour).text_color(colour)
         })
@@ -127,11 +127,15 @@ fn step_button(
         .px(px(6.0))
         .rounded(px(5.0))
         .border_1()
-        .border_color(theme::LINE)
+        .border_color(theme::active().line)
         .text_size(theme::SMALL_TEXT_SIZE)
-        .text_color(theme::MUTED)
+        .text_color(theme::active().muted)
         .cursor_pointer()
-        .hover(|button| button.text_color(theme::TEXT).bg(theme::RAISED))
+        .hover(|button| {
+            button
+                .text_color(theme::active().text)
+                .bg(theme::active().raised)
+        })
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
             this.perform(command, window, cx);
@@ -152,6 +156,6 @@ fn reading(width: Pixels, text: String) -> impl IntoElement {
 fn small_label(text: &'static str) -> impl IntoElement {
     div()
         .text_size(theme::TINY_TEXT_SIZE)
-        .text_color(theme::MUTED)
+        .text_color(theme::active().muted)
         .child(text)
 }

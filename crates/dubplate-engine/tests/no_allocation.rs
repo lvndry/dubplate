@@ -271,11 +271,11 @@ fn run_session(
                     start_seconds: 0.2,
                     tempo: 1.05,
                 },
-                second: PreviewTrack {
+                second: Some(PreviewTrack {
                     track,
                     start_seconds: 0.0,
                     tempo: 0.95,
-                },
+                }),
                 second_offset_seconds: 0.05,
                 key_lock: true,
             }))
