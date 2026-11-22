@@ -135,7 +135,7 @@ Statuses are as audited on 22 November 2026, on `main` with a second Dubplate ru
 
 **H5 Hot loops.** Status: **In progress.**
 
-**H6 Hot cues survive.** Must: a hot cue set in Dubplate is there next time the track loads, after a relaunch, and in the rekordbox XML. Status: **Gap** (lost on relaunch); **In progress.**
+**H6 Hot cues survive.** Must: a hot cue set in Dubplate is there next time the track loads, after a relaunch, and in the rekordbox XML. Status: **Done** (kept per track in Dubplate's database, in place of rekordbox's cues, and exported).
 
 ## Memory cues
 

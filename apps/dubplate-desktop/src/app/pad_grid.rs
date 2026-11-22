@@ -3,7 +3,7 @@
 
 use dubplate_engine::DeckId;
 use dubplate_midi::PadMode;
-use dubplate_rekordbox::HotCuePad;
+use dubplate_rekordbox::{HotCue, HotCuePad};
 use gpui::prelude::*;
 use gpui::{ClickEvent, Context, FontWeight, MouseButton, Pixels, Rgba, SharedString, div, px};
 
@@ -378,7 +378,9 @@ fn faces(app: &DubplateApp, deck: DeckId) -> Vec<PadFace> {
         .map(|pad| match mode {
             PadMode::HotCue => {
                 let letter = HotCuePad::ALL.get(pad).copied();
-                let cue = letter.and_then(|letter| side.hot_cues.get(letter));
+                let cue = letter
+                    .and_then(|letter| side.cues.hot_cue(letter))
+                    .map(HotCue::start_seconds);
                 PadFace {
                     title: letter
                         .map(|letter| letter.letter().to_string())

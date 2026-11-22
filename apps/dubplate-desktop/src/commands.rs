@@ -2,7 +2,9 @@
 //! controller. Every input turns into a [`Command`], and the window carries each one out in
 //! one place.
 
-use dubplate_engine::{DeckId, EffectKind, EffectTarget, EffectUnitId, SmartCfx};
+use dubplate_engine::{
+    DeckId, EffectKind, EffectTarget, EffectUnitId, SmartCfx, Stem, StemSettings,
+};
 use dubplate_midi::PadMode;
 use dubplate_prep::GridEdit;
 
@@ -137,6 +139,51 @@ pub enum EffectEdit {
     Toggle,
 }
 
+/// What a stems control does on a deck.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StemAction {
+    /// Mute the stem, or bring it back.
+    Toggle(Stem),
+    /// The vocals out and every other stem in, for an instrumental; back to every stem when the
+    /// deck plays one already.
+    Instrumental,
+    /// Only the vocals, for an acapella; back to every stem when the deck plays one already.
+    Acapella,
+    /// Only the drums and the bass, a groove to ride under another track; back to every stem
+    /// when the deck plays it already.
+    Groove,
+    /// Every stem back.
+    AllStems,
+}
+
+impl StemAction {
+    /// The stem settings this action leaves after `settings`. Muting keeps each stem's level.
+    pub fn apply(self, settings: StemSettings) -> StemSettings {
+        let every_stem = Stem::ALL
+            .into_iter()
+            .fold(settings, |settings, stem| settings.with_muted(stem, false));
+        match self {
+            StemAction::Toggle(stem) => settings.toggled(stem),
+            StemAction::Instrumental if settings.is_without(Stem::Vocals) => every_stem,
+            StemAction::Instrumental => settings.without(Stem::Vocals),
+            StemAction::Acapella if settings.is_solo(Stem::Vocals) => every_stem,
+            StemAction::Acapella => settings.solo(Stem::Vocals),
+            StemAction::Groove if is_groove(settings) => every_stem,
+            StemAction::Groove => [Stem::Melody, Stem::Vocals]
+                .into_iter()
+                .fold(every_stem, |settings, stem| settings.with_muted(stem, true)),
+            StemAction::AllStems => every_stem,
+        }
+    }
+}
+
+/// Whether only the drums and the bass play.
+pub fn is_groove(settings: StemSettings) -> bool {
+    Stem::ALL
+        .into_iter()
+        .all(|stem| settings.is_muted(stem) == matches!(stem, Stem::Melody | Stem::Vocals))
+}
+
 /// Something the DJ asks for.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Command {
@@ -198,6 +245,8 @@ pub enum Command {
     ToggleKeyLock(DeckId),
     /// Choose whether a track loaded on a deck starts with key lock on, from Settings.
     SetKeyLockOnNewTracks(bool),
+    /// A stems control of a deck: mute or bring back a stem, or a one-touch mix.
+    Stems(DeckId, StemAction),
     /// Move a fader or knob to a position from 0.0 to 1.0.
     SetControl(Control, f32),
     /// Move the crossfader one step towards deck A ([`Direction::Down`]) or deck B.
