@@ -41,7 +41,7 @@ Statuses are as audited on 22 November 2026, on `main` with a second Dubplate ru
 
 **L1 Load to a deck.** Must: ready within half a second, cued at the first memory or hot cue when it has one, else at its first sound on the beat (rekordbox's Load Setting and Auto Cue, Preferences > Controller > Deck). See: title, artist, BPM, key, time left, the scrolling waveform with its grid, the overview with its cues, the cue marker. FLX4: CUE lit (at the cue point), PLAY blinking (paused), the load signal. Status: **Done** (Settings > Decks switches either rule off).
 
-**L2 A track Dubplate has to analyse.** Must: the waveform, BPM, key and grid appear as soon as they are ready, and the deck says "Analysing" until then. Status: **Done** on the deck ("Analysing…" where the BPM goes). **Gap**: the header's "N to analyse" counts every library track, rekordbox's analysed ones and missing files included, so it barely moves; it should count only what Dubplate will analyse.
+**L2 A track Dubplate has to analyse.** Must: the waveform, BPM, key and grid appear as soon as they are ready, and the deck says "Analysing" until then. Status: **Done** on the deck ("Analysing…" where the BPM goes). The header's "N to analyse" counts only the tracks with nothing to show until Dubplate's analysis arrives: rekordbox's analysed tracks, missing files and tracks a rescan is confirming are left out, so it counts down to nothing.
 
 **L3 Load onto a playing deck.** Must: refused while Lock playing deck is on, with a notice; the playing deck untouched. rekordbox: Preferences > Controller > Deck > Eject/Load Lock. Status: **Done.**
 
