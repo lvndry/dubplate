@@ -353,11 +353,7 @@ fn run_session(
         |controller| controller.duplicate_deck(DeckId::B, DeckId::A).map(|_| ()),
         |controller| {
             let snapshot = controller.snapshot_deck(DeckId::B)?;
-            controller.restore_deck(
-                DeckId::A,
-                &snapshot,
-                dubplate_engine::DeckRestorePolicy::DeviceChange,
-            )
+            controller.restore_deck(DeckId::A, &snapshot)
         },
         |controller| controller.play(DeckId::B),
         |controller| controller.eject(DeckId::A),

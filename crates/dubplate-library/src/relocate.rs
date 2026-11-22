@@ -46,19 +46,24 @@ const LENGTH_TOLERANCE_SECONDS: f32 = 2.0;
 /// same size wins outright when the size is known; failing that, a candidate whose length is
 /// within two seconds wins when both lengths are known. Two equally good candidates are never
 /// guessed between, so an ambiguous name yields nothing. The result keeps the order of `missing`.
+/// Only candidates named like a missing file have their path resolved on disk.
 pub fn find_relocations(missing: &[MissingTrack], candidates: &[LibraryTrack]) -> Vec<Relocation> {
+    let wanted_names: HashSet<String> = missing
+        .iter()
+        .filter_map(|missing| lowercase_name(&missing.path))
+        .collect();
     // Overlapping source folders (and aliases of a folder) can report the same file more
     // than once. Ambiguity means distinct files, never duplicate scan results.
     let mut seen_paths = HashSet::new();
     let mut seen_identities = HashSet::new();
     let mut by_name: HashMap<String, Vec<&LibraryTrack>> = HashMap::new();
     for candidate in candidates {
-        if !seen_paths.insert(&candidate.path) {
-            continue;
-        }
         let Some(name) = lowercase_name(&candidate.path) else {
             continue;
         };
+        if !wanted_names.contains(&name) || !seen_paths.insert(&candidate.path) {
+            continue;
+        }
         let identity = candidate
             .path
             .canonicalize()

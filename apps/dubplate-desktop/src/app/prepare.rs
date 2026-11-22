@@ -193,8 +193,12 @@ impl DubplateApp {
                     }
                 }
                 match completion.outcome {
-                    Ok(value) if applied => complete(this, value, cx),
-                    Ok(_) => {}
+                    Ok(value) => {
+                        this.quit_refused = false;
+                        if applied {
+                            complete(this, value, cx);
+                        }
+                    }
                     Err(error) => this.report_set_save_failure(error, cx),
                 }
                 if applied {
