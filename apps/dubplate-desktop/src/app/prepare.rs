@@ -275,6 +275,7 @@ impl DubplateApp {
 
     /// After every change: mark the set's tracks in the library and check the new ones.
     pub(super) fn set_changed(&mut self, cx: &mut Context<'_, Self>) {
+        self.stop_audition(cx);
         let in_set: HashSet<TrackIndex> = match (self.collection(), &self.set_editor) {
             (Some(collection), Some(editor)) => editor
                 .tracks()

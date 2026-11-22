@@ -319,6 +319,7 @@ impl CollectionTrack {
             bpm: None,
             length_seconds: None,
             file_path: Some(path.to_path_buf()),
+            file_size: None,
             rating: None,
             comment: None,
             analysis_path: None,
@@ -342,6 +343,7 @@ impl CollectionTrack {
                 .duration_seconds
                 .map(|seconds| seconds.round().max(0.0) as u32),
             file_path: Some(found.path.clone()),
+            file_size: Some(found.size),
             rating: None,
             comment: None,
             analysis_path: None,
@@ -492,6 +494,7 @@ mod tests {
             bpm: Some(124.0),
             length_seconds: Some(408),
             file_path: None,
+            file_size: None,
             rating: None,
             comment: None,
             analysis_path: None,

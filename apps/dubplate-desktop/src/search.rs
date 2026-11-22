@@ -75,6 +75,7 @@ mod tests {
             bpm: None,
             length_seconds: None,
             file_path: None,
+            file_size: None,
             rating: None,
             comment: None,
             analysis_path: None,

@@ -2,6 +2,7 @@
 
 mod app;
 mod assets;
+mod audition;
 mod browser;
 mod collection;
 mod commands;
