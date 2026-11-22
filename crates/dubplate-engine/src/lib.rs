@@ -72,7 +72,7 @@ pub use jog::{
 };
 pub use mixer::Renderer;
 pub use output::{AudioOutput, OutputConfig, OutputDevice, SILENT_OUTPUT_NAME};
-pub use pad_effects::PadEffect;
+pub use pad_effects::{PadEffect, PadRelease};
 pub use preview::{MAX_PREVIEW_SECONDS, Preview, PreviewState, PreviewTrack};
 pub use processor::{AudioProcessor, ProcessContext, StereoBlock};
 pub use recording::RecordingTap;

@@ -4,8 +4,8 @@ mod common;
 
 use common::{SAMPLE_RATE, assert_close, left_channel, render_frames, sine_track};
 use dubplate_engine::{
-    BeatGrid, BeatLength, Controller, DeckId, EffectKind, MasterTempo, PadEffect, ParameterValue,
-    Renderer, SyncMode, offline_engine,
+    BeatGrid, BeatLength, Controller, DeckId, EffectKind, MasterTempo, PadEffect, PadRelease,
+    ParameterValue, Renderer, SyncMode, offline_engine,
 };
 
 const BLOCK: usize = 256;
@@ -107,6 +107,7 @@ fn a_held_echo_rings_out_after_release_and_a_brake_gives_the_live_track_back() {
         kind: EffectKind::Echo,
         parameter: Some(ParameterValue::Beats(BeatLength::HALF)),
         depth: 0.8,
+        release: PadRelease::RingOut,
     };
     controller.hold_pad_effect(DeckId::A, echo).unwrap();
     assert_eq!(controller.pad_effect(DeckId::A), Some(echo));
@@ -122,6 +123,7 @@ fn a_held_echo_rings_out_after_release_and_a_brake_gives_the_live_track_back() {
                 kind: EffectKind::Brake,
                 parameter: Some(ParameterValue::Beats(BeatLength::HALF)),
                 depth: 1.0,
+                release: PadRelease::RingOut,
             },
         )
         .unwrap();
@@ -136,6 +138,33 @@ fn a_held_echo_rings_out_after_release_and_a_brake_gives_the_live_track_back() {
     let live = seconds(&mut renderer, 1.0);
     assert!(rms(&live[24_000..]) > 0.3, "the live track is back");
     assert_close(position(&controller), started + 2.0, 0.01);
+}
+
+#[test]
+fn a_pad_set_to_go_back_to_dry_takes_its_echoes_out_when_it_is_let_go() {
+    let mut tails = Vec::new();
+    for release in [PadRelease::RingOut, PadRelease::Dry] {
+        let (mut controller, mut renderer) = deck_on_grid(440.0);
+        controller.play(DeckId::A).unwrap();
+        seconds(&mut renderer, 0.5);
+        let echo = PadEffect {
+            kind: EffectKind::Echo,
+            parameter: Some(ParameterValue::Beats(BeatLength::HALF)),
+            depth: 0.8,
+            release,
+        };
+        controller.hold_pad_effect(DeckId::A, echo).unwrap();
+        seconds(&mut renderer, 1.0);
+        controller.pause(DeckId::A).unwrap();
+        controller.release_pad_effect(DeckId::A).unwrap();
+        seconds(&mut renderer, 0.1);
+        tails.push(rms(&seconds(&mut renderer, 0.4)));
+    }
+    let [ring_out, dry] = tails[..] else {
+        unreachable!()
+    };
+    assert!(ring_out > 0.05, "the echoes ring out: {ring_out}");
+    assert!(dry < 0.005, "back to dry leaves silence: {dry}");
 }
 
 #[test]
