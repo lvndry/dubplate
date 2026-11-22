@@ -18,7 +18,9 @@ On first launch the library is empty and asks you where your music is.
 - **Add music folders…** (Cmd+O) picks one or more folders. Dubplate reads them and their subfolders, and never changes a file.
 - **Import rekordbox collection** brings in your rekordbox tracks, playlists, cues, beat grids and phrases.
 
-You can use both. Settings (Cmd+,) lists your folders with Rescan and Remove. Each track's energy (1 to 10) is analysed in the background and cached, set tracks first.
+You can use both. Settings (Cmd+,) lists your folders with Rescan and Remove.
+
+Dubplate analyses every track in the background and keeps what it found for the next launch, set tracks and the tracks you load first. Each track gets its energy (1 to 10), and the tracks rekordbox never analysed, such as the ones only in your music folders, also get a BPM, a beat grid with its downbeats and a key in Camelot. Sync, beat FX, loops, quantize, the beat marks, the track check, the seam warnings and the suggestions then work for them as for rekordbox tracks. rekordbox's own BPM, key and grid stay first for its tracks, and tap tempo or your grid nudges win over Dubplate's grid. A blank BPM, Key or Energy cell means the track is still being analysed; the header counts how many are left.
 
 ## 2. Pick the sound card
 
@@ -42,7 +44,7 @@ Each set track has a **ready badge**: Ready, or what is missing (Grid unconfirme
 
 ### Check each track
 
-Select a set track to open its track check: the waveform with the beat grid, rekordbox's phrases and the mix cues.
+Select a set track to open its track check: the waveform with the beat grid, rekordbox's phrases and the mix cues. A track rekordbox never analysed shows Dubplate's grid, with no waveform or phrases under it, and its proposed cues come from the grid alone.
 
 | Do | Key |
 | --- | --- |
