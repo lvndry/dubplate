@@ -1,17 +1,21 @@
 //! A set exported as rekordbox XML parses back with a real XML parser, keeps its text and paths
-//! through escaping, and carries the grid corrections, mix cues and rekordbox cues in seconds.
+//! through escaping, and carries the grid corrections, mix cues and each track's cues in seconds:
+//! the ones made in Dubplate, else rekordbox's.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use dubplate_library::{FolderScan, LibraryTrack};
 use dubplate_prep::{
     ExportError, ExportLibrary, ExportTrack, RekordboxCollection, Set, SetEntry, SetExport, SetId,
-    export_file_name, file_track, rekordbox_xml, tempo_markers,
+    TrackIdentity, export_file_name, file_track, rekordbox_xml, tempo_markers,
 };
 use dubplate_rekordbox::analysis::{Beat, BeatGrid};
 use dubplate_rekordbox::xml::TempoMarker;
-use dubplate_rekordbox::{Cue, CueKind, HotCuePad, Track};
+use dubplate_rekordbox::{
+    Cue, CueKind, HotCue, HotCuePad, MemoryCue, PaletteColor, Track, TrackCues,
+};
 use quick_xml::XmlVersion;
 use quick_xml::events::Event;
 use quick_xml::reader::Reader;
@@ -141,7 +145,8 @@ fn hot_cue(track_id: &str, pad: HotCuePad, start_ms: u32, name: &str) -> Cue {
         kind: CueKind::Hot { pad },
         start_ms,
         loop_end_ms: None,
-        color: None,
+        hot_cue_color: None,
+        memory_color: None,
         comment: Some(name.to_owned()),
     }
 }
@@ -153,7 +158,8 @@ fn memory_cue(track_id: &str, start_ms: u32) -> Cue {
         kind: CueKind::Memory,
         start_ms,
         loop_end_ms: None,
-        color: None,
+        hot_cue_color: None,
+        memory_color: None,
         comment: None,
     }
 }
@@ -168,7 +174,7 @@ fn export_track(track: Track, entry: SetEntry) -> ExportTrack {
         track,
         in_rekordbox: true,
         beat_grid: None,
-        cues: Vec::new(),
+        cues: TrackCues::default(),
     }
 }
 
@@ -326,12 +332,12 @@ fn mix_cues_are_named_memory_cues_beside_rekordbox_cues() {
     );
     let mut saved_loop = hot_cue("1", HotCuePad::B, 64_000, "Loop");
     saved_loop.loop_end_ms = Some(72_000);
-    track.cues = vec![
+    track.cues = TrackCues::from_rekordbox(&[
         hot_cue("1", HotCuePad::C, 1_259, "1.1Bars"),
         saved_loop,
         memory_cue("1", 32_123),
         memory_cue("1", 100_500),
-    ];
+    ]);
     let elements = parse(&rekordbox_xml("Set", &[track]));
     let marks: Vec<(&str, &str, &str, &str, Option<&str>)> = named(&elements, "POSITION_MARK")
         .into_iter()
@@ -505,6 +511,99 @@ fn the_library_finds_each_set_track_where_the_dj_keeps_it() {
     assert_eq!(tracks[1].attribute("TotalTime"), "302");
     assert_eq!(decoded_location(tracks[2].attribute("Location")), gone);
     assert!(!tracks[2].attributes.contains_key("Name"));
+}
+
+#[test]
+fn the_cues_made_in_dubplate_take_the_place_of_rekordbox_s() {
+    let directory = tempfile::tempdir().unwrap();
+    let rekordbox_file = directory.path().join("Edited.mp3");
+    let cleared_file = directory.path().join("Cleared.mp3");
+    let loose_file = directory.path().join("Loose.mp3");
+    for file in [&rekordbox_file, &cleared_file, &loose_file] {
+        std::fs::write(file, b"audio").unwrap();
+    }
+    let rekordbox_tracks = vec![
+        rekordbox_track("1", rekordbox_file.to_str().unwrap()),
+        rekordbox_track("2", cleared_file.to_str().unwrap()),
+    ];
+    let cues = vec![
+        hot_cue("1", HotCuePad::A, 1_000, "rekordbox A"),
+        hot_cue("2", HotCuePad::B, 2_000, "rekordbox B"),
+    ];
+    let mut edited = TrackCues::default();
+    edited.set_hot_cue(
+        HotCuePad::C,
+        HotCue {
+            color: PaletteColor::from_index(42),
+            name: "Vocal".to_owned(),
+            ..HotCue::at(33_000)
+        },
+    );
+    edited.insert_memory_cue(MemoryCue::at(64_000));
+    let mut loose = TrackCues::default();
+    loose.set_hot_cue(HotCuePad::H, HotCue::at(5_500));
+    let track_cues = HashMap::from([
+        (TrackIdentity::Rekordbox("1".to_owned()), Arc::new(edited)),
+        (
+            TrackIdentity::Rekordbox("2".to_owned()),
+            Arc::new(TrackCues::default()),
+        ),
+        (TrackIdentity::File(loose_file.clone()), Arc::new(loose)),
+    ]);
+    let relinks = HashMap::new();
+    let library = ExportLibrary::new(
+        Some(RekordboxCollection {
+            tracks: &rekordbox_tracks,
+            cues: &cues,
+            share_directory: directory.path(),
+        }),
+        &[],
+        &relinks,
+    )
+    .with_track_cues(&track_cues);
+    let entry = |path: &Path, rekordbox_id: Option<&str>| SetEntry {
+        track_path: path.to_path_buf(),
+        rekordbox_id: rekordbox_id.map(str::to_owned),
+        ..SetEntry::default()
+    };
+    let set = Set {
+        id: SetId(1),
+        name: "Sunday".to_owned(),
+        target_minutes: 60,
+        created_at: 0,
+        updated_at: 0,
+        entries: vec![
+            entry(&rekordbox_file, Some("1")),
+            entry(&cleared_file, Some("2")),
+            entry(&loose_file, None),
+        ],
+        seams: Vec::new(),
+    };
+    let elements = parse(&library.export(&set).xml);
+    let mut marks: Vec<Vec<(&str, &str, &str)>> = Vec::new();
+    for element in &elements {
+        if element.name == "TRACK" && element.attributes.contains_key("Location") {
+            marks.push(Vec::new());
+        } else if element.name == "POSITION_MARK"
+            && let Some(track_marks) = marks.last_mut()
+        {
+            track_marks.push((
+                element.attribute("Name"),
+                element.attribute("Num"),
+                element.attributes.get("Red").map_or("", String::as_str),
+            ));
+        }
+    }
+    assert_eq!(
+        marks,
+        [
+            vec![("", "-1", ""), ("Vocal", "2", "230")],
+            vec![],
+            vec![("", "7", "")],
+        ],
+        "an edited track keeps only Dubplate's cues, deleting them all clears rekordbox's, and \
+         a file rekordbox does not hold carries its own"
+    );
 }
 
 #[test]

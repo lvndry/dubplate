@@ -5,6 +5,41 @@ use std::path::{Path, PathBuf};
 use dubplate_engine::{EngineError, Stem, StemTracks};
 use euphoria_core::stems as separation;
 
+/// How far into a track, from either end, a seam's overlap reaches: 32 seconds, 16 bars at
+/// 120 BPM, the longest blend a set plans.
+pub const SEAM_EDGE_SECONDS: f32 = 32.0;
+
+/// Whether the vocals sound near the start and near the end of a track, where it meets its
+/// neighbours in a set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct VocalPresence {
+    /// The vocals sound in the first [`SEAM_EDGE_SECONDS`].
+    pub at_start: bool,
+    /// The vocals sound in the last [`SEAM_EDGE_SECONDS`].
+    pub at_end: bool,
+}
+
+impl VocalPresence {
+    /// Where the vocals sound, from windows of the track as `(start, length, vocals)`, in
+    /// seconds.
+    fn from_windows(windows: impl IntoIterator<Item = (f32, f32, bool)>) -> Self {
+        let windows: Vec<(f32, f32, bool)> = windows.into_iter().collect();
+        let end = windows
+            .iter()
+            .map(|(start, length, _)| start + length)
+            .fold(0.0, f32::max);
+        let sung = |inside: &dyn Fn(f32, f32) -> bool| {
+            windows
+                .iter()
+                .any(|(start, length, vocals)| *vocals && inside(*start, start + length))
+        };
+        Self {
+            at_start: sung(&|start, _| start < SEAM_EDGE_SECONDS),
+            at_end: sung(&|_, window_end| window_end > end - SEAM_EDGE_SECONDS),
+        }
+    }
+}
+
 /// Why a track's stems could not be loaded for a deck.
 #[derive(Debug, thiserror::Error)]
 pub enum StemLoadError {
@@ -29,6 +64,14 @@ pub enum StemLoadError {
     Resample {
         /// The stem file.
         path: PathBuf,
+        /// What went wrong.
+        reason: String,
+    },
+    /// The vocals stem could not be measured.
+    #[error("could not measure the vocals in {}: {reason}", directory.display())]
+    Vocals {
+        /// The stems folder.
+        directory: PathBuf,
         /// What went wrong.
         reason: String,
     },
@@ -89,6 +132,21 @@ impl StemFiles {
             std::array::from_fn(|stem| samples[stem].as_slice()),
             sample_rate,
         )?)
+    }
+
+    /// Where the vocals sound near the track's start and end. The vocals stem is measured once
+    /// and the levels are kept next to the stems, so later calls only read them back.
+    pub fn vocal_presence(&self) -> Result<VocalPresence, StemLoadError> {
+        let activity = separation::vocal_activity(&separation::StemFiles::in_directory(
+            self.directory.clone(),
+        ))
+        .map_err(|error| StemLoadError::Vocals {
+            directory: self.directory.clone(),
+            reason: error.to_string(),
+        })?;
+        Ok(VocalPresence::from_windows(activity.windows.iter().map(
+            |window| (window.start_seconds, window.duration_seconds, window.active),
+        )))
     }
 
     /// The name of the folder inside the cache, which names the model and the track's content.
@@ -229,6 +287,30 @@ mod tests {
             files.load(STEMS_SAMPLE_RATE),
             Err(StemLoadError::Format { sample_rate, .. }) if sample_rate == STEMS_SAMPLE_RATE
         ));
+    }
+
+    #[test]
+    fn vocals_count_only_near_either_end_of_the_track() {
+        let window = |start: f32, vocals| (start, 4.0, vocals);
+        let verse_in_the_middle = (0..60).map(|index| {
+            let start = index as f32 * 4.0;
+            window(start, (100.0..140.0).contains(&start))
+        });
+        assert_eq!(
+            VocalPresence::from_windows(verse_in_the_middle),
+            VocalPresence::default()
+        );
+        let sung_intro_and_outro = (0..60).map(|index| {
+            let start = index as f32 * 4.0;
+            window(start, start < 8.0 || start > 220.0)
+        });
+        assert_eq!(
+            VocalPresence::from_windows(sung_intro_and_outro),
+            VocalPresence {
+                at_start: true,
+                at_end: true
+            }
+        );
     }
 
     #[test]
