@@ -12,6 +12,7 @@ mod controls;
 mod deck;
 mod effects;
 mod energy;
+mod folder_picker;
 mod fonts;
 mod frame_stats;
 mod hardware;
