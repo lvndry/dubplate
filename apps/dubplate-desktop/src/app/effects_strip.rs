@@ -4,7 +4,7 @@
 
 use std::rc::Rc;
 
-use dubplate_engine::{DeckId, EffectTarget, EffectUnitId, EffectUnitState};
+use dubplate_engine::{DeckId, EffectTarget, EffectUnitId, EffectUnitState, ReleaseFx};
 use gpui::component::input::Input;
 use gpui::prelude::*;
 use gpui::{
@@ -80,6 +80,7 @@ fn unit_row(
         .when_some(lever, |row, lever| row.child(lever_reading(lever)))
         .child(level_bar(app, unit, state.depth, cx))
         .child(on_button(unit, state.enabled, accent, cx))
+        .child(release_button(unit, &state, cx))
         .when_some(menu, |row, menu| {
             row.child(picker(app, unit, &state, menu.opening, cx))
         })
@@ -348,6 +349,49 @@ fn on_button(
             this.perform(Command::Effect(unit, EffectEdit::Toggle), window, cx);
         }))
         .child("On")
+}
+
+/// The Release FX that SHIFT + BEAT FX ON plays on this unit; a click picks the next one. It
+/// lights while the release is held.
+fn release_button(
+    unit: EffectUnitId,
+    state: &EffectUnitState,
+    cx: &mut Context<'_, DubplateApp>,
+) -> impl IntoElement + use<> {
+    let name = release_label(state.release);
+    div()
+        .id(("effect-release", unit.index()))
+        .accessible_button(format!("Effect {} release: {name}", unit.index() + 1))
+        .flex()
+        .items_center()
+        .h(px(24.0))
+        .px(px(6.0))
+        .rounded(px(5.0))
+        .text_size(theme::TINY_TEXT_SIZE)
+        .cursor_pointer()
+        .map(|button| {
+            if state.releasing {
+                button.bg(theme::ATTENTION).text_color(theme::ON_DECK)
+            } else {
+                button
+                    .text_color(theme::MUTED)
+                    .hover(|button| button.bg(theme::RAISED).text_color(theme::TEXT))
+            }
+        })
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+            this.perform(Command::Effect(unit, EffectEdit::NextRelease), window, cx);
+        }))
+        .child(name)
+}
+
+/// A Release FX's name on the strip.
+fn release_label(release: ReleaseFx) -> &'static str {
+    match release {
+        ReleaseFx::Echo => "Echo out",
+        ReleaseFx::BackSpin => "Back spin",
+        ReleaseFx::VinylBrake => "Vinyl brake",
+    }
 }
 
 /// Where the controller's CH SELECT lever sits, next to the targets of the unit it drives, so

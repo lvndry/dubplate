@@ -1418,8 +1418,10 @@ impl DubplateApp {
             EffectEdit::Target(target) => controller.set_effect_target(unit, target),
             EffectEdit::Depth(depth) => controller.set_effect_depth(unit, depth.clamp(0.0, 1.0)),
             EffectEdit::Toggle => controller.toggle_effect(unit),
+            EffectEdit::Release(held) => controller.hold_release_fx(unit, held),
+            EffectEdit::NextRelease => controller.set_release_fx(unit, state.release.next()),
         });
-        if !matches!(edit, EffectEdit::Toggle) {
+        if !matches!(edit, EffectEdit::Toggle | EffectEdit::Release(_)) {
             self.remember_effect_units(cx);
         }
         if matches!(edit, EffectEdit::StepKind(_)) {
@@ -1544,6 +1546,9 @@ impl DubplateApp {
                 }
                 if let Some(value) = setting.parameter() {
                     controller.set_effect_parameter(unit, value)?;
+                }
+                if let Some(release) = setting.release() {
+                    controller.set_release_fx(unit, release)?;
                 }
                 match setting.depth() {
                     Some(depth) => controller.set_effect_depth(unit, depth),

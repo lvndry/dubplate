@@ -332,6 +332,7 @@ mod tests {
                 target: "M".to_owned(),
                 parameter: "2".to_owned(),
                 depth: 0.25,
+                release: "vinyl brake".to_owned(),
             }],
             smart_cfx_preset: Some("dub echo".to_owned()),
             smart_cfx_on: true,

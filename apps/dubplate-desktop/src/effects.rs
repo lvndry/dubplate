@@ -1,7 +1,9 @@
 //! The effects as the DJ picks them: their names on screen, the groups of the effect picker,
 //! and the order FX SELECT steps through.
 
-use dubplate_engine::{DeckId, EffectKind, EffectTarget, EffectUnitState, ParameterValue};
+use dubplate_engine::{
+    DeckId, EffectKind, EffectTarget, EffectUnitState, ParameterValue, ReleaseFx,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::commands::Direction;
@@ -268,6 +270,10 @@ pub struct EffectUnitSetting {
     pub parameter: String,
     /// The level and depth knob, from 0.0 to 1.0.
     pub depth: f32,
+    /// The Release FX, such as `echo` or `vinyl brake`; empty in files written before units had
+    /// one.
+    #[serde(default)]
+    pub release: String,
 }
 
 impl EffectUnitSetting {
@@ -280,7 +286,15 @@ impl EffectUnitSetting {
                 .parameter
                 .map_or_else(String::new, |value| value.to_string()),
             depth: state.depth,
+            release: state.release.to_string(),
         }
+    }
+
+    /// The Release FX, if the name is one Dubplate knows.
+    pub fn release(&self) -> Option<ReleaseFx> {
+        ReleaseFx::ALL
+            .into_iter()
+            .find(|release| release.to_string() == self.release)
     }
 
     /// The effect, if the name is one Dubplate knows.
@@ -399,9 +413,12 @@ mod tests {
             parameter: Some(ParameterValue::Beats(BeatLength::THREE_QUARTERS)),
             depth: 0.4,
             enabled: true,
+            release: ReleaseFx::BackSpin,
+            releasing: false,
             sounding: true,
         };
         let setting = EffectUnitSetting::of(&state);
+        assert_eq!(setting.release(), Some(ReleaseFx::BackSpin));
         assert_eq!(setting.kind(), Some(EffectKind::PingPong));
         assert_eq!(setting.target(), Some(EffectTarget::Deck(DeckId::B)));
         assert_eq!(
@@ -414,10 +431,12 @@ mod tests {
             target: "C".to_owned(),
             parameter: "64".to_owned(),
             depth: f32::NAN,
+            release: "scratch".to_owned(),
         };
         assert_eq!(unknown.kind(), None);
         assert_eq!(unknown.target(), None);
         assert_eq!(unknown.parameter(), None);
+        assert_eq!(unknown.release(), None);
         assert_eq!(unknown.depth(), None);
         assert_eq!(target_from_letter("m"), Some(EffectTarget::Master));
     }

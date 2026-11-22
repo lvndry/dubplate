@@ -135,6 +135,7 @@ pub struct Dispatcher {
     lever_contacts: [bool; DECK_COUNT],
     beat_fx: BeatFxSection,
     master_pickup: Pickup,
+    release_held: bool,
 }
 
 impl Default for Dispatcher {
@@ -145,6 +146,7 @@ impl Default for Dispatcher {
             lever_contacts: [false; DECK_COUNT],
             beat_fx: BeatFxSection::default(),
             master_pickup: Pickup::default(),
+            release_held: false,
         }
     }
 }
@@ -273,6 +275,21 @@ impl Dispatcher {
             }
             (Button::BeatFxOn, Layer::Normal) if pressed => {
                 Some(Command::Effect(surface.focused_effect?, EffectEdit::Toggle))
+            }
+            (Button::BeatFxOn, Layer::Shift) if pressed => {
+                self.release_held = true;
+                Some(Command::Effect(
+                    surface.focused_effect?,
+                    EffectEdit::Release(true),
+                ))
+            }
+            // The release ends with the button, whether SHIFT is still down or was let go first.
+            (Button::BeatFxOn, _) if !pressed && self.release_held => {
+                self.release_held = false;
+                Some(Command::Effect(
+                    surface.focused_effect?,
+                    EffectEdit::Release(false),
+                ))
             }
             (Button::SmartCfx, Layer::Normal) if pressed => Some(Command::ToggleSmartCfx),
             (Button::SmartCfx, Layer::Shift) if pressed => Some(Command::NextSmartCfx),
@@ -795,6 +812,31 @@ mod tests {
                 Command::ToggleSmartCfx,
                 Command::NextSmartCfx,
                 Command::ToggleSmartFader,
+            ]
+        );
+    }
+
+    #[test]
+    fn shift_beat_fx_on_holds_the_release_until_the_button_is_let_go() {
+        let mut dispatcher = Dispatcher::default();
+        let surface = fx_surface();
+        let unit = EffectUnitId::ALL[1];
+        let commands = run(
+            &mut dispatcher,
+            &surface,
+            &[
+                shift_press(Button::BeatFxOn),
+                release(Button::BeatFxOn),
+                press(Button::BeatFxOn),
+                release(Button::BeatFxOn),
+            ],
+        );
+        assert_eq!(
+            commands,
+            [
+                Command::Effect(unit, EffectEdit::Release(true)),
+                Command::Effect(unit, EffectEdit::Release(false)),
+                Command::Effect(unit, EffectEdit::Toggle),
             ]
         );
     }
