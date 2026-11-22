@@ -96,17 +96,20 @@ impl DubplateApp {
         else {
             return;
         };
-        let grid = DeckGrid::new(&grid, self.grid_correction(&track));
+        let fixed = DeckGrid::new(&grid, self.grid_correction(&track));
         let deck_state = &mut self.decks[deck.index()];
         let DeckContent::Loaded(visuals) = &mut deck_state.content else {
             return;
         };
-        visuals.beats = Arc::new(grid.beats);
+        visuals.beats = Arc::new(fixed.beats);
+        visuals.read_grid = Some(Arc::new(grid));
         if visuals.zoomed.is_none() {
             visuals.analysis_problem = Some(ANALYSED_GRID_NOTE.to_owned());
         }
         deck_state.grid_source = Some(GridSource::Analysis);
-        self.engine_command(cx, |controller| controller.set_beat_grid(deck, grid.engine));
+        self.engine_command(cx, |controller| {
+            controller.set_beat_grid(deck, fixed.engine)
+        });
     }
 
     fn collect_analyses_while_waiting(&mut self, cx: &mut Context<'_, Self>) {

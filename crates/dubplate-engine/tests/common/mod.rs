@@ -117,3 +117,39 @@ pub fn sine_track(
         .collect();
     Track::from_interleaved_stereo(&samples, sample_rate).expect("valid test track")
 }
+
+/// A four-to-the-floor loop at `tempo_bpm`: a kick on every beat, a hi-hat on every off-beat, a
+/// shaker on the sixteenths and a held chord, peaking around -3 dBFS. Busy enough that a filter,
+/// a gate or an echo all change it audibly.
+pub fn club_loop_track(tempo_bpm: f64, seconds: f64, sample_rate: u32) -> Track {
+    let frames = (seconds * f64::from(sample_rate)) as usize;
+    let beat_seconds = 60.0 / tempo_bpm;
+    let mut noise_state: u64 = 0x2545_f491_4f6c_dd1d;
+    let mut kick_phase = 0.0;
+    let samples: Vec<f32> = (0..frames)
+        .flat_map(|frame| {
+            let seconds = frame as f64 / f64::from(sample_rate);
+            let beats = seconds / beat_seconds;
+            let since_beat = beats.fract() * beat_seconds;
+            let kick_hz = 50.0 + 90.0 * (-since_beat / 0.03).exp();
+            kick_phase += kick_hz / f64::from(sample_rate);
+            let kick = (std::f64::consts::TAU * kick_phase).sin() * (-since_beat / 0.2).exp() * 0.5;
+            noise_state ^= noise_state << 13;
+            noise_state ^= noise_state >> 7;
+            noise_state ^= noise_state << 17;
+            let noise = (noise_state >> 40) as f64 / (1_u64 << 24) as f64 * 2.0 - 1.0;
+            let since_off_beat = (beats + 0.5).fract() * beat_seconds;
+            let hat = noise * 0.2 * (-since_off_beat / 0.03).exp();
+            let since_sixteenth = (beats * 4.0).fract() * beat_seconds / 4.0;
+            let shaker = noise * 0.06 * (-since_sixteenth / 0.02).exp();
+            let chord: f64 = [220.0, 261.63, 329.63]
+                .iter()
+                .map(|hertz| (std::f64::consts::TAU * hertz * seconds).sin())
+                .sum::<f64>()
+                * 0.07;
+            let value = (kick + hat + shaker + chord) as f32;
+            [value, value]
+        })
+        .collect();
+    Track::from_interleaved_stereo(&samples, sample_rate).expect("valid test track")
+}

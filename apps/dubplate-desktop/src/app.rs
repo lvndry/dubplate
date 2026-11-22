@@ -5,14 +5,17 @@
 mod analysis;
 mod audio;
 mod audition;
+mod deck_grid;
 mod deck_panel;
 mod drop_target;
 mod effects_strip;
 mod export;
 mod filter_reference;
+mod grid_controls;
 mod header;
 mod help;
 mod knob;
+mod lane_drag;
 mod lanes;
 mod library;
 mod library_panel;
@@ -26,6 +29,7 @@ mod prepare;
 mod recording;
 mod relink;
 mod sampler;
+mod script;
 mod set_panel;
 mod slider;
 mod smart;
@@ -40,12 +44,12 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use dubplate_engine::{
-    AudioOutput, Controller, DECK_COUNT, DeckId, DeckState, EFFECT_UNIT_COUNT, EffectUnitId,
-    EffectUnitState, EngineError, HeadphoneSettings, MasterTempo, OutputDevice, SyncMode,
-    TempoRange, TempoState,
+    AudioOutput, Controller, DECK_COUNT, DeckId, DeckState, EFFECT_UNIT_COUNT, EffectTarget,
+    EffectUnitId, EffectUnitState, EngineError, HeadphoneSettings, MasterTempo, OutputDevice,
+    SyncMode, TempoRange, TempoState,
 };
 use dubplate_midi::{Feedback, PadMode};
-use dubplate_prep::{AnalysisQueue, GridCorrection};
+use dubplate_prep::{AnalysisQueue, GridCorrection, TrackGrid};
 use dubplate_rekordbox::HotCuePad;
 use gpui::component::input::{InputEvent, InputState};
 use gpui::prelude::*;
@@ -67,6 +71,7 @@ use crate::deck::{
     Deck, DeckContent, GridSource, HotCues, LoadError, PreparedTrack, TrackVisuals, deck_letter,
     prepare_track,
 };
+use crate::devices::DeviceAccess;
 use crate::effects::{EffectUnitSetting, search, step_beat, step_effect};
 use crate::fonts::UI_FAMILY;
 use crate::frame_stats::FrameStats;
@@ -104,6 +109,9 @@ const BUFFER_FRAMES: u32 = 256;
 const LIGHTS_INTERVAL: Duration = Duration::from_millis(30);
 /// How long after the last change to an effect unit its settings are saved.
 const SETTINGS_SAVE_DELAY: Duration = Duration::from_millis(500);
+/// How long the effect picker that FX SELECT opens stays up after the last press, as
+/// rekordbox's FX window does.
+const FX_SELECT_GLANCE: Duration = Duration::from_millis(1_500);
 /// How long after a command the controller lights look again, once the audio thread has
 /// carried it out: a few audio buffers.
 const LIGHTS_SETTLE: Duration = Duration::from_millis(12);
@@ -136,6 +144,8 @@ enum Drag {
     },
     /// An effect unit's level bar follows the pointer.
     EffectLevel(EffectUnitId),
+    /// A deck's waveform turns its jog as the pointer moves along the lane.
+    Lane(lane_drag::LaneDrag),
 }
 
 /// How far the pointer moves up or down to turn a knob from one end to the other.
@@ -178,6 +188,10 @@ pub struct DubplateApp {
     keyboard_cues: [HotCuePad; DECK_COUNT],
     selected_samples: [usize; DECK_COUNT],
     set_editor: Option<dubplate_prep::SetSession>,
+    /// Every track's grid fix, by its file, as the set store keeps them.
+    track_grids: HashMap<PathBuf, TrackGrid>,
+    /// The deck whose grid bar is open, which the grid keys fix in Perform.
+    grid_bar: Option<DeckId>,
     set_selection_generation: u64,
     set_selection: Option<usize>,
     modal_focus: FocusHandle,
@@ -212,7 +226,8 @@ pub struct DubplateApp {
     recording: Option<Recording>,
     recording_skip_reported: bool,
     smart_cfx_menu: bool,
-    effect_menu: Option<EffectUnitId>,
+    effect_menu: Option<EffectMenu>,
+    fx_select_presses: u64,
     refocus_window: bool,
     effect_search: Entity<InputState>,
     settings_save_pending: bool,
@@ -227,13 +242,15 @@ pub struct DubplateApp {
     frame_stats: Option<Rc<RefCell<FrameStats>>>,
     /// What the menu bar was last built for.
     menu_state: Option<MenuState>,
+    /// Whether the sound cards and controllers may be opened.
+    devices: DeviceAccess,
     _subscriptions: Vec<Subscription>,
 }
 
 impl DubplateApp {
     /// Starts the audio engine, opens the browser and opens the library the DJ chose in the
     /// background.
-    pub fn new(window: &mut Window, cx: &mut Context<'_, Self>) -> Self {
+    pub fn new(devices: DeviceAccess, window: &mut Window, cx: &mut Context<'_, Self>) -> Self {
         let this = cx.weak_entity();
         window.on_window_should_close(cx, move |_, cx| {
             this.update(cx, |this, cx| this.request_quit(cx)).is_err()
@@ -285,8 +302,8 @@ impl DubplateApp {
                         .into_iter()
                         .flat_map(|(_, effects)| effects)
                         .next();
-                    if let (Some(unit), Some(kind)) = (this.effect_menu, first) {
-                        this.edit_effect(unit, EffectEdit::Kind(kind), cx);
+                    if let (Some(menu), Some(kind)) = (this.effect_menu, first) {
+                        this.edit_effect(menu.unit, EffectEdit::Kind(kind), cx);
                     }
                     this.close_effect_menu(cx);
                 }
@@ -313,17 +330,26 @@ impl DubplateApp {
             ..MixerPositions::default()
         });
         let mode = settings.screen();
-        let (engine, audio_problem) = audio::start_engine(&mixer, settings.audio_device.as_deref());
+        let (engine, audio_problem) =
+            audio::start_engine(&mixer, settings.audio_device.as_deref(), &devices);
         problems.extend(audio_problem);
-        let hardware = match Hardware::start() {
-            Ok((hardware, events)) => {
-                listen_to_controllers(events, window, cx);
-                Some(hardware)
+        let hardware = match &devices {
+            DeviceAccess::Offline { script } => {
+                if let Some(script) = script {
+                    script::listen(script.clone(), window, cx);
+                }
+                Some(Hardware::offline())
             }
-            Err(error) => {
-                problems.push(format!("Controllers cannot be used: {error}"));
-                None
-            }
+            DeviceAccess::Real => match Hardware::start() {
+                Ok((hardware, events)) => {
+                    listen_to_controllers(events, window, cx);
+                    Some(hardware)
+                }
+                Err(error) => {
+                    problems.push(format!("Controllers cannot be used: {error}"));
+                    None
+                }
+            },
         };
         keep_lights_moving(cx);
         let analysis_queue = Settings::analysis_cache_path()
@@ -363,6 +389,8 @@ impl DubplateApp {
             keyboard_cues: [HotCuePad::ALL[0]; DECK_COUNT],
             selected_samples: [0; DECK_COUNT],
             set_editor: None,
+            track_grids: HashMap::new(),
+            grid_bar: None,
             set_selection_generation: 0,
             set_selection: None,
             modal_focus: cx.focus_handle(),
@@ -400,6 +428,7 @@ impl DubplateApp {
             recording_skip_reported: false,
             smart_cfx_menu: false,
             effect_menu: None,
+            fx_select_presses: 0,
             refocus_window: false,
             effect_search,
             settings_save_pending: false,
@@ -416,11 +445,13 @@ impl DubplateApp {
             last_frame: Instant::now(),
             frame_stats: FrameStats::from_environment().map(|stats| Rc::new(RefCell::new(stats))),
             menu_state: None,
+            devices,
             _subscriptions: vec![subscription, search_subscription, quit_subscription],
         };
         app.browser
             .update(cx, |browser, cx| browser.show_screen(mode, cx));
         app.restore_effect_units(cx);
+        app.restore_smart_cfx(cx);
         app.restore_sampler(cx);
         app.restore_library_sorts(cx);
         app.start_library(cx);
@@ -553,12 +584,16 @@ impl DubplateApp {
                 .spawn(async {
                     let path = Settings::sets_path().map_err(|error| error.to_string())?;
                     let editor = SetEditor::open(&path).map_err(|error| error.to_string())?;
-                    dubplate_prep::SetSession::new(editor).map_err(|error| error.to_string())
+                    let grids = editor.track_grids().map_err(|error| error.to_string())?;
+                    let session = dubplate_prep::SetSession::new(editor)
+                        .map_err(|error| error.to_string())?;
+                    Ok::<_, String>((session, grids))
                 })
                 .await;
             this.update(cx, |this, cx| match session {
-                Ok(session) => {
+                Ok((session, grids)) => {
                     this.set_editor = Some(session);
+                    this.take_track_grids(grids, cx);
                     this.set_changed(cx);
                     // The first library build may have completed before set storage opened.
                     this.rebuild_collection(cx);
@@ -845,6 +880,8 @@ impl DubplateApp {
                 self.engine_command(cx, |controller| controller.set_headphone_cue(deck, !cued));
             }
             Command::TapTempo(deck) => self.tap_tempo(deck, cx),
+            Command::ToggleGridBar(deck) => self.toggle_grid_bar(deck),
+            Command::EditDeckGrid(deck, edit) => self.edit_deck_grid(deck, edit, cx),
             Command::AuditionSeam => self.toggle_seam_audition(cx),
             Command::ToggleRecording => self.toggle_recording(cx),
             Command::ToggleSmartCfx => self.toggle_smart_cfx(cx),
@@ -963,6 +1000,7 @@ impl DubplateApp {
             Command::Effect(unit, edit) => self.edit_effect(unit, edit, cx),
             Command::FocusEffectUnit(steps) => {
                 self.effect_focus = step_unit(self.effect_focus, steps);
+                self.follow_beat_fx_section(cx);
             }
             Command::FocusSearch => self
                 .browser
@@ -1251,6 +1289,11 @@ impl DubplateApp {
                     self.show_notice(NoticePlace::Window, format!("{name} connected"), cx);
                 }
                 LinkEvent::Disconnected { name, .. } => {
+                    if let Some(hardware) = self.hardware.as_mut()
+                        && !hardware.is_connected()
+                    {
+                        hardware.dispatcher.forget_positions();
+                    }
                     self.show_notice(NoticePlace::Window, format!("{name} disconnected"), cx);
                 }
                 LinkEvent::Problem(problem) => {
@@ -1261,9 +1304,6 @@ impl DubplateApp {
                         positions: self.shown_positions(),
                         playing: DeckId::ALL.map(|deck| self.deck_state(deck).playing),
                         focused_effect: Some(self.effect_focus),
-                        effect_depth: self
-                            .effect_unit(self.effect_focus)
-                            .map_or(0.0, |unit| unit.depth),
                     };
                     let command = self.hardware.as_mut().and_then(|hardware| {
                         hardware
@@ -1310,26 +1350,24 @@ impl DubplateApp {
             }
         };
         let deck_state = &mut self.decks[deck.index()];
-        if deck_state.grid_source == Some(GridSource::Analysis)
-            && let DeckContent::Loaded(visuals) = &mut deck_state.content
-        {
-            visuals.beats = Arc::default();
+        if let DeckContent::Loaded(visuals) = &mut deck_state.content {
+            visuals.read_grid = None;
+            if deck_state.grid_source == Some(GridSource::Analysis) {
+                visuals.beats = Arc::default();
+            }
         }
         deck_state.grid_source = Some(GridSource::Tapped);
         self.engine_command(cx, |controller| controller.set_beat_grid(deck, Some(grid)));
     }
 
-    /// The DJ's fix of a track's grid, when the track is in the set.
+    /// The DJ's fix of a track's grid.
     fn grid_correction(&self, track: &CollectionTrack) -> GridCorrection {
-        let entry = track.track.file_path.as_deref().and_then(|path| {
-            let editor = self.set_editor.as_ref()?;
-            editor
-                .set()
-                .entries
-                .iter()
-                .find(|entry| entry.track_path == path)
-        });
-        entry.map(GridCorrection::of).unwrap_or_default()
+        track
+            .track
+            .file_path
+            .as_deref()
+            .map(|path| self.track_grid(path).correction)
+            .unwrap_or_default()
     }
 
     /// The deck Space plays or pauses now.
@@ -1406,7 +1444,73 @@ impl DubplateApp {
         if !matches!(edit, EffectEdit::Toggle) {
             self.remember_effect_units(cx);
         }
+        if matches!(edit, EffectEdit::StepKind(_)) {
+            self.glance_effect_menu(unit, cx);
+        }
         cx.notify();
+    }
+
+    /// Gives the unit the controller's BEAT FX section drives the lever's target and the knob's
+    /// level, as far as the controller has reported them.
+    fn follow_beat_fx_section(&mut self, cx: &mut Context<'_, Self>) {
+        let Some(section) = self
+            .hardware
+            .as_ref()
+            .map(|hardware| hardware.dispatcher.beat_fx_section())
+        else {
+            return;
+        };
+        for command in section.commands_for(self.effect_focus) {
+            if let Command::Effect(unit, edit) = command {
+                self.edit_effect(unit, edit, cx);
+            }
+        }
+    }
+
+    /// Where the CH SELECT lever of the controller's BEAT FX section sits, when a controller is
+    /// connected.
+    pub(super) fn beat_fx_lever(&self) -> Option<Lever> {
+        self.hardware
+            .as_ref()
+            .filter(|hardware| hardware.is_connected())
+            .map(
+                |hardware| match hardware.dispatcher.beat_fx_section().lever {
+                    Some(target) => Lever::At(target),
+                    None => Lever::Unreported,
+                },
+            )
+    }
+
+    /// Shows `unit`'s effect picker after FX SELECT, with the new effect highlighted, without
+    /// taking the keyboard, and closes it a moment after the last press. A picker the DJ opened
+    /// with the pointer stays as it is.
+    fn glance_effect_menu(&mut self, unit: EffectUnitId, cx: &mut Context<'_, Self>) {
+        if self
+            .effect_menu
+            .is_some_and(|menu| menu.opening == MenuOpening::Pointer)
+        {
+            return;
+        }
+        self.fx_select_presses += 1;
+        let press = self.fx_select_presses;
+        self.effect_menu = Some(EffectMenu {
+            unit,
+            opening: MenuOpening::FxSelect,
+        });
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(FX_SELECT_GLANCE).await;
+            this.update(cx, |this, cx| {
+                let still_glancing = this
+                    .effect_menu
+                    .is_some_and(|menu| menu.opening == MenuOpening::FxSelect);
+                if still_glancing && this.fx_select_presses == press {
+                    this.effect_menu = None;
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// Opens the effect picker of `unit` with the cursor in its search field, or closes it.
@@ -1416,11 +1520,17 @@ impl DubplateApp {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        if self.effect_menu == Some(unit) {
+        if self
+            .effect_menu
+            .is_some_and(|menu| menu.unit == unit && menu.opening == MenuOpening::Pointer)
+        {
             self.close_effect_menu(cx);
             return;
         }
-        self.effect_menu = Some(unit);
+        self.effect_menu = Some(EffectMenu {
+            unit,
+            opening: MenuOpening::Pointer,
+        });
         self.effect_search.update(cx, |input, cx| {
             input.set_value("", window, cx);
             input.focus(window, cx);
@@ -1430,8 +1540,10 @@ impl DubplateApp {
 
     /// Closes the effect picker and gives the keys back to the window.
     pub(super) fn close_effect_menu(&mut self, cx: &mut Context<'_, Self>) {
-        if self.effect_menu.take().is_some() {
-            self.refocus_window = true;
+        if let Some(menu) = self.effect_menu.take() {
+            if menu.opening == MenuOpening::Pointer {
+                self.refocus_window = true;
+            }
             cx.notify();
         }
     }
@@ -1572,6 +1684,7 @@ impl DubplateApp {
         slider: Slider,
         position: Point<Pixels>,
         click_count: usize,
+        window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
         if click_count == 2 {
@@ -1580,7 +1693,7 @@ impl DubplateApp {
             return;
         }
         self.dragging = Some(Drag::Slider(slider));
-        self.drag_to(Drag::Slider(slider), position, cx);
+        self.drag_to(Drag::Slider(slider), position, window, cx);
     }
 
     /// Starts turning a knob, or puts it back where it rests on a double-click.
@@ -1607,14 +1720,22 @@ impl DubplateApp {
         &mut self,
         unit: EffectUnitId,
         position: Point<Pixels>,
+        window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
         self.dragging = Some(Drag::EffectLevel(unit));
-        self.drag_to(Drag::EffectLevel(unit), position, cx);
+        self.drag_to(Drag::EffectLevel(unit), position, window, cx);
     }
 
-    fn drag_to(&mut self, drag: Drag, position: Point<Pixels>, cx: &mut Context<'_, Self>) {
+    fn drag_to(
+        &mut self,
+        drag: Drag,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
         match drag {
+            Drag::Lane(lane) => self.drag_lane(lane, position, window, cx),
             Drag::Slider(slider) => {
                 if let Some(bounds) = self.hit_areas.sliders[slider.index()].get() {
                     self.set_control(
@@ -1644,21 +1765,27 @@ impl DubplateApp {
     fn on_mouse_move(
         &mut self,
         event: &MouseMoveEvent,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
         let Some(drag) = self.dragging else {
             return;
         };
         if event.pressed_button == Some(MouseButton::Left) {
-            self.drag_to(drag, event.position, cx);
+            self.drag_to(drag, event.position, window, cx);
         } else {
-            self.dragging = None;
+            self.end_drag(window, cx);
         }
     }
 
-    fn on_mouse_up(&mut self, _: &MouseUpEvent, _: &mut Window, _: &mut Context<'_, Self>) {
-        self.dragging = None;
+    fn on_mouse_up(&mut self, _: &MouseUpEvent, window: &mut Window, cx: &mut Context<'_, Self>) {
+        self.end_drag(window, cx);
+    }
+
+    fn end_drag(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        if let Some(Drag::Lane(lane)) = self.dragging.take() {
+            self.end_lane_drag(lane, window, cx);
+        }
     }
 
     fn duration_seconds(&self, deck: DeckId) -> Option<f64> {
@@ -1786,6 +1913,34 @@ fn keep_lights_moving(cx: &mut Context<'_, DubplateApp>) {
 }
 
 /// The effect unit `steps` along from `unit`, going round at either end.
+/// Where a connected controller's CH SELECT lever sits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Lever {
+    /// The controller has not said yet; it will when the lever moves.
+    Unreported,
+    /// The lever sends the effect to this target.
+    At(EffectTarget),
+}
+
+/// An open effect picker and what opened it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct EffectMenu {
+    /// The unit whose effect it picks.
+    pub(super) unit: EffectUnitId,
+    /// What opened it.
+    pub(super) opening: MenuOpening,
+}
+
+/// What opened an effect picker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum MenuOpening {
+    /// The pointer: the picker searches as the DJ types and stays until closed.
+    Pointer,
+    /// FX SELECT on the controller: the picker shows the effect it chose, leaves the keyboard
+    /// alone and closes by itself.
+    FxSelect,
+}
+
 fn step_unit(unit: EffectUnitId, steps: i32) -> EffectUnitId {
     let count = i64::try_from(EFFECT_UNIT_COUNT).unwrap_or(1);
     let index = (i64::try_from(unit.index()).unwrap_or(0) + i64::from(steps)).rem_euclid(count);
