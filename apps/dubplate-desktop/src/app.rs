@@ -67,6 +67,7 @@ use crate::hardware::{
     DeckLights, Hardware, Lights, LinkEvent, Surface, controller_deck, meter_level,
 };
 use crate::library::LibrarySources;
+use crate::library_view::SortSetting;
 use crate::loading::{LoadRefusal, LoadSource, check_deck_free, check_file};
 use crate::meter::PeakMeter;
 use crate::pads::{PadFx, next_mode};
@@ -238,6 +239,12 @@ impl DubplateApp {
                 BrowserEvent::ImportRekordbox => this.set_rekordbox_import(true, cx),
                 BrowserEvent::RelinkAll => this.start_relink(None, cx),
                 BrowserEvent::Relink(track) => this.start_relink(Some(track), cx),
+                BrowserEvent::Sorted { screen, sort } => {
+                    this.settings
+                        .library_sort
+                        .set(screen, sort.map(SortSetting::of));
+                    this.save_settings(cx);
+                }
             });
         let effect_search = cx.new(|cx| InputState::new(window, cx).placeholder("Find an effect"));
         let quit_subscription = cx.on_app_quit(|this: &mut Self, _| {
@@ -374,6 +381,7 @@ impl DubplateApp {
         };
         app.restore_effect_units(cx);
         app.restore_sampler(cx);
+        app.restore_library_sorts(cx);
         app.start_library(cx);
         if let Some(problem) = problems.into_iter().next() {
             app.show_notice(NoticePlace::Window, problem, cx);
@@ -685,9 +693,8 @@ impl DubplateApp {
             }
             Command::SwitchMode(mode) => {
                 self.mode = mode;
-                self.browser.update(cx, |browser, cx| {
-                    browser.show_load_buttons(mode == Mode::Perform, cx)
-                });
+                self.browser
+                    .update(cx, |browser, cx| browser.show_screen(mode, cx));
             }
             Command::EditSet(edit) => self.edit_set(edit, cx),
             Command::SwitchPrepareFocus => {
@@ -1556,6 +1563,10 @@ impl Render for DubplateApp {
             window.focus(&self.focus_handle, cx);
         }
         let frames = self.advance_frame(window);
+        let reference = self.filter_reference();
+        self.browser.update(cx, |browser, cx| {
+            browser.set_filter_reference(reference, cx);
+        });
         let root = div()
             .key_context(WINDOW_CONTEXT)
             .track_focus(&self.focus_handle)

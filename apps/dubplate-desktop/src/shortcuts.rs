@@ -220,7 +220,10 @@ pub fn help_lines() -> Vec<HelpLine> {
             "Load the selected track on deck A / deck B",
         ),
         line(&["up", "down"], "Select the previous / next track"),
-        line(&["/", "cmd-f"], "Search titles and artists"),
+        line(
+            &["/", "cmd-f"],
+            "Search titles, artists, genres, folders and comments",
+        ),
         line(&["k", "shift-k"], "Key lock, deck A / deck B"),
         line(
             &["t", "shift-t"],

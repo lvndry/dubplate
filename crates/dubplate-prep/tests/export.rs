@@ -418,6 +418,8 @@ fn the_library_finds_each_set_track_where_the_dj_keeps_it() {
             title: Some("Folder Title".to_owned()),
             artist: Some("Folder Artist".to_owned()),
             album: None,
+            genre: None,
+            comment: None,
             bpm: Some(124.0),
             key: Some("Am".to_owned()),
             duration_seconds: Some(301.6),

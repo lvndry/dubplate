@@ -53,7 +53,7 @@ pub struct CollectionTrack {
     pub row: RowText,
     /// Its hot cues, ordered by pad.
     pub hot_cues: Vec<HotCue>,
-    /// Its title and artist folded for search.
+    /// Its title, artist, genre, folder and comment folded for search.
     pub search_text: SearchText,
 }
 
@@ -75,6 +75,9 @@ pub struct RowText {
     pub title: SharedString,
     /// The artist.
     pub artist: SharedString,
+    /// The genre tag, or the folders the DJ filed the file in inside their music folder, such
+    /// as `afro house / peak`.
+    pub genre: SharedString,
     /// The tempo with two decimals.
     pub bpm: SharedString,
     /// The key as rekordbox shows it.
@@ -202,6 +205,7 @@ impl Collection {
         }];
         let mut index_by_path: HashMap<PathBuf, TrackIndex> = HashMap::new();
         let mut playlist_crates = Vec::new();
+        let filed_under = filing(folders);
         if let Some(rekordbox) = rekordbox {
             let mut cues_by_track: HashMap<&str, Vec<&Cue>> = HashMap::new();
             for cue in &rekordbox.cues {
@@ -219,14 +223,18 @@ impl Collection {
                     .map(Vec::as_slice)
                     .unwrap_or_default();
                 let index = TrackIndex(tracks.len());
+                let mut filing = None;
                 if let Some(path) = &track.file_path {
-                    index_by_path.insert(canonical(path), index);
+                    let path = canonical(path);
+                    filing = filed_under.get(&path).map(String::as_str);
+                    index_by_path.insert(path, index);
                 }
                 tracks.push(Arc::new(CollectionTrack::new(
                     track.clone(),
                     track_cues,
                     TrackOrigin::Rekordbox,
                     "rekordbox",
+                    filing,
                 )));
             }
             let index_by_id: HashMap<&str, TrackIndex> = tracks
@@ -248,7 +256,8 @@ impl Collection {
             for found in &scan.tracks {
                 let index = *index_by_path.entry(found.path.clone()).or_insert_with(|| {
                     let index = TrackIndex(tracks.len());
-                    tracks.push(Arc::new(CollectionTrack::from_folder(found, &name)));
+                    let filing = filed_under.get(&found.path).map(String::as_str);
+                    tracks.push(Arc::new(CollectionTrack::from_folder(found, &name, filing)));
                     index
                 });
                 folder_tracks.push(index);
@@ -336,15 +345,27 @@ impl CollectionTrack {
     /// An audio file that is not in the rekordbox collection, such as one dropped from Finder.
     /// It has no cues, beat grid or tempo.
     pub fn from_file(path: &Path) -> Self {
-        Self::new(file_track(path), &[], TrackOrigin::File, "")
+        Self::new(file_track(path), &[], TrackOrigin::File, "", None)
     }
 
-    /// A track found in the music folder called `folder`.
-    fn from_folder(found: &LibraryTrack, folder: &str) -> Self {
-        Self::new(folder_track(found), &[], TrackOrigin::Folder, folder)
+    /// A track found in the music folder called `folder`, inside the folders `filing` names.
+    fn from_folder(found: &LibraryTrack, folder: &str, filing: Option<&str>) -> Self {
+        Self::new(
+            folder_track(found),
+            &[],
+            TrackOrigin::Folder,
+            folder,
+            filing,
+        )
     }
 
-    fn new(track: Track, cues: &[&Cue], origin: TrackOrigin, source: &str) -> Self {
+    fn new(
+        track: Track,
+        cues: &[&Cue],
+        origin: TrackOrigin,
+        source: &str,
+        filing: Option<&str>,
+    ) -> Self {
         let mut hot_cues: Vec<HotCue> = cues
             .iter()
             .filter_map(|cue| {
@@ -359,8 +380,22 @@ impl CollectionTrack {
         hot_cues.dedup_by_key(|cue| cue.pad);
         let title = track.title.clone().unwrap_or_else(|| file_name(&track));
         let artist = track.artist.clone().unwrap_or_default();
-        let search_text = SearchText::new([title.as_str(), artist.as_str()]);
+        let genre_tag = track.genre.as_deref().map(str::trim).unwrap_or_default();
+        let filing = filing.unwrap_or_default();
+        let search_text = SearchText::new([
+            title.as_str(),
+            artist.as_str(),
+            genre_tag,
+            filing,
+            track.comment.as_deref().unwrap_or_default(),
+        ]);
+        let genre = if genre_tag.is_empty() {
+            filing
+        } else {
+            genre_tag
+        };
         let row = RowText {
+            genre: SharedString::from(genre.to_owned()),
             title: title.into(),
             artist: artist.into(),
             bpm: track
@@ -433,6 +468,33 @@ fn add_playlist_crates(
             );
         }
     }
+}
+
+/// The folders each file sits in inside its music folder, such as `afro house / peak`, by the
+/// file's path. A file at the top of its music folder has none.
+fn filing(folders: &[FolderScan]) -> HashMap<PathBuf, String> {
+    let mut filed_under = HashMap::new();
+    for scan in folders {
+        let root = canonical(&scan.folder);
+        for found in &scan.tracks {
+            let inside = found
+                .path
+                .parent()
+                .and_then(|parent| parent.strip_prefix(&root).ok())
+                .map(|inside| {
+                    inside
+                        .components()
+                        .map(|component| component.as_os_str().to_string_lossy())
+                        .collect::<Vec<_>>()
+                        .join(" / ")
+                })
+                .filter(|inside| !inside.is_empty());
+            if let Some(inside) = inside {
+                filed_under.entry(found.path.clone()).or_insert(inside);
+            }
+        }
+    }
+    filed_under
 }
 
 /// The name a music folder shows in the sidebar: its last component.
@@ -595,6 +657,8 @@ mod tests {
             title: title.map(str::to_owned),
             artist: Some("Artist".to_owned()),
             album: None,
+            genre: None,
+            comment: None,
             bpm: Some(122.0),
             key: Some("9A".to_owned()),
             duration_seconds: Some(300.4),
@@ -660,6 +724,44 @@ mod tests {
         assert_eq!(only_here.row.time.as_ref(), "5:00");
         assert_eq!(collection.find(&only_here.identity()), Some(TrackIndex(1)));
         assert!(collection.share_directory().is_some());
+    }
+
+    #[test]
+    fn a_track_without_a_genre_tag_shows_the_folders_it_is_filed_in() {
+        let mut in_rekordbox = track("1", "Tagged in rekordbox");
+        in_rekordbox.file_path = Some(PathBuf::from("/Music/DJ/afro house/peak/Tagged.mp3"));
+        in_rekordbox.genre = Some("Afro House".to_owned());
+        in_rekordbox.comment = Some("Big vocal at the drop".to_owned());
+        let rekordbox = RekordboxLibrary::new(
+            vec![in_rekordbox],
+            Vec::new(),
+            Vec::new(),
+            Path::new("/share"),
+        );
+        let folders = [folder(
+            "/Music/DJ",
+            vec![
+                found("/Music/DJ/afro house/peak/Tagged.mp3", None),
+                found("/Music/DJ/amapiano/warmup/Log Drum.mp3", Some("Log Drum")),
+                found("/Music/DJ/At The Top.mp3", Some("At The Top")),
+            ],
+        )];
+        let collection = Collection::build(Some(&rekordbox), &folders);
+        let genres: Vec<&str> = collection
+            .indexed_tracks()
+            .map(|(_, track)| track.row.genre.as_ref())
+            .collect();
+        assert_eq!(genres, ["Afro House", "amapiano / warmup", ""]);
+        let words = |text: &str| crate::search::SearchQuery::parse(text);
+        let tagged = &collection.track(TrackIndex(0)).search_text;
+        assert!(
+            words("afro peak").matches(tagged),
+            "the folders are searched too"
+        );
+        assert!(words("vocal drop").matches(tagged), "and the comment");
+        let filed = &collection.track(TrackIndex(1)).search_text;
+        assert!(words("amapiano").matches(filed));
+        assert!(!words("afro").matches(filed));
     }
 
     #[test]

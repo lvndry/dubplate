@@ -40,6 +40,13 @@ The **Next** panel suggests what to play after the selected set track, with the 
 
 Each set track has a **ready badge**: Ready, or what is missing (Grid unconfirmed, No mix-in cue, No mix-out cue, File missing, Key unknown). Each seam between two tracks shows the key move, the tempo step and any warning: key clash, a tempo gap over 6%, vocals meeting, an energy drop, or the same track twice.
 
+### Dig through the library
+
+- Click a column header to sort by it, again to reverse it, and a third time to go back to the crate's own order. Prepare and Perform each remember their sort.
+- The search field matches titles, artists, genres, comments and the folders a track is filed in, so `amapiano warmup` finds the tracks in your amapiano/warmup folder. The Genre column shows the genre tag, or those folders when the track has none.
+- **BPM** keeps a tempo range, a few BPM either side of the selected set track (or the playing deck); the arrows move each end.
+- **Key fits** keeps the tracks whose key mixes well after the selected set track in Prepare, or the deck playing in Perform: the same key, one step on the wheel, or the relative key, as the Next suggestions choose.
+
 ### Check each track
 
 Select a set track to open its track check: the waveform with the beat grid, rekordbox's phrases and the mix cues.

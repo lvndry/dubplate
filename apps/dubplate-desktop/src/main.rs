@@ -14,6 +14,7 @@ mod fonts;
 mod frame_stats;
 mod hardware;
 mod library;
+mod library_view;
 mod loading;
 #[cfg(target_os = "macos")]
 mod macos_identity;
