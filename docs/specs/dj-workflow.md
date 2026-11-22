@@ -157,9 +157,9 @@ Statuses are as audited on 22 November 2026, on `main` with a second Dubplate ru
 
 **O5 Loop roll.** Status: **Done.**
 
-**O6 Loop adjust.** Status: **Missing** ([inventory 18](feature-inventory.md#top-40-gaps)).
+**O6 Loop adjust.** Status: **Missing** ([inventory 18](feature-inventory.md#top-40-gaps)) Moving a loop's in and out points needs the engine's loop code, which is being audited separately; this waits for that audit.
 
-**O7 Saved and active loops.** Status: shown on the overview; calling them **Missing** ([inventory 19](feature-inventory.md#top-40-gaps)).
+**O7 Saved and active loops.** Status: shown on the overview; calling them **Missing** ([inventory 19](feature-inventory.md#top-40-gaps)) Calling a saved loop and an active loop that engages by itself wait for the same loop audit.
 
 ## Beat jump and slip
 
