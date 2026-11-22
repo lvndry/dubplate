@@ -4,7 +4,7 @@
 use std::rc::Rc;
 
 use dubplate_engine::{DeckId, SyncMode};
-use dubplate_prep::Key;
+
 use gpui::prelude::*;
 use gpui::{
     ClickEvent, Context, FontWeight, MouseButton, MouseDownEvent, Pixels, SharedString, canvas,
@@ -14,6 +14,7 @@ use gpui::{
 use super::drop_target::accept_drops;
 use super::slider::{self, SMALL_THUMB};
 use super::{DeckFrame, DubplateApp, HitAreas, pad_grid};
+use crate::analysis::{AnalysisState, key_cell, track_key};
 use crate::assets::{PAUSE_ICON_PATH, PLAY_ICON_PATH};
 use crate::collection::{CollectionTrack, TrackOrigin, clock};
 use crate::commands::{Command, Press};
@@ -111,17 +112,21 @@ fn title_row(
     );
     let key_shift = app.key_shift(deck);
     let key: SharedString = match entry {
-        Some(entry) if key_shift != 0 => {
-            let shifted = entry
+        Some(entry) => {
+            let analysis = entry
                 .track
-                .key
+                .file_path
                 .as_deref()
-                .and_then(Key::parse_file_key)
-                .map(|key| key.transposed(key_shift as i8).camelot())
-                .unwrap_or_default();
-            format!("{shifted} {}", semitones_label(key_shift)).into()
+                .map_or(AnalysisState::Waiting, |path| app.analyses.state(path));
+            if key_shift == 0 {
+                key_cell(entry, analysis)
+            } else {
+                let shifted = track_key(entry, analysis)
+                    .map(|key| key.transposed(key_shift as i8).camelot())
+                    .unwrap_or_default();
+                format!("{shifted} {}", semitones_label(key_shift)).into()
+            }
         }
-        Some(entry) => entry.row.key.clone(),
         None => SharedString::default(),
     };
     div()
