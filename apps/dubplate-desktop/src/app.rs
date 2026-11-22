@@ -69,7 +69,7 @@ use crate::hardware::{
 use crate::library::LibrarySources;
 use crate::loading::{LoadRefusal, LoadSource, check_deck_free, check_file};
 use crate::meter::PeakMeter;
-use crate::pads::{PadFx, next_mode};
+use crate::pads::next_mode;
 use crate::prep::{Catalogue, TrackCheck, TrackDetail};
 use crate::recording::Recording;
 use crate::relink::Missing;
@@ -184,11 +184,22 @@ pub struct DubplateApp {
     key_pad_offsets: [i32; DECK_COUNT],
     keyboard_cues: [HotCuePad; DECK_COUNT],
     selected_samples: [usize; DECK_COUNT],
-    set_editor: Option<SetEditor>,
+    set_editor: Option<dubplate_prep::SetSession>,
+    set_selection_generation: u64,
     set_selection: Option<usize>,
+    modal_focus: FocusHandle,
+    modal_return_focus: Option<FocusHandle>,
+    modal_active: bool,
+    quit_requested: bool,
+    quit_barrier_ready: bool,
+    set_edits_pending: usize,
+    set_save_failed: bool,
+    set_save_problem: Option<String>,
     prepare_focus: PrepareFocus,
     next_cursor: usize,
     set_scroll: ScrollHandle,
+    prepare_view: Arc<prepare::PrepareViewModel>,
+    prepare_generation: u64,
     track_checks: HashMap<PathBuf, TrackCheck>,
     checks_pending: HashSet<PathBuf>,
     check_generation: u64,
@@ -226,6 +237,10 @@ impl DubplateApp {
     /// Starts the audio engine, opens the browser and opens the library the DJ chose in the
     /// background.
     pub fn new(window: &mut Window, cx: &mut Context<'_, Self>) -> Self {
+        let this = cx.weak_entity();
+        window.on_window_should_close(cx, move |_, cx| {
+            this.update(cx, |this, cx| this.request_quit(cx)).is_err()
+        });
         let browser = cx.new(|cx| Browser::new(window, cx));
         let subscription =
             cx.subscribe(&browser, |this, _, event: &BrowserEvent, cx| match *event {
@@ -242,9 +257,20 @@ impl DubplateApp {
                 BrowserEvent::Relink(track) => this.start_relink(Some(track), cx),
             });
         let effect_search = cx.new(|cx| InputState::new(window, cx).placeholder("Find an effect"));
-        let quit_subscription = cx.on_app_quit(|this: &mut Self, _| {
+        let quit_subscription = cx.on_app_quit(|this: &mut Self, cx| {
             this.finish_recording_on_quit();
-            async {}
+            let barrier = this
+                .set_editor
+                .as_ref()
+                .and_then(|session| session.submit(|_| Ok(())).ok());
+            let task = cx.background_executor().spawn(async move {
+                if let Some(barrier) = barrier {
+                    let _ = barrier.wait();
+                }
+            });
+            async move {
+                task.await;
+            }
         });
         let search_subscription = cx.subscribe(
             &effect_search,
@@ -296,11 +322,6 @@ impl DubplateApp {
             }
         };
         keep_lights_moving(cx);
-        let set_editor = Settings::sets_path()
-            .map_err(|error| error.to_string())
-            .and_then(|path| SetEditor::open(&path).map_err(|error| error.to_string()))
-            .map_err(|problem| problems.push(format!("Sets cannot be kept: {problem}")))
-            .ok();
         let analysis_queue = Settings::analysis_cache_path()
             .map_err(|error| error.to_string())
             .and_then(|path| AnalysisQueue::start(path).map_err(|error| error.to_string()))
@@ -337,11 +358,22 @@ impl DubplateApp {
             key_pad_offsets: [0; DECK_COUNT],
             keyboard_cues: [HotCuePad::ALL[0]; DECK_COUNT],
             selected_samples: [0; DECK_COUNT],
-            set_editor,
+            set_editor: None,
+            set_selection_generation: 0,
             set_selection: None,
+            modal_focus: cx.focus_handle(),
+            modal_return_focus: None,
+            modal_active: false,
+            quit_requested: false,
+            quit_barrier_ready: false,
+            set_edits_pending: 0,
+            set_save_failed: false,
+            set_save_problem: None,
             prepare_focus: PrepareFocus::Library,
             next_cursor: 0,
             set_scroll: ScrollHandle::new(),
+            prepare_view: Arc::default(),
+            prepare_generation: 0,
             track_checks: HashMap::new(),
             checks_pending: HashSet::new(),
             check_generation: 0,
@@ -379,6 +411,7 @@ impl DubplateApp {
         app.restore_effect_units(cx);
         app.restore_sampler(cx);
         app.start_library(cx);
+        app.start_set_session(cx);
         if let Some(problem) = problems.into_iter().next() {
             app.show_notice(NoticePlace::Window, problem, cx);
         }
@@ -391,6 +424,118 @@ impl DubplateApp {
         self.settings.lock_playing_deck = self.lock_playing_deck;
         self.save_settings(cx);
         cx.notify();
+    }
+
+    /// Flushes queued edits before asking GPUI to quit (its shutdown hook has a short timeout).
+    /// Keeping the window alive lets slow storage finish without blocking event delivery.
+    fn request_quit(&mut self, cx: &mut Context<'_, Self>) {
+        if self.quit_requested {
+            return;
+        }
+        self.quit_requested = true;
+        self.quit_barrier_ready = false;
+        let barrier = self
+            .set_editor
+            .as_ref()
+            .map(|session| session.submit(|_| Ok(())));
+        match barrier {
+            Some(Ok(job)) => {
+                cx.spawn(async move |this, cx| {
+                    let result = cx
+                        .background_executor()
+                        .spawn(async move { job.wait() })
+                        .await;
+                    this.update(cx, |this, cx| {
+                        match result {
+                            Ok(completion) => {
+                                if let Err(error) = completion.outcome {
+                                    this.report_set_save_failure(error, cx);
+                                }
+                            }
+                            Err(error) => this.report_set_save_failure(error, cx),
+                        }
+                        this.quit_barrier_ready = true;
+                        this.finish_quit_if_saved(cx);
+                    })
+                    .ok();
+                })
+                .detach();
+            }
+            Some(Err(error)) => {
+                self.report_set_save_failure(error, cx);
+                self.quit_barrier_ready = true;
+                self.finish_quit_if_saved(cx);
+            }
+            None => {
+                self.quit_barrier_ready = true;
+                self.finish_quit_if_saved(cx);
+            }
+        }
+    }
+
+    /// Keeps the precise failure available even if another notice replaced the original one.
+    fn report_set_save_failure(
+        &mut self,
+        error: impl std::fmt::Display,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.set_save_failed = true;
+        self.set_save_problem = Some(error.to_string());
+        self.show_notice(
+            NoticePlace::Window,
+            format!("The set was not saved: {error}"),
+            cx,
+        );
+    }
+
+    /// A worker barrier is not enough: every submitted edit's UI callback must also report
+    /// its outcome before a successful barrier can allow the application to exit.
+    fn finish_quit_if_saved(&mut self, cx: &mut Context<'_, Self>) {
+        if !self.quit_requested || !self.quit_barrier_ready || self.set_edits_pending != 0 {
+            return;
+        }
+        if self.set_save_failed {
+            self.quit_requested = false;
+            self.quit_barrier_ready = false;
+            self.set_save_failed = false;
+            let problem = self
+                .set_save_problem
+                .take()
+                .unwrap_or_else(|| "a set edit failed".to_owned());
+            self.show_notice(NoticePlace::Window,
+                format!("The set was not saved: {problem}. Dubplate stayed open; review the set before quitting again."), cx);
+        } else {
+            cx.quit();
+        }
+    }
+
+    /// Opens and migrates set storage off the UI thread, then starts its serialized worker.
+    fn start_set_session(&mut self, cx: &mut Context<'_, Self>) {
+        cx.spawn(async move |this, cx| {
+            let session = cx
+                .background_executor()
+                .spawn(async {
+                    let path = Settings::sets_path().map_err(|error| error.to_string())?;
+                    let editor = SetEditor::open(&path).map_err(|error| error.to_string())?;
+                    dubplate_prep::SetSession::new(editor).map_err(|error| error.to_string())
+                })
+                .await;
+            this.update(cx, |this, cx| match session {
+                Ok(session) => {
+                    this.set_editor = Some(session);
+                    this.set_changed(cx);
+                    // The first library build may have completed before set storage opened.
+                    this.rebuild_collection(cx);
+                }
+                Err(problem) => this.show_notice(
+                    NoticePlace::Window,
+                    format!("Sets cannot be kept: {problem}"),
+                    cx,
+                ),
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// Writes the settings on a background thread, after any earlier write, so the last
@@ -486,6 +631,7 @@ impl DubplateApp {
             .and_then(|collection| collection.share_directory().map(Path::to_path_buf));
         let correction = self.grid_correction(&track);
         let analysis = track.track.file_path.as_deref().and_then(|path| {
+            self.analyses.retry_failed(path);
             self.request_analysis([path], AnalysisPriority::Set, cx);
             self.analyses.get(path).cloned()
         });
@@ -503,10 +649,9 @@ impl DubplateApp {
                 })
                 .await;
             this.update(cx, |this, cx| {
-                this.finish_load(deck, generation, prepared, cx);
+                let loaded = this.finish_load(deck, generation, prepared, cx);
                 if let Some(seconds) = cue
-                    && this.deck(deck).is_current_load(generation)
-                    && this.deck(deck).visuals().is_some()
+                    && loaded
                 {
                     this.jump(deck, seconds, cx);
                 }
@@ -548,27 +693,39 @@ impl DubplateApp {
         generation: u64,
         prepared: Result<PreparedTrack, LoadError>,
         cx: &mut Context<'_, Self>,
-    ) {
+    ) -> bool {
         if !self.deck(deck).is_current_load(generation) {
-            return;
+            return false;
+        }
+        // A DJ may have resumed the old track while this replacement decoded.
+        if let Err(refusal) =
+            check_deck_free(deck, self.deck_state(deck).playing, self.lock_playing_deck)
+        {
+            self.decks[deck.index()].fail_load(generation, refusal.to_string());
+            self.show_notice(NoticePlace::Deck(deck), refusal.to_string(), cx);
+            return false;
         }
         let grid_source = prepared
             .as_ref()
             .ok()
             .and_then(|prepared| prepared.grid_source);
-        let (content, grid_source) =
-            match prepared.and_then(|prepared| self.put_on_deck(deck, prepared)) {
-                Ok(visuals) => {
-                    self.signal_controllers(Feedback::TrackLoaded(controller_deck(deck)));
-                    (DeckContent::Loaded(visuals), grid_source)
-                }
-                Err(error) => (DeckContent::Failed(error_chain(&error)), None),
-            };
-        self.decks[deck.index()].content = content;
-        self.decks[deck.index()].grid_source = grid_source;
-        self.give_deck_analysed_grid(deck, cx);
+        let loaded = match prepared.and_then(|prepared| self.put_on_deck(deck, prepared)) {
+            Ok(visuals) => {
+                self.decks[deck.index()].commit_load(generation, visuals, grid_source);
+                self.signal_controllers(Feedback::TrackLoaded(controller_deck(deck)));
+                self.give_deck_analysed_grid(deck, cx);
+                true
+            }
+            Err(error) => {
+                let problem = error_chain(&error);
+                self.decks[deck.index()].fail_load(generation, problem.clone());
+                self.show_notice(NoticePlace::Deck(deck), problem, cx);
+                false
+            }
+        };
         self.update_lights();
         cx.notify();
+        loaded
     }
 
     fn put_on_deck(
@@ -581,15 +738,11 @@ impl DubplateApp {
             .as_mut()
             .map_err(|problem| LoadError::Audio(EngineError::Output(problem.to_string())))?;
         let visuals = TrackVisuals::new(&mut prepared);
-        engine.controller.load_track(deck, prepared.audio)?;
-        engine.controller.set_beat_grid(deck, prepared.beat_grid)?;
-        engine.controller.set_key_shift(deck, 0.0)?;
-        if let Some(held) = self.held_pads[deck.index()].take() {
-            match held.fx {
-                PadFx::Roll(_) => engine.controller.release_roll(deck)?,
-                PadFx::Effect(_) => engine.controller.release_pad_effect(deck)?,
-            }
-        }
+        engine
+            .controller
+            .load_prepared_track(deck, prepared.audio, prepared.beat_grid)?;
+        // Loading clears transient pad gestures on the audio thread in the same command.
+        self.held_pads[deck.index()] = None;
         Ok(visuals)
     }
 
@@ -692,7 +845,7 @@ impl DubplateApp {
             }
             Command::MoveSelection(direction) => match (self.mode, self.prepare_focus) {
                 (Mode::Prepare, PrepareFocus::Set) => {
-                    self.move_set_selection(direction);
+                    self.move_set_selection(direction, cx);
                     self.ensure_track_detail(cx);
                 }
                 (Mode::Prepare, PrepareFocus::Next) => self.move_next_cursor(direction),
@@ -708,8 +861,11 @@ impl DubplateApp {
             }
             Command::EditSet(edit) => self.edit_set(edit, cx),
             Command::SwitchPrepareFocus(direction) => {
-                self.prepare_focus = self.prepare_focus.step(direction);
-                self.next_cursor = 0;
+                if self.mode == Mode::Prepare {
+                    self.prepare_focus = self.prepare_focus.step(direction);
+                    self.next_cursor = 0;
+                    window.focus(&self.focus_handle, cx);
+                }
             }
             Command::LoadSet => self.load_set(cx),
             Command::ExportSet => self.export_set(cx),
@@ -895,16 +1051,11 @@ impl DubplateApp {
         if !doubled {
             return;
         }
+        let grid_source = self.deck(source).grid_source;
         let side = &mut self.decks[deck.index()];
-        side.begin_load(track, hot_cues);
-        side.content = DeckContent::Loaded(visuals);
-        let range = self.tempo_range(source);
-        self.engine_command(cx, |controller| controller.set_tempo_range(deck, range));
-        self.set_control(
-            Control::Tempo(deck),
-            self.mixer.tempo_sliders[source.index()],
-            cx,
-        );
+        let generation = side.begin_load(track, hot_cues);
+        side.commit_load(generation, visuals, grid_source);
+        self.mixer.tempo_sliders[deck.index()] = self.mixer.tempo_sliders[source.index()];
         self.signal_controllers(Feedback::TrackLoaded(controller_deck(deck)));
     }
 
@@ -1570,13 +1721,30 @@ fn error_chain(error: &dyn std::error::Error) -> String {
 impl Render for DubplateApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let render_started = Instant::now();
-        if std::mem::take(&mut self.refocus_window) {
+        let modal_open = self.help_open || self.library_open || self.relink_review.is_some();
+        if modal_open && !self.modal_active {
+            self.modal_return_focus = window.focused(cx);
+            window.focus(&self.modal_focus, cx);
+        } else if !modal_open && self.modal_active {
+            window.focus(
+                self.modal_return_focus
+                    .as_ref()
+                    .unwrap_or(&self.focus_handle),
+                cx,
+            );
+            self.modal_return_focus = None;
+        } else if !modal_open && std::mem::take(&mut self.refocus_window) {
             window.focus(&self.focus_handle, cx);
         }
+        if modal_open {
+            self.refocus_window = false;
+        }
+        self.modal_active = modal_open;
         let frames = self.advance_frame(window);
         let root = div()
             .key_context(WINDOW_CONTEXT)
             .track_focus(&self.focus_handle)
+            .on_action(cx.listener(|this, _: &crate::Quit, _, cx| this.request_quit(cx)))
             .on_action(cx.listener(|this, action: &Perform, window, cx| {
                 this.perform(action.0, window, cx);
             }))
@@ -1629,10 +1797,14 @@ impl Render for DubplateApp {
                     .filter(|notice| notice.place == NoticePlace::Window)
                     .map(|notice| notice_toast(notice.text.clone())),
             )
-            .when(self.help_open, |root| root.child(help::render(cx)))
-            .when_some(self.relink_review.as_ref(), |root, review| {
-                root.child(relink::render(self, review, cx))
-            })
+            .when(
+                self.help_open && !self.library_open && self.relink_review.is_none(),
+                |root| root.child(help::render(self, cx)),
+            )
+            .when_some(
+                self.relink_review.as_ref().filter(|_| !self.library_open),
+                |root, review| root.child(relink::render(self, review, cx)),
+            )
             .when(self.library_open, |root| {
                 root.child(library_panel::render(self, cx))
             });

@@ -15,7 +15,7 @@ use gpui::{
     Window, div, px, svg, uniform_list,
 };
 
-use crate::analysis::{AnalysisState, bpm_cell, energy_cell, key_cell};
+use crate::analysis::{AnalysisAnswer, AnalysisState, bpm_cell, energy_cell, key_cell};
 use crate::assets::SEARCH_ICON_PATH;
 use crate::collection::{Collection, CollectionTrack, CrateIndex, CrateKind, TrackIndex};
 use crate::commands::Direction;
@@ -23,7 +23,7 @@ use crate::deck::deck_letter;
 use crate::fonts::MONO_FAMILY;
 use crate::search::{SearchQuery, filter_tracks};
 use crate::theme;
-use crate::widgets::{Emphasis, button};
+use crate::widgets::{Emphasis, InteractiveControl, button};
 
 const ROW_HEIGHT: Pixels = px(32.0);
 const SIDEBAR_WIDTH: Pixels = px(200.0);
@@ -121,10 +121,11 @@ pub struct Browser {
     shows_load: bool,
     missing: Arc<HashSet<TrackIndex>>,
     relinking: bool,
-    analyses: HashMap<PathBuf, Option<Arc<AudioAnalysis>>>,
+    analyses: HashMap<PathBuf, Result<Arc<AudioAnalysis>, String>>,
     search_input: Entity<InputState>,
     table_focus: FocusHandle,
     scroll: UniformListScrollHandle,
+    detail_scroll: gpui::ScrollHandle,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -161,6 +162,7 @@ impl Browser {
             search_input,
             table_focus: cx.focus_handle(),
             scroll: UniformListScrollHandle::new(),
+            detail_scroll: gpui::ScrollHandle::new(),
             _subscriptions: vec![subscription],
         }
     }
@@ -199,13 +201,15 @@ impl Browser {
         cx.notify();
     }
 
-    /// Shows what the analyses just made found, `None` for a track that could not be analysed.
-    pub fn add_analyses(
-        &mut self,
-        analyses: Vec<(PathBuf, Option<Arc<AudioAnalysis>>)>,
-        cx: &mut Context<'_, Self>,
-    ) {
+    /// Shows completed analyses, retaining the error when a track could not be analysed.
+    pub fn add_analyses(&mut self, analyses: Vec<AnalysisAnswer>, cx: &mut Context<'_, Self>) {
         self.analyses.extend(analyses);
+        cx.notify();
+    }
+
+    /// Discards analyses after a library rescan, so changed or repaired files can be retried.
+    pub fn clear_analyses(&mut self, cx: &mut Context<'_, Self>) {
+        self.analyses.clear();
         cx.notify();
     }
 
@@ -217,7 +221,8 @@ impl Browser {
             .as_ref()
             .and_then(|path| self.analyses.get(path))
         {
-            Some(answer) => AnalysisState::of_answer(answer.as_ref()),
+            Some(Ok(answer)) => AnalysisState::Found(answer),
+            Some(Err(_)) => AnalysisState::Failed,
             None => AnalysisState::Waiting,
         }
     }
@@ -339,6 +344,7 @@ impl Browser {
 
     fn select(&mut self, track: Option<TrackIndex>, cx: &mut Context<'_, Self>) {
         self.selected = track;
+        self.detail_scroll.set_offset(gpui::point(px(0.0), px(0.0)));
         cx.notify();
     }
 
@@ -399,6 +405,7 @@ impl Browser {
                 };
                 div()
                     .id(("crate", crate_index.position()))
+                    .accessible_toggle(entry.name.clone(), chosen)
                     .flex()
                     .flex_none()
                     .items_center()
@@ -446,8 +453,16 @@ impl Browser {
         } else {
             Some("This crate is empty.".into())
         };
+        let list_collection = Arc::clone(&collection);
         div()
             .id("track-table")
+            .role(gpui::Role::Grid)
+            .aria_row_count(self.rows.len() + 1)
+            .aria_column_count(if self.actions() == Actions::None { 7 } else { 8 })
+            .aria_label("Library tracks")
+            .aria_description("Use Up and Down to select a track. Full title and artist appear below the list. Shift Left or Shift Right loads a deck.")
+            .tab_index(0)
+            .focus_visible(|style| style.border_1().border_color(theme::TEXT))
             .track_focus(&self.table_focus)
             .flex()
             .flex_col()
@@ -481,7 +496,7 @@ impl Browser {
                             range
                                 .map(|position| {
                                     let track = this.rows[position];
-                                    this.render_row(&collection, position, track, cx)
+                                    this.render_row(&list_collection, position, track, cx)
                                 })
                                 .collect::<Vec<_>>()
                         }),
@@ -489,6 +504,43 @@ impl Browser {
                     .flex_1()
                     .track_scroll(&self.scroll),
                 ),
+            })
+            .when_some(self.selected, |table, selected| {
+                let entry = collection.track(selected);
+                table.child(
+                    div().id("selected-track-details")
+                        .accessible_button(format!("Selected track: {} by {}", entry.row.title, entry.row.artist))
+                        .role(gpui::Role::ScrollView)
+                        .aria_description("Full track details. Use Up, Down, Page Up or Page Down to scroll, and Home or End to reach either end.")
+                        .track_scroll(&self.detail_scroll)
+                        .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _, cx| {
+                            let stroke = &event.keystroke;
+                            if stroke.modifiers.platform || stroke.modifiers.control || stroke.modifiers.alt { return; }
+                            let scroll = &this.detail_scroll;
+                            let offset = scroll.offset();
+                            let page = scroll.bounds().size.height.max(px(24.0));
+                            let y = match stroke.key.as_str() {
+                                "up" => offset.y + px(24.0),
+                                "down" => offset.y - px(24.0),
+                                "pageup" => offset.y + page,
+                                "pagedown" => offset.y - page,
+                                "home" => px(0.0),
+                                "end" => -scroll.max_offset().y,
+                                _ => return,
+                            };
+                            scroll.set_offset(gpui::point(offset.x, y.clamp(-scroll.max_offset().y, px(0.0))));
+                            cx.stop_propagation();
+                            cx.notify();
+                        }))
+                        .flex_none().min_w_0().max_h(px(120.0)).overflow_y_scroll()
+                        .px(theme::GUTTER).py(px(8.0))
+                        .border_t_1().border_color(theme::LINE)
+                        .child(div().font_weight(gpui::FontWeight::MEDIUM).child(entry.row.title.clone()))
+                        .child(div().text_color(theme::MUTED).child(entry.row.artist.clone()))
+                        .when_some(entry.track.file_path.as_ref().and_then(|path| self.analyses.get(path)).and_then(|answer| answer.as_ref().err()), |details, problem| {
+                            details.child(div().text_color(theme::ALERT).child(format!("Analysis failed: {problem}. Rescan this music folder to retry.")))
+                        })
+                )
             })
     }
 
@@ -511,6 +563,25 @@ impl Browser {
         };
         div()
             .id(("track", position))
+            .role(gpui::Role::Row)
+            .aria_row_index(position + 2)
+            .aria_label(format!(
+                "{} by {}. BPM {}. Key {}. Energy {}. Duration {}. {}",
+                row.title,
+                row.artist,
+                bpm_cell(entry, analysis),
+                key_cell(entry, analysis),
+                energy_cell(analysis),
+                row.time,
+                row.source
+            ))
+            .aria_selected(selected)
+            .aria_position_in_set(position + 1)
+            .aria_size_of_set(self.rows.len())
+            .when(selected, |row| row.aria_active_descendant())
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                this.select(Some(track), cx);
+            }))
             .group(ROW_GROUP)
             .flex()
             .items_center()
@@ -535,6 +606,10 @@ impl Browser {
             .on_drag(dragged, |dragged, _, _, cx| cx.new(|_| dragged.clone()))
             .child(
                 div()
+                    .id("title-cell")
+                    .role(gpui::Role::Cell)
+                    .aria_column_index(1)
+                    .aria_label(row.title.clone())
                     .flex()
                     .items_center()
                     .gap(px(8.0))
@@ -559,22 +634,58 @@ impl Browser {
             )
             .child(
                 text_cell(row.artist.clone())
+                    .id("artist-cell")
+                    .role(gpui::Role::Cell)
+                    .aria_column_index(2)
+                    .aria_label(row.artist.clone())
                     .flex_basis(px(0.0))
                     .flex_grow(ARTIST_SHARE)
                     .min_w_0()
                     .px(px(8.0))
                     .text_color(theme::MUTED),
             )
-            .child(number_cell(bpm_cell(entry, analysis), BPM_WIDTH).justify_end())
-            .child(number_cell(key_cell(entry, analysis), KEY_WIDTH))
-            .child(number_cell(energy_cell(analysis), ENERGY_WIDTH).justify_end())
+            .child(
+                number_cell(bpm_cell(entry, analysis), BPM_WIDTH)
+                    .id("bpm-cell")
+                    .role(gpui::Role::Cell)
+                    .aria_column_index(3)
+                    .aria_label(bpm_cell(entry, analysis))
+                    .justify_end(),
+            )
+            .child(
+                number_cell(key_cell(entry, analysis), KEY_WIDTH)
+                    .id("key-cell")
+                    .role(gpui::Role::Cell)
+                    .aria_column_index(4)
+                    .aria_label(key_cell(entry, analysis)),
+            )
+            .child(
+                number_cell(energy_cell(analysis), ENERGY_WIDTH)
+                    .id("energy-cell")
+                    .role(gpui::Role::Cell)
+                    .aria_column_index(5)
+                    .aria_label(energy_cell(analysis))
+                    .justify_end(),
+            )
             .child(
                 number_cell(row.time.clone(), TIME_WIDTH)
+                    .id("duration-cell")
+                    .role(gpui::Role::Cell)
+                    .aria_column_index(6)
+                    .aria_label(row.time.clone())
                     .justify_end()
                     .text_color(theme::MUTED),
             )
             .child(
                 text_cell(if missing {
+                    MISSING_SOURCE.into()
+                } else {
+                    row.source.clone()
+                })
+                .id("source-cell")
+                .role(gpui::Role::Cell)
+                .aria_column_index(7)
+                .aria_label(if missing {
                     MISSING_SOURCE.into()
                 } else {
                     row.source.clone()
@@ -592,17 +703,16 @@ impl Browser {
             .when(actions != Actions::None, |row| {
                 row.child(
                     div()
+                        .id("actions-cell")
+                        .role(gpui::Role::Cell)
+                        .aria_column_index(8)
+                        .aria_label("Track actions")
                         .flex()
                         .flex_none()
                         .justify_end()
                         .gap(px(4.0))
                         .w(LOAD_WIDTH)
                         .pr(theme::GUTTER)
-                        .when(!selected, |buttons| {
-                            buttons
-                                .opacity(0.0)
-                                .group_hover(ROW_GROUP, |style| style.opacity(1.0))
-                        })
                         .map(|buttons| {
                             if missing {
                                 buttons.child(relink_button(position, track, cx))
@@ -640,6 +750,9 @@ fn offset(position: usize, steps: i32, count: usize) -> Option<usize> {
 fn header_row(actions: Actions) -> impl IntoElement {
     let header = |label: &'static str| {
         div()
+            .id(label)
+            .role(gpui::Role::ColumnHeader)
+            .aria_label(label)
             .flex()
             .items_center()
             .h_full()
@@ -647,6 +760,9 @@ fn header_row(actions: Actions) -> impl IntoElement {
             .child(label)
     };
     div()
+        .id("library-column-headers")
+        .role(gpui::Role::Row)
+        .aria_row_index(1)
         .flex()
         .flex_none()
         .items_center()
@@ -694,11 +810,15 @@ fn header_row(actions: Actions) -> impl IntoElement {
         .child(header("Source").w(SOURCE_WIDTH).flex_none().px(px(8.0)))
         .when(actions != Actions::None, |row| {
             row.child(
-                header(if actions == Actions::Load { "Load" } else { "" })
-                    .w(LOAD_WIDTH)
-                    .flex_none()
-                    .pr(theme::GUTTER)
-                    .justify_end(),
+                header(if actions == Actions::Load {
+                    "Load"
+                } else {
+                    "Actions"
+                })
+                .w(LOAD_WIDTH)
+                .flex_none()
+                .pr(theme::GUTTER)
+                .justify_end(),
             )
         })
 }
@@ -727,6 +847,7 @@ fn load_button(
     let colour = theme::deck_colour(deck);
     div()
         .id(("load", position * 2 + deck.index()))
+        .accessible_button(format!("Load track on deck {}", deck_letter(deck)))
         .flex()
         .items_center()
         .justify_center()
@@ -796,6 +917,7 @@ fn relink_button(
 ) -> impl IntoElement + use<> {
     div()
         .id(("relink", position))
+        .accessible_button("Relink track")
         .flex()
         .items_center()
         .h(px(22.0))
