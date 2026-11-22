@@ -4,11 +4,10 @@ use std::sync::Arc;
 
 use crate::error::EngineError;
 use crate::stems::Stem;
-use crate::track::{FrameRead, MAX_TRACK_SECONDS, check_sample_rate};
-use crate::voice::StereoFrames;
+use crate::track::{MAX_TRACK_SECONDS, check_sample_rate};
 
 /// Channels of one stem frame: left and right of each stem, in the order of [`Stem::ALL`].
-const STEM_CHANNELS: usize = Stem::COUNT * 2;
+pub(crate) const STEM_CHANNELS: usize = Stem::COUNT * 2;
 
 /// Channels of one part frame: every stem side by side, then the track itself.
 pub(crate) const PART_CHANNELS: usize = STEM_CHANNELS + 2;
@@ -107,60 +106,41 @@ impl AttachedStems {
         Self { stems }
     }
 
-    /// The left and right channels of `stem`, for the resampling kernel.
+    /// Every stem at frame `index`, silent before the start and after the end.
     #[inline]
-    pub(crate) fn channel(&self, stem: Stem) -> StemChannel<'_> {
-        StemChannel {
-            frames: &self.stems.buffer.frames,
-            offset: stem.index() * 2,
-        }
-    }
-}
-
-/// One stem's left and right channels inside the frames of every stem.
-pub(crate) struct StemChannel<'stems> {
-    frames: &'stems [[i16; STEM_CHANNELS]],
-    offset: usize,
-}
-
-impl StemChannel<'_> {
-    #[inline]
-    fn sample(&self, frame: &[i16; STEM_CHANNELS], channel: usize) -> f32 {
-        f32::from(frame[self.offset + channel]) * SAMPLE_SCALE
-    }
-}
-
-impl StereoFrames for StemChannel<'_> {
-    #[inline]
-    fn read_frame(&self, index: i64) -> FrameRead {
-        match usize::try_from(index)
+    pub(crate) fn frame(&self, index: i64) -> [f32; STEM_CHANNELS] {
+        usize::try_from(index)
             .ok()
-            .and_then(|index| self.frames.get(index))
-        {
-            Some(frame) => FrameRead::Frame(self.sample(frame, 0), self.sample(frame, 1)),
-            None => FrameRead::Outside,
-        }
+            .and_then(|index| self.stems.buffer.frames.get(index))
+            .map_or([0.0; STEM_CHANNELS], |frame| {
+                frame.map(|sample| f32::from(sample) * SAMPLE_SCALE)
+            })
     }
 
+    /// Adds every stem's frames from `first` on, each times its weight in `weights`, into
+    /// `into`: one pass over the frames for all four stems, as the resampling kernel needs.
     #[inline]
-    fn visit_frames<const N: usize>(
+    pub(crate) fn accumulate<const TAPS: usize>(
         &self,
         first: i64,
-        mut visit: impl FnMut(usize, f32, f32),
-    ) -> bool {
-        let start = first.clamp(0, self.frames.len() as i64);
+        weights: &[f32; TAPS],
+        into: &mut [f32],
+    ) {
+        let frames = &self.stems.buffer.frames;
+        let start = first.clamp(0, frames.len() as i64);
         let end = first
-            .saturating_add(N as i64)
-            .clamp(start, self.frames.len() as i64);
+            .saturating_add(TAPS as i64)
+            .clamp(start, frames.len() as i64);
+        let mut sums = [0.0_f32; STEM_CHANNELS];
         for index in start..end {
-            let frame = &self.frames[index as usize];
-            visit(
-                (index - first) as usize,
-                self.sample(frame, 0),
-                self.sample(frame, 1),
-            );
+            let weight = weights[(index - first) as usize];
+            for (sum, sample) in sums.iter_mut().zip(frames[index as usize]) {
+                *sum += f32::from(sample) * weight;
+            }
         }
-        false
+        for (sample, sum) in into.iter_mut().zip(sums) {
+            *sample = sum * SAMPLE_SCALE;
+        }
     }
 }
 
@@ -221,33 +201,25 @@ mod tests {
     #[test]
     fn each_stem_reads_back_on_its_own_channels() {
         let attached = AttachedStems::new(stems(8));
+        let frame = attached.frame(3);
         for stem in Stem::ALL {
             let first = (stem.index() as f32 + 1.0) * 1000.0;
-            assert_eq!(
-                attached.channel(stem).read_frame(3),
-                FrameRead::Frame((first + 6.0) * SAMPLE_SCALE, (first + 7.0) * SAMPLE_SCALE)
-            );
-            let mut visited = Vec::new();
-            attached
-                .channel(stem)
-                .visit_frames::<4>(-2, |offset, left, _| visited.push((offset, left)));
-            assert_eq!(
-                visited,
-                [(2, first * SAMPLE_SCALE), (3, (first + 2.0) * SAMPLE_SCALE)]
-            );
+            assert_eq!(frame[stem.index() * 2], (first + 6.0) * SAMPLE_SCALE);
+            assert_eq!(frame[stem.index() * 2 + 1], (first + 7.0) * SAMPLE_SCALE);
         }
+        assert_eq!(attached.frame(-1), [0.0; STEM_CHANNELS]);
+        assert_eq!(attached.frame(8), [0.0; STEM_CHANNELS]);
     }
 
     #[test]
-    fn outside_the_stems_is_outside() {
+    fn weighted_frames_outside_the_stems_count_as_silence() {
         let attached = AttachedStems::new(stems(4));
+        let mut into = [0.0; STEM_CHANNELS];
+        attached.accumulate(-2, &[1.0, 1.0, 0.5, 0.25], &mut into);
+        let first_drum = 1000.0;
         assert_eq!(
-            attached.channel(Stem::Bass).read_frame(-1),
-            FrameRead::Outside
-        );
-        assert_eq!(
-            attached.channel(Stem::Bass).read_frame(4),
-            FrameRead::Outside
+            into[0],
+            (first_drum * 0.5 + (first_drum + 2.0) * 0.25) * SAMPLE_SCALE
         );
     }
 
