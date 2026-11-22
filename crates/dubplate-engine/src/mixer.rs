@@ -10,6 +10,7 @@ use crate::effects::{EffectChange, EffectRack, EffectTarget, EffectUnitId};
 use crate::grid::BeatGrid;
 use crate::headphones::Headphones;
 use crate::jog::JogInput;
+use crate::pad_effects::PadEffect;
 use crate::processor::{AudioProcessor, ProcessContext, StereoBlock};
 use crate::state::{GapDetector, SharedState, encode_loop_length, raise_peak};
 use crate::sync::SyncMode;
@@ -137,6 +138,23 @@ pub(crate) enum Command {
     SetKeyLock {
         deck: DeckId,
         enabled: bool,
+    },
+    SetSlip {
+        deck: DeckId,
+        enabled: bool,
+    },
+    BeatRoll {
+        deck: DeckId,
+        length: Option<BeatLength>,
+    },
+    HoldPadEffect {
+        deck: DeckId,
+        pad: PadEffect,
+    },
+    ReleasePadEffect(DeckId),
+    SetKeyShift {
+        deck: DeckId,
+        semitones: f32,
     },
 }
 
@@ -495,6 +513,15 @@ impl Renderer {
             Command::SetKeyLock { deck, enabled } => {
                 self.decks[deck.index()].set_key_lock(enabled);
             }
+            Command::SetSlip { deck, enabled } => self.decks[deck.index()].set_slip(enabled),
+            Command::BeatRoll { deck, length } => {
+                self.decks[deck.index()].beat_roll(length, &mut self.retire);
+            }
+            Command::HoldPadEffect { deck, pad } => self.decks[deck.index()].hold_pad_effect(pad),
+            Command::ReleasePadEffect(deck) => self.decks[deck.index()].release_pad_effect(),
+            Command::SetKeyShift { deck, semitones } => {
+                self.decks[deck.index()].set_key_shift(semitones);
+            }
             Command::SetMasterTempo(source) => self.tempo_master.set_source(source),
             Command::ChangeEffect { unit, change } => self.effects.change(unit, change),
             Command::SetEq {
@@ -551,6 +578,13 @@ impl Renderer {
             shared
                 .fader_waits_for_pickup
                 .store(deck.fader_waits_for_pickup(), Ordering::Relaxed);
+            shared
+                .slip_enabled
+                .store(deck.slip_enabled(), Ordering::Relaxed);
+            shared.slip_shadow_seconds.store(
+                deck.slip_shadow()
+                    .map_or(f64::NAN, |frames| deck.frames_to_seconds(frames)),
+            );
             let region = deck.loop_region();
             let seconds_or_none = |frames: Option<f64>| {
                 frames.map_or(f64::NAN, |frames| deck.frames_to_seconds(frames))
