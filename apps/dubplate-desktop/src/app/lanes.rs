@@ -168,10 +168,10 @@ fn lane(
     let flags = match content {
         DeckContent::Loaded(_) => app
             .deck(deck)
-            .hot_cues
-            .iter()
-            .map(|(pad, seconds)| {
-                let offset = (seconds - playhead_seconds) * pixels_per_track_second;
+            .cues
+            .hot_cues()
+            .map(|(pad, cue)| {
+                let offset = (cue.start_seconds() - playhead_seconds) * pixels_per_track_second;
                 (pad.letter(), offset as f32)
             })
             .collect(),
