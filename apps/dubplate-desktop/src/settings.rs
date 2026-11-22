@@ -330,7 +330,7 @@ mod tests {
             effect_units: vec![EffectUnitSetting {
                 effect: "reverb".to_owned(),
                 target: "M".to_owned(),
-                beat: "2".to_owned(),
+                parameter: "2".to_owned(),
                 depth: 0.25,
             }],
             smart_cfx_preset: Some("dub echo".to_owned()),
