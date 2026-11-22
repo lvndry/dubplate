@@ -6,7 +6,8 @@ use std::path::{Path, PathBuf};
 use dubplate_library::{DataFolder, LibrarySettings};
 use serde::{Deserialize, Serialize};
 
-use crate::controls::DEFAULT_SAMPLER_VOLUME;
+use crate::commands::Mode;
+use crate::controls::{DEFAULT_MASTER_LEVEL, DEFAULT_SAMPLER_VOLUME, MixerPositions};
 use crate::effects::EffectUnitSetting;
 
 /// Why the settings could not be read or written.
@@ -57,6 +58,77 @@ pub struct Settings {
     pub smart_cfx_preset: Option<String>,
     /// The sampler's volume and the sample in each slot.
     pub sampler: SamplerSetting,
+    /// The screen Dubplate was on, `prepare` or `perform`.
+    pub screen: Option<String>,
+    /// The master and headphone levels.
+    pub levels: LevelsSetting,
+}
+
+/// The output levels as the DJ left them, so Dubplate never opens louder than it closed.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LevelsSetting {
+    /// The master level, from 0.0 to 1.0.
+    pub master: f32,
+    /// The headphone level, from 0.0 to 1.0.
+    pub headphones: f32,
+    /// The headphone mix between the cued channels and the master, from 0.0 to 1.0.
+    pub headphone_mix: f32,
+}
+
+impl Default for LevelsSetting {
+    fn default() -> Self {
+        let defaults = MixerPositions::default();
+        Self {
+            master: DEFAULT_MASTER_LEVEL,
+            headphones: defaults.headphone_level,
+            headphone_mix: defaults.headphone_mix,
+        }
+    }
+}
+
+impl LevelsSetting {
+    /// The levels of `positions`.
+    pub fn of(positions: &MixerPositions) -> Self {
+        Self {
+            master: positions.master_level,
+            headphones: positions.headphone_level,
+            headphone_mix: positions.headphone_mix,
+        }
+    }
+
+    /// `positions` with these levels, each kept between 0.0 and 1.0.
+    pub fn apply(&self, positions: MixerPositions) -> MixerPositions {
+        MixerPositions {
+            master_level: self.master.clamp(0.0, 1.0),
+            headphone_level: self.headphones.clamp(0.0, 1.0),
+            headphone_mix: self.headphone_mix.clamp(0.0, 1.0),
+            ..positions
+        }
+    }
+}
+
+/// The name the settings keep a screen by.
+fn screen_name(screen: Mode) -> &'static str {
+    match screen {
+        Mode::Prepare => "prepare",
+        Mode::Perform => "perform",
+    }
+}
+
+impl Settings {
+    /// The screen to open on: the one Dubplate was on, Perform the first time.
+    pub fn screen(&self) -> Mode {
+        [Mode::Prepare, Mode::Perform]
+            .into_iter()
+            .find(|screen| self.screen.as_deref() == Some(screen_name(*screen)))
+            .unwrap_or(Mode::Perform)
+    }
+
+    /// Remembers the screen Dubplate is on.
+    pub fn set_screen(&mut self, screen: Mode) {
+        self.screen = Some(screen_name(screen).to_owned());
+    }
 }
 
 /// The sampler as the DJ left it.
@@ -109,6 +181,8 @@ impl Default for Settings {
             effect_units: Vec::new(),
             smart_cfx_preset: None,
             sampler: SamplerSetting::default(),
+            screen: None,
+            levels: LevelsSetting::default(),
         }
     }
 }
@@ -230,6 +304,12 @@ mod tests {
                     sync: false,
                 }],
             },
+            screen: Some("prepare".to_owned()),
+            levels: LevelsSetting {
+                master: 0.4,
+                headphones: 0.3,
+                headphone_mix: 0.7,
+            },
         };
         settings.save(&path).unwrap();
         assert_eq!(Settings::load(&path).unwrap(), settings);
@@ -278,6 +358,29 @@ mod tests {
         assert!(
             !settings.library.import_rekordbox,
             "rekordbox is only read when the DJ asks"
+        );
+    }
+
+    #[test]
+    fn the_screen_and_levels_come_back_and_an_unknown_screen_opens_perform() {
+        let mut settings = Settings::default();
+        assert_eq!(settings.screen(), Mode::Perform);
+        settings.set_screen(Mode::Prepare);
+        assert_eq!(settings.screen(), Mode::Prepare);
+        settings.screen = Some("edit".to_owned());
+        assert_eq!(settings.screen(), Mode::Perform);
+
+        let positions = LevelsSetting {
+            master: 1.7,
+            headphones: 0.25,
+            headphone_mix: 0.6,
+        }
+        .apply(MixerPositions::default());
+        assert_eq!(positions.master_level, 1.0);
+        assert_eq!(LevelsSetting::of(&positions).headphones, 0.25);
+        assert!(
+            LevelsSetting::default().master < 1.0,
+            "a first launch never opens the master at full"
         );
     }
 

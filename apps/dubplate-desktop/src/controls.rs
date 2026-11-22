@@ -179,6 +179,9 @@ pub fn trim_gain_at(fraction: f32) -> f32 {
 
 /// Where the sampler's volume starts, a little under its loudest so a sample sits in the mix.
 pub const DEFAULT_SAMPLER_VOLUME: f32 = 0.8;
+/// The master level the first time Dubplate opens, 10 dB under full, before the DJ or the
+/// controller's MASTER LEVEL knob sets it.
+pub const DEFAULT_MASTER_LEVEL: f32 = 0.75;
 
 /// Where the mixer and tempo controls are. The interface keeps them, rather than reading them
 /// back from the engine, so quick key presses each count before the engine has caught up.

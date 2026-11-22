@@ -91,6 +91,7 @@ pub struct Dispatcher {
     fx_lever: [bool; DECK_COUNT],
     depth_pickup: Pickup,
     depth_unit: Option<EffectUnitId>,
+    master_pickup: Pickup,
 }
 
 impl Default for Dispatcher {
@@ -101,6 +102,7 @@ impl Default for Dispatcher {
             fx_lever: [false; DECK_COUNT],
             depth_pickup: Pickup::default(),
             depth_unit: None,
+            master_pickup: Pickup::default(),
         }
     }
 }
@@ -273,7 +275,18 @@ impl Dispatcher {
         let control = match control {
             Continuous::ChannelFader(deck) => Control::ChannelFader(deck_id(deck)),
             Continuous::Crossfader => Control::Crossfader,
-            Continuous::MasterLevel => Control::MasterLevel,
+            Continuous::MasterLevel => {
+                // Turning the master down always works; a knob that reports a louder level
+                // than the screen's, as when the controller connects, waits to reach it.
+                let shown = surface.positions.master_level;
+                if !self
+                    .master_pickup
+                    .takes_over(fraction, shown, fraction <= shown)
+                {
+                    return None;
+                }
+                Control::MasterLevel
+            }
             Continuous::Trim(deck) => Control::Trim(deck_id(deck)),
             Continuous::Tempo(deck) => {
                 let deck = deck_id(deck);
@@ -516,6 +529,25 @@ mod tests {
                 Command::SwitchBrowserPane
             ]
         );
+    }
+
+    #[test]
+    fn a_master_knob_louder_than_the_screen_waits_but_turning_down_always_works() {
+        let mut dispatcher = Dispatcher::default();
+        let mut surface = Surface::default();
+        surface.positions.master_level = 0.4;
+        let master = |fraction| moved(Continuous::MasterLevel, fraction);
+        assert!(
+            run(&mut dispatcher, &surface, &[master(1.0), master(0.9)]).is_empty(),
+            "a knob left at full on connect does not blast the room"
+        );
+        assert_eq!(
+            run(&mut dispatcher, &surface, &[master(0.35)]).len(),
+            1,
+            "it takes over once it comes down through the level"
+        );
+        let mut quiet = Dispatcher::default();
+        assert_eq!(run(&mut quiet, &surface, &[master(0.1)]).len(), 1);
     }
 
     #[test]
