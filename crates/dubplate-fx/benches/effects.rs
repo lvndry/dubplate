@@ -1,5 +1,5 @@
 //! What each effect, the channel EQ and the limiter cost on one 256-frame block, switched on at
-//! a performance depth and following a 124 BPM beat.
+//! a performance depth and following a 124 BPM beat, in CPU time of the processing thread.
 
 use std::hint::black_box;
 
@@ -7,6 +7,11 @@ use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use dubplate_fx::{
     BeatLength, EffectConfig, EffectKind, EqBand, Isolator, Limiter, ProcessContext, create,
 };
+
+#[path = "../../dubplate-engine/benches/support/cpu_time.rs"]
+mod cpu_time;
+
+use cpu_time::ThreadCpuTime;
 
 const SAMPLE_RATE: f32 = 48_000.0;
 const BLOCK_FRAMES: usize = 256;
@@ -71,7 +76,7 @@ impl BlockRunner {
     }
 }
 
-fn effects(criterion: &mut Criterion) {
+fn effects(criterion: &mut Criterion<ThreadCpuTime>) {
     let mut group = criterion.benchmark_group("effect_256_frames");
     let config = EffectConfig {
         max_sample_rate: SAMPLE_RATE,
@@ -96,7 +101,7 @@ fn effects(criterion: &mut Criterion) {
     group.finish();
 }
 
-fn channel_and_master(criterion: &mut Criterion) {
+fn channel_and_master(criterion: &mut Criterion<ThreadCpuTime>) {
     let mut group = criterion.benchmark_group("mixer_256_frames");
     let mut isolator = Isolator::new(SAMPLE_RATE);
     isolator.set_gain(EqBand::Low, 0.3);
@@ -120,5 +125,9 @@ fn channel_and_master(criterion: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, effects, channel_and_master);
+criterion_group! {
+    name = benches;
+    config = cpu_time::criterion();
+    targets = effects, channel_and_master
+}
 criterion_main!(benches);
