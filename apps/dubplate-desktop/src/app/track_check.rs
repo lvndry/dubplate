@@ -22,6 +22,7 @@ use crate::prep::{TrackDetail, track_detail};
 use crate::shortcuts::GRID_NUDGE_MS;
 use crate::theme;
 use crate::waveform::BeatMarks;
+use crate::widgets::{InteractiveControl, adjusted_value};
 
 const LANE_HEIGHT: Pixels = px(64.0);
 const OVERVIEW_HEIGHT: Pixels = px(26.0);
@@ -29,8 +30,19 @@ const CONTROLS_HEIGHT: Pixels = px(26.0);
 const ROW_GAP: Pixels = px(6.0);
 const OVERVIEW_BAR_SPACING: f32 = 3.0;
 const OVERVIEW_BAR_WIDTH: f32 = 2.0;
-/// The share of the overview a phrase name needs before the next one is written.
-const LABEL_ROOM: f32 = 0.05;
+/// The lane above the overview that holds the phrase names, clear of the bars and ticks.
+const PHRASE_LANE_HEIGHT: Pixels = px(15.0);
+const PHRASE_LABEL_SIZE: f32 = 10.0;
+/// The phrase names are set in the monospaced face, whose every character is this wide in
+/// ems, so their width is known before they are drawn.
+const MONO_ADVANCE_EM: f32 = 0.6;
+const PHRASE_LABEL_PADDING: f32 = 4.0;
+/// The chip's left edge, which marks where the phrase starts.
+const PHRASE_LABEL_EDGE: f32 = 1.0;
+/// The space kept between two phrase names.
+const PHRASE_LABEL_GAP: f32 = 3.0;
+/// The overview's width before it is first drawn, to place the names on the first frame.
+const FIRST_OVERVIEW_WIDTH: f32 = 1100.0;
 /// Bars in a phrase, how often the overview draws a stronger bar line.
 const BARS_PER_PHRASE: usize = 8;
 /// Room for the grid button in both its states, so the controls beside it stay put when it
@@ -149,7 +161,8 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
         };
         // The same height as the check itself, so the set list below never jumps while a
         // track is read.
-        let content_height = CONTROLS_HEIGHT + ROW_GAP * 2.0 + LANE_HEIGHT + OVERVIEW_HEIGHT;
+        let content_height =
+            CONTROLS_HEIGHT + ROW_GAP * 2.0 + LANE_HEIGHT + PHRASE_LANE_HEIGHT + OVERVIEW_HEIGHT;
         return strip.child(
             div()
                 .h(content_height)
@@ -268,6 +281,7 @@ fn controls(
         .child(
             div()
                 .id("confirm-grid")
+                .accessible_button("Confirm beat grid")
                 .flex()
                 .items_center()
                 .justify_center()
@@ -334,6 +348,7 @@ fn key_button(
 ) -> impl IntoElement + use<> {
     div()
         .id(id)
+        .accessible_button(label)
         .flex()
         .items_center()
         .justify_center()
@@ -441,18 +456,12 @@ fn overview(
             .collect(),
         _ => Vec::new(),
     };
-    let mut last_label: Option<f32> = None;
-    let labels: Vec<(f32, SharedString)> = phrases
-        .iter()
-        .filter(|(seconds, _)| {
-            let room = last_label.is_none_or(|last| seconds - last >= duration as f32 * LABEL_ROOM);
-            if room {
-                last_label = Some(*seconds);
-            }
-            room
-        })
-        .cloned()
-        .collect();
+    let width = app
+        .hit_areas
+        .check_overview
+        .get()
+        .map_or(FIRST_OVERVIEW_WIDTH, |bounds| f32::from(bounds.size.width));
+    let labels = place_phrase_labels(&phrases, duration as f32, width);
     let cues: Vec<f32> = [entry.mix_in_ms, entry.mix_out_ms]
         .into_iter()
         .flatten()
@@ -462,8 +471,49 @@ fn overview(
     let hit_areas: Rc<HitAreas> = Rc::clone(&app.hit_areas);
     let duration_f32 = duration.max(1.0) as f32;
     let playhead_f32 = playhead as f32;
-    div()
+    let lane = div()
+        .relative()
+        .h(PHRASE_LANE_HEIGHT)
+        .children(labels.into_iter().map(|(left, label)| {
+            div()
+                .absolute()
+                .top_0()
+                .left(px(left))
+                .h(PHRASE_LANE_HEIGHT - px(2.0))
+                .flex()
+                .items_center()
+                .px(px(PHRASE_LABEL_PADDING))
+                .rounded(px(3.0))
+                .border_l(px(PHRASE_LABEL_EDGE))
+                .border_color(theme::TEXT)
+                .bg(theme::RAISED)
+                .font_family(MONO_FAMILY)
+                .text_size(px(PHRASE_LABEL_SIZE))
+                .line_height(px(PHRASE_LABEL_SIZE + 2.0))
+                .text_color(theme::TEXT)
+                .whitespace_nowrap()
+                .child(label)
+        }));
+    let strip = div()
         .id("check-overview")
+        .accessible_slider(
+            "Track check position",
+            (playhead / duration.max(1.0)) as f32,
+        )
+        .aria_orientation(gpui::Orientation::Horizontal)
+        .map(|element| {
+            crate::widgets::numeric_actions(element, cx, move |this, change, cx| {
+                let fraction = (this.check_cursor_seconds / duration.max(1.0)) as f32;
+                this.click_check_overview(change.apply(fraction), duration, cx);
+            })
+        })
+        .on_key_down(cx.listener(move |this, event, _, cx| {
+            let current = (playhead / duration.max(1.0)) as f32;
+            if let Some(fraction) = adjusted_value(event, current, 0.0) {
+                this.click_check_overview(fraction, duration, cx);
+                cx.stop_propagation();
+            }
+        }))
         .relative()
         .h(OVERVIEW_HEIGHT)
         .rounded(px(4.0))
@@ -533,15 +583,76 @@ fn overview(
             )
             .absolute()
             .size_full(),
-        )
-        .children(labels.into_iter().map(move |(seconds, label)| {
-            div()
-                .absolute()
-                .top(px(7.0))
-                .left(gpui::relative((seconds / duration_f32).clamp(0.0, 1.0)))
-                .ml(px(3.0))
-                .text_size(px(10.0))
-                .text_color(theme::MUTED)
-                .child(label)
-        }))
+        );
+    div().flex().flex_col().child(lane).child(strip)
+}
+
+/// Where each phrase name goes in the lane, in pixels from its left edge, keeping only names
+/// that fit: a name starts at its phrase and is dropped when it would run into the one before
+/// it or past the end of the lane.
+fn place_phrase_labels(
+    phrases: &[(f32, SharedString)],
+    duration: f32,
+    width: f32,
+) -> Vec<(f32, SharedString)> {
+    let duration = duration.max(1.0);
+    let mut free_from = 0.0_f32;
+    phrases
+        .iter()
+        .filter_map(|(seconds, label)| {
+            let left = (seconds / duration).clamp(0.0, 1.0) * width;
+            let label_width = label.chars().count() as f32 * PHRASE_LABEL_SIZE * MONO_ADVANCE_EM
+                + PHRASE_LABEL_PADDING * 2.0
+                + PHRASE_LABEL_EDGE;
+            let fits = left >= free_from && left + label_width <= width;
+            fits.then(|| {
+                free_from = left + label_width + PHRASE_LABEL_GAP;
+                (left, label.clone())
+            })
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn phrases(entries: &[(f32, &'static str)]) -> Vec<(f32, SharedString)> {
+        entries
+            .iter()
+            .map(|(seconds, label)| (*seconds, SharedString::from(*label)))
+            .collect()
+    }
+
+    #[test]
+    fn phrase_names_that_would_touch_the_one_before_are_dropped() {
+        let placed = place_phrase_labels(
+            &phrases(&[
+                (0.0, "Intro 1"),
+                (5.0, "Up 1"),
+                (60.0, "Chorus 1"),
+                (300.0, "Outro 1"),
+            ]),
+            300.0,
+            600.0,
+        );
+        let names: Vec<&str> = placed.iter().map(|(_, label)| label.as_ref()).collect();
+        assert_eq!(
+            names,
+            ["Intro 1", "Chorus 1"],
+            "Up 1 starts inside Intro 1's name and Outro 1 would run past the end"
+        );
+        assert_eq!(placed[1].0, 120.0);
+    }
+
+    #[test]
+    fn a_wide_overview_keeps_every_name() {
+        let placed = place_phrase_labels(
+            &phrases(&[(0.0, "Intro 1"), (30.0, "Up 1"), (60.0, "Chorus 1")]),
+            300.0,
+            1200.0,
+        );
+        assert_eq!(placed.len(), 3);
+        assert!(placed.windows(2).all(|pair| pair[0].0 < pair[1].0));
+    }
 }

@@ -26,6 +26,8 @@ pub enum AnalysisPriority {
 pub struct AnalysedTrack {
     /// The track's audio file.
     pub path: PathBuf,
+    /// Library revision that requested this answer.
+    pub revision: u64,
     /// What the analysis found, or why the track could not be analysed.
     pub outcome: Result<AudioAnalysis, String>,
 }
@@ -34,24 +36,25 @@ pub struct AnalysedTrack {
 /// stay behind it.
 pub trait TrackAnalyser {
     /// Asks for each track, by its file, to be analysed, sooner for an earlier `priority`.
-    fn request(&self, tracks: Vec<PathBuf>, priority: AnalysisPriority);
+    fn request(&self, tracks: Vec<PathBuf>, priority: AnalysisPriority, revision: u64);
     /// The next answer that has arrived, without waiting.
     fn next_result(&self) -> Option<AnalysedTrack>;
 }
 
 impl TrackAnalyser for AnalysisQueue {
-    fn request(&self, tracks: Vec<PathBuf>, priority: AnalysisPriority) {
+    fn request(&self, tracks: Vec<PathBuf>, priority: AnalysisPriority, revision: u64) {
         let priority = match priority {
             AnalysisPriority::Set => Priority::Set,
             AnalysisPriority::Library => Priority::Library,
         };
-        self.request_all(tracks.into_iter().map(|path| (path, priority)));
+        self.request_all_versioned(tracks.into_iter().map(|path| (path, priority, revision)));
     }
 
     fn next_result(&self) -> Option<AnalysedTrack> {
         let result = self.results().try_recv().ok()?;
         Some(AnalysedTrack {
             path: result.path,
+            revision: result.revision,
             outcome: result.outcome,
         })
     }
@@ -69,14 +72,6 @@ pub enum AnalysisState<'analysis> {
 }
 
 impl<'analysis> AnalysisState<'analysis> {
-    /// The state an answer leaves a track in: found, or failed when it could not be analysed.
-    pub fn of_answer(answer: Option<&'analysis Arc<AudioAnalysis>>) -> Self {
-        match answer {
-            Some(analysis) => Self::Found(analysis),
-            None => Self::Failed,
-        }
-    }
-
     /// What the analysis found, once it found it.
     pub fn found(self) -> Option<&'analysis AudioAnalysis> {
         match self {
@@ -92,10 +87,38 @@ pub struct TrackAnalyses {
     analyser: Option<Box<dyn TrackAnalyser>>,
     found: HashMap<PathBuf, Arc<AudioAnalysis>>,
     waiting: HashMap<PathBuf, AnalysisPriority>,
-    failed: HashSet<PathBuf>,
+    failed: HashMap<PathBuf, String>,
+    unconfirmed: HashSet<PathBuf>,
+    revision: u64,
 }
 
+/// An answer retains the failure reason instead of treating it as missing metadata.
+pub type AnalysisAnswer = (PathBuf, Result<Arc<AudioAnalysis>, String>);
+
 impl TrackAnalyses {
+    /// A source rescan asks the backend cache to validate file fingerprints again. Pending
+    /// answers from the old library are ignored, including answers already in flight. What was
+    /// found stays shown until its file's new answer replaces it, so the library's tempos and
+    /// keys never blank out while the cache confirms them.
+    pub fn refresh(&mut self) {
+        self.revision = self.revision.wrapping_add(1);
+        self.unconfirmed = self.found.keys().cloned().collect();
+        self.failed.clear();
+        self.waiting.clear();
+    }
+
+    /// Every analysis that has arrived, including those a rescan has yet to confirm.
+    pub fn found(&self) -> impl Iterator<Item = (&Path, &Arc<AudioAnalysis>)> {
+        self.found
+            .iter()
+            .map(|(path, analysis)| (path.as_path(), analysis))
+    }
+
+    /// An explicit load may retry a file repaired since its previous failure.
+    pub fn retry_failed(&mut self, path: &Path) {
+        self.failed.remove(path);
+    }
+
     /// Analyses from `analyser`, or none at all without one.
     pub fn new(analyser: Option<Box<dyn TrackAnalyser>>) -> Self {
         Self {
@@ -108,7 +131,7 @@ impl TrackAnalyses {
     pub fn state(&self, path: &Path) -> AnalysisState<'_> {
         match self.found.get(path) {
             Some(analysis) => AnalysisState::Found(analysis),
-            None if self.failed.contains(path) => AnalysisState::Failed,
+            None if self.failed.contains_key(path) => AnalysisState::Failed,
             None => AnalysisState::Waiting,
         }
     }
@@ -116,13 +139,6 @@ impl TrackAnalyses {
     /// The analysis of the track whose audio file is `path`, once it has arrived.
     pub fn get(&self, path: &Path) -> Option<&Arc<AudioAnalysis>> {
         self.found.get(path)
-    }
-
-    /// Every analysis that has arrived.
-    pub fn found(&self) -> impl Iterator<Item = (&Path, &Arc<AudioAnalysis>)> {
-        self.found
-            .iter()
-            .map(|(path, analysis)| (path.as_path(), analysis))
     }
 
     /// How many tracks are waiting for their analysis.
@@ -146,7 +162,8 @@ impl TrackAnalyses {
                 .waiting
                 .get(path)
                 .is_some_and(|waiting| *waiting <= priority);
-            if asked || self.found.contains_key(path) || self.failed.contains(path) {
+            let confirmed = self.found.contains_key(path) && !self.unconfirmed.contains(path);
+            if asked || confirmed || self.failed.contains_key(path) {
                 continue;
             }
             self.waiting.insert(path.to_path_buf(), priority);
@@ -155,25 +172,30 @@ impl TrackAnalyses {
         if wanted.is_empty() {
             return;
         }
-        analyser.request(wanted, priority);
+        analyser.request(wanted, priority, self.revision);
     }
 
-    /// Takes the answers that have arrived: each track with its analysis, or `None` when it
-    /// could not be analysed.
-    pub fn collect(&mut self) -> Vec<(PathBuf, Option<Arc<AudioAnalysis>>)> {
+    /// Takes arrived answers, preserving the error when a track could not be analysed.
+    pub fn collect(&mut self) -> Vec<AnalysisAnswer> {
         let mut answered = Vec::new();
         let Some(analyser) = &self.analyser else {
             return answered;
         };
         while let Some(answer) = analyser.next_result() {
+            if answer.revision != self.revision {
+                continue;
+            }
             self.waiting.remove(&answer.path);
-            let analysis = answer.outcome.ok().map(Arc::new);
+            self.unconfirmed.remove(&answer.path);
+            let analysis = answer.outcome.map(Arc::new);
             match &analysis {
-                Some(analysis) => {
+                Ok(analysis) => {
+                    self.failed.remove(&answer.path);
                     self.found.insert(answer.path.clone(), Arc::clone(analysis));
                 }
-                None => {
-                    self.failed.insert(answer.path.clone());
+                Err(problem) => {
+                    self.found.remove(&answer.path);
+                    self.failed.insert(answer.path.clone(), problem.clone());
                 }
             }
             answered.push((answer.path, analysis));
@@ -268,7 +290,7 @@ mod tests {
     }
 
     impl TrackAnalyser for Rc<Analyser> {
-        fn request(&self, tracks: Vec<PathBuf>, priority: AnalysisPriority) {
+        fn request(&self, tracks: Vec<PathBuf>, priority: AnalysisPriority, _revision: u64) {
             self.requests
                 .borrow_mut()
                 .extend(tracks.into_iter().map(|path| (path, priority)));
@@ -299,6 +321,7 @@ mod tests {
     fn answer(path: &str, outcome: Result<AudioAnalysis, &str>) -> AnalysedTrack {
         AnalysedTrack {
             path: PathBuf::from(path),
+            revision: 0,
             outcome: outcome.map_err(str::to_owned),
         }
     }
@@ -337,16 +360,75 @@ mod tests {
         answered.sort_by(|first, second| first.0.cmp(&second.0));
         assert_eq!(answered.len(), 2);
         assert_eq!(
-            answered[0].1.as_ref().and_then(|analysis| analysis.bpm),
+            answered[0]
+                .1
+                .as_ref()
+                .ok()
+                .and_then(|analysis| analysis.bpm),
             Some(122.0)
         );
-        assert!(answered[1].1.is_none());
+        assert_eq!(answered[1].1.as_ref().unwrap_err(), "not audio");
         assert_eq!(analyses.waiting(), 0);
         assert_eq!(analyses.state(paths[1]), AnalysisState::Failed);
-        assert_eq!(analyses.found().count(), 1);
+        assert_eq!(analyses.found.len(), 1);
         analyser.requests.borrow_mut().clear();
         analyses.request(paths, AnalysisPriority::Set);
         assert!(analyser.requests.borrow().is_empty());
+    }
+
+    #[test]
+    fn rescan_revalidates_successes_retries_failures_and_ignores_old_answers() {
+        let analyser = Rc::new(Analyser::default());
+        let mut analyses = TrackAnalyses::new(Some(Box::new(Rc::clone(&analyser))));
+        let paths = ["/a.mp3", "/b.mp3"].map(Path::new);
+        analyses.request(paths, AnalysisPriority::Library);
+        analyser.answers.borrow_mut().extend([
+            answer("/a.mp3", Ok(analysis(Some(122.0), None, None))),
+            answer("/b.mp3", Err("disconnected")),
+        ]);
+        analyses.collect();
+        analyser.requests.borrow_mut().clear();
+        analyses.refresh();
+        assert_eq!(analyses.get(paths[0]).unwrap().bpm, Some(122.0));
+        assert_eq!(analyses.state(paths[1]), AnalysisState::Waiting);
+        analyses.request(paths, AnalysisPriority::Library);
+        assert_eq!(analyser.requests.borrow().len(), 2);
+        analyser
+            .answers
+            .borrow_mut()
+            .push(answer("/a.mp3", Ok(analysis(Some(99.0), None, None))));
+        assert!(analyses.collect().is_empty());
+        assert_eq!(analyses.waiting(), 2);
+        assert_eq!(analyses.get(paths[0]).unwrap().bpm, Some(122.0));
+        let mut fresh = answer("/a.mp3", Ok(analysis(Some(124.0), None, None)));
+        fresh.revision = 1;
+        analyser.answers.borrow_mut().push(fresh);
+        assert_eq!(analyses.collect().len(), 1);
+        assert_eq!(analyses.get(paths[0]).unwrap().bpm, Some(124.0));
+        analyser.requests.borrow_mut().clear();
+        analyses.request([paths[0]], AnalysisPriority::Library);
+        assert!(analyser.requests.borrow().is_empty());
+    }
+
+    #[test]
+    fn a_rescan_drops_an_analysis_once_its_file_fails() {
+        let analyser = Rc::new(Analyser::default());
+        let mut analyses = TrackAnalyses::new(Some(Box::new(Rc::clone(&analyser))));
+        let path = Path::new("/a.mp3");
+        analyses.request([path], AnalysisPriority::Library);
+        analyser
+            .answers
+            .borrow_mut()
+            .push(answer("/a.mp3", Ok(analysis(Some(122.0), None, None))));
+        analyses.collect();
+        analyses.refresh();
+        analyses.request([path], AnalysisPriority::Library);
+        let mut gone = answer("/a.mp3", Err("file is gone"));
+        gone.revision = 1;
+        analyser.answers.borrow_mut().push(gone);
+        analyses.collect();
+        assert_eq!(analyses.state(path), AnalysisState::Failed);
+        assert!(analyses.get(path).is_none());
     }
 
     #[test]

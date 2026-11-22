@@ -7,7 +7,8 @@ use std::time::Duration;
 
 use gpui::Context;
 
-use super::{DubplateApp, NoticePlace, error_chain};
+use super::notice::NoticePlace;
+use super::{DubplateApp, error_chain};
 use crate::recording::{Recording, RecordingError, RecordingSummary, recordings_directory};
 use crate::set::running_time;
 
