@@ -2,6 +2,8 @@ use std::path::PathBuf;
 
 use serde::Serialize;
 
+use crate::cue_colors::{MemoryCueColor, PaletteColor};
+
 /// A track in the rekordbox collection, from `djmdContent` and the tables it points to.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Track {
@@ -179,8 +181,10 @@ pub struct Cue {
     pub start_ms: u32,
     /// Where the loop ends, in milliseconds, when the cue is a saved loop.
     pub loop_end_ms: Option<u32>,
-    /// rekordbox's colour value for the cue.
-    pub color: Option<i64>,
+    /// A hot cue's own colour, from `ColorTableIndex`; `None` draws it in its pad's default.
+    pub hot_cue_color: Option<PaletteColor>,
+    /// A memory cue's colour, from `Color`; `None` draws it red.
+    pub memory_color: Option<MemoryCueColor>,
     /// The cue's name.
     pub comment: Option<String>,
 }

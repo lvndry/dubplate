@@ -9,6 +9,7 @@ use dubplate_midi::{
     JogMode, Layer, PadIndex, Position, Switch,
 };
 
+use super::held::HeldControls;
 use crate::commands::{Command, Direction, EffectEdit, JogMotion, LoopAction, PadPress, Press};
 use crate::controls::{Control, MixerPositions};
 
@@ -135,6 +136,9 @@ pub struct Dispatcher {
     lever_contacts: [bool; DECK_COUNT],
     beat_fx: BeatFxSection,
     master_pickup: Pickup,
+    release_held: bool,
+    /// Which buttons with a twin on screen are down, for the screen to show the press.
+    pub held: HeldControls,
 }
 
 impl Default for Dispatcher {
@@ -145,6 +149,8 @@ impl Default for Dispatcher {
             lever_contacts: [false; DECK_COUNT],
             beat_fx: BeatFxSection::default(),
             master_pickup: Pickup::default(),
+            release_held: false,
+            held: HeldControls::default(),
         }
     }
 }
@@ -177,12 +183,23 @@ impl Dispatcher {
             Action::Button {
                 button,
                 state: edge,
-            } => self.button(button, edge, event.layer, now, surface),
+            } => {
+                self.held.note(button, edge, now);
+                self.button(button, edge, event.layer, now, surface)
+            }
             Action::Continuous { control, position } => self.continuous(control, position, surface),
             Action::Encoder {
                 encoder: Encoder::Browse,
                 ticks,
-            } => (event.layer == Layer::Normal).then(|| Command::Browse(i32::from(ticks.get()))),
+            } => {
+                let ticks = i32::from(ticks.get());
+                match event.layer {
+                    Layer::Normal => Some(Command::Browse(ticks)),
+                    Layer::Shift if ticks > 0 => Some(Command::ZoomLanes(Direction::Up)),
+                    Layer::Shift if ticks < 0 => Some(Command::ZoomLanes(Direction::Down)),
+                    Layer::Shift => None,
+                }
+            }
             Action::Encoder {
                 encoder: Encoder::Jog { deck, mode },
                 ticks,
@@ -262,7 +279,7 @@ impl Dispatcher {
                 };
                 Some(Command::Effect(
                     surface.focused_effect?,
-                    EffectEdit::Beat(direction),
+                    EffectEdit::Parameter(direction),
                 ))
             }
             (Button::BeatFxBeat(arrow), Layer::Shift) if pressed => {
@@ -274,9 +291,25 @@ impl Dispatcher {
             (Button::BeatFxOn, Layer::Normal) if pressed => {
                 Some(Command::Effect(surface.focused_effect?, EffectEdit::Toggle))
             }
+            (Button::BeatFxOn, Layer::Shift) if pressed => {
+                self.release_held = true;
+                Some(Command::Effect(
+                    surface.focused_effect?,
+                    EffectEdit::Release(true),
+                ))
+            }
+            // The release ends with the button, whether SHIFT is still down or was let go first.
+            (Button::BeatFxOn, _) if !pressed && self.release_held => {
+                self.release_held = false;
+                Some(Command::Effect(
+                    surface.focused_effect?,
+                    EffectEdit::Release(false),
+                ))
+            }
             (Button::SmartCfx, Layer::Normal) if pressed => Some(Command::ToggleSmartCfx),
             (Button::SmartCfx, Layer::Shift) if pressed => Some(Command::NextSmartCfx),
             (Button::SmartFader, Layer::Normal) if pressed => Some(Command::ToggleSmartFader),
+            (Button::Shift(deck), _) => Some(Command::ShiftHeld(deck_id(deck), pressed)),
             (Button::PadMode { deck, mode }, _) if pressed => {
                 Some(Command::SetPadMode(deck_id(deck), mode))
             }
@@ -297,11 +330,17 @@ impl Dispatcher {
                 Some(Command::Loop(deck_id(deck), LoopAction::FourBeatOrExit))
             }
             (Button::CueLoopCall { deck, direction }, Layer::Normal) if pressed => {
-                let action = match direction {
-                    Arrow::Left => LoopAction::Halve,
-                    Arrow::Right => LoopAction::Double,
+                let direction = match direction {
+                    Arrow::Left => Direction::Down,
+                    Arrow::Right => Direction::Up,
                 };
-                Some(Command::Loop(deck_id(deck), action))
+                Some(Command::CueLoopCall(deck_id(deck), direction))
+            }
+            (Button::CueLoopCall { deck, direction }, Layer::Shift) if pressed => {
+                Some(match direction {
+                    Arrow::Left => Command::DeleteMemoryCue(deck_id(deck)),
+                    Arrow::Right => Command::StoreMemoryCue(deck_id(deck)),
+                })
             }
             _ => None,
         }
@@ -375,7 +414,9 @@ impl Dispatcher {
 
 #[cfg(test)]
 mod tests {
-    use dubplate_midi::{PadMode, Ticks, U14};
+    use std::sync::Arc;
+
+    use dubplate_midi::{Decoder, Mapping, PadMode, Ticks, U14};
 
     use super::*;
 
@@ -494,6 +535,66 @@ mod tests {
     }
 
     #[test]
+    fn each_decks_shift_reports_when_it_is_held_and_let_go() {
+        let mut dispatcher = Dispatcher::default();
+        let surface = Surface::default();
+        let commands = run(
+            &mut dispatcher,
+            &surface,
+            &[
+                press(Button::Shift(Deck::B)),
+                release(Button::Shift(Deck::B)),
+                press(Button::Shift(Deck::A)),
+            ],
+        );
+        assert_eq!(
+            commands,
+            [
+                Command::ShiftHeld(DeckId::B, true),
+                Command::ShiftHeld(DeckId::B, false),
+                Command::ShiftHeld(DeckId::A, true),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_flx4_cue_loop_call_arrows_call_store_and_delete_memory_cues() {
+        let mapping = Mapping::built_in_for_port("DDJ-FLX4")
+            .expect("the built-in mappings parse")
+            .expect("the FLX4 has a built-in mapping");
+        let mut decoder = Decoder::new(Arc::new(mapping));
+        let mut dispatcher = Dispatcher::default();
+        let surface = Surface::default();
+        let messages: [[u8; 3]; 8] = [
+            [0x90, 0x51, 0x7F],
+            [0x90, 0x51, 0x00],
+            [0x90, 0x53, 0x7F],
+            [0x91, 0x51, 0x7F],
+            [0x91, 0x53, 0x7F],
+            [0x90, 0x3D, 0x7F],
+            [0x90, 0x3E, 0x7F],
+            [0x91, 0x3D, 0x7F],
+        ];
+        let events: Vec<ControlEvent> = messages
+            .iter()
+            .filter_map(|message| decoder.decode(message))
+            .collect();
+        assert_eq!(
+            run(&mut dispatcher, &surface, &events),
+            [
+                Command::CueLoopCall(DeckId::A, Direction::Down),
+                Command::CueLoopCall(DeckId::A, Direction::Up),
+                Command::CueLoopCall(DeckId::B, Direction::Down),
+                Command::CueLoopCall(DeckId::B, Direction::Up),
+                Command::StoreMemoryCue(DeckId::A),
+                Command::DeleteMemoryCue(DeckId::A),
+                Command::StoreMemoryCue(DeckId::B),
+            ],
+            "◀ and ▶ call, SHIFT + ▶ stores and SHIFT + ◀ deletes, as in rekordbox's FLX4 layout"
+        );
+    }
+
+    #[test]
     fn the_loop_section_follows_rekordbox() {
         let mut dispatcher = Dispatcher::default();
         let surface = Surface::default();
@@ -521,8 +622,8 @@ mod tests {
                 Command::Loop(DeckId::A, LoopAction::In),
                 Command::Loop(DeckId::A, LoopAction::Out),
                 Command::Loop(DeckId::B, LoopAction::FourBeatOrExit),
-                Command::Loop(DeckId::B, LoopAction::Halve),
-                Command::Loop(DeckId::B, LoopAction::Double),
+                Command::CueLoopCall(DeckId::B, Direction::Down),
+                Command::CueLoopCall(DeckId::B, Direction::Up),
             ]
         );
     }
@@ -552,7 +653,7 @@ mod tests {
     }
 
     #[test]
-    fn the_browse_knob_moves_the_cursor_and_its_push_switches_pane() {
+    fn the_browse_knob_moves_the_cursor_zooms_with_shift_and_its_push_switches_pane() {
         let mut dispatcher = Dispatcher::default();
         let surface = Surface::default();
         let turn = |count, layer| ControlEvent {
@@ -569,6 +670,7 @@ mod tests {
                 turn(3, Layer::Normal),
                 turn(-1, Layer::Normal),
                 turn(2, Layer::Shift),
+                turn(-1, Layer::Shift),
                 press(Button::BrowsePush),
                 release(Button::BrowsePush),
             ],
@@ -578,6 +680,8 @@ mod tests {
             [
                 Command::Browse(3),
                 Command::Browse(-1),
+                Command::ZoomLanes(Direction::Up),
+                Command::ZoomLanes(Direction::Down),
                 Command::SwitchBrowserPane
             ]
         );
@@ -785,8 +889,8 @@ mod tests {
             [
                 Command::Effect(unit, EffectEdit::StepKind(1)),
                 Command::Effect(unit, EffectEdit::StepKind(-1)),
-                Command::Effect(unit, EffectEdit::Beat(Direction::Up)),
-                Command::Effect(unit, EffectEdit::Beat(Direction::Down)),
+                Command::Effect(unit, EffectEdit::Parameter(Direction::Up)),
+                Command::Effect(unit, EffectEdit::Parameter(Direction::Down)),
                 Command::FocusEffectUnit(1),
                 Command::Effect(unit, EffectEdit::Target(EffectTarget::Deck(DeckId::A))),
                 Command::Effect(unit, EffectEdit::Target(EffectTarget::BothDecks)),
@@ -795,6 +899,31 @@ mod tests {
                 Command::ToggleSmartCfx,
                 Command::NextSmartCfx,
                 Command::ToggleSmartFader,
+            ]
+        );
+    }
+
+    #[test]
+    fn shift_beat_fx_on_holds_the_release_until_the_button_is_let_go() {
+        let mut dispatcher = Dispatcher::default();
+        let surface = fx_surface();
+        let unit = EffectUnitId::ALL[1];
+        let commands = run(
+            &mut dispatcher,
+            &surface,
+            &[
+                shift_press(Button::BeatFxOn),
+                release(Button::BeatFxOn),
+                press(Button::BeatFxOn),
+                release(Button::BeatFxOn),
+            ],
+        );
+        assert_eq!(
+            commands,
+            [
+                Command::Effect(unit, EffectEdit::Release(true)),
+                Command::Effect(unit, EffectEdit::Release(false)),
+                Command::Effect(unit, EffectEdit::Toggle),
             ]
         );
     }
@@ -896,6 +1025,169 @@ mod tests {
             ],
         );
         assert!(commands.is_empty(), "{commands:?}");
+    }
+
+    /// What a DDJ-FLX4 sent back on its own when asked for its positions: the left tempo and
+    /// trims, EQs, CFX, faders and crossfader, the LEVEL/DEPTH knob, the CH SELECT lever on 2.
+    const FLX4_POSITION_REPORT: [[u8; 3]; 42] = [
+        [0xB0, 0x04, 0x47],
+        [0xB0, 0x24, 0x58],
+        [0xB1, 0x04, 0x3B],
+        [0xB1, 0x24, 0x6F],
+        [0xB0, 0x07, 0x40],
+        [0xB0, 0x27, 0x00],
+        [0xB1, 0x07, 0x40],
+        [0xB1, 0x27, 0x00],
+        [0xB0, 0x0B, 0x40],
+        [0xB0, 0x2B, 0x00],
+        [0xB1, 0x0B, 0x40],
+        [0xB1, 0x2B, 0x00],
+        [0xB0, 0x0F, 0x40],
+        [0xB0, 0x2F, 0x00],
+        [0xB1, 0x0F, 0x40],
+        [0xB1, 0x2F, 0x00],
+        [0xB0, 0x13, 0x7F],
+        [0xB0, 0x33, 0x7F],
+        [0xB1, 0x13, 0x00],
+        [0xB1, 0x33, 0x00],
+        [0xB0, 0x00, 0x40],
+        [0xB0, 0x20, 0x00],
+        [0xB1, 0x00, 0x55],
+        [0xB1, 0x20, 0x45],
+        [0xB6, 0x17, 0x40],
+        [0xB6, 0x37, 0x00],
+        [0xB6, 0x18, 0x40],
+        [0xB6, 0x38, 0x00],
+        [0xB6, 0x1F, 0x39],
+        [0xB6, 0x3F, 0x6B],
+        [0xB4, 0x02, 0x00],
+        [0xB4, 0x22, 0x00],
+        [0xB5, 0x02, 0x00],
+        [0xB5, 0x22, 0x00],
+        [0x90, 0x17, 0x7F],
+        [0x91, 0x17, 0x7F],
+        [0x9F, 0x47, 0x7F],
+        [0x9F, 0x49, 0x7F],
+        [0x94, 0x10, 0x00],
+        [0x94, 0x11, 0x00],
+        [0x95, 0x10, 0x00],
+        [0x95, 0x11, 0x7F],
+    ];
+
+    fn report_fraction(most_significant: u8, least_significant: u8) -> f32 {
+        f32::from(u16::from(most_significant) << 7 | u16::from(least_significant))
+            / f32::from(U14::MAX.get())
+    }
+
+    fn replay_report(
+        dispatcher: &mut Dispatcher,
+        surface: &Surface,
+        report: &[[u8; 3]],
+    ) -> Vec<Command> {
+        let mapping = Mapping::built_in_for_port("DDJ-FLX4").unwrap().unwrap();
+        let mut decoder = Decoder::new(Arc::new(mapping));
+        let now = Instant::now();
+        report
+            .iter()
+            .filter_map(|bytes| decoder.decode(bytes))
+            .filter_map(|event| dispatcher.dispatch(event, now, surface))
+            .collect()
+    }
+
+    fn set_to(commands: &[Command], control: Control) -> f32 {
+        commands
+            .iter()
+            .rev()
+            .find_map(|command| match command {
+                Command::SetControl(set, fraction) if *set == control => Some(*fraction),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("{control:?} was not set"))
+    }
+
+    #[test]
+    fn the_controllers_position_report_sets_every_control_it_covers() {
+        let mut dispatcher = Dispatcher::default();
+        let surface = fx_surface();
+        let unit = EffectUnitId::ALL[1];
+        let commands = replay_report(&mut dispatcher, &surface, &FLX4_POSITION_REPORT);
+        let expected = [
+            (Control::Trim(DeckId::A), 0x47, 0x58),
+            (Control::Trim(DeckId::B), 0x3B, 0x6F),
+            (
+                Control::Eq(DeckId::A, dubplate_engine::EqBand::High),
+                0x40,
+                0x00,
+            ),
+            (
+                Control::Eq(DeckId::A, dubplate_engine::EqBand::Mid),
+                0x40,
+                0x00,
+            ),
+            (
+                Control::Eq(DeckId::A, dubplate_engine::EqBand::Low),
+                0x40,
+                0x00,
+            ),
+            (
+                Control::Eq(DeckId::B, dubplate_engine::EqBand::High),
+                0x40,
+                0x00,
+            ),
+            (
+                Control::Eq(DeckId::B, dubplate_engine::EqBand::Mid),
+                0x40,
+                0x00,
+            ),
+            (
+                Control::Eq(DeckId::B, dubplate_engine::EqBand::Low),
+                0x40,
+                0x00,
+            ),
+            (Control::ChannelFader(DeckId::A), 0x7F, 0x7F),
+            (Control::ChannelFader(DeckId::B), 0x00, 0x00),
+            (Control::Tempo(DeckId::A), 0x40, 0x00),
+            (Control::Tempo(DeckId::B), 0x55, 0x45),
+            (Control::Filter(DeckId::A), 0x40, 0x00),
+            (Control::Filter(DeckId::B), 0x40, 0x00),
+        ];
+        for (control, most_significant, least_significant) in expected {
+            let fraction = set_to(&commands, control);
+            let reported = report_fraction(most_significant, least_significant);
+            assert!(
+                (fraction - reported).abs() < 1e-4,
+                "{control:?} is {fraction}, the controller reported {reported}"
+            );
+        }
+        let crossfader = set_to(&commands, Control::Crossfader);
+        assert!((crossfader - report_fraction(0x39, 0x6B)).abs() < 1e-4);
+        let section = dispatcher.beat_fx_section();
+        assert_eq!(section.lever, Some(EffectTarget::Deck(DeckId::B)));
+        assert!(section.level.is_some_and(|level| level.abs() < 1e-4));
+        assert!(commands.contains(&Command::Effect(
+            unit,
+            EffectEdit::Target(EffectTarget::Deck(DeckId::B))
+        )));
+        assert!(commands.contains(&Command::Effect(unit, EffectEdit::Depth(0.0))));
+    }
+
+    #[test]
+    fn a_reported_tempo_does_not_jump_a_playing_deck() {
+        let mut dispatcher = Dispatcher::default();
+        let tempo_report = [[0xB0, 0x00, 0x55], [0xB0, 0x20, 0x45]];
+        let mut surface = Surface::default();
+        surface.positions.tempo_sliders = [0.5, 0.5];
+        surface.playing = [true, false];
+        let commands = replay_report(&mut dispatcher, &surface, &tempo_report);
+        assert!(commands.is_empty());
+        let reported = report_fraction(0x55, 0x45);
+        assert_eq!(dispatcher.tempo_waiting(DeckId::A, 0.5), Some(reported));
+        surface.playing = [false, false];
+        let commands = replay_report(&mut dispatcher, &surface, &tempo_report);
+        assert_eq!(
+            commands,
+            [Command::SetControl(Control::Tempo(DeckId::A), reported)]
+        );
     }
 }
 

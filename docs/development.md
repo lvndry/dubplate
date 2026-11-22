@@ -25,6 +25,8 @@ Pick a crate on the left, type in the search field to find a track by title or a
 | Play or pause | Space | ⇧ Space |
 | Cue | C | ⇧ C |
 | Hot cues A to H | 1 to 8 | ⇧ 1 to ⇧ 8 |
+| Previous / next memory cue | H / J | ⇧ H / ⇧ J |
+| Keep / delete a memory cue | N / ⌥ N | ⇧ N / ⇧ ⌥ N |
 | Tempo down / up 0.1% | - / = | ⇧ - / ⇧ = |
 | Load the selected track | ⇧ ← | ⇧ → |
 
@@ -54,6 +56,7 @@ key space
 press shift
 release shift
 click 400 300
+rightclick 400 300
 drag 400 300 520 300
 ```
 

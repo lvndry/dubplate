@@ -3,6 +3,7 @@ use crate::context::{BlockTiming, ProcessContext};
 use crate::dsp::shaping::{sanitize_input, sanitize_output};
 use crate::dsp::smoothing::Smoothed;
 use crate::effect::EffectKind;
+use crate::parameter::ParameterValue;
 
 pub(crate) type Frame = [f32; 2];
 
@@ -22,6 +23,9 @@ pub(crate) enum MixLaw {
     /// taper, so the first quarter stays gentle: 12 dB under the music a quarter of the way,
     /// at full level half way. The master limiter keeps the sum from clipping.
     Blend,
+    /// The music always plays at full level and the effect is laid over it at the mix: for
+    /// effects that add a sound of their own, such as a tone or noise.
+    Layer,
 }
 
 impl MixLaw {
@@ -33,6 +37,7 @@ impl MixLaw {
                 let rise = (2.0 * mix).min(1.0);
                 ((2.0 - 2.0 * mix).min(1.0), rise * rise)
             }
+            Self::Layer => (1.0, mix),
         }
     }
 }
@@ -54,6 +59,11 @@ pub(crate) trait Kernel: Send {
     /// Clears every internal state.
     fn reset(&mut self);
 
+    /// Moves every smoothed control straight to its target without touching the audio the
+    /// effect holds. Constructors call it, so a new effect starts at its settings without
+    /// writing through buffers that are already silent.
+    fn settle(&mut self) {}
+
     /// Called each time the effect is switched on.
     fn switched_on(&mut self) {}
 
@@ -69,6 +79,7 @@ pub(crate) struct Unit<K> {
     enabled: bool,
     mix: Smoothed,
     presence: Smoothed,
+    trail_cut: bool,
     idle: bool,
     quiet_samples: usize,
     sample_rate: f32,
@@ -81,6 +92,7 @@ impl<K: Kernel> Unit<K> {
             enabled: false,
             mix: Smoothed::new(mix.clamp(0.0, 1.0), MIX_SMOOTHING_SECONDS),
             presence: Smoothed::new(0.0, SWITCH_SMOOTHING_SECONDS),
+            trail_cut: false,
             idle: true,
             quiet_samples: 0,
             sample_rate: 0.0,
@@ -104,6 +116,7 @@ impl<K: Kernel> Unit<K> {
         self.enabled = enabled;
         self.presence.set_target(if enabled { 1.0 } else { 0.0 });
         if enabled {
+            self.trail_cut = false;
             if self.idle {
                 self.mix.snap_to_target();
                 if !K::TRAILS && !K::LISTENS_WHEN_OFF {
@@ -116,6 +129,13 @@ impl<K: Kernel> Unit<K> {
         }
     }
 
+    /// Switches off and fades the trail out with the switch, leaving the music dry. The trail
+    /// keeps running silently until it has died away, so the effect goes idle as usual.
+    pub(crate) fn switch_off_dry(&mut self) {
+        self.set_enabled(false);
+        self.trail_cut = true;
+    }
+
     pub(crate) fn is_enabled(&self) -> bool {
         self.enabled
     }
@@ -126,6 +146,13 @@ impl<K: Kernel> Unit<K> {
 
     pub(crate) fn needs_input_when_off(&self) -> bool {
         K::LISTENS_WHEN_OFF
+    }
+
+    /// Moves the mix and every smoothed control of the effect straight to its target, for a
+    /// newly built effect.
+    pub(crate) fn settle(&mut self) {
+        self.kernel.settle();
+        self.mix.snap_to_target();
     }
 
     pub(crate) fn reset(&mut self) {
@@ -164,10 +191,12 @@ impl<K: Kernel> Unit<K> {
             let presence = self.presence.next();
             let (dry_mix, wet_mix) = K::MIX_LAW.gains(self.mix.next());
             let dry_gain = presence * dry_mix + (1.0 - presence);
-            let (send_gain, wet_gain) = if K::TRAILS {
-                (presence, wet_mix)
+            let (send_gain, wet_gain, heard_gain) = if K::TRAILS && self.trail_cut {
+                (presence, wet_mix, presence * wet_mix)
+            } else if K::TRAILS {
+                (presence, wet_mix, wet_mix)
             } else {
-                (1.0, presence * wet_mix)
+                (1.0, presence * wet_mix, presence * wet_mix)
             };
 
             let mut wet = self
@@ -178,8 +207,8 @@ impl<K: Kernel> Unit<K> {
                 poisoned = true;
             }
 
-            *left_sample = sanitize_output(dry[0] * dry_gain + wet[0] * wet_gain);
-            *right_sample = sanitize_output(dry[1] * dry_gain + wet[1] * wet_gain);
+            *left_sample = sanitize_output(dry[0] * dry_gain + wet[0] * heard_gain);
+            *right_sample = sanitize_output(dry[1] * dry_gain + wet[1] * heard_gain);
             beat_position += timing.beats_per_sample;
 
             if !self.enabled && self.presence.is_settled() {
@@ -222,12 +251,30 @@ pub(crate) trait Controls {
     fn current_beat(&self) -> Option<BeatLength> {
         None
     }
+
+    /// Sets the effect's parameter. Effects whose parameter is a beat length take it through
+    /// [`Controls::apply_beat`]; the others override this.
+    fn apply_parameter(&mut self, value: ParameterValue) {
+        if let ParameterValue::Beats(beat) = value {
+            self.apply_beat(beat);
+        }
+    }
+
+    fn current_parameter(&self) -> Option<ParameterValue> {
+        self.current_beat().map(ParameterValue::Beats)
+    }
 }
 
 /// Implements [`Effect`] for a type with a `unit` field and [`Controls`].
 macro_rules! implement_effect {
+    (impl<$generic:ident: $bound:path> $effect:ty) => {
+        $crate::unit::implement_effect!(@body [$generic: $bound] $effect);
+    };
     ($effect:ty) => {
-        impl $crate::effect::Effect for $effect {
+        $crate::unit::implement_effect!(@body [] $effect);
+    };
+    (@body [$($generic:ident: $bound:path)?] $effect:ty) => {
+        impl$(<$generic: $bound>)? $crate::effect::Effect for $effect {
             fn kind(&self) -> $crate::effect::EffectKind {
                 $crate::unit::Controls::effect_kind(self)
             }
@@ -243,6 +290,10 @@ macro_rules! implement_effect {
 
             fn set_enabled(&mut self, enabled: bool) {
                 self.unit.set_enabled(enabled);
+            }
+
+            fn switch_off_dry(&mut self) {
+                self.unit.switch_off_dry();
             }
 
             fn is_enabled(&self) -> bool {
@@ -271,12 +322,12 @@ macro_rules! implement_effect {
                 }
             }
 
-            fn set_beat(&mut self, beat: $crate::beat::BeatLength) {
-                $crate::unit::Controls::apply_beat(self, beat);
+            fn set_parameter(&mut self, value: $crate::parameter::ParameterValue) {
+                $crate::unit::Controls::apply_parameter(self, value);
             }
 
-            fn beat(&self) -> Option<$crate::beat::BeatLength> {
-                $crate::unit::Controls::current_beat(self)
+            fn parameter(&self) -> Option<$crate::parameter::ParameterValue> {
+                $crate::unit::Controls::current_parameter(self)
             }
 
             fn reset(&mut self) {

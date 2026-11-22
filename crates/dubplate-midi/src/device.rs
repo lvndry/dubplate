@@ -3,7 +3,7 @@
 use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use midir::{Ignore, MidiIO, MidiInput, MidiInputConnection, MidiOutput, MidiOutputConnection};
 
@@ -13,6 +13,10 @@ use crate::mapping::{Feedback, Mapping};
 use crate::message::RawMessage;
 
 const CLIENT_NAME: &str = "Dubplate";
+
+/// How long after its ports open a controller must be left before it answers the startup
+/// messages. A DDJ-FLX4 asked sooner than about 75 ms stays silent.
+pub const STARTUP_DELAY: Duration = Duration::from_millis(500);
 
 /// A MIDI port or connection that failed.
 #[derive(Debug, thiserror::Error)]
@@ -245,10 +249,13 @@ pub struct ControllerOutput {
     connection: MidiOutputConnection,
     mapping: Arc<Mapping>,
     last_keepalive: Option<Instant>,
+    opened: Instant,
+    startup_sent: bool,
 }
 
 impl ControllerOutput {
-    /// Opens the output port called `port` and sends the mapping's startup messages.
+    /// Opens the output port called `port`. The mapping's startup messages follow from
+    /// [`ControllerOutput::service`] once [`STARTUP_DELAY`] has passed.
     pub fn open(port: &str, mapping: Arc<Mapping>) -> Result<ControllerOutput, MidiError> {
         let output = MidiOutput::new(CLIENT_NAME)?;
         let (midi_port, port_name) = find_port(&output, port, PortDirection::Output)?;
@@ -264,11 +271,10 @@ impl ControllerOutput {
             connection,
             mapping,
             last_keepalive: None,
+            opened: Instant::now(),
+            startup_sent: false,
         };
-        for message in controller.mapping.startup() {
-            controller.connection.send(message)?;
-        }
-        controller.last_keepalive = Some(Instant::now());
+        controller.last_keepalive = Some(controller.opened);
         Ok(controller)
     }
 
@@ -287,9 +293,16 @@ impl ControllerOutput {
         Ok(true)
     }
 
-    /// Sends the controller's keepalive when its interval has passed since the last one. Call it
-    /// often, from the loop that reads the controller.
-    pub fn keep_alive(&mut self, now: Instant) -> Result<(), MidiError> {
+    /// Sends the mapping's startup messages once, when [`STARTUP_DELAY`] has passed since the
+    /// port opened, and the controller's keepalive when its interval has passed since the last
+    /// one. Call it often, from the loop that reads the controller.
+    pub fn service(&mut self, now: Instant) -> Result<(), MidiError> {
+        if startup_due(self.startup_sent, self.opened, now) {
+            self.startup_sent = true;
+            for message in self.mapping.startup() {
+                self.connection.send(message)?;
+            }
+        }
         let Some(keepalive) = self.mapping.keepalive() else {
             return Ok(());
         };
@@ -301,5 +314,23 @@ impl ControllerOutput {
             self.last_keepalive = Some(now);
         }
         Ok(())
+    }
+}
+
+fn startup_due(sent: bool, opened: Instant, now: Instant) -> bool {
+    !sent && now.saturating_duration_since(opened) >= STARTUP_DELAY
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_startup_messages_wait_for_the_controller_to_settle_and_go_once() {
+        let opened = Instant::now();
+        assert!(!startup_due(false, opened, opened));
+        assert!(!startup_due(false, opened, opened + STARTUP_DELAY / 2));
+        assert!(startup_due(false, opened, opened + STARTUP_DELAY));
+        assert!(!startup_due(true, opened, opened + STARTUP_DELAY * 2));
     }
 }

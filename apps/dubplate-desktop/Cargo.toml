@@ -19,6 +19,8 @@ dubplate-library = { version = "0.1.0", path = "../../crates/dubplate-library" }
 dubplate-midi = { version = "0.1.0", path = "../../crates/dubplate-midi" }
 dubplate-prep = { version = "0.1.0", path = "../../crates/dubplate-prep" }
 dubplate-rekordbox = { version = "0.1.0", path = "../../crates/dubplate-rekordbox" }
+dubplate-usb = { version = "0.1.0", path = "../../crates/dubplate-usb" }
+dubplate-stems = { version = "0.1.0", path = "../../crates/dubplate-stems" }
 gpui = { version = "=0.9.1", package = "gpui-kit" }
 hound = "3.5.1"
 jiff = "1.0.2"
@@ -31,8 +33,8 @@ workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6.5"
-objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSApplication", "NSImage", "NSResponder", "NSRunningApplication", "libc"] }
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSData", "NSString", "NSBundle", "NSDictionary", "NSObject", "NSProcessInfo", "NSUserDefaults"] }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSApplication", "NSImage", "NSResponder", "NSRunningApplication", "NSWorkspace", "libc"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSArray", "NSData", "NSString", "NSBundle", "NSDictionary", "NSObject", "NSProcessInfo", "NSURL", "NSUserDefaults"] }
 
 [build-dependencies]
 resvg = "0.50.0"

@@ -1,7 +1,7 @@
-//! Small controls shared by the views, drawn the Graphite way.
+//! Small controls shared by the views, drawn in the active theme.
 
 use crate::controls::Control;
-use dubplate_engine::{DeckId, EqBand};
+use dubplate_engine::{DeckId, EqBand, Stem};
 use gpui::prelude::*;
 use gpui::{
     AnyView, App, Context, Div, ElementId, MouseButton, SharedString, Stateful, Window, div, px,
@@ -41,12 +41,12 @@ pub fn button(
         .child(label);
     match emphasis {
         Emphasis::Primary => base
-            .bg(theme::TEXT)
-            .text_color(theme::BACKGROUND)
+            .bg(theme::active().text)
+            .text_color(theme::active().background)
             .font_weight(gpui::FontWeight::MEDIUM)
             .focus_visible(|style| {
                 style.shadow(vec![
-                    gpui::BoxShadow::new(px(0.0), px(0.0), theme::BACKGROUND.into())
+                    gpui::BoxShadow::new(px(0.0), px(0.0), theme::active().background.into())
                         .spread_radius(px(2.0))
                         .inset(),
                 ])
@@ -54,10 +54,10 @@ pub fn button(
             .hover(|button| button.opacity(0.9)),
         Emphasis::Secondary => base
             .border_1()
-            .border_color(theme::LINE)
-            .bg(theme::PANEL)
-            .text_color(theme::TEXT)
-            .hover(|button| button.bg(theme::RAISED)),
+            .border_color(theme::active().line)
+            .bg(theme::active().panel)
+            .text_color(theme::active().text)
+            .hover(|button| button.bg(theme::active().raised)),
     }
 }
 
@@ -83,7 +83,7 @@ impl InteractiveControl for Stateful<Div> {
             .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
             .focus_visible(|style| {
                 style.shadow(vec![
-                    gpui::BoxShadow::new(px(0.0), px(0.0), theme::TEXT.into())
+                    gpui::BoxShadow::new(px(0.0), px(0.0), theme::active().text.into())
                         .spread_radius(px(2.0))
                         .inset(),
                 ])
@@ -131,6 +131,14 @@ pub fn control_label(control: Control) -> &'static str {
         Control::HeadphoneMix => "Headphone cue/master mix",
         Control::HeadphoneLevel => "Headphone level",
         Control::SamplerVolume => "Sampler volume",
+        Control::StemLevel(DeckId::A, Stem::Drums) => "Deck A drums level",
+        Control::StemLevel(DeckId::B, Stem::Drums) => "Deck B drums level",
+        Control::StemLevel(DeckId::A, Stem::Bass) => "Deck A bass level",
+        Control::StemLevel(DeckId::B, Stem::Bass) => "Deck B bass level",
+        Control::StemLevel(DeckId::A, Stem::Melody) => "Deck A melody level",
+        Control::StemLevel(DeckId::B, Stem::Melody) => "Deck B melody level",
+        Control::StemLevel(DeckId::A, Stem::Vocals) => "Deck A vocals level",
+        Control::StemLevel(DeckId::B, Stem::Vocals) => "Deck B vocals level",
     }
 }
 
@@ -224,9 +232,9 @@ impl Render for Tooltip {
             .py(px(5.0))
             .rounded(theme::SMALL_RADIUS)
             .border_1()
-            .border_color(theme::LINE)
-            .bg(theme::RAISED)
-            .text_color(theme::TEXT)
+            .border_color(theme::active().line)
+            .bg(theme::active().raised)
+            .text_color(theme::active().text)
             .text_size(theme::SMALL_TEXT_SIZE)
             .child(self.0.clone())
     }

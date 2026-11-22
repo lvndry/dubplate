@@ -46,15 +46,15 @@ pub fn build_library(directory: &Path) -> PathBuf {
              ('m1', 't1', 16268, 52429, 16256, 0, 0, '{STAMP}', '{STAMP}'),
              ('m2', 't2', 16128, 0, 16256, 0, 1, '{STAMP}', '{STAMP}');
          INSERT INTO djmdCue
-             (ID, ContentID, Kind, InMsec, OutMsec, Color, Comment, rb_local_deleted,
-              created_at, updated_at) VALUES
-             ('c1', 't1', 0, 1000, -1, NULL, NULL, 0, '{STAMP}', '{STAMP}'),
-             ('c2', 't1', 1, 45000, -1, 255, 'Drop', 0, '{STAMP}', '{STAMP}'),
-             ('c3', 't2', 2, 30000, 60000, NULL, NULL, 0, '{STAMP}', '{STAMP}'),
-             ('c4', 't1', 3, 90000, -1, NULL, NULL, 1, '{STAMP}', '{STAMP}'),
-             ('c5', 't2', 5, 40000, -1, -1, NULL, 0, '{STAMP}', '{STAMP}'),
-             ('c6', 't2', 9, 50000, -1, -1, NULL, 0, '{STAMP}', '{STAMP}'),
-             ('c7', 't2', 4, 70000, -1, -1, NULL, 0, '{STAMP}', '{STAMP}');
+             (ID, ContentID, Kind, InMsec, OutMsec, Color, ColorTableIndex, Comment,
+              rb_local_deleted, created_at, updated_at) VALUES
+             ('c1', 't1', 0, 1000, -1, 6, 0, NULL, 0, '{STAMP}', '{STAMP}'),
+             ('c2', 't1', 1, 45000, -1, 255, 42, 'Drop', 0, '{STAMP}', '{STAMP}'),
+             ('c3', 't2', 2, 30000, 60000, NULL, NULL, NULL, 0, '{STAMP}', '{STAMP}'),
+             ('c4', 't1', 3, 90000, -1, NULL, NULL, NULL, 1, '{STAMP}', '{STAMP}'),
+             ('c5', 't2', 5, 40000, -1, -1, 0, NULL, 0, '{STAMP}', '{STAMP}'),
+             ('c6', 't2', 9, 50000, -1, -1, 0, NULL, 0, '{STAMP}', '{STAMP}'),
+             ('c7', 't2', 4, 70000, -1, -1, 0, NULL, 0, '{STAMP}', '{STAMP}');
          INSERT INTO djmdPlaylist (ID, ParentID, Name, Attribute, Seq, created_at, updated_at)
              VALUES
              ('f1', 'root', 'Sets', 1, 1, '{STAMP}', '{STAMP}'),

@@ -12,9 +12,9 @@ use common::{SAMPLE_RATE, constant_track, stems_like, wait_until_decoded, write_
 use dubplate_engine::cpal::{OutputCallbackInfo, OutputStreamTimestamp, StreamInstant};
 use dubplate_engine::{
     AudioProcessor, BeatGrid, BeatLength, Controller, DeckId, EffectKind, EffectTarget,
-    EffectUnitId, EngineError, EqBand, GridBeat, MasterTempo, PadEffect, Preview, PreviewTrack,
-    ProcessContext, Renderer, SampleMode, SampleSettings, SmartCfx, Stem, StemLevel, StemSettings,
-    StereoBlock, SyncMode, TempoRange, offline_engine,
+    EffectUnitId, EngineError, EqBand, GridBeat, MasterTempo, PadEffect, PadRelease,
+    ParameterValue, Preview, PreviewTrack, ProcessContext, Renderer, SampleMode, SampleSettings,
+    SmartCfx, Stem, StemLevel, StemSettings, StereoBlock, SyncMode, TempoRange, offline_engine,
 };
 
 struct CountingAllocator;
@@ -206,7 +206,7 @@ fn run_session(
         let beat = BeatLength::STANDARD[step % BeatLength::STANDARD.len()];
         controller.set_effect_kind(unit, kind)?;
         controller.set_effect_target(unit, target)?;
-        controller.set_effect_beat(unit, beat)?;
+        controller.set_effect_parameter(unit, ParameterValue::Beats(beat))?;
         controller.set_effect_depth(unit, step as f32 / EffectKind::ALL.len() as f32)?;
         if step % 4 == 3 {
             controller.toggle_effect(unit)?;
@@ -228,6 +228,10 @@ fn run_session(
 
     let steps: &[Step] = &[
         |controller| controller.set_smart_fader(true),
+        |controller| controller.set_fader_echo(true),
+        |controller| controller.set_channel_fader(DeckId::A, 0.3),
+        |controller| controller.set_channel_fader(DeckId::A, 0.0),
+        |controller| controller.set_channel_fader(DeckId::A, 1.0),
         |controller| controller.set_crossfader(0.6),
         |controller| controller.set_crossfader(0.9),
         |controller| controller.set_smart_fader(false),
@@ -267,11 +271,11 @@ fn run_session(
                     start_seconds: 0.2,
                     tempo: 1.05,
                 },
-                second: PreviewTrack {
+                second: Some(PreviewTrack {
                     track,
                     start_seconds: 0.0,
                     tempo: 0.95,
-                },
+                }),
                 second_offset_seconds: 0.05,
                 key_lock: true,
             }))
@@ -286,8 +290,9 @@ fn run_session(
                 DeckId::B,
                 PadEffect {
                     kind: EffectKind::Brake,
-                    beat: BeatLength::HALF,
+                    parameter: Some(ParameterValue::Beats(BeatLength::HALF)),
                     depth: 1.0,
+                    release: PadRelease::RingOut,
                 },
             )
         },

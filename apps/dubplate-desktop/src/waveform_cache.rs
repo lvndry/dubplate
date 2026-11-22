@@ -5,9 +5,9 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use dubplate_engine::{DecodeStatus, Track};
+use dubplate_engine::{DecodeStatus, Track, three_band_levels};
+use dubplate_rekordbox::analysis::{ThreeBandColumn, Waveforms};
 
-use crate::audio_waveform::three_band_waveforms;
 use crate::waveform::{OverviewWaveform, Zoom, ZoomedWaveform};
 
 /// A track's waveforms drawn from its audio: the scrolling one at the lanes' zoom and the
@@ -29,6 +29,23 @@ impl DrawnWaveforms {
             zoomed: Arc::new(ZoomedWaveform::from_waveforms(&waveforms, Zoom::DEFAULT)?),
             overview: OverviewWaveform::from_waveforms(&waveforms),
         })
+    }
+}
+
+/// The waveforms of `audio`'s decoded audio: the scrolling 3-band waveform, from which the
+/// overview is drawn too.
+pub fn three_band_waveforms(audio: &Track) -> Waveforms {
+    let detail = three_band_levels(audio)
+        .into_iter()
+        .map(|levels| ThreeBandColumn {
+            low: levels.low,
+            mid: levels.mid,
+            high: levels.high,
+        })
+        .collect();
+    Waveforms {
+        three_band_detail: Some(detail),
+        ..Waveforms::default()
     }
 }
 
@@ -94,6 +111,22 @@ mod tests {
         cache.finish(path.to_path_buf(), Arc::clone(&drawn));
         assert!(cache.get(path).is_some_and(|got| Arc::ptr_eq(&got, &drawn)));
         assert!(!cache.claim(path), "a drawn track is never drawn again");
+    }
+
+    #[test]
+    fn a_track_rekordbox_never_analysed_gets_both_waveforms_from_its_audio() {
+        let samples: Vec<f32> = (0..44_100 * 2)
+            .flat_map(|frame| {
+                let value = 0.5 * (std::f32::consts::TAU * 120.0 * frame as f32 / 44_100.0).sin();
+                [value, value]
+            })
+            .collect();
+        let audio = Track::from_interleaved_stereo(&samples, 44_100).unwrap();
+        let waveforms = three_band_waveforms(&audio);
+        let zoomed = ZoomedWaveform::from_waveforms(&waveforms, Zoom::DEFAULT).unwrap();
+        assert_eq!(zoomed.columns().len(), 300);
+        let overview = OverviewWaveform::from_waveforms(&waveforms).unwrap();
+        assert!(overview.bars(100).iter().all(|level| level.loudest() > 0.9));
     }
 
     #[test]

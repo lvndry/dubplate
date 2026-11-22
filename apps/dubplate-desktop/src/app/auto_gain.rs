@@ -71,8 +71,8 @@ impl DubplateApp {
     }
 
     /// Turns Auto Gain on or off for every deck at once, and remembers it.
-    pub(super) fn toggle_auto_gain(&mut self, cx: &mut Context<'_, Self>) {
-        self.settings.auto_gain = !self.settings.auto_gain;
+    pub(super) fn set_auto_gain(&mut self, on: bool, cx: &mut Context<'_, Self>) {
+        self.settings.auto_gain = on;
         self.save_settings(cx);
         for deck in DeckId::ALL {
             self.level_deck(deck, cx);

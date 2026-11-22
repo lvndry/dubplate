@@ -3,8 +3,8 @@
 mod analysis;
 mod app;
 mod assets;
-mod audio_waveform;
 mod audition;
+mod auto_cue;
 mod auto_gain;
 mod browser;
 mod collection;
@@ -15,16 +15,23 @@ mod deck;
 mod devices;
 mod effects;
 mod energy;
+mod finder;
 mod folder_picker;
 mod fonts;
 mod frame_stats;
+mod glitches;
 mod hardware;
+mod history;
 mod library;
+mod library_match;
 mod library_view;
 mod loading;
 #[cfg(target_os = "macos")]
 mod macos_identity;
+mod match_cell;
+mod menus;
 mod meter;
+mod pad_fx;
 mod pads;
 mod phrases;
 mod playhead;
@@ -38,17 +45,21 @@ mod settings;
 mod shortcuts;
 mod single_instance;
 mod space;
+mod stems;
 mod tap_tempo;
 mod theme;
+mod track_menu;
+mod tracklist;
 mod transport;
 mod waveform;
 mod waveform_cache;
 mod widgets;
 
+use std::process::ExitCode;
+
 use gpui::prelude::*;
 use gpui::{
-    App, Bounds, KeyBinding, Menu, MenuItem, TitlebarOptions, WindowBounds, WindowOptions, point,
-    px, size,
+    App, Bounds, KeyBinding, TitlebarOptions, WindowBounds, WindowOptions, point, px, size,
 };
 
 use crate::app::DubplateApp;
@@ -65,9 +76,13 @@ gpui::actions!(
     ]
 );
 
-const APP_NAME: &str = "Dubplate";
+/// The app's name, in the menu bar and the Dock.
+pub const APP_NAME: &str = "Dubplate";
 
-fn main() {
+fn main() -> ExitCode {
+    if let Some(exit) = dubplate_stems::run_worker_if_requested() {
+        return exit;
+    }
     let devices = DeviceAccess::from_environment();
     if devices.is_offline() {
         eprintln!(
@@ -96,14 +111,16 @@ fn main() {
             theme::apply_to_components(cx);
             cx.bind_keys(shortcuts::key_bindings());
             cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
+            cx.bind_keys(menus::key_bindings());
             cx.on_action(|_: &Quit, cx| cx.quit());
-            cx.set_menus([Menu::new(APP_NAME).items([MenuItem::action("Quit Dubplate", Quit)])]);
+            menus::register_app_actions(cx);
             cx.on_window_closed(|cx, _| cx.quit()).detach();
             if let Err(error) = open_window(devices.clone(), cx) {
                 eprintln!("error: {error:#}");
                 cx.quit();
             }
         });
+    ExitCode::SUCCESS
 }
 
 /// Makes this the one running Dubplate, or brings the running one to the front and quits. When
@@ -163,6 +180,9 @@ fn open_window(devices: DeviceAccess, cx: &mut App) -> anyhow::Result<()> {
         app_owns_titlebar_drag: true,
         inactive_frame_interval: None,
         low_power_frame_interval: None,
+        // The decks must scroll at the display's rate exactly when the Mac is busiest; a frame
+        // of both lanes paints in about 3 ms, well inside a 120 Hz frame.
+        thermal_frame_interval: None,
         app_id: Some("dubplate".into()),
         focus: !devices.is_offline(),
         ..WindowOptions::default()

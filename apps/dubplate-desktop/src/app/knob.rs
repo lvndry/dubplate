@@ -46,7 +46,7 @@ pub(super) fn render(
     let colour = if (value - control.resting()).abs() > AT_REST {
         accent
     } else {
-        theme::TEXT
+        theme::active().text
     };
     let mark = app.knob_mark(control);
     let mark_fraction = mark.as_ref().map(|mark| mark.fraction);
@@ -84,7 +84,7 @@ pub(super) fn render(
                     let radius = f32::from(bounds.size.width.min(bounds.size.height)) / 2.0
                         - f32::from(STROKE);
                     if let Some(track) = arc(center, radius, 1.0) {
-                        window.paint_path(track, theme::TRACK);
+                        window.paint_path(track, theme::active().track);
                     }
                     if let Some(filled) = arc(center, radius, value) {
                         window.paint_path(filled, colour);
@@ -92,7 +92,7 @@ pub(super) fn render(
                     if let Some(mark) =
                         mark_fraction.and_then(|fraction| dot(center, radius, fraction))
                     {
-                        window.paint_path(mark, theme::KNOB_MARK);
+                        window.paint_path(mark, theme::active().thumb);
                     }
                 },
             )

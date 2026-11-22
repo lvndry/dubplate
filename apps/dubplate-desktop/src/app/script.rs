@@ -45,6 +45,8 @@ enum Step {
     Press(String),
     Release(String),
     Click(Point<Pixels>),
+    /// A right-click, which opens a context menu.
+    RightClick(Point<Pixels>),
     Drag {
         from: Point<Pixels>,
         to: Point<Pixels>,
@@ -104,14 +106,19 @@ fn parse_step(line: &str) -> Result<Option<Step>, StepError> {
                 _ => Step::Release(key),
             }
         }
-        "click" => {
+        "click" | "rightclick" => {
             let [x, y] = arguments.as_slice() else {
                 return Err(StepError::Arguments {
-                    step: "click",
+                    step: "a click step",
                     expected: "x and y",
                 });
             };
-            Step::Click(parse_point(x, y)?)
+            let at = parse_point(x, y)?;
+            if verb == "click" {
+                Step::Click(at)
+            } else {
+                Step::RightClick(at)
+            }
         }
         "drag" => {
             let [from_x, from_y, to_x, to_y] = arguments.as_slice() else {
@@ -287,12 +294,17 @@ fn play_in_window(step: &Step, window: &mut Window, cx: &mut gpui::App) {
         }
         Step::Click(position) => {
             move_mouse(*position, None, window, cx);
-            press_mouse(*position, window, cx);
-            release_mouse(*position, window, cx);
+            press_mouse(*position, MouseButton::Left, window, cx);
+            release_mouse(*position, MouseButton::Left, window, cx);
+        }
+        Step::RightClick(position) => {
+            move_mouse(*position, None, window, cx);
+            press_mouse(*position, MouseButton::Right, window, cx);
+            release_mouse(*position, MouseButton::Right, window, cx);
         }
         Step::Drag { from, to } => {
             move_mouse(*from, None, window, cx);
-            press_mouse(*from, window, cx);
+            press_mouse(*from, MouseButton::Left, window, cx);
             for index in 1..=DRAG_MOVES {
                 let progress = f32::from(index) / f32::from(DRAG_MOVES);
                 let position = point(
@@ -301,7 +313,7 @@ fn play_in_window(step: &Step, window: &mut Window, cx: &mut gpui::App) {
                 );
                 move_mouse(position, Some(MouseButton::Left), window, cx);
             }
-            release_mouse(*to, window, cx);
+            release_mouse(*to, MouseButton::Left, window, cx);
         }
     }
 }
@@ -322,10 +334,15 @@ fn move_mouse(
     );
 }
 
-fn press_mouse(position: Point<Pixels>, window: &mut Window, cx: &mut gpui::App) {
+fn press_mouse(
+    position: Point<Pixels>,
+    button: MouseButton,
+    window: &mut Window,
+    cx: &mut gpui::App,
+) {
     window.dispatch_event(
         PlatformInput::MouseDown(MouseDownEvent {
-            button: MouseButton::Left,
+            button,
             position,
             modifiers: Modifiers::default(),
             click_count: 1,
@@ -335,10 +352,15 @@ fn press_mouse(position: Point<Pixels>, window: &mut Window, cx: &mut gpui::App)
     );
 }
 
-fn release_mouse(position: Point<Pixels>, window: &mut Window, cx: &mut gpui::App) {
+fn release_mouse(
+    position: Point<Pixels>,
+    button: MouseButton,
+    window: &mut Window,
+    cx: &mut gpui::App,
+) {
     window.dispatch_event(
         PlatformInput::MouseUp(MouseUpEvent {
-            button: MouseButton::Left,
+            button,
             position,
             modifiers: Modifiers::default(),
             click_count: 1,
@@ -376,6 +398,10 @@ mod tests {
             Some(Step::Click(point(px(400.0), px(300.5))))
         );
         assert_eq!(
+            parse_step("rightclick 400 300").unwrap(),
+            Some(Step::RightClick(point(px(400.0), px(300.0))))
+        );
+        assert_eq!(
             parse_step("drag 1 2 3 4").unwrap(),
             Some(Step::Drag {
                 from: point(px(1.0), px(2.0)),
@@ -396,7 +422,10 @@ mod tests {
         );
         assert!(matches!(
             parse_step("click 1").unwrap_err(),
-            StepError::Arguments { step: "click", .. }
+            StepError::Arguments {
+                step: "a click step",
+                ..
+            }
         ));
         assert_eq!(
             parse_step("click left 1").unwrap_err(),

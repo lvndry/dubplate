@@ -4,7 +4,8 @@ use dubplate_fx::{BeatLength, EqBand};
 
 use crate::INSERT_SLOTS;
 use crate::channel::ChannelStrip;
-use crate::curves::{Ramp, channel_fader_gain};
+use crate::crossfader::ChannelFaderCurve;
+use crate::curves::Ramp;
 use crate::grid::BeatGrid;
 use crate::jog::{BlockStart, JogInput, Platter};
 use crate::keylock::{KeyLock, KeyLockBlock};
@@ -60,6 +61,15 @@ pub(crate) struct DeckRender {
     pub(crate) starved: bool,
 }
 
+/// Which beat a beat loop that is not already on starts from.
+#[derive(Debug, Clone, Copy)]
+enum LoopSnap {
+    /// The beat nearest to what the DJ hears, as a beat loop on a CDJ.
+    Nearest,
+    /// The beat just passed, so a loop roll repeats what was just heard.
+    Previous,
+}
+
 /// The audio-thread side of a deck.
 pub(crate) struct Deck {
     voice: Voice,
@@ -93,6 +103,7 @@ pub(crate) struct Deck {
     pub(crate) inserts: [Option<Box<dyn AudioProcessor>>; INSERT_SLOTS],
     pub(crate) block: StereoBlock,
     output_rate: f64,
+    output_lag_frames: f64,
 }
 
 impl Deck {
@@ -129,6 +140,7 @@ impl Deck {
             inserts: std::array::from_fn(|_| None),
             block: StereoBlock::with_capacity(max_block_frames),
             output_rate: f64::from(output_rate.max(1)),
+            output_lag_frames: 0.0,
         }
     }
 
@@ -193,12 +205,12 @@ impl Deck {
     }
 
     /// The deck's gain to the master while it plays, 0 when it is stopped. Counts the trim,
-    /// the channel fader and the crossfader side gain `crossfader_gain`, the same way the
+    /// the channel fader on `curve` and the crossfader gain `crossfader_gain`, the same way the
     /// louder-deck rule hears the deck. The channel fader is not read from `channel_gain`
     /// because that gain already carries the crossfader.
-    pub(crate) fn level(&self, crossfader_gain: f32) -> f32 {
+    pub(crate) fn level(&self, curve: ChannelFaderCurve, crossfader_gain: f32) -> f32 {
         if self.playing {
-            self.trim.target() * channel_fader_gain(self.fader_position()) * crossfader_gain
+            self.trim.target() * curve.gain(self.fader_position()) * crossfader_gain
         } else {
             0.0
         }
@@ -365,10 +377,42 @@ impl Deck {
         self.quantize && self.beat_grid.is_some()
     }
 
+    /// How many output frames the sound card and the mixer still hold of what the deck has
+    /// rendered: the delay between the playhead and what the DJ hears.
+    pub(crate) fn set_output_lag(&mut self, frames: f64) {
+        self.output_lag_frames = frames.max(0.0);
+    }
+
+    /// The frame of the track the DJ hears now, which is behind the playhead by the output lag.
+    fn heard_position(&self) -> f64 {
+        if !self.playing {
+            return self.voice.position;
+        }
+        self.clamp_position(self.voice.position - self.output_lag_frames * self.platter.last_step())
+    }
+
     /// The nearest beat to `frame` with quantize on and a grid, otherwise `frame` itself.
     fn snap_to_beat(&self, frame: f64) -> f64 {
+        self.snap_to_grain(frame, 1.0)
+    }
+
+    /// The last multiple of `grain` beats at or before `frame` with quantize on and a grid,
+    /// otherwise `frame` itself.
+    fn previous_grain(&self, frame: f64, grain: f64) -> f64 {
         if self.quantizes() {
-            self.clamp_position(self.frame_at_beat(self.beat_at_frame(frame).round()))
+            let beat = (self.beat_at_frame(frame) / grain).floor() * grain;
+            self.clamp_position(self.frame_at_beat(beat))
+        } else {
+            frame
+        }
+    }
+
+    /// The nearest multiple of `grain` beats to `frame` with quantize on and a grid, otherwise
+    /// `frame` itself.
+    fn snap_to_grain(&self, frame: f64, grain: f64) -> f64 {
+        if self.quantizes() {
+            let beat = (self.beat_at_frame(frame) / grain).round() * grain;
+            self.clamp_position(self.frame_at_beat(beat))
         } else {
             frame
         }
@@ -399,6 +443,37 @@ impl Deck {
         }
     }
 
+    /// A hot loop: the loop from `start_seconds` to `end_seconds` goes on and the deck goes to
+    /// its start as a hot cue does, in rhythm while playing and playing from it when stopped.
+    pub(crate) fn hot_loop(
+        &mut self,
+        start_seconds: f64,
+        end_seconds: f64,
+        retire: &mut RetireQueue,
+    ) {
+        let rate = self.source_rate();
+        let region = LoopRegion {
+            start: self.clamp_position(start_seconds * rate),
+            end: self.clamp_position(end_seconds * rate),
+            active: true,
+            length: None,
+        };
+        if region.length_frames() <= 0.0 {
+            self.hot_cue(start_seconds, retire);
+            return;
+        }
+        self.start_slipping_loop();
+        self.looping.pending_start = None;
+        self.looping.region = Some(region);
+        if self.playing {
+            let target = region.fold(self.in_phase(region.start));
+            self.jump_to_frame(target, retire);
+        } else {
+            self.jump_to_frame(region.start, retire);
+            self.play();
+        }
+    }
+
     /// Jumps by `beats` beats, forwards or backwards, keeping the place in the beat. A loop
     /// that is on moves with the playhead.
     pub(crate) fn beat_jump(&mut self, beats: f64, retire: &mut RetireQueue) {
@@ -417,7 +492,7 @@ impl Deck {
 
     /// Sets the loop in point where the deck is, on the nearest beat with quantize.
     pub(crate) fn loop_in(&mut self) {
-        self.looping.pending_start = Some(self.snap_to_beat(self.voice.position));
+        self.looping.pending_start = Some(self.snap_to_beat(self.heard_position()));
     }
 
     /// Sets the loop out point where the deck is, on the nearest beat with quantize, and turns
@@ -432,7 +507,7 @@ impl Deck {
             (None, Some(region)) => region.start,
             (None, None) => return,
         };
-        let mut end = self.snap_to_beat(self.voice.position);
+        let mut end = self.snap_to_beat(self.heard_position());
         if end <= start {
             end = self.frame_at_beat(self.beat_at_frame(start) + 1.0);
         }
@@ -447,22 +522,24 @@ impl Deck {
         );
     }
 
-    /// A beat loop of `length` from the beat the deck just passed with quantize, or from where
-    /// it is without. With a loop on, changes its length from its start instead.
+    /// A beat loop of `length` from the beat nearest to what the DJ hears with quantize, which
+    /// may be just ahead of the playhead, or from exactly there without. With a loop on, changes its length from its start instead.
     pub(crate) fn beat_loop(&mut self, length: BeatLength, retire: &mut RetireQueue) {
         self.start_slipping_loop();
-        self.start_beat_loop(length, retire);
+        self.start_beat_loop(length, LoopSnap::Nearest, retire);
     }
 
-    fn start_beat_loop(&mut self, length: BeatLength, retire: &mut RetireQueue) {
+    fn start_beat_loop(&mut self, length: BeatLength, snap: LoopSnap, retire: &mut RetireQueue) {
         let start = match self.looping.active_loop() {
             Some(region) => region.start,
-            None if self.quantizes() => {
+            None => {
                 let grain = length.beats().min(1.0);
-                let beat = self.beat_at_frame(self.voice.position);
-                self.frame_at_beat((beat / grain).floor() * grain)
+                let heard = self.heard_position();
+                match snap {
+                    LoopSnap::Nearest => self.snap_to_grain(heard, grain),
+                    LoopSnap::Previous => self.previous_grain(heard, grain),
+                }
             }
-            None => self.voice.position,
         };
         let end = self.frame_at_beat(self.beat_at_frame(start) + length.beats());
         self.set_loop(
@@ -568,7 +645,7 @@ impl Deck {
                     self.roll = Some(self.looping.region.take());
                     self.slip.begin(self.voice.position);
                 }
-                self.start_beat_loop(length, retire);
+                self.start_beat_loop(length, LoopSnap::Previous, retire);
             }
             None => {
                 if let Some(previous) = self.roll.take() {
@@ -1054,6 +1131,11 @@ impl Deck {
         result
     }
 
+    /// The channel fader and crossfader gain the deck is heading to.
+    pub(crate) fn channel_gain(&self) -> f32 {
+        self.channel_gain.target()
+    }
+
     /// Applies the channel fader and crossfader gain to the deck's block.
     pub(crate) fn apply_channel_gain(&mut self) {
         let (left_channel, right_channel) = self.block.channels_mut();
@@ -1069,33 +1151,29 @@ impl Deck {
 
 #[cfg(test)]
 mod tests {
-    use std::f32::consts::FRAC_PI_2;
-
-    use crate::curves::channel_fader_gain;
-
     use super::*;
 
     #[test]
-    fn the_louder_deck_level_counts_the_crossfader_gain() {
+    fn the_louder_deck_level_counts_the_fader_curve_and_the_crossfader_gain() {
         let track = crate::track::Track::from_interleaved_stereo(&[0.1, 0.1], 48_000).unwrap();
         let (producer, _consumer) = rtrb::RingBuffer::new(16);
         let mut retire = RetireQueue::new(producer);
         let mut deck = Deck::new(48_000, 512, 240);
+        let standard = ChannelFaderCurve::Standard;
         deck.load(Some(Arc::clone(track.buffer())), &mut retire);
-        assert_eq!(deck.level(1.0), 0.0);
+        assert_eq!(deck.level(standard, 1.0), 0.0);
         deck.play();
         deck.set_trim(2.0);
         assert_eq!(deck.fader_position(), 1.0);
-        // Crossfader fully to this deck: the trim stands alone.
-        assert_eq!(deck.level(1.0), 2.0);
-        // Half-open fader, -3 dB crossfader: both count.
-        let crossfader_gain = FRAC_PI_2.cos();
-        let half_fader = channel_fader_gain(0.5);
-        assert_eq!(deck.level(0.5 * 1.0), 2.0 * 1.0 * 0.5);
-        assert_eq!(deck.level(1.0) * half_fader, 2.0 * half_fader);
-        assert_eq!(deck.level(0.5), 2.0 * 1.0 * 0.5);
-        let _ = crossfader_gain;
-        // Crossfader fully to the other deck: the level goes to zero while the deck still plays.
-        assert_eq!(deck.level(0.0), 0.0);
+        assert_eq!(deck.level(standard, 1.0), 2.0, "the trim stands alone");
+        assert_eq!(deck.level(standard, 0.5), 1.0, "the crossfader counts");
+        deck.set_fader_position(0.5);
+        assert_eq!(deck.level(standard, 1.0), 2.0 * 0.25);
+        assert_eq!(deck.level(ChannelFaderCurve::Fast, 1.0), 2.0 * 0.75);
+        assert_eq!(
+            deck.level(standard, 0.0),
+            0.0,
+            "the crossfader cuts a playing deck"
+        );
     }
 }

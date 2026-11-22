@@ -10,6 +10,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use dubplate_engine::DeckId;
+use dubplate_rekordbox::{HotCuePad, TrackCues};
 use gpui::prelude::*;
 use gpui::{
     Bounds, Context, FontWeight, MouseButton, MouseDownEvent, MouseMoveEvent, PathBuilder, Pixels,
@@ -19,12 +20,12 @@ use gpui::{
 use super::{DeckFrame, DubplateApp};
 use crate::collection::{CollectionTrack, clock};
 use crate::controls::{Orientation, fraction_at};
-use crate::deck::{HotCues, OverviewBars, deck_letter, pad_position};
+use crate::deck::{OverviewBars, deck_letter};
 use crate::fonts::MONO_FAMILY;
 use crate::phrases::{PhraseSpan, Section, phrase_at};
 use crate::theme;
 use crate::waveform::{BandLevels, LaneLoop, LoopLook};
-use crate::widgets::{InteractiveControl, adjusted_value};
+use crate::widgets::{InteractiveControl, adjusted_value, tooltip};
 
 /// The overview's height: the cue row, the bands and the phrase strip.
 pub(super) const OVERVIEW_HEIGHT: Pixels = px(42.0);
@@ -51,7 +52,7 @@ pub(super) struct OverviewContent {
     bars: Option<Rc<RefCell<OverviewBars>>>,
     track: Arc<CollectionTrack>,
     phrases: Arc<[PhraseSpan]>,
-    hot_cues: HotCues,
+    cues: Arc<TrackCues>,
     mix_in: Option<f64>,
     mix_out: Option<f64>,
     duration: f64,
@@ -67,7 +68,7 @@ impl PartialEq for OverviewContent {
         same_bars
             && Arc::ptr_eq(&self.track, &other.track)
             && Arc::ptr_eq(&self.phrases, &other.phrases)
-            && self.hot_cues == other.hot_cues
+            && Arc::ptr_eq(&self.cues, &other.cues)
             && self.mix_in == other.mix_in
             && self.mix_out == other.mix_out
             && self.duration == other.duration
@@ -103,14 +104,15 @@ impl Render for DeckOverview {
         let Some(content) = self.content.clone() else {
             return div().size_full();
         };
-        let letters: Vec<(f32, char, Rgba)> = content
-            .hot_cues
-            .iter()
-            .map(|(pad, seconds)| {
+        let letters: Vec<(f32, HotCuePad, Rgba, String)> = content
+            .cues
+            .hot_cues()
+            .map(|(pad, cue)| {
                 (
-                    (seconds / content.duration).clamp(0.0, 1.0) as f32,
-                    pad.letter(),
-                    theme::HOT_CUE_TINTS[pad_position(pad)],
+                    (cue.start_seconds() / content.duration).clamp(0.0, 1.0) as f32,
+                    pad,
+                    theme::hot_cue_colour(pad, cue),
+                    cue.name.clone(),
                 )
             })
             .collect();
@@ -125,8 +127,9 @@ impl Render for DeckOverview {
                 .absolute()
                 .size_full(),
             )
-            .children(letters.into_iter().map(|(fraction, letter, tint)| {
+            .children(letters.into_iter().map(|(fraction, pad, tint, name)| {
                 div()
+                    .id(("overview-hot-cue", pad.index()))
                     .absolute()
                     .top_0()
                     .left(relative(fraction))
@@ -142,8 +145,9 @@ impl Render for DeckOverview {
                     .text_size(px(9.0))
                     .line_height(px(CUE_ROW - 1.0))
                     .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(theme::ON_DECK)
-                    .child(letter.to_string())
+                    .text_color(theme::active().on_deck)
+                    .when(!name.is_empty(), |letter| letter.tooltip(tooltip(name)))
+                    .child(pad.letter().to_string())
             }))
     }
 }
@@ -151,12 +155,12 @@ impl Render for DeckOverview {
 /// The colour of a section on the phrase strip.
 fn section_colour(section: Section) -> Rgba {
     match section {
-        Section::Intro => theme::PHRASE_INTRO,
-        Section::Build => theme::PHRASE_BUILD,
-        Section::Drop => theme::PHRASE_DROP,
-        Section::Breakdown => theme::PHRASE_BREAKDOWN,
-        Section::Outro => theme::PHRASE_OUTRO,
-        Section::Other => theme::PHRASE_OTHER,
+        Section::Intro => theme::active().phrase_intro,
+        Section::Build => theme::active().phrase_build,
+        Section::Drop => theme::active().phrase_drop,
+        Section::Breakdown => theme::active().phrase_breakdown,
+        Section::Outro => theme::active().phrase_outro,
+        Section::Other => theme::active().phrase_other,
     }
 }
 
@@ -217,18 +221,18 @@ fn paint_content(bounds: Bounds<Pixels>, content: &OverviewContent, window: &mut
     let ending_from = area.x_of(content.duration - ENDING_SECONDS);
     window.paint_quad(fill(
         area.band_span(ending_from, area.width - ending_from),
-        theme::ENDING_TINT,
+        theme::active().ending_tint,
     ));
-    for &(start, end) in &content.track.saved_loops {
-        let left = area.x_of(start);
-        let width = (area.x_of(end) - left).max(1.0);
+    for (start_ms, end_ms) in content.cues.loops() {
+        let left = area.x_of(seconds(start_ms));
+        let width = (area.x_of(seconds(end_ms)) - left).max(1.0);
         window.paint_quad(fill(
             area.band_span(left, width),
-            theme::faded(theme::SAVED_LOOP, 0.14),
+            theme::faded(theme::active().saved_loop, 0.14),
         ));
         window.paint_quad(fill(
             area.rect(left, area.bands_top, width, 2.0),
-            theme::SAVED_LOOP,
+            theme::active().saved_loop,
         ));
     }
     if let Some(bars) = &content.bars {
@@ -240,12 +244,12 @@ fn paint_content(bounds: Bounds<Pixels>, content: &OverviewContent, window: &mut
         let x = area.x_of(minute as f64 * SECONDS_PER_MINUTE);
         window.paint_quad(fill(
             area.rect(x, area.bands_top, 1.0, 3.0),
-            theme::MINUTE_TICK,
+            theme::active().minute_tick,
         ));
     }
     for (seconds, colour) in [
-        (content.mix_in, theme::MIX_IN_MARK),
-        (content.mix_out, theme::MIX_OUT_MARK),
+        (content.mix_in, theme::active().mix_in_mark),
+        (content.mix_out, theme::active().mix_out_mark),
     ] {
         if let Some(seconds) = seconds {
             let x = area.x_of(seconds);
@@ -253,8 +257,16 @@ fn paint_content(bounds: Bounds<Pixels>, content: &OverviewContent, window: &mut
             paint_triangle(&area, x, area.bands_top, colour, window);
         }
     }
-    for &seconds in &content.track.memory_cues {
-        paint_triangle(&area, area.x_of(seconds), 1.0, theme::MEMORY_CUE, window);
+    for cue in content.cues.memory_cues() {
+        if cue.loop_end_ms.is_none() {
+            paint_triangle(
+                &area,
+                area.x_of(cue.start_seconds()),
+                1.0,
+                theme::memory_cue_colour(cue),
+                window,
+            );
+        }
     }
     let strip_top = area.bands_bottom + 1.0;
     for phrase in content.phrases.iter() {
@@ -265,6 +277,10 @@ fn paint_content(bounds: Bounds<Pixels>, content: &OverviewContent, window: &mut
             section_colour(phrase.section),
         ));
     }
+}
+
+fn seconds(milliseconds: u32) -> f64 {
+    f64::from(milliseconds) / 1000.0
 }
 
 /// A small triangle pointing down at `x`, its top edge at `top`.
@@ -287,9 +303,9 @@ fn paint_band_bars(area: &OverviewArea, bars: &[BandLevels], window: &mut Window
     for (index, levels) in bars.iter().enumerate() {
         let left = index as f32 * BAR_SPACING;
         for (level, colour) in [
-            (levels.low, theme::BAND_LOW),
-            (levels.mid, theme::BAND_MID),
-            (levels.high, theme::BAND_HIGH),
+            (levels.low, theme::active().band_low),
+            (levels.mid, theme::active().band_mid),
+            (levels.high, theme::active().band_high),
         ] {
             let height = (level * tallest).max(0.0);
             if height < 0.5 {
@@ -335,7 +351,10 @@ fn paint_motion(bounds: Bounds<Pixels>, motion: OverviewMotion, window: &mut Win
     }
     if let Some(progress) = motion.progress {
         let played = progress * area.width;
-        window.paint_quad(fill(area.band_span(0.0, played), theme::PLAYED_SHADE));
+        window.paint_quad(fill(
+            area.band_span(0.0, played),
+            theme::active().played_shade,
+        ));
         paint_playhead(&area, area.playhead_left(progress), window);
     }
     if let Some(cue_point) = motion.cue_point {
@@ -347,20 +366,20 @@ fn paint_motion(bounds: Bounds<Pixels>, motion: OverviewMotion, window: &mut Win
         triangle.line_to(origin + point(px(x), px(area.bands_bottom - 6.0)));
         triangle.close();
         if let Ok(path) = triangle.build() {
-            window.paint_path(path, theme::CUE_POINT);
+            window.paint_path(path, theme::active().cue_point);
         }
     }
     if let Some((seconds, strength)) = motion.pulse {
         let half_width = 2.0 + 5.0 * (1.0 - strength);
         window.paint_quad(fill(
             area.band_span(area.x_of(seconds) - half_width, half_width * 2.0),
-            theme::faded(theme::TEXT, 0.5 * strength),
+            theme::faded(theme::active().text, 0.5 * strength),
         ));
     }
     if let Some(hover) = motion.hover {
         window.paint_quad(fill(
             area.band_span(hover * area.width, 1.0),
-            theme::faded(theme::TEXT, 0.6),
+            theme::faded(theme::active().text, 0.6),
         ));
     }
 }
@@ -370,7 +389,7 @@ fn paint_playhead(area: &OverviewArea, left: f32, window: &mut Window) {
     let height = f32::from(area.bounds.size.height);
     window.paint_quad(fill(
         area.rect(left, 0.0, PLAYHEAD_WIDTH, height),
-        theme::PLAYHEAD,
+        theme::active().playhead,
     ));
     let centre = left + PLAYHEAD_WIDTH / 2.0;
     let origin = area.bounds.origin;
@@ -381,7 +400,7 @@ fn paint_playhead(area: &OverviewArea, left: f32, window: &mut Window) {
         cap.line_to(origin + point(px(centre), px(tip)));
         cap.close();
         if let Ok(path) = cap.build() {
-            window.paint_path(path, theme::PLAYHEAD);
+            window.paint_path(path, theme::active().playhead);
         }
     }
 }
@@ -424,7 +443,7 @@ pub(super) fn render(
                     bars: visuals.overview.clone(),
                     track: Arc::clone(track),
                     phrases: Arc::clone(&visuals.phrases),
-                    hot_cues: side.hot_cues,
+                    cues: Arc::clone(&side.cues),
                     mix_in,
                     mix_out,
                     duration,
@@ -494,7 +513,7 @@ pub(super) fn render(
         .relative()
         .h(OVERVIEW_HEIGHT)
         .rounded(px(4.0))
-        .bg(theme::RAISED)
+        .bg(theme::active().raised)
         .overflow_hidden()
         .cursor_pointer()
         .on_mouse_down(
@@ -542,12 +561,12 @@ pub(super) fn render(
                 .ml(px(4.0))
                 .px(px(4.0))
                 .rounded(px(3.0))
-                .bg(theme::PANEL)
+                .bg(theme::active().panel)
                 .border_1()
-                .border_color(theme::LINE)
+                .border_color(theme::active().line)
                 .font_family(MONO_FAMILY)
                 .text_size(px(10.0))
-                .text_color(theme::TEXT)
+                .text_color(theme::active().text)
                 .whitespace_nowrap()
                 .child(label)
         }))
@@ -595,7 +614,7 @@ mod tests {
             bars: None,
             track: Arc::new(CollectionTrack::from_file(std::path::Path::new("a.mp3"))),
             phrases: Arc::default(),
-            hot_cues: HotCues::default(),
+            cues: Arc::default(),
             mix_in: None,
             mix_out: None,
             duration: 300.0,

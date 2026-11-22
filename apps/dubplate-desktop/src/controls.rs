@@ -1,10 +1,8 @@
 //! The mixer and tempo sliders: their positions, and how a pointer on a slider becomes a value.
 
-use dubplate_engine::{DeckId, EqBand, TempoRange, decibels_to_gain, gain_to_decibels};
+use dubplate_engine::{DeckId, EqBand, Stem, TempoRange, decibels_to_gain, gain_to_decibels};
 use gpui::{Bounds, Pixels, Point};
 
-/// How much one tempo key press changes the tempo: 0.1%.
-pub const TEMPO_STEP: f64 = 0.001;
 /// How far one crossfader key press moves the crossfader.
 pub const CROSSFADER_STEP: f32 = 0.05;
 /// The master level slider's range below unity, in decibels; the bottom mutes.
@@ -38,13 +36,15 @@ pub enum Control {
     HeadphoneLevel,
     /// The sampler's volume.
     SamplerVolume,
+    /// The level of one of a deck's stems, on the channel fader's curve.
+    StemLevel(DeckId, Stem),
 }
 
 impl Control {
     /// Where the control rests: a double-click puts it back there.
     pub fn resting(self) -> f32 {
         match self {
-            Control::ChannelFader(_) | Control::MasterLevel => 1.0,
+            Control::ChannelFader(_) | Control::MasterLevel | Control::StemLevel(..) => 1.0,
             Control::Crossfader
             | Control::Tempo(_)
             | Control::Trim(_)
@@ -151,10 +151,20 @@ pub fn tempo_slider_at(tempo: f64, range: TempoRange) -> f32 {
     ((position + 1.0) / 2.0).clamp(0.0, 1.0) as f32
 }
 
-/// The tempo slider one key press away, a tenth of a percent of tempo in `range`.
+/// The tempo slider one key press away: the range's next step up or down, 0.02% at ±6% as on a
+/// CDJ. A slider dragged between two steps goes to the nearer one in the pressed direction.
 pub fn nudged_tempo_slider(fraction: f32, sign: f64, range: TempoRange) -> f32 {
-    let step = TEMPO_STEP / range.span() / 2.0;
-    (f64::from(fraction) + sign * step).clamp(0.0, 1.0) as f32
+    // The slider is an f32, so a tempo on a step can read a few hundred-thousandths off it.
+    const ON_A_STEP: f64 = 1e-3;
+    let steps_per_side = range.span() / range.step();
+    let steps_now = tempo_fader(fraction) * steps_per_side;
+    let steps = if sign > 0.0 {
+        (steps_now + ON_A_STEP).floor() + 1.0
+    } else {
+        (steps_now - ON_A_STEP).ceil() - 1.0
+    };
+    let position = (steps / steps_per_side).clamp(-1.0, 1.0);
+    ((position + 1.0) / 2.0) as f32
 }
 
 /// How the tempo range reads beside the slider, such as `±10%`.
@@ -229,6 +239,8 @@ pub struct MixerPositions {
     pub headphone_level: f32,
     /// The sampler's volume, on the channel fader's curve.
     pub sampler_volume: f32,
+    /// Each deck's stem levels, in the order of [`Stem::ALL`], on the channel fader's curve.
+    pub stem_levels: [[f32; Stem::COUNT]; 2],
 }
 
 impl MixerPositions {
@@ -245,6 +257,7 @@ impl MixerPositions {
             Control::HeadphoneMix => self.headphone_mix,
             Control::HeadphoneLevel => self.headphone_level,
             Control::SamplerVolume => self.sampler_volume,
+            Control::StemLevel(deck, stem) => self.stem_levels[deck.index()][stem.index()],
         }
     }
 }
@@ -262,6 +275,7 @@ impl Default for MixerPositions {
             headphone_mix: 0.5,
             headphone_level: 0.5,
             sampler_volume: DEFAULT_SAMPLER_VOLUME,
+            stem_levels: [[1.0; Stem::COUNT]; 2],
         }
     }
 }
@@ -297,16 +311,27 @@ mod tests {
     }
 
     #[test]
-    fn the_tempo_slider_drives_the_engines_fader_and_keys_step_a_tenth_of_a_percent() {
+    fn the_tempo_slider_drives_the_engines_fader_and_keys_step_the_ranges_finest_step() {
         assert_eq!(tempo_fader(0.5), 0.0);
         assert_eq!(tempo_fader(0.0), -1.0);
         assert_eq!(tempo_fader(1.0), 1.0);
-        let step = nudged_tempo_slider(0.5, 1.0, TempoRange::TenPercent) - 0.5;
-        assert!(
-            (f64::from(step) * 2.0 * 0.10 - 0.001).abs() < 1e-6,
-            "{step}"
-        );
+        let tempo_after = |fraction: f32, sign: f64, range: TempoRange| {
+            1.0 + tempo_fader(nudged_tempo_slider(fraction, sign, range)) * range.span()
+        };
+        assert!((tempo_after(0.5, 1.0, TempoRange::SixPercent) - 1.0002).abs() < 1e-6);
+        assert!((tempo_after(0.5, -1.0, TempoRange::TenPercent) - 0.9996).abs() < 1e-6);
+        assert!((tempo_after(0.5, 1.0, TempoRange::Wide) - 1.005).abs() < 1e-6);
+        let between_steps = tempo_slider_at(1.000_13, TempoRange::SixPercent);
+        assert!((tempo_after(between_steps, 1.0, TempoRange::SixPercent) - 1.0002).abs() < 1e-6);
+        assert!((tempo_after(between_steps, -1.0, TempoRange::SixPercent) - 1.0).abs() < 1e-6);
+        let mut fraction = 0.5;
+        for _ in 0..7 {
+            fraction = nudged_tempo_slider(fraction, 1.0, TempoRange::SixPercent);
+        }
+        let seven_steps_up = 1.0 + tempo_fader(fraction) * TempoRange::SixPercent.span();
+        assert!((seven_steps_up - 1.0014).abs() < 1e-5, "{seven_steps_up}");
         assert_eq!(nudged_tempo_slider(1.0, 1.0, TempoRange::SixPercent), 1.0);
+        assert_eq!(nudged_tempo_slider(0.0, -1.0, TempoRange::SixPercent), 0.0);
         assert_eq!(tempo_range_label(TempoRange::SixteenPercent), "\u{b1}16%");
         let in_between = tempo_slider_at(1.03, TempoRange::TenPercent);
         assert!((in_between - 0.65).abs() < 1e-6, "{in_between}");

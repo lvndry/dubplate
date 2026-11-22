@@ -1,5 +1,6 @@
 //! Export to rekordbox: the set written as a rekordbox XML file where the DJ chooses in the
-//! system's save dialog, then a notice saying how to bring it into rekordbox.
+//! system's save dialog, with the cues the DJ made in Dubplate, then a notice saying how to
+//! bring it into rekordbox.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -49,9 +50,10 @@ impl DubplateApp {
         let needs_rekordbox = set.entries.iter().any(|entry| entry.rekordbox_id.is_some());
         let scans = self.sources.chosen_scans();
         let relinks = self.settings.library.relink_map();
+        let track_cues = self.track_cues.clone();
         cx.spawn(async move |this, cx| {
             let path = match chosen.await {
-                Ok(Ok(Some(path))) => with_xml_extension(path),
+                Ok(Ok(Some(path))) => with_extension(path, XML_EXTENSION),
                 Ok(Ok(None)) | Err(_) => return,
                 Ok(Err(error)) => {
                     this.update(cx, |this, cx| {
@@ -86,6 +88,7 @@ impl DubplateApp {
                         &scans,
                         &relinks,
                     )
+                    .with_track_cues(&track_cues)
                     .export(&set);
                     export
                         .write_to(&path)
@@ -108,17 +111,17 @@ impl DubplateApp {
     }
 }
 
-/// `path`, with `.xml` added when the DJ typed a name without it.
-fn with_xml_extension(path: PathBuf) -> PathBuf {
+/// `path`, with `.extension` added when the DJ typed a name without it.
+pub(super) fn with_extension(path: PathBuf, extension: &str) -> PathBuf {
     let has_extension = path
         .extension()
-        .is_some_and(|extension| extension.eq_ignore_ascii_case(XML_EXTENSION));
+        .is_some_and(|existing| existing.eq_ignore_ascii_case(extension));
     if has_extension {
         return path;
     }
     let mut name = path.into_os_string();
     name.push(".");
-    name.push(XML_EXTENSION);
+    name.push(extension);
     PathBuf::from(name)
 }
 
@@ -153,16 +156,20 @@ mod tests {
     #[test]
     fn a_name_without_the_extension_gets_it() {
         assert_eq!(
-            with_xml_extension(PathBuf::from("/Exports/Friday")),
+            with_extension(PathBuf::from("/Exports/Friday"), XML_EXTENSION),
             PathBuf::from("/Exports/Friday.xml")
         );
         assert_eq!(
-            with_xml_extension(PathBuf::from("/Exports/Fri.day")),
+            with_extension(PathBuf::from("/Exports/Fri.day"), XML_EXTENSION),
             PathBuf::from("/Exports/Fri.day.xml")
         );
         assert_eq!(
-            with_xml_extension(PathBuf::from("/Exports/Friday.XML")),
+            with_extension(PathBuf::from("/Exports/Friday.XML"), XML_EXTENSION),
             PathBuf::from("/Exports/Friday.XML")
+        );
+        assert_eq!(
+            with_extension(PathBuf::from("/Exports/Friday tracklist"), "csv"),
+            PathBuf::from("/Exports/Friday tracklist.csv")
         );
     }
 

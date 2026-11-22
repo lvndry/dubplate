@@ -65,6 +65,15 @@ pub fn show_dock_icon() {
     unsafe { application.setApplicationIconImage(Some(&image)) };
 }
 
+/// Shows the standard About panel: the name, the icon and the version from the bundle. Does
+/// nothing off the main thread.
+pub fn show_about_panel() {
+    let Some(main_thread) = MainThreadMarker::new() else {
+        return;
+    };
+    NSApplication::sharedApplication(main_thread).orderFrontStandardAboutPanel(None);
+}
+
 /// Keeps this Dubplate out of the Dock, the app switcher and the menu bar, and never in front,
 /// for a copy running with offline devices beside the DJ's own. Does nothing off the main
 /// thread.
