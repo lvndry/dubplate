@@ -7,12 +7,14 @@ use std::time::Duration;
 use dubplate_prep::{SetWarning, Severity, WarningKind, WarningPosition};
 use gpui::prelude::*;
 use gpui::{
-    ClickEvent, Context, FontWeight, MouseButton, Pixels, Rgba, SharedString, Window, div, px,
+    ClickEvent, Context, FontWeight, MouseButton, PathBuilder, Pixels, Rgba, SharedString, Window,
+    canvas, div, point, px,
 };
 
 use super::DubplateApp;
-use super::prepare::{NextTrack, PrepareFocus, SetRow};
+use super::prepare::{NextSuggestions, PrepareFocus, SetRow};
 use crate::browser::DraggedTrack;
+use crate::energy::{HIGHEST_ENERGY, LOWEST_ENERGY, set_curve, target_energy};
 use crate::fonts::MONO_FAMILY;
 use crate::prep::SeamSummary;
 use crate::set::running_time;
@@ -20,6 +22,10 @@ use crate::theme;
 
 const PANEL_WIDTH: Pixels = px(420.0);
 const ROW_HEIGHT: Pixels = px(40.0);
+const CURVE_HEIGHT: Pixels = px(36.0);
+const CURVE_STROKE: Pixels = px(1.5);
+/// Line segments for the target curve, enough for a smooth line at the panel's width.
+const TARGET_SEGMENTS: usize = 60;
 
 /// A set track being dragged to another place in the set.
 #[derive(Debug, Clone)]
@@ -48,7 +54,7 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
     let rows = app.set_rows();
     let seams = DubplateApp::seams(&rows);
     let warnings = DubplateApp::warnings(&rows);
-    let (next_after, next) = app.next_tracks();
+    let next = app.next_tracks(&rows);
     let focused = app.prepare_focus == PrepareFocus::Set;
     let mut list = div()
         .id("set-tracks")
@@ -92,7 +98,7 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
         .child(summary(app, &rows))
         .child(list)
         .child(backups(app))
-        .child(next_panel(next_after, next, cx))
+        .child(next_panel(next, cx))
 }
 
 fn summary(app: &DubplateApp, rows: &[SetRow]) -> impl IntoElement {
@@ -157,6 +163,94 @@ fn summary(app: &DubplateApp, rows: &[SetRow]) -> impl IntoElement {
                     rows.len()
                 )),
         )
+        .when(!rows.is_empty(), |summary| {
+            summary.child(energy_curve(rows, target))
+        })
+}
+
+/// The set's energy track by track as steps, over the target it should follow, across the
+/// target length or the set's when it runs over.
+fn energy_curve(rows: &[SetRow], target: Duration) -> impl IntoElement + use<> {
+    let tracks: Vec<(Option<Duration>, Option<f32>)> = rows
+        .iter()
+        .map(|row| {
+            (
+                row.duration,
+                row.track.as_ref().and_then(|track| track.energy),
+            )
+        })
+        .collect();
+    let steps = set_curve(&tracks, target);
+    let rated = steps.iter().any(|step| step.rating.is_some());
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(2.0))
+        .pt(px(6.0))
+        .child(
+            div()
+                .flex()
+                .justify_between()
+                .text_size(theme::TINY_TEXT_SIZE)
+                .text_color(theme::MUTED)
+                .child("Energy against the target")
+                .when(!rated, |caption| caption.child("No ratings yet")),
+        )
+        .child(
+            canvas(
+                |_, _, _| {},
+                move |bounds, (), window, _| {
+                    let inset = f32::from(CURVE_STROKE);
+                    let top = f32::from(bounds.origin.y) + inset;
+                    let height = f32::from(bounds.size.height) - 2.0 * inset;
+                    let left = f32::from(bounds.origin.x);
+                    let width = f32::from(bounds.size.width);
+                    let at = |fraction: f32, energy: f32| {
+                        let level = (energy - LOWEST_ENERGY) / (HIGHEST_ENERGY - LOWEST_ENERGY);
+                        point(
+                            px(left + width * fraction),
+                            px(top + height * (1.0 - level.clamp(0.0, 1.0))),
+                        )
+                    };
+                    let mut target_line = PathBuilder::stroke(px(1.0));
+                    for segment in 0..=TARGET_SEGMENTS {
+                        let fraction = segment as f32 / TARGET_SEGMENTS as f32;
+                        let position = at(fraction, target_energy(fraction));
+                        if segment == 0 {
+                            target_line.move_to(position);
+                        } else {
+                            target_line.line_to(position);
+                        }
+                    }
+                    if let Ok(path) = target_line.build() {
+                        window.paint_path(path, theme::faded(theme::MUTED, 0.5));
+                    }
+                    if !rated {
+                        return;
+                    }
+                    let mut energy_line = PathBuilder::stroke(CURVE_STROKE);
+                    let mut drawing = false;
+                    for step in &steps {
+                        let Some(rating) = step.rating else {
+                            drawing = false;
+                            continue;
+                        };
+                        if drawing {
+                            energy_line.line_to(at(step.start, rating));
+                        } else {
+                            energy_line.move_to(at(step.start, rating));
+                        }
+                        energy_line.line_to(at(step.end, rating));
+                        drawing = true;
+                    }
+                    if let Ok(path) = energy_line.build() {
+                        window.paint_path(path, theme::TEXT);
+                    }
+                },
+            )
+            .w_full()
+            .h(CURVE_HEIGHT),
+        )
 }
 
 fn track_row(
@@ -167,15 +261,20 @@ fn track_row(
     cx: &mut Context<'_, DubplateApp>,
 ) -> impl IntoElement + use<> {
     let position = row.position;
-    let (title, artist, key, bpm) = match &row.track {
+    let (title, artist, key, bpm, energy) = match &row.track {
         Some(track) => (
             track.title.clone(),
             track.artist.clone(),
             track.key.map(|key| key.camelot()).unwrap_or_default(),
             track.bpm.map(|bpm| format!("{bpm:.1}")).unwrap_or_default(),
+            track
+                .energy
+                .map(|energy| format!("E{energy:.0}"))
+                .unwrap_or_default(),
         ),
         None => (
             "Not in the library".to_owned(),
+            String::new(),
             String::new(),
             String::new(),
             String::new(),
@@ -262,6 +361,7 @@ fn track_row(
                         .gap(px(8.0))
                         .font_family(MONO_FAMILY)
                         .text_size(theme::SMALL_TEXT_SIZE)
+                        .child(div().text_color(theme::MUTED).child(energy))
                         .child(key)
                         .child(div().text_color(theme::MUTED).child(bpm)),
                 )
@@ -370,13 +470,20 @@ fn backups(app: &DubplateApp) -> impl IntoElement {
 }
 
 fn next_panel(
-    after: Option<String>,
-    next: Vec<NextTrack>,
+    next: NextSuggestions,
     cx: &mut Context<'_, DubplateApp>,
 ) -> impl IntoElement + use<> {
-    let heading = match &after {
-        Some(title) => format!("Next after {title}"),
-        None => "Next".to_owned(),
+    let NextSuggestions {
+        after,
+        direction,
+        tracks: next,
+    } = next;
+    let heading = match (&after, direction) {
+        (Some(title), Some(direction)) => {
+            format!("Next after {title} \u{b7} {}", direction.label())
+        }
+        (Some(title), None) => format!("Next after {title}"),
+        (None, _) => "Next".to_owned(),
     };
     let mut panel = div()
         .flex()

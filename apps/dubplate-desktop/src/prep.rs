@@ -14,7 +14,7 @@ use dubplate_rekordbox::analysis::{Beat, BeatGrid, SongStructure};
 use crate::collection::{Collection, CollectionTrack, TrackOrigin};
 
 /// The suggestion engine's view of every track that has an audio file, found by its file.
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct Catalogue {
     /// The tracks, in the collection's order.
     pub tracks: Vec<PrepTrack>,
@@ -40,6 +40,17 @@ impl Catalogue {
     /// The track whose audio file is `path`.
     pub fn get(&self, path: &Path) -> Option<&PrepTrack> {
         self.tracks.get(*self.by_path.get(path)?)
+    }
+
+    /// Gives the track whose audio file is `path` its energy, from 1 to 10.
+    pub fn set_energy(&mut self, path: &Path, rating: u8) {
+        if let Some(track) = self
+            .by_path
+            .get(path)
+            .and_then(|position| self.tracks.get_mut(*position))
+        {
+            track.energy = Some(f32::from(rating));
+        }
     }
 }
 
