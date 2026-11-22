@@ -502,7 +502,7 @@ impl DeviceLibrary {
                 library_id = id;
             } else if id != library_id {
                 return Err(DeviceLibraryError::DanglingReference(format!(
-                    "the track rows carry two library ids, {library_id} and {id}"
+                    "the track rows carry two library ids, {library_id:?} and {id:?}"
                 )));
             }
             tracks.push(track);

@@ -88,7 +88,8 @@ pub fn export_ext_pdb(library_id: LibraryId) -> Result<Vec<u8>, DeviceLibraryErr
             rows: Vec::new(),
         })
         .collect();
-    tables[usize::try_from(TAGS_TABLE).unwrap()].rows = tags;
+    tables[TAGS_TABLE as usize].rows = tags;
+    tables[SETTINGS_TABLE as usize].rows = vec![settings_row(library_id)];
     write_database(&tables)
 }
 

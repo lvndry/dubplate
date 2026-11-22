@@ -192,7 +192,7 @@ fn a_track_row_stamped_with_another_library_id_is_refused() {
     let mut at = 0;
     let mut occurrences = 0;
     while at + 4 <= page.len() {
-        if &page[at..at + 4] == &stamp {
+        if page[at..at + 4] == stamp {
             occurrences += 1;
             if occurrences == 2 {
                 page[at..at + 4].copy_from_slice(&1_u32.to_le_bytes());
