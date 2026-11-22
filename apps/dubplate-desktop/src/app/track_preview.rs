@@ -9,6 +9,8 @@ use gpui::Context;
 
 use super::DubplateApp;
 use super::notice::NoticePlace;
+use dubplate_rekordbox::MemoryCue;
+
 use crate::collection::{CollectionTrack, TrackIndex};
 
 /// How often a decoding track is looked at, and a playing preview checked.
@@ -26,11 +28,11 @@ pub(super) struct TrackPreview {
 /// Where a track's preview starts: its earliest memory or hot cue, where the DJ marked the
 /// track, else its start.
 fn preview_start(track: &CollectionTrack) -> f64 {
-    track
-        .memory_cues
+    let cues = &track.cues;
+    cues.memory_cues()
         .iter()
-        .copied()
-        .chain(track.hot_cues.iter().map(|cue| cue.seconds))
+        .map(MemoryCue::start_seconds)
+        .chain(cues.hot_cues().map(|(_, cue)| cue.start_seconds()))
         .filter(|seconds| seconds.is_finite() && *seconds >= 0.0)
         .min_by(f64::total_cmp)
         .unwrap_or(0.0)
@@ -206,10 +208,12 @@ fn decoded_to(track: &Track, seconds: f64) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use dubplate_rekordbox::HotCuePad;
+    use std::sync::Arc;
+
+    use dubplate_rekordbox::{HotCue, TrackCues};
 
     use super::*;
-    use crate::collection::{HotCue, TrackOrigin};
+    use crate::collection::TrackOrigin;
 
     #[test]
     fn a_preview_starts_at_the_first_cue_the_dj_marked() {
@@ -218,11 +222,12 @@ mod tests {
             TrackOrigin::Folder,
         );
         assert_eq!(preview_start(&track), 0.0);
-        track.memory_cues = vec![64.0, 32.0];
-        track.hot_cues = vec![HotCue {
-            pad: HotCuePad::ALL[0],
-            seconds: 48.0,
-        }];
+        let mut hot = <[Option<HotCue>; 8]>::default();
+        hot[0] = Some(HotCue::at(48_000));
+        track.cues = Arc::new(TrackCues::new(
+            hot,
+            vec![MemoryCue::at(64_000), MemoryCue::at(32_000)],
+        ));
         assert_eq!(preview_start(&track), 32.0);
     }
 }
