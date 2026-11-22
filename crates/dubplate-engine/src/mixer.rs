@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{Ordering, fence};
 use std::time::{Duration, Instant};
 
 use rtrb::{Consumer, Producer};
@@ -761,7 +761,8 @@ impl Renderer {
 
     fn publish_state(&self) {
         for (deck, shared) in self.decks.iter().zip(&self.shared.decks) {
-            shared.publication.fetch_add(1, Ordering::AcqRel);
+            shared.publication.fetch_add(1, Ordering::Relaxed);
+            fence(Ordering::Release);
             shared.loaded.store(deck.is_loaded(), Ordering::Relaxed);
             shared.playing.store(deck.is_playing(), Ordering::Relaxed);
             shared.position_seconds.store(deck.position_seconds());
