@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::curves::Ramp;
 use crate::mixer::RetireQueue;
-use crate::track::{FrameRead, TrackBuffer};
+use crate::track::TrackBuffer;
 
 /// Fades that can overlap on one deck, for jumps that come faster than a fade lasts.
 const MAX_TAILS: usize = 8;
@@ -179,24 +179,11 @@ impl Voice {
 pub(crate) fn read_interpolated(track: &TrackBuffer, position: f64) -> (f32, f32, bool) {
     let base = position.floor();
     let fraction = (position - base) as f32;
-    let base_index = base as i64;
-    let mut left = [0.0_f32; 4];
-    let mut right = [0.0_f32; 4];
-    let mut missing = false;
-    for offset in 0..4 {
-        match track.read_frame(base_index.saturating_add(offset as i64 - 1)) {
-            FrameRead::Frame(sample_left, sample_right) => {
-                left[offset] = sample_left;
-                right[offset] = sample_right;
-            }
-            FrameRead::Outside => {}
-            FrameRead::Missing => missing = true,
-        }
-    }
+    let window = track.read_four((base as i64).saturating_sub(1));
     (
-        catmull_rom(left, fraction),
-        catmull_rom(right, fraction),
-        missing,
+        catmull_rom(window.left, fraction),
+        catmull_rom(window.right, fraction),
+        window.missing,
     )
 }
 

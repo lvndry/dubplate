@@ -51,6 +51,18 @@ pub enum DecodeStatus {
     Failed(String),
 }
 
+/// Frames read at once around a playhead: enough for cubic interpolation.
+pub(crate) const FRAME_WINDOW: usize = 4;
+
+/// [`FRAME_WINDOW`] consecutive frames of a track, silent where they fall outside it.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub(crate) struct FrameWindow {
+    pub(crate) left: [f32; FRAME_WINDOW],
+    pub(crate) right: [f32; FRAME_WINDOW],
+    /// Whether a frame of the window was not decoded yet.
+    pub(crate) missing: bool,
+}
+
 /// What reading one frame found.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum FrameRead {
@@ -163,6 +175,54 @@ impl TrackBuffer {
             UNKNOWN_LENGTH => None,
             frames => Some(frames),
         }
+    }
+
+    /// The four frames from `first`, as interpolation reads them around a playhead, without
+    /// waiting: left and right samples, and whether any of them was not decoded yet. Frames
+    /// outside the track read as silence. Safe to call on the audio thread.
+    ///
+    /// Four frames inside one decoded chunk, the case on almost every frame of playback, cost
+    /// one check of the decoded length and one chunk lookup instead of one of each per frame.
+    #[inline]
+    pub(crate) fn read_four(&self, first: i64) -> FrameWindow {
+        if let Some(window) = self.read_four_in_one_chunk(first) {
+            return window;
+        }
+        let mut window = FrameWindow::default();
+        for offset in 0..FRAME_WINDOW {
+            match self.read_frame(first.saturating_add(offset as i64)) {
+                FrameRead::Frame(left, right) => {
+                    window.left[offset] = left;
+                    window.right[offset] = right;
+                }
+                FrameRead::Outside => {}
+                FrameRead::Missing => window.missing = true,
+            }
+        }
+        window
+    }
+
+    fn read_four_in_one_chunk(&self, first: i64) -> Option<FrameWindow> {
+        let first = usize::try_from(first).ok()?;
+        let readable = match self.total_frames() {
+            Some(total_frames) => total_frames,
+            None => self.decoded_frames.load(Ordering::Acquire),
+        };
+        if first.checked_add(FRAME_WINDOW)? > readable {
+            return None;
+        }
+        let offset = (first & CHUNK_FRAME_MASK) * 2;
+        let chunk = self.chunks.get(first >> CHUNK_FRAMES_LOG2)?.get()?;
+        let samples: &[AtomicU32; FRAME_WINDOW * 2] = chunk
+            .get(offset..offset + FRAME_WINDOW * 2)?
+            .try_into()
+            .ok()?;
+        let sample = |index: usize| f32::from_bits(samples[index].load(Ordering::Relaxed));
+        Some(FrameWindow {
+            left: [sample(0), sample(2), sample(4), sample(6)],
+            right: [sample(1), sample(3), sample(5), sample(7)],
+            missing: false,
+        })
     }
 
     /// Reads one frame without waiting. Safe to call on the audio thread.
@@ -333,6 +393,75 @@ mod tests {
             track.duration_seconds(),
             Some(frame_count as f64 / 48_000.0)
         );
+    }
+
+    /// Reads the window one frame at a time, the way it reads outside a single chunk.
+    fn four_frames_one_by_one(track: &TrackBuffer, first: i64) -> FrameWindow {
+        let mut window = FrameWindow::default();
+        for offset in 0..FRAME_WINDOW {
+            match track.read_frame(first + offset as i64) {
+                FrameRead::Frame(left, right) => {
+                    window.left[offset] = left;
+                    window.right[offset] = right;
+                }
+                FrameRead::Outside => {}
+                FrameRead::Missing => window.missing = true,
+            }
+        }
+        window
+    }
+
+    #[test]
+    fn four_frames_read_at_once_match_four_single_reads_everywhere() {
+        let frame_count = CHUNK_FRAMES + 10;
+        let samples: Vec<f32> = (0..frame_count)
+            .flat_map(|index| [index as f32, -(index as f32)])
+            .collect();
+        let track = Track::from_interleaved_stereo(&samples, 48_000).unwrap();
+        let buffer = track.buffer();
+        let boundary = CHUNK_FRAMES as i64;
+        let last = frame_count as i64;
+        let firsts = [
+            -5,
+            -1,
+            0,
+            1,
+            100,
+            boundary - 4,
+            boundary - 3,
+            boundary - 1,
+            boundary,
+        ]
+        .into_iter()
+        .chain([last - 5, last - 4, last - 3, last, last + 7]);
+        for first in firsts {
+            assert_eq!(
+                buffer.read_four(first),
+                four_frames_one_by_one(buffer, first),
+                "frames from {first}"
+            );
+        }
+        assert_eq!(
+            buffer.read_four(10).left,
+            [10.0, 11.0, 12.0, 13.0],
+            "the window holds the frames in order"
+        );
+    }
+
+    #[test]
+    fn four_frames_past_the_decoded_ones_are_missing() {
+        let mut writer = TrackWriter::new(44_100, 2);
+        for index in 0..6 {
+            writer.push_frame(index as f32, 0.0);
+        }
+        writer.publish();
+        let track = writer.track();
+        let buffer = track.buffer();
+        assert!(!buffer.read_four(2).missing);
+        let window = buffer.read_four(4);
+        assert!(window.missing);
+        assert_eq!(window.left, [4.0, 5.0, 0.0, 0.0]);
+        assert_eq!(window, four_frames_one_by_one(buffer, 4));
     }
 
     #[test]
