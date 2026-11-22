@@ -4,6 +4,7 @@
 
 use dubplate_engine::{DeckId, EffectKind, EffectTarget, EffectUnitId, SmartCfx};
 use dubplate_midi::PadMode;
+use dubplate_prep::GridEdit;
 
 use crate::controls::Control;
 
@@ -68,12 +69,9 @@ pub enum SetEdit {
     ToggleBackup,
     /// Undo the last change to the set.
     Undo,
-    /// Confirm the selected set track's grid by ear, or take the confirmation back.
-    ConfirmGrid,
-    /// Move the selected set track's grid by milliseconds, later when positive.
-    NudgeGrid(i32),
-    /// Move the selected set track's bars by beats, later when positive.
-    ShiftDownbeat(i32),
+    /// Change the selected set track's grid, or in Perform the grid of the deck whose grid bar
+    /// is open.
+    Grid(GridEdit),
     /// Put the selected set track's mix-in on the bar nearest the playhead.
     MixInAtPlayhead,
     /// Put the selected set track's mix-out on the bar nearest the playhead.
@@ -153,6 +151,8 @@ pub enum EffectEdit {
 pub enum Command {
     /// Play or pause a deck.
     TogglePlay(DeckId),
+    /// Play or pause the deck the room can hear, as Space does: see [`crate::space`].
+    TogglePlayOnAir,
     /// The CDJ cue button of a deck.
     Cue(DeckId, Press),
     /// Go back to the start of the track, as SHIFT + CUE does.
@@ -174,6 +174,10 @@ pub enum Command {
     /// A tap on the beat, as SHIFT + a channel's CUE does: enough taps give a track without a
     /// beat grid its tempo and beats.
     TapTempo(DeckId),
+    /// Open a deck's grid bar to fix its track's beat grid, or close it.
+    ToggleGridBar(DeckId),
+    /// Change the beat grid of the track on a deck, for every set and deck it is in.
+    EditDeckGrid(DeckId, GridEdit),
     /// Hear the seam after the selected set track in the headphones, or stop hearing it.
     AuditionSeam,
     /// Start recording the mix to a file, or stop and close it.
