@@ -12,6 +12,7 @@ mod export;
 mod filter_reference;
 mod header;
 mod help;
+mod history;
 mod knob;
 mod lanes;
 mod library;
@@ -37,7 +38,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use dubplate_engine::{
     AudioOutput, Controller, DECK_COUNT, DeckId, DeckState, EFFECT_UNIT_COUNT, EffectUnitId,
@@ -73,6 +74,7 @@ use crate::frame_stats::FrameStats;
 use crate::hardware::{
     DeckLights, Hardware, Lights, LinkEvent, Surface, controller_deck, meter_level,
 };
+use crate::history::{PlayHistory, PlayWatch, SessionRecord};
 use crate::library::LibrarySources;
 use crate::library_view::SortSetting;
 use crate::loading::{LoadRefusal, LoadSource, check_deck_free, check_file, check_present};
@@ -210,6 +212,9 @@ pub struct DubplateApp {
     analysis_collecting: bool,
     recording: Option<Recording>,
     recording_skip_reported: bool,
+    play_history: PlayHistory,
+    play_watches: [PlayWatch<SessionRecord>; DECK_COUNT],
+    time_zone: jiff::tz::TimeZone,
     smart_cfx_menu: bool,
     effect_menu: Option<EffectUnitId>,
     refocus_window: bool,
@@ -249,6 +254,9 @@ impl DubplateApp {
                 BrowserEvent::ImportRekordbox => this.set_rekordbox_import(true, cx),
                 BrowserEvent::RelinkAll => this.start_relink(None, cx),
                 BrowserEvent::Relink(track) => this.start_relink(Some(track), cx),
+                BrowserEvent::ExportHistory { page, format } => {
+                    this.export_history(page, format, cx);
+                }
                 BrowserEvent::Sorted { screen, sort } => {
                     this.settings
                         .library_sort
@@ -259,6 +267,7 @@ impl DubplateApp {
         let effect_search = cx.new(|cx| InputState::new(window, cx).placeholder("Find an effect"));
         let quit_subscription = cx.on_app_quit(|this: &mut Self, cx| {
             this.finish_recording_on_quit();
+            this.finish_plays(cx);
             let barrier = this
                 .set_editor
                 .as_ref()
@@ -323,6 +332,7 @@ impl DubplateApp {
             }
         };
         keep_lights_moving(cx);
+        Self::keep_watching_plays(cx);
         let analysis_queue = Settings::analysis_cache_path()
             .map_err(|error| error.to_string())
             .and_then(|path| AnalysisQueue::start(path).map_err(|error| error.to_string()))
@@ -395,6 +405,9 @@ impl DubplateApp {
             analysis_collecting: false,
             recording: None,
             recording_skip_reported: false,
+            play_history: PlayHistory::new(SystemTime::now()),
+            play_watches: Default::default(),
+            time_zone: jiff::tz::TimeZone::system(),
             smart_cfx_menu: false,
             effect_menu: None,
             refocus_window: false,
@@ -443,6 +456,7 @@ impl DubplateApp {
         }
         self.quit_requested = true;
         self.quit_barrier_ready = false;
+        self.finish_plays(cx);
         let barrier = self
             .set_editor
             .as_ref()
@@ -536,6 +550,7 @@ impl DubplateApp {
             this.update(cx, |this, cx| match session {
                 Ok(session) => {
                     this.set_editor = Some(session);
+                    this.restore_play_history(cx);
                     this.set_changed(cx);
                     // The first library build may have completed before set storage opened.
                     this.rebuild_collection(cx);
