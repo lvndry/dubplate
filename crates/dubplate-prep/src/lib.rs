@@ -21,6 +21,7 @@ mod grid;
 mod identity;
 mod ready;
 mod session;
+mod sql;
 mod store;
 mod suggestion;
 mod track;
