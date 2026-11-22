@@ -6,7 +6,7 @@
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2::{AnyThread, ClassType, MainThreadMarker};
-use objc2_app_kit::{NSApplication, NSImage};
+use objc2_app_kit::{NSApplication, NSApplicationActivationOptions, NSImage, NSRunningApplication};
 use objc2_foundation::{
     NSActivityOptions, NSBundle, NSData, NSMutableDictionary, NSObjectProtocol, NSProcessInfo,
     NSString,
@@ -60,6 +60,17 @@ pub fn show_dock_icon() {
     let application = NSApplication::sharedApplication(main_thread);
     // SAFETY: the image is a valid, retained `NSImage`, which is what the setter requires.
     unsafe { application.setApplicationIconImage(Some(&image)) };
+}
+
+/// Brings the Dubplate running as `process_id` to the front, for a second launch that quits.
+pub fn bring_to_front(process_id: u32) {
+    let Ok(process_id) = i32::try_from(process_id) else {
+        return;
+    };
+    if let Some(running) = NSRunningApplication::runningApplicationWithProcessIdentifier(process_id)
+    {
+        running.activateWithOptions(NSApplicationActivationOptions::ActivateAllWindows);
+    }
 }
 
 #[cfg(test)]

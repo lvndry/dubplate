@@ -63,9 +63,9 @@ impl DeckGrid {
     }
 }
 
-/// What the lanes say where a track rekordbox never analysed has no waveform, once Dubplate's
-/// analysis has given it a beat grid.
-pub const ANALYSED_GRID_NOTE: &str = "Dubplate's beat grid \u{b7} no waveform outside rekordbox";
+/// What the lanes say while the waveform of a track rekordbox never analysed is drawn from its
+/// audio, once Dubplate's analysis has given it a beat grid.
+pub const ANALYSED_GRID_NOTE: &str = "Dubplate's beat grid \u{b7} drawing the waveform\u{2026}";
 
 /// The waveforms and beat grid of a loaded track. Missing analysis leaves them empty and says
 /// why in `analysis_problem`; the track still plays.
@@ -93,6 +93,12 @@ impl TrackVisuals {
             beats: Arc::new(std::mem::take(&mut prepared.beats)),
             analysis_problem: prepared.analysis_problem.take(),
         }
+    }
+
+    /// Draws `zoomed` and `overview`, worked out after the track was loaded.
+    pub fn show_waveforms(&mut self, zoomed: ZoomedWaveform, overview: Option<OverviewWaveform>) {
+        self.zoomed = Some(Arc::new(zoomed));
+        self.overview = overview.map(|waveform| Rc::new(RefCell::new(OverviewBars::new(waveform))));
     }
 }
 
@@ -157,13 +163,17 @@ pub fn prepare_track(
         .filter(|analysis_path| !analysis_path.is_empty());
     let rekordbox = match (entry.origin, analysis_path, share_directory) {
         (TrackOrigin::File, _, _) => {
-            Err("Not in your rekordbox collection: no beat grid, cues or waveform".to_owned())
+            Err("Not in your rekordbox collection: no beat grid or cues \u{b7} drawing the waveform\u{2026}".to_owned())
         }
-        (TrackOrigin::Folder, _, _) => Err("Not analysed yet: no beat grid or waveform".to_owned()),
+        (TrackOrigin::Folder, _, _) => {
+            Err("Not analysed yet: no beat grid \u{b7} drawing the waveform\u{2026}".to_owned())
+        }
         (TrackOrigin::Rekordbox, Some(analysis_path), Some(share_directory)) => {
             TrackAnalysis::read(share_directory, analysis_path).map_err(|error| error.to_string())
         }
-        (TrackOrigin::Rekordbox, _, _) => Err("rekordbox has not analysed this track".to_owned()),
+        (TrackOrigin::Rekordbox, _, _) => Err(
+            "rekordbox has not analysed this track \u{b7} drawing the waveform\u{2026}".to_owned(),
+        ),
     };
     let rekordbox_problem = rekordbox.as_ref().err().cloned();
     let rekordbox = rekordbox.as_ref().ok();
