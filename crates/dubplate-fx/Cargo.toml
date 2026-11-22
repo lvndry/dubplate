@@ -7,8 +7,10 @@ license.workspace = true
 repository.workspace = true
 
 [dev-dependencies]
+criterion = "0.8.2"
 dubplate-engine = { path = "../dubplate-engine" }
 hound = "3.5.1"
+libc = "0.2.191"
 tempfile = "3.27.0"
 
 [[example]]
@@ -17,3 +19,7 @@ test = true
 
 [lints]
 workspace = true
+
+[[bench]]
+name = "effects"
+harness = false

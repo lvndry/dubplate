@@ -17,6 +17,7 @@ mod lanes;
 mod library;
 mod library_panel;
 mod mixer;
+mod notice;
 mod pad_grid;
 mod pads;
 mod prepare;
@@ -48,12 +49,12 @@ use gpui::component::input::{InputEvent, InputState};
 use gpui::prelude::*;
 use gpui::{
     Bounds, Context, Entity, FocusHandle, MouseButton, MouseMoveEvent, MouseUpEvent, Pixels, Point,
-    ScrollHandle, SharedString, StyleRefinement, Subscription, Task, Window, div, px,
+    ScrollHandle, SharedString, StyleRefinement, Subscription, Task, Window, div,
 };
 
 use crate::analysis::{AnalysisPriority, TrackAnalyser, TrackAnalyses};
 use crate::browser::{Browser, BrowserEvent, LibraryStatus};
-use crate::collection::{Collection, CollectionTrack};
+use crate::collection::{Collection, CollectionTrack, TrackIndex};
 use crate::commands::{Command, EffectEdit, JogMotion, Mode, Press};
 use crate::controls::{
     CROSSFADER_STEP, Control, MixerPositions, Orientation, Slider, fraction_at, master_gain_at,
@@ -70,7 +71,7 @@ use crate::hardware::{
 };
 use crate::library::LibrarySources;
 use crate::library_view::SortSetting;
-use crate::loading::{LoadRefusal, LoadSource, check_deck_free, check_file};
+use crate::loading::{LoadRefusal, LoadSource, check_deck_free, check_file, check_present};
 use crate::meter::PeakMeter;
 use crate::pads::next_mode;
 use crate::prep::{Catalogue, TrackCheck, TrackDetail};
@@ -83,16 +84,13 @@ use crate::theme;
 use crate::transport::{self, CueDown, is_at_cue, other_deck};
 use crate::waveform::Zoom;
 use audition::Audition;
+use notice::{NoticePlace, Notices};
 use pads::HeldPad;
 use prepare::PrepareFocus;
 use relink::RelinkReview;
 
 /// Frames per device buffer: about 5 ms at 48 kHz.
 const BUFFER_FRAMES: u32 = 256;
-/// How long a notice stays on screen.
-const NOTICE_DURATION: Duration = Duration::from_secs(6);
-/// How wide a notice grows before its text wraps.
-const NOTICE_MAX_WIDTH: Pixels = px(560.0);
 /// How often the controller lights follow the decks while nothing else updates them, for the
 /// blinking lights and the level meters.
 const LIGHTS_INTERVAL: Duration = Duration::from_millis(30);
@@ -109,22 +107,6 @@ const LIGHTS_SETTLE: Duration = Duration::from_millis(12);
 struct Engine {
     controller: Controller,
     output: AudioOutput,
-}
-
-/// Where a notice shows.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum NoticePlace {
-    /// At the bottom of the window.
-    Window,
-    /// On a deck.
-    Deck(DeckId),
-}
-
-/// A short message about something the DJ asked for that did not happen.
-struct Notice {
-    id: u64,
-    place: NoticePlace,
-    text: SharedString,
 }
 
 /// Where the sliders and overviews were last drawn, so a pointer can be turned into a value.
@@ -232,8 +214,7 @@ pub struct DubplateApp {
     hit_areas: Rc<HitAreas>,
     browser: Entity<Browser>,
     help_open: bool,
-    notice: Option<Notice>,
-    notice_count: u64,
+    notices: Notices,
     focus_handle: FocusHandle,
     last_frame: Instant,
     frame_stats: Option<Rc<RefCell<FrameStats>>>,
@@ -415,8 +396,7 @@ impl DubplateApp {
             hit_areas: Rc::default(),
             browser,
             help_open: false,
-            notice: None,
-            notice_count: 0,
+            notices: Notices::default(),
             focus_handle,
             last_frame: Instant::now(),
             frame_stats: FrameStats::from_environment().map(|stats| Rc::new(RefCell::new(stats))),
@@ -633,8 +613,17 @@ impl DubplateApp {
         cue: Option<f64>,
         cx: &mut Context<'_, Self>,
     ) {
+        let track_index = match &source {
+            LoadSource::Collection(index) => Some(*index),
+            LoadSource::File(_) => None,
+        };
         let (track, generation) = match self.begin_load(deck, source) {
             Ok(started) => started,
+            Err(refusal @ LoadRefusal::FileMissing(_)) => {
+                let tracks: Vec<TrackIndex> = track_index.into_iter().collect();
+                self.report_missing_file(refusal.to_string(), &tracks, cx);
+                return;
+            }
             Err(refusal) => {
                 self.show_notice(NoticePlace::Deck(deck), refusal.to_string(), cx);
                 return;
@@ -682,11 +671,15 @@ impl DubplateApp {
         source: LoadSource,
     ) -> Result<(Arc<CollectionTrack>, u64), LoadRefusal> {
         let track = match source {
-            LoadSource::Collection(index) => Arc::clone(
-                self.collection()
-                    .ok_or(LoadRefusal::LibraryNotReady)?
-                    .track(index),
-            ),
+            LoadSource::Collection(index) => {
+                let track = Arc::clone(
+                    self.collection()
+                        .ok_or(LoadRefusal::LibraryNotReady)?
+                        .track(index),
+                );
+                check_present(&track)?;
+                track
+            }
             LoadSource::File(path) => {
                 check_file(&path)?;
                 Arc::new(CollectionTrack::from_file(&path))
@@ -934,8 +927,8 @@ impl DubplateApp {
                 } else if self.help_open || self.library_open {
                     self.help_open = false;
                     self.library_open = false;
-                } else if self.notice.is_some() {
-                    self.notice = None;
+                } else if self.notices.is_showing() {
+                    self.notices.dismiss();
                 } else if self.browser.read(cx).search_has_focus(window, cx) {
                     self.browser
                         .update(cx, |browser, cx| browser.focus_table(window, cx));
@@ -1109,44 +1102,6 @@ impl DubplateApp {
         if let Err(problem) = result {
             self.show_notice(NoticePlace::Window, problem, cx);
         }
-    }
-
-    fn show_notice(
-        &mut self,
-        place: NoticePlace,
-        text: impl Into<SharedString>,
-        cx: &mut Context<'_, Self>,
-    ) {
-        self.show_notice_for(place, text, NOTICE_DURATION, cx);
-    }
-
-    /// Shows a notice for `duration`, or until Escape closes it.
-    fn show_notice_for(
-        &mut self,
-        place: NoticePlace,
-        text: impl Into<SharedString>,
-        duration: Duration,
-        cx: &mut Context<'_, Self>,
-    ) {
-        self.notice_count += 1;
-        let id = self.notice_count;
-        self.notice = Some(Notice {
-            id,
-            place,
-            text: text.into(),
-        });
-        cx.notify();
-        cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(duration).await;
-            this.update(cx, |this, cx| {
-                if this.notice.as_ref().is_some_and(|notice| notice.id == id) {
-                    this.notice = None;
-                    cx.notify();
-                }
-            })
-            .ok();
-        })
-        .detach();
     }
 
     /// Where a fader or knob is, from 0.0 to 1.0.
@@ -1746,14 +1701,6 @@ impl DubplateApp {
         frames
     }
 
-    /// The message showing on `deck`, if any.
-    fn deck_notice(&self, deck: DeckId) -> Option<&SharedString> {
-        self.notice
-            .as_ref()
-            .filter(|notice| notice.place == NoticePlace::Deck(deck))
-            .map(|notice| &notice.text)
-    }
-
     fn dropouts(&self) -> u64 {
         self.engine
             .as_ref()
@@ -1920,12 +1867,7 @@ impl Render for DubplateApp {
                         .child(set_panel::render(self, cx)),
                 ),
             })
-            .children(
-                self.notice
-                    .as_ref()
-                    .filter(|notice| notice.place == NoticePlace::Window)
-                    .map(|notice| notice_toast(notice.text.clone())),
-            )
+            .children(notice::render_toast(self, cx))
             .when(
                 self.help_open && !self.library_open && self.relink_review.is_none(),
                 |root| root.child(help::render(self, cx)),
@@ -1942,26 +1884,4 @@ impl Render for DubplateApp {
         }
         root
     }
-}
-
-fn notice_toast(text: SharedString) -> impl IntoElement {
-    div()
-        .absolute()
-        .bottom(px(16.0))
-        .left_0()
-        .right_0()
-        .flex()
-        .justify_center()
-        .child(
-            div()
-                .max_w(NOTICE_MAX_WIDTH)
-                .px(px(12.0))
-                .py(px(8.0))
-                .rounded(px(8.0))
-                .border_1()
-                .border_color(theme::LINE)
-                .bg(theme::RAISED)
-                .text_color(theme::TEXT)
-                .child(text),
-        )
 }

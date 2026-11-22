@@ -7,7 +7,8 @@ use std::time::{Duration, Instant};
 use dubplate_engine::{DecodeStatus, Preview, PreviewTrack, Track};
 use gpui::Context;
 
-use super::{DubplateApp, NoticePlace};
+use super::DubplateApp;
+use super::notice::NoticePlace;
 use crate::audition::{
     AUDITION_LENGTH, AuditionPlan, AuditionProblem, DEFAULT_OVERLAP_BARS, SeamSide, plan_audition,
 };
