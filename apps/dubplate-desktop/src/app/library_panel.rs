@@ -109,13 +109,6 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
                 .child(rekordbox_row(app, cx))
                 .child(section_title("Decks"))
                 .child(key_lock_row(app, cx))
-                .child(section_title("Sound card"))
-                .children(output_rows)
-                .child(section_title("Decks"))
-                .child(key_lock_row(app, cx))
-                .child(section_title("Sound card"))
-                .children(output_rows)
-                .child(section_title("Decks"))
                 .child(setting_switch(
                     "auto-cue-saved",
                     "Cue at the first memory or hot cue",
@@ -132,6 +125,8 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
                     Command::ToggleAutoCue(AutoCueChoice::FirstSound),
                     cx,
                 ))
+                .child(section_title("Sound card"))
+                .children(output_rows)
                 .child(section_title("Mixer"))
                 .child(crossfader_row(app.crossfader().enabled, cx))
                 .child(curve_row(
