@@ -6,7 +6,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use dubplate_engine::DeckId;
 use dubplate_rekordbox::{HotCue, HotCuePad, MemoryCue, Rgb};
-use dubplate_rekordbox::{HotCue, HotCuePad, MemoryCue, Rgb};
 use gpui::component::{Theme as ComponentTheme, ThemeMode};
 use gpui::{App, Pixels, Rgba, px};
 
