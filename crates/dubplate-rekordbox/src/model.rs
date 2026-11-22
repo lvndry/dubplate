@@ -25,6 +25,8 @@ pub struct Track {
     pub length_seconds: Option<u32>,
     /// The path of the audio file.
     pub file_path: Option<PathBuf>,
+    /// The size of the audio file in bytes, when rekordbox recorded it.
+    pub file_size: Option<u64>,
     /// The rating from 0 to 5 stars.
     pub rating: Option<u8>,
     /// The comment.

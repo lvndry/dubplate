@@ -32,13 +32,13 @@ pub fn build_library(directory: &Path) -> PathBuf {
              ('k1', '8A', '{STAMP}', '{STAMP}'),
              ('k2', '9A', '{STAMP}', '{STAMP}');
          INSERT INTO djmdContent
-             (ID, Title, ArtistID, KeyID, BPM, Length, FolderPath, Rating, rb_local_deleted,
+             (ID, Title, ArtistID, KeyID, BPM, Length, FolderPath, FileSize, Rating, rb_local_deleted,
               AnalysisDataPath, created_at, updated_at) VALUES
-             ('t1', 'Saltwater Hymn', 'a1', 'k1', 12400, 408, '/Music/saltwater.flac', 4, 0,
+             ('t1', 'Saltwater Hymn', 'a1', 'k1', 12400, 408, '/Music/saltwater.flac', 81600000, 4, 0,
               '{SALTWATER_ANALYSIS}', '{STAMP}', '{STAMP}'),
-             ('t2', 'Low Orbit', 'a2', 'k2', 12550, 424, '/Music/low-orbit.mp3', 0, 0,
+             ('t2', 'Low Orbit', 'a2', 'k2', 12550, 424, '/Music/low-orbit.mp3', NULL, 0, 0,
               NULL, '{STAMP}', '{STAMP}'),
-             ('t3', 'Deleted Track', 'a1', 'k1', 12000, 300, '/Music/gone.wav', 0, 1,
+             ('t3', 'Deleted Track', 'a1', 'k1', 12000, 300, '/Music/gone.wav', -1, 0, 1,
               NULL, '{STAMP}', '{STAMP}');
          INSERT INTO djmdCue
              (ID, ContentID, Kind, InMsec, OutMsec, Color, Comment, rb_local_deleted,
