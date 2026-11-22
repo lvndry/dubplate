@@ -150,11 +150,20 @@ pub(super) fn listen(path: PathBuf, window: &mut Window, cx: &mut Context<'_, Du
     }
     cx.spawn_in(window, async move |this, cx| {
         while let Ok(event) = receiver.recv().await {
-            let played = this.update_in(cx, |this, window, cx| match event {
-                ScriptEvent::Link(event) => this.handle_link_events(vec![event], window, cx),
-                ScriptEvent::Window(step) => play_in_window(&step, window, cx),
-                ScriptEvent::Problem(problem) => eprintln!("script: {problem}"),
-            });
+            // Keys and clicks go to the window outside any update of the app, since the
+            // window hands them to the app's own listeners.
+            let played = match event {
+                ScriptEvent::Link(event) => this.update_in(cx, |this, window, cx| {
+                    this.handle_link_events(vec![event], window, cx);
+                }),
+                ScriptEvent::Window(step) => {
+                    cx.update(|window, cx| play_in_window(&step, window, cx))
+                }
+                ScriptEvent::Problem(problem) => {
+                    eprintln!("script: {problem}");
+                    Ok(())
+                }
+            };
             if played.is_err() {
                 break;
             }
