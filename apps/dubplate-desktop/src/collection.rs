@@ -344,6 +344,12 @@ impl CollectionTrack {
         Self::new(folder_track(found), &[], TrackOrigin::Folder, folder)
     }
 
+    /// A track from `origin` with no cues, for tests elsewhere in the app.
+    #[cfg(test)]
+    pub fn for_tests(track: Track, origin: TrackOrigin) -> Self {
+        Self::new(track, &[], origin, "")
+    }
+
     fn new(track: Track, cues: &[&Cue], origin: TrackOrigin, source: &str) -> Self {
         let mut hot_cues: Vec<HotCue> = cues
             .iter()
