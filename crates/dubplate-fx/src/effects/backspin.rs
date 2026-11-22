@@ -5,7 +5,9 @@ use crate::dsp::filters::{Svf, SvfCoefficients};
 use crate::dsp::shaping::smoothstep;
 use crate::effect::EffectKind;
 use crate::effects::turntable::{Motion, Turntable};
-use crate::unit::{Controls, Frame, Kernel, MixLaw, Unit, implement_effect};
+use crate::unit::{Controls, Frame, Kernel, MixLaw, Unit, engaged, implement_effect};
+
+const FULL_MIX_DEPTH: f32 = 0.25;
 
 const SPIN_SPEED: f64 = 3.0;
 const WIND_UP_SHARE: f64 = 0.12;
@@ -18,7 +20,8 @@ const ANTI_ALIAS_RATIO: f32 = 0.45;
 /// length (2 beats by default, from 1/4 to 32 beats, limited by the stored audio). The music
 /// stays stopped until the backspin is switched off, which brings the live music straight back.
 ///
-/// The depth knob sets the spin time, from 1/2 beat to 4 beats.
+/// The beat length sets the spin time. The depth knob blends the spin in over its first quarter,
+/// so from there on the record spins back completely.
 pub struct Backspin {
     unit: Unit<BackspinKernel>,
 }
@@ -40,14 +43,7 @@ impl Controls for Backspin {
     }
 
     fn apply_depth(&mut self, depth: f32) {
-        let beats = [
-            BeatLength::HALF,
-            BeatLength::ONE,
-            BeatLength::TWO,
-            BeatLength::FOUR,
-        ];
-        let index = (depth * (beats.len() - 1) as f32).round() as usize;
-        self.apply_beat(beats[index.min(beats.len() - 1)]);
+        self.unit.set_mix(engaged(depth, FULL_MIX_DEPTH));
     }
 
     fn apply_beat(&mut self, beat: BeatLength) {
