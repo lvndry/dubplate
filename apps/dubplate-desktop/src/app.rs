@@ -27,7 +27,7 @@ use std::time::{Duration, Instant};
 
 use dubplate_engine::{
     AudioOutput, Controller, DECK_COUNT, DeckId, DeckState, EFFECT_UNIT_COUNT, EffectUnitId,
-    EffectUnitState, EngineError, OutputConfig,
+    EffectUnitState, EngineError, MasterTempo, OutputConfig, SyncMode, TempoRange, TempoState,
 };
 use dubplate_midi::{Feedback, PadMode};
 use dubplate_rekordbox::HotCuePad;
@@ -43,7 +43,7 @@ use crate::collection::{Collection, CollectionTrack};
 use crate::commands::{Command, EffectEdit, JogMotion, Mode, Press};
 use crate::controls::{
     CROSSFADER_STEP, Control, MixerPositions, Orientation, Slider, fraction_at, master_gain_at,
-    nudged_tempo, tempo_at, tempo_fraction, trim_gain_at,
+    nudged_tempo_slider, tempo_fader, trim_gain_at,
 };
 use crate::deck::{
     Deck, DeckContent, HotCues, LoadError, PreparedTrack, TrackVisuals, prepare_track,
@@ -528,8 +528,30 @@ impl DubplateApp {
             }
             Command::InstantDouble(deck) => self.instant_double(deck, cx),
             Command::NudgeTempo(deck, direction) => {
-                let tempo = nudged_tempo(self.mixer.tempos[deck.index()], direction.sign());
-                self.set_control(Control::Tempo(deck), tempo_fraction(tempo), cx);
+                let slider = nudged_tempo_slider(
+                    self.mixer.tempo_sliders[deck.index()],
+                    direction.sign(),
+                    self.tempo_range(deck),
+                );
+                self.set_control(Control::Tempo(deck), slider, cx);
+            }
+            Command::ToggleSync(deck) => {
+                let synced = self
+                    .tempo_state(deck)
+                    .is_some_and(|state| state.sync != SyncMode::Off);
+                let mode = if synced {
+                    SyncMode::Off
+                } else {
+                    SyncMode::Beat
+                };
+                self.engine_command(cx, |controller| controller.set_sync(deck, mode));
+            }
+            Command::MakeTempoMaster(deck) => self.engine_command(cx, |controller| {
+                controller.set_master_tempo(MasterTempo::Deck(deck))
+            }),
+            Command::CycleTempoRange(deck) => {
+                let range = self.tempo_range(deck).next();
+                self.engine_command(cx, |controller| controller.set_tempo_range(deck, range));
             }
             Command::SetControl(control, fraction) => self.set_control(control, fraction, cx),
             Command::MoveCrossfader(direction) => {
@@ -731,9 +753,11 @@ impl DubplateApp {
         let side = &mut self.decks[deck.index()];
         side.begin_load(track, hot_cues);
         side.content = DeckContent::Loaded(visuals);
+        let range = self.tempo_range(source);
+        self.engine_command(cx, |controller| controller.set_tempo_range(deck, range));
         self.set_control(
             Control::Tempo(deck),
-            tempo_fraction(self.mixer.tempos[source.index()]),
+            self.mixer.tempo_sliders[source.index()],
             cx,
         );
         self.signal_controllers(Feedback::TrackLoaded(controller_deck(deck)));
@@ -812,9 +836,10 @@ impl DubplateApp {
                 self.engine_command(cx, |controller| controller.set_crossfader(fraction));
             }
             Control::Tempo(deck) => {
-                let tempo = tempo_at(fraction);
-                self.mixer.tempos[deck.index()] = tempo;
-                self.engine_command(cx, |controller| controller.set_tempo(deck, tempo));
+                self.mixer.tempo_sliders[deck.index()] = fraction;
+                self.engine_command(cx, |controller| {
+                    controller.set_tempo_fader(deck, tempo_fader(fraction))
+                });
             }
             Control::MasterLevel => {
                 self.mixer.master_level = fraction;
@@ -895,6 +920,21 @@ impl DubplateApp {
         }
         self.update_lights();
         cx.notify();
+    }
+
+    /// A deck's tempo and sync, when the engine runs.
+    pub(super) fn tempo_state(&self, deck: DeckId) -> Option<TempoState> {
+        self.engine
+            .as_ref()
+            .ok()
+            .map(|engine| engine.controller.tempo_state(deck))
+    }
+
+    /// How far a deck's tempo slider reaches.
+    pub(super) fn tempo_range(&self, deck: DeckId) -> TempoRange {
+        self.tempo_state(deck)
+            .map(|state| state.tempo_range)
+            .unwrap_or_default()
     }
 
     /// An effect unit's settings, when the engine runs.
@@ -1051,6 +1091,9 @@ impl DubplateApp {
             cue,
             pad_mode: self.pad_modes[deck.index()],
             pads: pad_lights.pads,
+            sync: self
+                .tempo_state(deck)
+                .is_some_and(|state| state.sync != SyncMode::Off),
             level: meter_level(self.deck_meters[deck.index()].decibels()),
             loop_in: pad_lights.loop_in,
             loop_out: pad_lights.loop_out,

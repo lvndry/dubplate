@@ -150,6 +150,12 @@ pub enum Command {
     InstantDouble(DeckId),
     /// Change a deck's tempo by one step.
     NudgeTempo(DeckId, Direction),
+    /// BEAT SYNC: lock a deck to the tempo master's tempo and beats, or let it go.
+    ToggleSync(DeckId),
+    /// Make a deck the tempo master that synced decks follow, as holding BEAT SYNC does.
+    MakeTempoMaster(DeckId),
+    /// Step a deck's tempo range: ±6%, ±10%, ±16%, wide.
+    CycleTempoRange(DeckId),
     /// Move a fader or knob to a position from 0.0 to 1.0.
     SetControl(Control, f32),
     /// Move the crossfader one step towards deck A ([`Direction::Down`]) or deck B.
