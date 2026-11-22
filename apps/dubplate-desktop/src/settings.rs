@@ -48,6 +48,9 @@ pub enum SettingsError {
 pub struct Settings {
     /// Whether a playing deck refuses a new track.
     pub lock_playing_deck: bool,
+    /// Whether each track loads with the gain that brings it to a common loudness, as
+    /// rekordbox's Auto Gain, on by default as there.
+    pub auto_gain: bool,
     /// The sound card last used, by name.
     pub audio_device: Option<String>,
     /// The music folders, whether rekordbox is in the library, and the relinked files.
@@ -210,6 +213,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             lock_playing_deck: true,
+            auto_gain: true,
             audio_device: None,
             library: LibrarySettings::default(),
             effect_units: Vec::new(),
@@ -315,6 +319,7 @@ mod tests {
         let path = directory.path().join("nested").join(FILE_NAME);
         let settings = Settings {
             lock_playing_deck: false,
+            auto_gain: false,
             audio_device: Some("Studio Speakers".to_owned()),
             library: LibrarySettings {
                 music_folders: vec![
@@ -402,6 +407,10 @@ mod tests {
         std::fs::write(&path, "audio_device = \"Headphones\"\n").unwrap();
         let settings = Settings::load(&path).unwrap();
         assert!(settings.lock_playing_deck);
+        assert!(
+            settings.auto_gain,
+            "Auto Gain is on until the DJ turns it off, as in rekordbox"
+        );
         assert_eq!(settings.audio_device.as_deref(), Some("Headphones"));
         assert!(settings.library.music_folders.is_empty());
         assert!(

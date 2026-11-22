@@ -18,6 +18,7 @@ mod editor;
 mod energy;
 mod export;
 mod grid;
+mod loudness;
 mod ready;
 mod session;
 mod store;
@@ -40,6 +41,7 @@ pub use export::{
     REKORDBOX_IMPORT_STEPS, RekordboxCollection, SetExport, default_export_folder,
     export_file_name, file_track, folder_track, rekordbox_xml, tempo_markers,
 };
+pub use loudness::{Lufs, integrated_loudness};
 pub use grid::{BEATS_PER_BAR, GridCorrection, GridEdit, TrackGrid};
 pub use ready::{ReadyProblem, ReadyReport, Severity, TrackReadiness, ready_report};
 pub use session::{SetCompletion, SetJob, SetSession, SetSessionError};

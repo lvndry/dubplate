@@ -102,6 +102,8 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
                 ))
                 .child(section_title("rekordbox"))
                 .child(rekordbox_row(app, cx))
+                .child(section_title("Mixer"))
+                .child(auto_gain_row(app, cx))
                 .child(section_title("Sound card"))
                 .children(output_rows)
                 .focus_trap("settings-focus-trap", &app.modal_focus),
@@ -319,6 +321,51 @@ fn output_row(
                         .truncate()
                         .when(current, |name| name.font_weight(FontWeight::MEDIUM))
                         .child(device.name.clone()),
+                )
+                .child(
+                    div()
+                        .text_size(theme::SMALL_TEXT_SIZE)
+                        .text_color(theme::MUTED)
+                        .child(detail),
+                ),
+        )
+}
+
+/// Auto Gain, on or off, as rekordbox's Preferences > Controller > Mixer > Auto Gain.
+fn auto_gain_row(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoElement + use<> {
+    let on = app.settings.auto_gain;
+    let detail = "Each track loads at a common loudness: rekordbox's Auto Gain for its tracks, \
+                  Dubplate's loudness measure for the others. TRIM stays where you set it.";
+    div()
+        .id("auto-gain")
+        .accessible_toggle(format!("Auto Gain. {detail}"), on)
+        .flex()
+        .items_center()
+        .gap(px(10.0))
+        .py(px(6.0))
+        .px(px(6.0))
+        .rounded(theme::SMALL_RADIUS)
+        .cursor_pointer()
+        .hover(|row| row.bg(theme::RAISED))
+        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.toggle_auto_gain(cx)))
+        .child(
+            div()
+                .size(px(8.0))
+                .flex_none()
+                .rounded_full()
+                .border_1()
+                .border_color(if on { theme::OK } else { theme::LINE })
+                .when(on, |dot| dot.bg(theme::OK)),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .min_w_0()
+                .child(
+                    div()
+                        .when(on, |name| name.font_weight(FontWeight::MEDIUM))
+                        .child(if on { "Auto Gain: on" } else { "Auto Gain: off" }),
                 )
                 .child(
                     div()

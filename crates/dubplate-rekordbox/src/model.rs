@@ -35,6 +35,10 @@ pub struct Track {
     pub analysis_path: Option<String>,
     /// When the track was added, as rekordbox wrote it.
     pub date_added: Option<String>,
+    /// The gain rekordbox's Auto Gain gives the track, in decibels, from its analysis: the
+    /// value of the Auto Gain knob in rekordbox's grid edit panel. `None` before rekordbox
+    /// analysed it.
+    pub auto_gain_db: Option<f32>,
 }
 
 /// Whether a cue is a memory cue or a hot cue, and on which pad.

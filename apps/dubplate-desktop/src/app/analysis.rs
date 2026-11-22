@@ -148,6 +148,7 @@ impl DubplateApp {
         for deck in DeckId::ALL {
             self.give_deck_analysed_grid(deck, cx);
         }
+        self.level_decks_with_new_analysis(cx);
         self.check_again_with_analysed_grids(&answered, cx);
         self.refresh_prepare_view(cx);
         self.browser

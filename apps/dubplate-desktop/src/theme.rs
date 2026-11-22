@@ -68,6 +68,8 @@ pub const ALERT: Rgba = hex(0xF07167);
 pub const TRACK: Rgba = white_alpha(0.1);
 /// Slider and fader thumbs.
 pub const THUMB: Rgba = hex(0xE6E7E9);
+/// The mark on a knob's ring where its level really is, such as TRIM with Auto Gain.
+pub const KNOB_MARK: Rgba = THUMB;
 /// A lit meter segment.
 pub const METER_ON: Rgba = white_alpha(0.72);
 /// An unlit meter segment.

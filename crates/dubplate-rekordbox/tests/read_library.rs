@@ -34,6 +34,23 @@ fn reads_tracks_with_their_names_key_and_tempo() {
 }
 
 #[test]
+fn reads_the_auto_gain_rekordbox_measured() {
+    let (_directory, library) = common::open_fixture();
+    let tracks = library.tracks().unwrap();
+    let gain_of = |title: &str| {
+        tracks
+            .iter()
+            .find(|track| track.title.as_deref() == Some(title))
+            .unwrap()
+            .auto_gain_db
+    };
+    // GainHigh 0x3F8C and GainLow 0xCCCD are the bits of the single 1.1: +0.83 dB.
+    let saltwater = gain_of("Saltwater Hymn").unwrap();
+    assert!((saltwater - 0.827_853_7).abs() < 1e-4, "{saltwater}");
+    assert_eq!(gain_of("Low Orbit"), None, "its only mixer row is deleted");
+}
+
+#[test]
 fn reads_memory_cues_hot_cues_and_loops_but_not_deleted_cues() {
     let (_directory, library) = open_fixture();
     let cues = library.cues().unwrap();

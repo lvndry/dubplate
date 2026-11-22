@@ -4,6 +4,7 @@
 
 mod analysis;
 mod audio;
+mod auto_gain;
 mod audition;
 mod deck_grid;
 mod deck_panel;
@@ -59,12 +60,13 @@ use gpui::{
 };
 
 use crate::analysis::{AnalysisPriority, TrackAnalyser, TrackAnalyses};
+use crate::auto_gain::AutoGain;
 use crate::browser::{Browser, BrowserEvent, LibraryStatus};
 use crate::collection::{Collection, CollectionTrack, TrackIndex};
 use crate::commands::{Command, EffectEdit, JogMotion, Mode, Press};
 use crate::controls::{
     CROSSFADER_STEP, Control, MixerPositions, Orientation, Slider, fraction_at, master_gain_at,
-    nudged_tempo_slider, tempo_fader, trim_gain_at,
+    nudged_tempo_slider, tempo_fader,
 };
 use crate::cue_marks::{MarkerPulse, SeenMarks};
 use crate::deck::{
@@ -224,6 +226,7 @@ pub struct DubplateApp {
     analysis_collecting: bool,
     recording: Option<Recording>,
     recording_skip_reported: bool,
+    auto_gains: [Option<AutoGain>; DECK_COUNT],
     smart_cfx_menu: bool,
     effect_menu: Option<EffectMenu>,
     fx_select_presses: u64,
@@ -423,6 +426,7 @@ impl DubplateApp {
             analysis_collecting: false,
             recording: None,
             recording_skip_reported: false,
+            auto_gains: [None; DECK_COUNT],
             smart_cfx_menu: false,
             effect_menu: None,
             fx_select_presses: 0,
@@ -776,6 +780,7 @@ impl DubplateApp {
                 self.decks[deck.index()].commit_load(generation, visuals, grid_source);
                 self.signal_controllers(Feedback::TrackLoaded(controller_deck(deck)));
                 self.give_deck_analysed_grid(deck, cx);
+                self.level_deck(deck, cx);
                 self.refresh_filter_reference(cx);
                 if needs_waveform {
                     self.draw_waveform_from_audio(deck, generation, cx);
@@ -1148,6 +1153,7 @@ impl DubplateApp {
         if needs_waveform {
             self.draw_waveform_from_audio(deck, generation, cx);
         }
+        self.level_deck(deck, cx);
         self.mixer.tempo_sliders[deck.index()] = self.mixer.tempo_sliders[source.index()];
         self.signal_controllers(Feedback::TrackLoaded(controller_deck(deck)));
     }
@@ -1207,9 +1213,7 @@ impl DubplateApp {
             }
             Control::Trim(deck) => {
                 self.mixer.trims[deck.index()] = fraction;
-                self.engine_command(cx, |controller| {
-                    controller.set_gain(deck, trim_gain_at(fraction))
-                });
+                self.apply_trim(deck, cx);
             }
             Control::Eq(deck, band) => {
                 self.mixer.eqs[deck.index()][band.index()] = fraction;

@@ -14,10 +14,11 @@ use thiserror::Error;
 
 use crate::analysis::{AnalysedGrid, AudioAnalysis, analysis_version};
 use crate::energy::TrackEnergy;
+use crate::loudness::Lufs;
 use crate::store::is_inside_rekordbox;
 
 /// The highest schema version the cache can bring a database to.
-const SCHEMA_VERSION: u32 = 1;
+const SCHEMA_VERSION: u32 = 2;
 
 /// One migration per schema version, index = target version - 1.
 const MIGRATIONS: &[&str] = &[r#"
@@ -38,11 +39,16 @@ CREATE TABLE analysis (
 );
 
 PRAGMA user_version = 1;
+"#, r#"
+ALTER TABLE analysis ADD COLUMN loudness_lufs REAL;
+
+PRAGMA user_version = 2;
 "#];
 
 /// The columns a cached analysis is read back from, in the order [`analysis_columns_of_row`] reads them.
 const ANALYSIS_COLUMNS: &str = "duration_seconds, bpm, grid_bpm, grid_first_downbeat_seconds, \
-                                camelot_key, energy_rating, energy_score, energy_curve_json";
+                                camelot_key, energy_rating, energy_score, energy_curve_json, \
+                                loudness_lufs";
 
 /// Errors opening or using Dubplate's analysis cache.
 #[derive(Debug, Error)]
@@ -158,8 +164,8 @@ impl AnalysisCache {
         self.connection.execute(
             "INSERT INTO analysis (track_path, file_size, modified_ms, analysis_version,
                  duration_seconds, bpm, grid_bpm, grid_first_downbeat_seconds, camelot_key,
-                 energy_rating, energy_score, energy_curve_json, analysed_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+                 energy_rating, energy_score, energy_curve_json, loudness_lufs, analysed_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
              ON CONFLICT (track_path) DO UPDATE SET
                  file_size = excluded.file_size,
                  modified_ms = excluded.modified_ms,
@@ -172,6 +178,7 @@ impl AnalysisCache {
                  energy_rating = excluded.energy_rating,
                  energy_score = excluded.energy_score,
                  energy_curve_json = excluded.energy_curve_json,
+                 loudness_lufs = excluded.loudness_lufs,
                  analysed_at = excluded.analysed_at",
             params![
                 path.to_string_lossy(),
@@ -186,6 +193,7 @@ impl AnalysisCache {
                 energy.map(|energy| energy.rating),
                 energy.map(|energy| f64::from(energy.score)),
                 curve_json,
+                analysis.loudness.map(|loudness| f64::from(loudness.0)),
                 now_unix_millis(),
             ],
         )?;
@@ -212,6 +220,7 @@ struct AnalysisColumns {
     energy_rating: Option<u8>,
     energy_score: Option<f64>,
     energy_curve_json: Option<String>,
+    loudness_lufs: Option<f64>,
 }
 
 fn analysis_columns_of_row(row: &Row<'_>) -> rusqlite::Result<AnalysisColumns> {
@@ -224,6 +233,7 @@ fn analysis_columns_of_row(row: &Row<'_>) -> rusqlite::Result<AnalysisColumns> {
         energy_rating: row.get(5)?,
         energy_score: row.get(6)?,
         energy_curve_json: row.get(7)?,
+        loudness_lufs: row.get(8)?,
     })
 }
 
@@ -253,6 +263,7 @@ fn analysis_of_columns(columns: AnalysisColumns) -> Result<AudioAnalysis, Analys
         beat_grid,
         key: columns.camelot_key.as_deref().and_then(Key::parse_file_key),
         energy,
+        loudness: columns.loudness_lufs.map(|lufs| Lufs(lufs as f32)),
     })
 }
 
