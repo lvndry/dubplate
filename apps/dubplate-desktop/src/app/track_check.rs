@@ -34,6 +34,8 @@ const PHRASE_LABEL_SIZE: f32 = 10.0;
 /// ems, so their width is known before they are drawn.
 const MONO_ADVANCE_EM: f32 = 0.6;
 const PHRASE_LABEL_PADDING: f32 = 4.0;
+/// The chip's left edge, which marks where the phrase starts.
+const PHRASE_LABEL_EDGE: f32 = 1.0;
 /// The space kept between two phrase names.
 const PHRASE_LABEL_GAP: f32 = 3.0;
 /// The overview's width before it is first drawn, to place the names on the first frame.
@@ -471,7 +473,7 @@ fn overview(
                 .items_center()
                 .px(px(PHRASE_LABEL_PADDING))
                 .rounded(px(3.0))
-                .border_l_1()
+                .border_l(px(PHRASE_LABEL_EDGE))
                 .border_color(theme::TEXT)
                 .bg(theme::RAISED)
                 .font_family(MONO_FAMILY)
@@ -571,7 +573,8 @@ fn place_phrase_labels(
         .filter_map(|(seconds, label)| {
             let left = (seconds / duration).clamp(0.0, 1.0) * width;
             let label_width = label.chars().count() as f32 * PHRASE_LABEL_SIZE * MONO_ADVANCE_EM
-                + PHRASE_LABEL_PADDING * 2.0;
+                + PHRASE_LABEL_PADDING * 2.0
+                + PHRASE_LABEL_EDGE;
             let fits = left >= free_from && left + label_width <= width;
             fits.then(|| {
                 free_from = left + label_width + PHRASE_LABEL_GAP;
