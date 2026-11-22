@@ -54,11 +54,14 @@ impl EnergyAnalyser for AnalysisQueue {
         let result = self.results().try_recv().ok()?;
         Some(AnalysedTrack {
             path: result.path,
-            outcome: result.outcome.map(|analysis| {
-                analysis.energy.map(|energy| EnergyReading {
-                    rating: energy.rating,
+            outcome: result
+                .outcome
+                .map(|analysis| {
+                    analysis.energy.map(|energy| EnergyReading {
+                        rating: energy.rating,
+                    })
                 })
-            }),
+                .map_err(|failure| failure.to_string()),
         })
     }
 }

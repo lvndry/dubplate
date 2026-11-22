@@ -5,7 +5,8 @@ use std::fs;
 use std::path::Path;
 
 use dubplate_prep::{
-    AnalysisCache, AnalysisCacheError, AnalysisQueue, AudioAnalysis, Key, Priority, analyse_track,
+    AnalysisCache, AnalysisCacheError, AnalysisFailure, AnalysisQueue, AudioAnalysis, Key,
+    Priority, analyse_track,
 };
 
 const SAMPLE_RATE: u32 = 44_100;
@@ -395,6 +396,11 @@ fn an_unreadable_track_is_answered_with_why() {
     queue.request(missing.clone(), Priority::Set);
     let answer = queue.results().recv().expect("the answer arrives");
     assert_eq!(answer.path, missing);
-    assert!(answer.outcome.is_err());
+    let failure = answer.outcome.expect_err("a missing file has no analysis");
+    assert!(matches!(failure, AnalysisFailure::Unreadable { .. }));
+    assert_eq!(
+        failure.to_string(),
+        format!("the file at {} is not readable", missing.display())
+    );
     assert_eq!(queue.decoded_count(), 0);
 }

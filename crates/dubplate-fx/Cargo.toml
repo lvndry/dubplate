@@ -6,6 +6,9 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[dependencies]
+thiserror = "2.0.21"
+
 [dev-dependencies]
 criterion = "0.8.2"
 dubplate-engine = { path = "../dubplate-engine" }

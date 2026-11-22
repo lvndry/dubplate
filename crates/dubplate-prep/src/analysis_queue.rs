@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread::JoinHandle;
 
-use crate::analysis::{AudioAnalysis, analyse_track};
+use crate::analysis::{AnalysisError, AudioAnalysis, analyse_track};
 use crate::analysis_cache::{AnalysisCache, AnalysisCacheError};
 
 /// The order in which tracks are analysed.
@@ -49,7 +49,39 @@ pub struct AnalysisResult {
     /// The track the request was for.
     pub path: PathBuf,
     /// What the analysis found, or why the track could not be analysed.
-    pub outcome: Result<AudioAnalysis, String>,
+    pub outcome: Result<AudioAnalysis, AnalysisFailure>,
+}
+
+/// Why the worker could not answer a request with an analysis.
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum AnalysisFailure {
+    /// The cache could not be opened, so the worker answers every request with this.
+    #[error(transparent)]
+    CacheUnavailable(Arc<AnalysisCacheError>),
+    /// The cache could not be read or written for this track.
+    #[error(transparent)]
+    Cache(Arc<AnalysisCacheError>),
+    /// The track's file could not be read.
+    #[error("the file at {} is not readable", path.display())]
+    Unreadable {
+        /// The track's file.
+        path: PathBuf,
+    },
+    /// The file was read but could not be decoded or analysed.
+    #[error(transparent)]
+    Analysis(Arc<AnalysisError>),
+}
+
+impl From<AnalysisCacheError> for AnalysisFailure {
+    fn from(error: AnalysisCacheError) -> Self {
+        Self::Cache(Arc::new(error))
+    }
+}
+
+impl From<AnalysisError> for AnalysisFailure {
+    fn from(error: AnalysisError) -> Self {
+        Self::Analysis(Arc::new(error))
+    }
 }
 
 /// A track waiting to be analysed.
@@ -206,7 +238,7 @@ impl Worker {
         let mut cache = match AnalysisCache::open(&cache_path) {
             Ok(cache) => cache,
             Err(error) => {
-                self.answer_all_with(&error.to_string());
+                self.answer_all_with(&AnalysisFailure::CacheUnavailable(Arc::new(error)));
                 return;
             }
         };
@@ -240,31 +272,28 @@ impl Worker {
         &self,
         track: &QueuedTrack,
         cache: &mut AnalysisCache,
-    ) -> Result<AudioAnalysis, String> {
-        if let Some(cached) = cache.get(&track.path).map_err(|error| error.to_string())? {
+    ) -> Result<AudioAnalysis, AnalysisFailure> {
+        if let Some(cached) = cache.get(&track.path)? {
             return Ok(cached);
         }
         if std::fs::metadata(&track.path).is_err() {
-            return Err(format!(
-                "the file at {} is not readable",
-                track.path.display()
-            ));
+            return Err(AnalysisFailure::Unreadable {
+                path: track.path.clone(),
+            });
         }
         self.decoded.fetch_add(1, Ordering::SeqCst);
-        let analysis = analyse_track(&track.path).map_err(|error| error.to_string())?;
-        cache
-            .put(&track.path, &analysis)
-            .map_err(|error| error.to_string())?;
+        let analysis = analyse_track(&track.path)?;
+        cache.put(&track.path, &analysis)?;
         Ok(analysis)
     }
 
-    /// The cache did not open: answers every request with `message` until the queue is dropped.
-    fn answer_all_with(&self, message: &str) {
+    /// The cache did not open: answers every request with `failure` until the queue is dropped.
+    fn answer_all_with(&self, failure: &AnalysisFailure) {
         for batch in self.request_receiver.iter() {
             for track in batch {
                 let _ = self.result_sender.send(AnalysisResult {
                     path: track.path,
-                    outcome: Err(message.to_owned()),
+                    outcome: Err(failure.clone()),
                 });
             }
         }

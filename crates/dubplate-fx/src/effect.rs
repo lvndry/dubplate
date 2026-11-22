@@ -143,18 +143,17 @@ impl fmt::Display for EffectKind {
 }
 
 /// The error returned when text names no effect.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("`{text}` is not an effect; choose one of: {choices}", choices = EffectNames)]
 pub struct ParseEffectKindError {
     text: String,
 }
 
-impl fmt::Display for ParseEffectKindError {
+/// Every effect's name, separated by commas.
+struct EffectNames;
+
+impl fmt::Display for EffectNames {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            formatter,
-            "`{}` is not an effect; choose one of: ",
-            self.text
-        )?;
         for (index, kind) in EffectKind::ALL.iter().enumerate() {
             if index > 0 {
                 formatter.write_str(", ")?;
@@ -164,8 +163,6 @@ impl fmt::Display for ParseEffectKindError {
         Ok(())
     }
 }
-
-impl std::error::Error for ParseEffectKindError {}
 
 impl FromStr for EffectKind {
     type Err = ParseEffectKindError;
@@ -211,6 +208,11 @@ mod tests {
         for kind in EffectKind::ALL {
             assert_eq!(kind.name().parse::<EffectKind>(), Ok(kind));
         }
-        assert!("wah".parse::<EffectKind>().is_err());
+        let error = "wah".parse::<EffectKind>().unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "`wah` is not an effect; choose one of: echo, ping-pong, reverb, sweep, low-pass, \
+             high-pass, band-pass, flanger, phaser, gate, crusher, brake, backspin"
+        );
     }
 }

@@ -26,7 +26,7 @@ pub use analysis::{
     AnalysedGrid, AnalysisError, AudioAnalysis, analyse_audio, analyse_track, analysis_version,
 };
 pub use analysis_cache::{AnalysisCache, AnalysisCacheError};
-pub use analysis_queue::{AnalysisQueue, AnalysisResult, Priority};
+pub use analysis_queue::{AnalysisFailure, AnalysisQueue, AnalysisResult, Priority};
 pub use cue_proposal::{ProposalSource, ProposedCue, ProposedCues, propose_mix_cues};
 pub use energy::{EnergyWindow, TrackEnergy};
 pub use euphoria_core::harmony::EnergyDirection;

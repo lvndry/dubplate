@@ -151,22 +151,11 @@ impl fmt::Display for BeatLength {
 }
 
 /// The error returned when text is not a beat length such as `1/2`, `3/4` or `4`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("`{text}` is not a beat length from 1/16 to 32, such as 1/2, 3/4 or 4")]
 pub struct ParseBeatLengthError {
     text: String,
 }
-
-impl fmt::Display for ParseBeatLengthError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            formatter,
-            "`{}` is not a beat length from 1/16 to 32, such as 1/2, 3/4 or 4",
-            self.text
-        )
-    }
-}
-
-impl std::error::Error for ParseBeatLengthError {}
 
 impl FromStr for BeatLength {
     type Err = ParseBeatLengthError;
@@ -223,6 +212,10 @@ mod tests {
         assert!("64".parse::<BeatLength>().is_err());
         assert!("0".parse::<BeatLength>().is_err());
         assert!("half".parse::<BeatLength>().is_err());
+        assert_eq!(
+            "1/32".parse::<BeatLength>().unwrap_err().to_string(),
+            "`1/32` is not a beat length from 1/16 to 32, such as 1/2, 3/4 or 4"
+        );
     }
 
     #[test]
