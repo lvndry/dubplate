@@ -65,6 +65,12 @@ pub const OK: Rgba = hex(0x7FD1A4);
 pub const ATTENTION: Rgba = hex(0xF2C46D);
 /// Problems the DJ has to act on.
 pub const ALERT: Rgba = hex(0xF07167);
+/// A key that follows smoothly in the library's Match column: same key, one step, relative.
+pub const KEY_SMOOTH: Rgba = OK;
+/// A key move that lifts the energy, such as an energy boost.
+pub const KEY_LIFT: Rgba = hex(0x6E86E8);
+/// Keys that clash.
+pub const KEY_CLASH: Rgba = ALERT;
 /// The track of sliders and the empty part of the effect amount.
 pub const TRACK: Rgba = white_alpha(0.1);
 /// Slider and fader thumbs.

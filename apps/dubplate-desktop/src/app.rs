@@ -19,6 +19,7 @@ mod knob;
 mod lane_drag;
 mod lanes;
 mod library;
+mod library_matches;
 mod library_panel;
 mod memory_cues;
 mod mixer;
@@ -222,6 +223,8 @@ pub struct DubplateApp {
     waveform_cache: WaveformCache,
     check_cursor_seconds: f64,
     catalogue: Arc<Catalogue>,
+    /// What the library's Match column was last worked out for.
+    match_source: Option<library_matches::MatchSource>,
     /// The tracks a deck played this session, by file.
     played_tracks: Arc<HashSet<PathBuf>>,
     missing: Arc<Vec<Missing>>,
@@ -348,8 +351,18 @@ impl DubplateApp {
             ..MixerPositions::default()
         });
         let mode = settings.screen();
-        let (engine, audio_problem) =
+        let (mut engine, audio_problem) =
             audio::start_engine(&mixer, settings.audio_device.as_deref(), &devices);
+        if let Ok(engine) = &mut engine {
+            for deck in DeckId::ALL {
+                if let Err(problem) = engine
+                    .controller
+                    .set_key_lock(deck, settings.key_lock_on_new_tracks)
+                {
+                    problems.push(format!("Key lock could not be set: {problem}"));
+                }
+            }
+        }
         problems.extend(audio_problem);
         let hardware = match &devices {
             DeviceAccess::Offline { script } => {
@@ -446,6 +459,7 @@ impl DubplateApp {
             waveform_cache: WaveformCache::default(),
             check_cursor_seconds: 0.0,
             catalogue: Arc::default(),
+            match_source: None,
             played_tracks: Arc::default(),
             missing: Arc::default(),
             relinking: false,
@@ -836,6 +850,7 @@ impl DubplateApp {
         deck: DeckId,
         mut prepared: PreparedTrack,
     ) -> Result<TrackVisuals, LoadError> {
+        let key_lock = self.settings.key_lock_on_new_tracks;
         let engine = self
             .engine
             .as_mut()
@@ -844,6 +859,7 @@ impl DubplateApp {
         engine
             .controller
             .load_prepared_track(deck, prepared.audio, prepared.beat_grid)?;
+        engine.controller.set_key_lock(deck, key_lock)?;
         // Loading clears transient pad gestures on the audio thread in the same command.
         self.held_pads[deck.index()] = None;
         Ok(visuals)
@@ -956,6 +972,10 @@ impl DubplateApp {
             Command::MakeTempoMaster(deck) => self.engine_command(cx, |controller| {
                 controller.set_master_tempo(MasterTempo::Deck(deck))
             }),
+            Command::SetKeyLockOnNewTracks(on) => {
+                self.settings.key_lock_on_new_tracks = on;
+                self.save_settings(cx);
+            }
             Command::Stems(deck, action) => self.apply_stem_action(deck, action, cx),
             Command::ToggleKeyLock(deck) => {
                 let locked = self.key_lock(deck);
@@ -2004,6 +2024,7 @@ impl Render for DubplateApp {
         self.modal_active = modal_open;
         let frames = self.advance_frame(window);
         self.mark_played(&frames, cx);
+        self.follow_library_matches(cx);
         let root = div()
             .key_context(WINDOW_CONTEXT)
             .track_focus(&self.focus_handle)

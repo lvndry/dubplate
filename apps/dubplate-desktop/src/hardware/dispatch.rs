@@ -381,7 +381,9 @@ impl Dispatcher {
 
 #[cfg(test)]
 mod tests {
-    use dubplate_midi::{PadMode, Ticks, U14};
+    use std::sync::Arc;
+
+    use dubplate_midi::{Decoder, Mapping, PadMode, Ticks, U14};
 
     use super::*;
 
@@ -501,10 +503,10 @@ mod tests {
 
     #[test]
     fn the_flx4_cue_loop_call_arrows_call_store_and_delete_memory_cues() {
-        let mapping = dubplate_midi::Mapping::built_in_for_port("DDJ-FLX4")
+        let mapping = Mapping::built_in_for_port("DDJ-FLX4")
             .expect("the built-in mappings parse")
             .expect("the FLX4 has a built-in mapping");
-        let mut decoder = dubplate_midi::Decoder::new(std::sync::Arc::new(mapping));
+        let mut decoder = Decoder::new(Arc::new(mapping));
         let mut dispatcher = Dispatcher::default();
         let surface = Surface::default();
         let messages: [[u8; 3]; 8] = [
@@ -939,6 +941,169 @@ mod tests {
             ],
         );
         assert!(commands.is_empty(), "{commands:?}");
+    }
+
+    /// What a DDJ-FLX4 sent back on its own when asked for its positions: the left tempo and
+    /// trims, EQs, CFX, faders and crossfader, the LEVEL/DEPTH knob, the CH SELECT lever on 2.
+    const FLX4_POSITION_REPORT: [[u8; 3]; 42] = [
+        [0xB0, 0x04, 0x47],
+        [0xB0, 0x24, 0x58],
+        [0xB1, 0x04, 0x3B],
+        [0xB1, 0x24, 0x6F],
+        [0xB0, 0x07, 0x40],
+        [0xB0, 0x27, 0x00],
+        [0xB1, 0x07, 0x40],
+        [0xB1, 0x27, 0x00],
+        [0xB0, 0x0B, 0x40],
+        [0xB0, 0x2B, 0x00],
+        [0xB1, 0x0B, 0x40],
+        [0xB1, 0x2B, 0x00],
+        [0xB0, 0x0F, 0x40],
+        [0xB0, 0x2F, 0x00],
+        [0xB1, 0x0F, 0x40],
+        [0xB1, 0x2F, 0x00],
+        [0xB0, 0x13, 0x7F],
+        [0xB0, 0x33, 0x7F],
+        [0xB1, 0x13, 0x00],
+        [0xB1, 0x33, 0x00],
+        [0xB0, 0x00, 0x40],
+        [0xB0, 0x20, 0x00],
+        [0xB1, 0x00, 0x55],
+        [0xB1, 0x20, 0x45],
+        [0xB6, 0x17, 0x40],
+        [0xB6, 0x37, 0x00],
+        [0xB6, 0x18, 0x40],
+        [0xB6, 0x38, 0x00],
+        [0xB6, 0x1F, 0x39],
+        [0xB6, 0x3F, 0x6B],
+        [0xB4, 0x02, 0x00],
+        [0xB4, 0x22, 0x00],
+        [0xB5, 0x02, 0x00],
+        [0xB5, 0x22, 0x00],
+        [0x90, 0x17, 0x7F],
+        [0x91, 0x17, 0x7F],
+        [0x9F, 0x47, 0x7F],
+        [0x9F, 0x49, 0x7F],
+        [0x94, 0x10, 0x00],
+        [0x94, 0x11, 0x00],
+        [0x95, 0x10, 0x00],
+        [0x95, 0x11, 0x7F],
+    ];
+
+    fn report_fraction(most_significant: u8, least_significant: u8) -> f32 {
+        f32::from(u16::from(most_significant) << 7 | u16::from(least_significant))
+            / f32::from(U14::MAX.get())
+    }
+
+    fn replay_report(
+        dispatcher: &mut Dispatcher,
+        surface: &Surface,
+        report: &[[u8; 3]],
+    ) -> Vec<Command> {
+        let mapping = Mapping::built_in_for_port("DDJ-FLX4").unwrap().unwrap();
+        let mut decoder = Decoder::new(Arc::new(mapping));
+        let now = Instant::now();
+        report
+            .iter()
+            .filter_map(|bytes| decoder.decode(bytes))
+            .filter_map(|event| dispatcher.dispatch(event, now, surface))
+            .collect()
+    }
+
+    fn set_to(commands: &[Command], control: Control) -> f32 {
+        commands
+            .iter()
+            .rev()
+            .find_map(|command| match command {
+                Command::SetControl(set, fraction) if *set == control => Some(*fraction),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("{control:?} was not set"))
+    }
+
+    #[test]
+    fn the_controllers_position_report_sets_every_control_it_covers() {
+        let mut dispatcher = Dispatcher::default();
+        let surface = fx_surface();
+        let unit = EffectUnitId::ALL[1];
+        let commands = replay_report(&mut dispatcher, &surface, &FLX4_POSITION_REPORT);
+        let expected = [
+            (Control::Trim(DeckId::A), 0x47, 0x58),
+            (Control::Trim(DeckId::B), 0x3B, 0x6F),
+            (
+                Control::Eq(DeckId::A, dubplate_engine::EqBand::High),
+                0x40,
+                0x00,
+            ),
+            (
+                Control::Eq(DeckId::A, dubplate_engine::EqBand::Mid),
+                0x40,
+                0x00,
+            ),
+            (
+                Control::Eq(DeckId::A, dubplate_engine::EqBand::Low),
+                0x40,
+                0x00,
+            ),
+            (
+                Control::Eq(DeckId::B, dubplate_engine::EqBand::High),
+                0x40,
+                0x00,
+            ),
+            (
+                Control::Eq(DeckId::B, dubplate_engine::EqBand::Mid),
+                0x40,
+                0x00,
+            ),
+            (
+                Control::Eq(DeckId::B, dubplate_engine::EqBand::Low),
+                0x40,
+                0x00,
+            ),
+            (Control::ChannelFader(DeckId::A), 0x7F, 0x7F),
+            (Control::ChannelFader(DeckId::B), 0x00, 0x00),
+            (Control::Tempo(DeckId::A), 0x40, 0x00),
+            (Control::Tempo(DeckId::B), 0x55, 0x45),
+            (Control::Filter(DeckId::A), 0x40, 0x00),
+            (Control::Filter(DeckId::B), 0x40, 0x00),
+        ];
+        for (control, most_significant, least_significant) in expected {
+            let fraction = set_to(&commands, control);
+            let reported = report_fraction(most_significant, least_significant);
+            assert!(
+                (fraction - reported).abs() < 1e-4,
+                "{control:?} is {fraction}, the controller reported {reported}"
+            );
+        }
+        let crossfader = set_to(&commands, Control::Crossfader);
+        assert!((crossfader - report_fraction(0x39, 0x6B)).abs() < 1e-4);
+        let section = dispatcher.beat_fx_section();
+        assert_eq!(section.lever, Some(EffectTarget::Deck(DeckId::B)));
+        assert!(section.level.is_some_and(|level| level.abs() < 1e-4));
+        assert!(commands.contains(&Command::Effect(
+            unit,
+            EffectEdit::Target(EffectTarget::Deck(DeckId::B))
+        )));
+        assert!(commands.contains(&Command::Effect(unit, EffectEdit::Depth(0.0))));
+    }
+
+    #[test]
+    fn a_reported_tempo_does_not_jump_a_playing_deck() {
+        let mut dispatcher = Dispatcher::default();
+        let tempo_report = [[0xB0, 0x00, 0x55], [0xB0, 0x20, 0x45]];
+        let mut surface = Surface::default();
+        surface.positions.tempo_sliders = [0.5, 0.5];
+        surface.playing = [true, false];
+        let commands = replay_report(&mut dispatcher, &surface, &tempo_report);
+        assert!(commands.is_empty());
+        let reported = report_fraction(0x55, 0x45);
+        assert_eq!(dispatcher.tempo_waiting(DeckId::A, 0.5), Some(reported));
+        surface.playing = [false, false];
+        let commands = replay_report(&mut dispatcher, &surface, &tempo_report);
+        assert_eq!(
+            commands,
+            [Command::SetControl(Control::Tempo(DeckId::A), reported)]
+        );
     }
 }
 

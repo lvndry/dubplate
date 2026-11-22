@@ -57,6 +57,7 @@ pub fn offline_engine(sample_rate: u32) -> (Controller, Renderer) {
         effect_units: EffectUnitId::ALL.map(EffectSettings::initial),
         channels: [ChannelSettings::default(); DECK_COUNT],
         quantize: true,
+        master_tempo: MasterTempo::default(),
         headphones: HeadphoneSettings::default(),
         key_locks: [false; DECK_COUNT],
         stem_settings: [StemSettings::UNTOUCHED; DECK_COUNT],
@@ -92,6 +93,7 @@ pub struct Controller {
     effect_units: [EffectSettings; EFFECT_UNIT_COUNT],
     channels: [ChannelSettings; DECK_COUNT],
     quantize: bool,
+    master_tempo: MasterTempo,
     headphones: HeadphoneSettings,
     key_locks: [bool; DECK_COUNT],
     stem_settings: [StemSettings; DECK_COUNT],
@@ -875,7 +877,7 @@ impl Controller {
 
     /// Switches quantize for both decks, on by default. With quantize and a beat grid, the cue
     /// button, loop in and loop out set their points on the nearest beat, beat loops start on
-    /// the beat just passed, and hot cues and reloop jump in rhythm.
+    /// the beat nearest to what is heard, and hot cues and reloop jump in rhythm.
     pub fn set_quantize(&mut self, enabled: bool) -> Result<(), EngineError> {
         self.send(Command::SetQuantize(enabled))?;
         self.quantize = enabled;
@@ -938,8 +940,9 @@ impl Controller {
     }
 
     /// A beat loop of `length`, from a sixteenth of a beat to thirty-two beats. It starts on
-    /// the beat just passed with quantize, so the music never jumps; with a loop already on,
-    /// it changes that loop's length from its start.
+    /// the beat nearest to what is heard with quantize, which may be just ahead of the
+    /// playhead, and exactly where it was pressed without; with a loop already on, it changes
+    /// that loop's length from its start.
     pub fn beat_loop(&mut self, deck: DeckId, length: BeatLength) -> Result<(), EngineError> {
         self.send(Command::BeatLoop { deck, length })
     }
@@ -998,7 +1001,15 @@ impl Controller {
     /// Chooses the tempo master: the deck synced decks follow and whose tempo effects on the
     /// master follow, like the MASTER button of a CDJ.
     pub fn set_master_tempo(&mut self, source: MasterTempo) -> Result<(), EngineError> {
-        self.send(Command::SetMasterTempo(source))
+        self.send(Command::SetMasterTempo(source))?;
+        self.master_tempo = source;
+        Ok(())
+    }
+
+    /// The tempo master as chosen: a deck the DJ pressed MASTER on, kept even while it is
+    /// stopped, or the louder playing deck.
+    pub fn master_tempo(&self) -> MasterTempo {
+        self.master_tempo
     }
 
     /// The deck whose tempo effects on the master follow, as the audio thread last chose it.

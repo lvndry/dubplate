@@ -360,7 +360,10 @@ pub fn help_sections() -> Vec<HelpSection> {
                 line(&["m", "shift-m"], "Next pad mode, deck A / deck B"),
                 line(&["-", "="], "Tempo down / up, deck A"),
                 line(&["shift--", "shift-="], "Tempo down / up, deck B"),
-                line(&["k", "shift-k"], "Key lock, deck A / deck B"),
+                line(
+                    &["k", "shift-k"],
+                    "Key lock for the track on deck A / deck B (new tracks: Settings)",
+                ),
                 line(&["q", "shift-q"], "Drums stem out or back, deck A / deck B"),
                 line(&["w", "shift-w"], "Bass stem out or back, deck A / deck B"),
                 line(
