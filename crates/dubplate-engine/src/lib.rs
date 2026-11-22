@@ -27,6 +27,7 @@ mod crossfader;
 mod curves;
 mod deck;
 mod decode;
+mod denormals;
 mod effects;
 mod error;
 mod grid;
