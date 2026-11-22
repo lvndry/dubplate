@@ -87,6 +87,8 @@ From then on the set is an ordinary rekordbox playlist, ready to export to a USB
 
 ## 4. Mix
 
+P plays the track selected in the library in the headphones, from its first memory or hot cue, without loading it: the headphone MIX and LEVEL knobs set how loud, the header shows "Preview" with its title (click to stop), and P again stops it. It never reaches the master or a deck, and stops by itself after 30 seconds.
+
 Cmd+L loads the set's first two tracks onto deck A and deck B at their mix-in cues; Cmd+2 opens Perform. A set track whose file is missing is never loaded: its deck keeps what it had, and a notice names the track with a **Relink** button that looks for the file. The same goes for any track loaded from the library.
 
 On the keyboard, **Space** plays or pauses the deck you can hear: the one whose channel fader is up past 20% and that the crossfader lets through. With both up it acts on the tempo master, else the louder one, and with neither it is deck A. A small **Space** label beside a deck's letter shows which one it will be. Shift+Space is always deck B, and the FLX4's PLAY buttons always their own deck.

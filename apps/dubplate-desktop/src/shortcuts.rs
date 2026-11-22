@@ -82,7 +82,7 @@ const fn pad(keystroke: &'static str, deck: DeckId, pad: usize) -> Shortcut {
 }
 
 /// Every keyboard shortcut.
-pub const SHORTCUTS: [Shortcut; 76] = [
+pub const SHORTCUTS: &[Shortcut] = &[
     outside_text("space", Command::TogglePlayOnAir),
     outside_text("shift-space", Command::TogglePlay(DeckId::B)),
     outside_text("c", Command::Cue(DeckId::A, Press::Tap)),
@@ -109,6 +109,7 @@ pub const SHORTCUTS: [Shortcut; 76] = [
     outside_text("shift-=", Command::NudgeTempo(DeckId::B, Direction::Up)),
     outside_text("left", Command::MoveCrossfader(Direction::Down)),
     outside_text("right", Command::MoveCrossfader(Direction::Up)),
+    outside_text("p", Command::PreviewSelected),
     outside_text("shift-left", Command::LoadSelected(DeckId::A)),
     outside_text("shift-right", Command::LoadSelected(DeckId::B)),
     outside_text("up", Command::MoveSelection(Direction::Up)),
@@ -316,6 +317,10 @@ pub fn help_sections() -> Vec<HelpSection> {
                 line(
                     &["shift-left", "shift-right"],
                     "Load the selected track on deck A / deck B",
+                ),
+                line(
+                    &["p"],
+                    "Preview the selected track in the headphones, or stop",
                 ),
             ],
         },
