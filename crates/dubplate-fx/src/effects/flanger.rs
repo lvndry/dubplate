@@ -8,7 +8,7 @@ use crate::dsp::lfo::SyncedPhase;
 use crate::dsp::shaping::{flush_denormal, saturate};
 use crate::dsp::smoothing::Smoothed;
 use crate::effect::EffectKind;
-use crate::unit::{Controls, Frame, Kernel, MixLaw, Unit, implement_effect, knob};
+use crate::unit::{Controls, Frame, Kernel, MixLaw, Unit, engaged, implement_effect, knob};
 
 const SHORTEST_DELAY_SECONDS: f32 = 0.000_2;
 const LONGEST_DELAY_SECONDS: f32 = 0.006;
@@ -16,6 +16,8 @@ const STEREO_OFFSET: f64 = 0.25;
 const MAX_FEEDBACK: f32 = 0.95;
 const FEEDBACK_SMOOTHING_SECONDS: f32 = 0.02;
 const DEFAULT_FEEDBACK: f32 = 0.6;
+const LOWEST_DEPTH_FEEDBACK: f32 = 0.4;
+const FULL_MIX_DEPTH: f32 = 0.5;
 
 /// A jet flanger whose sweep is locked to the beat grid.
 ///
@@ -23,7 +25,8 @@ const DEFAULT_FEEDBACK: f32 = 0.6;
 /// with the bar. The sweep is exponential, so the jet moves evenly through the whole range, and
 /// the right channel runs a quarter cycle apart for width that still sums well to mono.
 ///
-/// The depth knob blends the flanger in and raises its feedback from 0.3 to 0.9.
+/// The depth knob blends the flanger in over its first half and raises its feedback from 0.4
+/// to 0.95 across its whole travel.
 pub struct Flanger {
     unit: Unit<FlangerKernel>,
 }
@@ -56,8 +59,8 @@ impl Controls for Flanger {
     }
 
     fn apply_depth(&mut self, depth: f32) {
-        self.unit.set_mix(depth);
-        self.set_feedback(0.3 + 0.6 * depth);
+        self.unit.set_mix(engaged(depth, FULL_MIX_DEPTH));
+        self.set_feedback(LOWEST_DEPTH_FEEDBACK + (MAX_FEEDBACK - LOWEST_DEPTH_FEEDBACK) * depth);
     }
 
     fn apply_beat(&mut self, beat: BeatLength) {
