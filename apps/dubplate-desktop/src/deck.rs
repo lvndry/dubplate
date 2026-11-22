@@ -96,8 +96,12 @@ impl TrackVisuals {
     }
 
     /// Draws `zoomed` and `overview`, worked out after the track was loaded.
-    pub fn show_waveforms(&mut self, zoomed: ZoomedWaveform, overview: Option<OverviewWaveform>) {
-        self.zoomed = Some(Arc::new(zoomed));
+    pub fn show_waveforms(
+        &mut self,
+        zoomed: Arc<ZoomedWaveform>,
+        overview: Option<OverviewWaveform>,
+    ) {
+        self.zoomed = Some(zoomed);
         self.overview = overview.map(|waveform| Rc::new(RefCell::new(OverviewBars::new(waveform))));
     }
 }

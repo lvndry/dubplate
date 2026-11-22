@@ -26,8 +26,6 @@ use crate::waveform::{BandLevels, BeatMarks, LaneView, Zoom, ZoomedWaveform};
 const LANE_HEIGHT: Pixels = px(74.0);
 const PLAYHEAD_WIDTH: Pixels = px(2.0);
 const FLAG_WIDTH: f32 = 14.0;
-/// Each zoomed column is one pixel wide: the waveform is resampled to the zoom.
-const COLUMN_WIDTH: f32 = 1.0;
 /// The quietest band still drawn, in pixels of half height.
 const SHORTEST_HALF_HEIGHT: f32 = 0.5;
 
@@ -72,6 +70,7 @@ fn lane(
     let zoomed = visuals.and_then(|visuals| visuals.zoomed.clone());
     let beats = visuals.map(|visuals| Arc::clone(&visuals.beats));
     let playhead_seconds = frame.playhead_seconds;
+    let tempo = frame.state.tempo;
     let stats = app.frame_stats.clone();
     let notice = app.deck_notice(deck).map(|notice| notice.to_string());
     let hint_colour = if notice.is_some() {
@@ -101,13 +100,14 @@ fn lane(
     let zoom = zoomed
         .as_ref()
         .map_or(Zoom::DEFAULT, |waveform| waveform.zoom());
+    let pixels_per_track_second = zoom.pixels_per_track_second(tempo);
     let flags = match content {
         DeckContent::Loaded(_) => app
             .deck(deck)
             .hot_cues
             .iter()
             .map(|(pad, seconds)| {
-                let offset = (seconds - playhead_seconds) * zoom.pixels_per_second();
+                let offset = (seconds - playhead_seconds) * pixels_per_track_second;
                 (pad.letter(), offset as f32)
             })
             .collect(),
@@ -129,6 +129,7 @@ fn lane(
                         zoomed.as_deref(),
                         beats.as_deref(),
                         playhead_seconds,
+                        tempo,
                         window,
                     );
                     record_paint(stats.as_ref(), started);
@@ -213,6 +214,7 @@ pub(super) fn paint_lane(
     zoomed: Option<&ZoomedWaveform>,
     beats: Option<&BeatMarks>,
     playhead_seconds: f64,
+    tempo: f64,
     window: &mut Window,
 ) {
     let width = f32::from(bounds.size.width);
@@ -221,6 +223,7 @@ pub(super) fn paint_lane(
         width,
         playhead_seconds,
         zoom,
+        tempo,
     };
     if let Some(zoomed) = zoomed {
         paint_waveform(bounds, zoomed, &view, window);
@@ -260,13 +263,13 @@ fn paint_waveform(
     };
     let visible = view.visible_columns(zoomed.columns().len());
     for (offset, levels) in zoomed.columns()[visible.range].iter().enumerate() {
-        let x = visible.first_x + offset as f32;
-        let colours = if x + COLUMN_WIDTH <= centre_x {
+        let x = visible.first_x + offset as f32 * visible.column_width;
+        let colours = if x + visible.column_width <= centre_x {
             &played
         } else {
             &unplayed
         };
-        area.paint_column(x, *levels, colours, window);
+        area.paint_column(x, visible.column_width, *levels, colours, window);
     }
 }
 
@@ -278,8 +281,15 @@ struct BandArea {
 }
 
 impl BandArea {
-    /// Draws one column at `x`, lows behind, highs in front.
-    fn paint_column(&self, x: f32, levels: BandLevels, colours: &BandColours, window: &mut Window) {
+    /// Draws one column `width` wide at `x`, lows behind, highs in front.
+    fn paint_column(
+        &self,
+        x: f32,
+        width: f32,
+        levels: BandLevels,
+        colours: &BandColours,
+        window: &mut Window,
+    ) {
         for (level, colour) in [
             (levels.low, colours.low),
             (levels.mid, colours.mid),
@@ -291,7 +301,7 @@ impl BandArea {
             }
             let band = Bounds::new(
                 self.origin + point(px(x), px(self.centre_y - half_height)),
-                size(px(COLUMN_WIDTH), px(half_height * 2.0)),
+                size(px(width), px(half_height * 2.0)),
             );
             window.paint_quad(fill(band, colour));
         }

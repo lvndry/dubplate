@@ -38,7 +38,8 @@ pub(super) const SMALL_THUMB: Thumb = Thumb {
 };
 
 /// A slider showing `slider`'s position, with the part from `fill_from` to the thumb drawn in
-/// `fill` when given.
+/// `fill` when given. A tempo slider whose fader waits to pick up the playing tempo also shows
+/// where that fader sits, as an outline.
 pub(super) fn render(
     app: &DubplateApp,
     slider: Slider,
@@ -46,7 +47,13 @@ pub(super) fn render(
     fill: Option<(f32, Rgba)>,
     cx: &mut Context<'_, DubplateApp>,
 ) -> gpui::Stateful<gpui::Div> {
-    let fraction = app.control_fraction(Control::from(slider));
+    let (fraction, waiting) = match slider {
+        Slider::Tempo(deck) => {
+            let view = app.tempo_slider_view(deck);
+            (view.thumb, view.waiting_fader)
+        }
+        _ => (app.control_fraction(Control::from(slider)), None),
+    };
     let orientation = slider.orientation();
     let hit_areas: Rc<HitAreas> = Rc::clone(&app.hit_areas);
     let recorder = canvas(
@@ -76,6 +83,29 @@ pub(super) fn render(
         }
     });
     let knob = div().absolute().rounded(px(2.0)).bg(theme::THUMB);
+    let waiting_knob = waiting.map(|waiting| {
+        let outline = div()
+            .absolute()
+            .rounded(px(2.0))
+            .border_1()
+            .border_color(theme::ATTENTION);
+        match orientation {
+            Orientation::Horizontal => outline
+                .left(relative(waiting))
+                .ml(-thumb.along / 2.0)
+                .top(relative(0.5))
+                .mt(-thumb.across / 2.0)
+                .w(thumb.along)
+                .h(thumb.across),
+            Orientation::Vertical => outline
+                .top(relative(1.0 - waiting))
+                .mt(-thumb.along / 2.0)
+                .left(relative(0.5))
+                .ml(-thumb.across / 2.0)
+                .w(thumb.across)
+                .h(thumb.along),
+        }
+    });
     let (track, knob) = match orientation {
         Orientation::Horizontal => (
             track
@@ -136,6 +166,7 @@ pub(super) fn render(
         .child(recorder)
         .child(track)
         .children(filled)
+        .children(waiting_knob)
         .child(knob);
     match orientation {
         Orientation::Horizontal => base.h(GRAB_THICKNESS),
