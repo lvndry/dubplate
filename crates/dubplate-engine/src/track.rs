@@ -324,7 +324,7 @@ mod tests {
             .collect();
         let track = Track::from_interleaved_stereo(&samples, 48_000).unwrap();
         assert_eq!(track.decoded_frames(), frame_count);
-        let boundary = CHUNK_FRAMES as i64;
+        let boundary = i64::try_from(CHUNK_FRAMES).unwrap();
         assert_eq!(
             track.buffer().read_frame(boundary),
             FrameRead::Frame(boundary as f32, -(boundary as f32))

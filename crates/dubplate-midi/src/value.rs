@@ -138,8 +138,8 @@ pub(crate) enum RelativeEncoding {
 impl RelativeEncoding {
     pub(crate) const fn decode(self, value: U7) -> Ticks {
         match self {
-            RelativeEncoding::Offset64 => Ticks(value.0 as i8 - 64),
-            RelativeEncoding::TwosComplement => Ticks(((value.0 << 1) as i8) >> 1),
+            RelativeEncoding::Offset64 => Ticks(value.0.cast_signed() - 64),
+            RelativeEncoding::TwosComplement => Ticks((value.0 << 1).cast_signed() >> 1),
         }
     }
 }

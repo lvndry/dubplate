@@ -204,7 +204,7 @@ fn build_library(directory: &Path) -> std::path::PathBuf {
                     format!("Track {track:03}"),
                     format!("a{}", track % 60),
                     format!("k{}", track % 24),
-                    11_800 + (track as i64 % 30) * 20,
+                    11_800 + i64::try_from(track % 30).expect("a small number") * 20,
                     format!("/Music/Artist {}/Track {track:03}.flac", track % 60),
                     ANALYSIS_PATH,
                     STAMP,
@@ -221,8 +221,8 @@ fn build_library(directory: &Path) -> std::path::PathBuf {
                     (
                         format!("c{track}-{cue}"),
                         format!("t{track}"),
-                        cue as i64,
-                        cue as i64 * 30_000,
+                        i64::try_from(cue).expect("a small number"),
+                        i64::try_from(cue).expect("a small number") * 30_000,
                         STAMP,
                     ),
                 )
@@ -247,7 +247,7 @@ fn build_library(directory: &Path) -> std::path::PathBuf {
                     format!("p{playlist}"),
                     format!("f{}", playlist % 2),
                     format!("Playlist {playlist}"),
-                    playlist as i64,
+                    i64::try_from(playlist).expect("a small number"),
                     STAMP,
                 ),
             )
@@ -262,7 +262,7 @@ fn build_library(directory: &Path) -> std::path::PathBuf {
                         format!("e{playlist}-{entry}"),
                         format!("p{playlist}"),
                         format!("t{}", (playlist * 13 + entry * 7) % LIBRARY_TRACKS),
-                        entry as i64,
+                        i64::try_from(entry).expect("a small number"),
                         STAMP,
                     ),
                 )

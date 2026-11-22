@@ -183,11 +183,11 @@ pub(crate) fn read_interpolated(track: &TrackBuffer, position: f64) -> (f32, f32
     let mut left = [0.0_f32; 4];
     let mut right = [0.0_f32; 4];
     let mut missing = false;
-    for offset in 0..4 {
-        match track.read_frame(base_index.saturating_add(offset as i64 - 1)) {
+    for (index, offset) in (-1_i64..=2).enumerate() {
+        match track.read_frame(base_index.saturating_add(offset)) {
             FrameRead::Frame(sample_left, sample_right) => {
-                left[offset] = sample_left;
-                right[offset] = sample_right;
+                left[index] = sample_left;
+                right[index] = sample_right;
             }
             FrameRead::Outside => {}
             FrameRead::Missing => missing = true,

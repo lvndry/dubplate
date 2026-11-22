@@ -123,7 +123,7 @@ fn the_stretched_beats_land_where_the_playhead_is() {
         for onset in plain_late {
             let nearest = locked
                 .iter()
-                .map(|other| *other as i64 - onset as i64)
+                .map(|other| i64::try_from(*other).unwrap() - i64::try_from(onset).unwrap())
                 .min_by_key(|difference| difference.abs())
                 .unwrap();
             assert!(

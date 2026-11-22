@@ -114,16 +114,14 @@ pub fn search_folders_for(names: &HashSet<String>, folders: &[PathBuf]) -> Vec<P
     let mut seen_folders = HashSet::new();
     let mut pending: Vec<PathBuf> = folders.to_vec();
     while let Some(directory) = pending.pop() {
-        let canonical = match directory.canonicalize() {
-            Ok(canonical) => canonical,
-            Err(_) => continue,
+        let Ok(canonical) = directory.canonicalize() else {
+            continue;
         };
         if !seen_folders.insert(canonical.clone()) {
             continue;
         }
-        let entries = match std::fs::read_dir(&canonical) {
-            Ok(entries) => entries,
-            Err(_) => continue,
+        let Ok(entries) = std::fs::read_dir(&canonical) else {
+            continue;
         };
         for entry in entries {
             let path = match entry {

@@ -221,7 +221,7 @@ impl SetStore {
         execute_cached(
             &transaction,
             "INSERT INTO sets (name, target_minutes, created_at, updated_at) VALUES (?1, ?2, ?3, ?3)",
-            (name, target_minutes as i64, timestamp),
+            (name, i64::from(target_minutes), timestamp),
         )?;
         let id = transaction.last_insert_rowid();
         transaction.commit()?;
@@ -358,7 +358,7 @@ impl SetStore {
             "UPDATE set_entry SET position = ?4 WHERE set_id = ?1 AND is_backup = ?3 AND position = ?2",
             (
                 set.as_i64(),
-                from as i64,
+                stored_position(from),
                 list.is_backup(),
                 MOVE_SENTINEL_POSITION,
             ),
@@ -375,7 +375,7 @@ impl SetStore {
                 set.as_i64(),
                 MOVE_SENTINEL_POSITION,
                 list.is_backup(),
-                to as i64,
+                stored_position(to),
             ),
         )?;
         transaction.commit()?;
@@ -398,7 +398,7 @@ impl SetStore {
         execute_cached(
             &transaction,
             "DELETE FROM set_entry WHERE set_id = ?1 AND is_backup = ?2 AND position = ?3",
-            (set.as_i64(), list.is_backup(), position as i64),
+            (set.as_i64(), list.is_backup(), stored_position(position)),
         )?;
         shift_entry_positions(&mut transaction, set, list, position + 1, usize::MAX, -1)?;
         transaction.commit()?;
@@ -440,7 +440,7 @@ impl SetStore {
                 entry.vocal_in_ms,
                 entry.vocal_out_ms,
                 &entry.note,
-                position as i64,
+                stored_position(position),
                 entry.grid_offset_ms,
                 entry.downbeat_shift,
             ),
@@ -546,6 +546,11 @@ fn trim_backups(backups_folder: &Path, max_backups: usize) -> Result<(), StoreEr
     Ok(())
 }
 
+/// A position as the database stores it.
+fn stored_position(position: usize) -> i64 {
+    i64::try_from(position).unwrap_or(i64::MAX)
+}
+
 /// Refreshes a set's `updated_at`, failing if the set is gone.
 fn touch_set(transaction: &mut Transaction<'_>, set: SetId) -> Result<(), StoreError> {
     let deleted = execute_cached(
@@ -587,7 +592,7 @@ fn entry_at(
         transaction,
         "SELECT COUNT(*) FROM set_entry
          WHERE set_id = ?1 AND is_backup = ?2 AND position = ?3",
-        (set.as_i64(), list.is_backup(), position as i64),
+        (set.as_i64(), list.is_backup(), stored_position(position)),
         |row| row.get(0),
     )?;
     Ok(usize::try_from(count).unwrap_or(0))
@@ -615,7 +620,13 @@ fn shift_entry_positions(
         transaction,
         "UPDATE set_entry SET position = -(position + ?5) - 1
          WHERE set_id = ?1 AND is_backup = ?2 AND position >= ?3 AND position < ?4",
-        (set.as_i64(), list.is_backup(), start as i64, end, delta),
+        (
+            set.as_i64(),
+            list.is_backup(),
+            stored_position(start),
+            end,
+            delta,
+        ),
     )?;
     execute_cached(
         transaction,
@@ -644,7 +655,7 @@ fn insert_entry_row(
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
         (
             set.as_i64(),
-            position as i64,
+            stored_position(position),
             &entry.track_path.to_string_lossy(),
             &entry.rekordbox_id,
             entry.mix_in_ms,

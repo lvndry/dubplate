@@ -193,7 +193,7 @@ impl ControllerInput {
             .connect(
                 &midi_port,
                 CLIENT_NAME,
-                move |timestamp_micros, bytes, _| {
+                move |timestamp_micros, bytes, &mut ()| {
                     let event = MidiEvent {
                         received: Instant::now(),
                         timestamp_micros,

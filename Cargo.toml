@@ -31,6 +31,19 @@ dbg_macro = "warn"
 todo = "warn"
 undocumented_unsafe_blocks = "warn"
 unwrap_used = "warn"
+# From clippy::pedantic, the lints that catch real mistakes rather than taste: integer casts
+# that can silently wrap or lose bits, copies of large values and arrays that blow up the audio
+# thread's stack, needless allocations, and `Result`s that can never be an error.
+cast_lossless = "warn"
+cast_possible_wrap = "warn"
+checked_conversions = "warn"
+ignored_unit_patterns = "warn"
+implicit_clone = "warn"
+inefficient_to_string = "warn"
+large_stack_arrays = "warn"
+large_types_passed_by_value = "warn"
+manual_let_else = "warn"
+unnecessary_wraps = "warn"
 
 [profile.release]
 codegen-units = 1
