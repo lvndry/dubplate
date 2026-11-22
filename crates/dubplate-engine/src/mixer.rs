@@ -20,6 +20,7 @@ use crate::sampler::{SampleSettings, Sampler};
 use crate::smart_cfx::SmartCfx;
 use crate::smart_fader::{TEMPO_GLIDE_SECONDS, bass_swap, shared_bpm};
 use crate::state::{GapDetector, SharedState, encode_loop_length, raise_peak};
+use crate::stems::StemSettings;
 use crate::sync::SyncMode;
 use crate::tempo::{DeckLevel, MasterTempo, TempoMaster, TempoRange};
 use crate::track::TrackBuffer;
@@ -173,6 +174,10 @@ pub(crate) enum Command {
     SetKeyLock {
         deck: DeckId,
         enabled: bool,
+    },
+    SetStems {
+        deck: DeckId,
+        settings: StemSettings,
     },
     Preview(Option<PreviewPlan>),
     SetRecording(Option<RecordingSink>),
@@ -688,6 +693,9 @@ impl Renderer {
             Command::SetHeadphoneLevel(level) => self.headphones.set_level(level),
             Command::SetKeyLock { deck, enabled } => {
                 self.decks[deck.index()].set_key_lock(enabled);
+            }
+            Command::SetStems { deck, settings } => {
+                self.decks[deck.index()].set_stem_settings(settings);
             }
             Command::SetSmartFader(enabled) => self.set_smart_fader(enabled),
             Command::SetSmartCfx { deck, preset } => {

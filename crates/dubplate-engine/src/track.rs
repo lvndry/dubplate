@@ -2,6 +2,7 @@ use std::sync::atomic::{AtomicU8, AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use crate::error::EngineError;
+use crate::stems::{AttachedStems, StemTracks};
 
 const CHUNK_FRAMES_LOG2: u32 = 16;
 const CHUNK_FRAMES: usize = 1 << CHUNK_FRAMES_LOG2;
@@ -13,6 +14,9 @@ pub const MIN_SAMPLE_RATE: u32 = 8_000;
 /// Highest sample rate a track can have, in Hz.
 pub const MAX_SAMPLE_RATE: u32 = 384_000;
 const UNKNOWN_LENGTH: usize = usize::MAX;
+/// How far the stems' length may differ from the track's: decoders and resampling may add or
+/// trim a few milliseconds, never more.
+const STEM_LENGTH_TOLERANCE_SECONDS: f64 = 0.05;
 
 const STATUS_DECODING: u8 = 0;
 const STATUS_COMPLETE: u8 = 1;
@@ -38,6 +42,7 @@ pub(crate) struct TrackBuffer {
     total_frames: AtomicUsize,
     status: AtomicU8,
     failure: OnceLock<String>,
+    stems: OnceLock<AttachedStems>,
 }
 
 /// Where a track's decoding stands.
@@ -125,6 +130,52 @@ impl Track {
         }
     }
 
+    /// Gives the track its stems, which every deck playing it then plays, each at its own
+    /// level. The stems must be at the track's sample rate, so both are read at the same
+    /// positions through the same resampling. Fails when the track has stems already, when
+    /// their rate differs, or when their length differs from the track's by more than 50 ms, so
+    /// the stems of another file never play.
+    pub fn attach_stems(&self, stems: StemTracks) -> Result<(), EngineError> {
+        if self.inner.stems.get().is_some() {
+            return Err(EngineError::StemsAlreadyAttached);
+        }
+        if stems.sample_rate() != self.inner.sample_rate {
+            return Err(EngineError::StemsSampleRate {
+                track: self.inner.sample_rate,
+                stems: stems.sample_rate(),
+            });
+        }
+        let stems_seconds = stems.duration_seconds();
+        let (track_seconds, matches) = match self.duration_seconds() {
+            Some(track_seconds) => (
+                track_seconds,
+                (track_seconds - stems_seconds).abs() <= STEM_LENGTH_TOLERANCE_SECONDS,
+            ),
+            None => {
+                let decoded_seconds = self.decoded_seconds();
+                (
+                    decoded_seconds,
+                    stems_seconds + STEM_LENGTH_TOLERANCE_SECONDS >= decoded_seconds,
+                )
+            }
+        };
+        if !matches {
+            return Err(EngineError::StemsDoNotMatch {
+                track_seconds,
+                stems_seconds,
+            });
+        }
+        self.inner
+            .stems
+            .set(AttachedStems::new(stems))
+            .map_err(|_| EngineError::StemsAlreadyAttached)
+    }
+
+    /// Whether the track has its stems.
+    pub fn has_stems(&self) -> bool {
+        self.inner.stems.get().is_some()
+    }
+
     /// Copies the decoded frames from `first_frame` on into `frames`, as `[left, right]`, and
     /// returns how many it copied: fewer than `frames` holds near the end of what is decoded.
     /// Reading a whole track this way costs a fraction of reading it frame by frame.
@@ -197,6 +248,12 @@ impl TrackBuffer {
             UNKNOWN_LENGTH => None,
             frames => Some(frames),
         }
+    }
+
+    /// The track's stems, once attached. Safe to call on the audio thread.
+    #[inline]
+    pub(crate) fn stems(&self) -> Option<&AttachedStems> {
+        self.stems.get()
     }
 
     /// Visits decoded frames in a small window, leaving positions outside the track as zero.
@@ -307,6 +364,7 @@ impl TrackWriter {
                 total_frames: AtomicUsize::new(UNKNOWN_LENGTH),
                 status: AtomicU8::new(STATUS_DECODING),
                 failure: OnceLock::new(),
+                stems: OnceLock::new(),
             }),
             written_frames: 0,
             closed: false,
