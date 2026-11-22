@@ -18,8 +18,6 @@ On macOS, `cargo run` starts it from a `Dubplate.app` next to the binary (see `.
 ./scripts/bundle-macos.sh && open target/release/Dubplate.app
 ```
 
-Set `DUBPLATE_FRAME_STATS=1` to print the frame rate and frame times once a second.
-
 Pick a crate on the left, type in the search field to find a track by title or artist, then drag it onto a deck, double-click it, click A or B at the end of its row, or press ⇧← or ⇧→ to load it on deck A or B. Audio files dragged from Finder (MP3, M4A, AAC, FLAC, WAV, AIFF, Ogg) load too, without beat grid or cues. The decks show rekordbox's 3-band waveforms, beat grid and hot cues. The first build takes a few minutes.
 
 | Keys | Deck A | Deck B |
