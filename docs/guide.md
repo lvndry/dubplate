@@ -111,6 +111,17 @@ Drag a deck's waveform on the lanes to move it, as with a jog: a stopped deck sc
 
 **Grid** on a deck (or E, Shift+E for deck B) opens its grid bar to fix any track's beat grid while you play, as rekordbox's grid edit does: the downbeat a beat earlier or later, the grid 5 ms earlier or later, and confirm. The grid keys G, [ ], comma and period then work on that deck. A fix never moves the deck in the track, and it is the same fix the track check shows.
 
+### Stems
+
+Dubplate separates each track of the set into drums, bass, melody and vocals while you prepare, then the shortlist; the separation runs in the background at low priority and takes a few minutes a track. The **Stems** column of the library and each set row show where a track stands: blank, `…` waiting, a percentage while separating, `ready`. Hover a blank cell and click **Separate** to separate a track ahead of the rest, or click **Separate** on a deck. Stems are kept in Dubplate's own folder, so a track is separated once.
+
+Once a deck's track has its stems, the strip under its transport mutes or brings back each stem, with a small level knob beside it, and **Inst** and **Acap** give the instrumental and the acapella in one touch (touch again for every stem back). Every move fades in 20 ms and key lock keeps working. With every stem up the deck plays the track exactly.
+
+- Keys: Q, W, R and V mute or bring back the drums, bass, melody and vocals of deck A, X gives the instrumental and A the acapella; add ⇧ for deck B.
+- FLX4: in Beat Loop mode, hold SHIFT. Pads 1 to 4 mute or bring back the vocals, melody, bass and drums; pad 5 is the acapella, 6 the instrumental, 7 drums and bass only (ride a log drum under the other track), 8 every stem back. rekordbox maps no stems on the FLX4, and SHIFT + the Beat Loop pads do nothing there, so this takes no control from you.
+
+When two tracks with stems sing over each other across a seam, the seam says so in the set and suggests taking the vocals out on the outgoing track.
+
 ## 5. Record
 
 Cmd+Shift+R (or REC in the header) records what the room hears, after the limiter, as a 24-bit WAV in Music/Dubplate Recordings. The header shows the time in red.
