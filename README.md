@@ -5,17 +5,15 @@
 
 # Dubplate
 
-**Pro DJ software, free, that speaks rekordbox.**
+Dubplate is free DJ software for preparing and mixing sets, 100% rekordbox compatible. It reads your rekordbox library (tracks, cues, beat grids, waveforms, playlists) without changing it, and sends your sets back to rekordbox.
 
-Prepare a set, mix it on your controller, take it to rekordbox and the CDJs. Dubplate reads your rekordbox library as it is (cues, beat grids, waveforms, playlists) and every pro feature is in the box: no plan, no subscription, nothing locked.
+## What's in it
 
-## Why it's different
-
-- **Your rekordbox library, untouched.** Dubplate opens a copy of rekordbox's database and its analysis files, so rekordbox can stay open and nothing of yours is ever rewritten. Sets go back to rekordbox as a playlist it imports.
-- **Set preparation built in.** Order a set, see the key move, tempo step and energy of every transition, get the next track suggested with the reason why, check each track's grid and mix cues, and hear any transition in your headphones before you play it.
-- **A real-time engine with no compromises.** Key lock on Signalsmith Stretch, a DJM-style isolator EQ that keeps a kick's attack, beat sync that holds to the millisecond, sixteen sampler slots, Smart CFX and Smart Fader, and a limiter so nothing ever clips. The audio thread never allocates, locks or waits.
-- **Your controller, every control.** The Pioneer DDJ-FLX4 works exactly as in rekordbox's layout, pads, jogs, beat FX and lights included.
-- **Your music, not just rekordbox's.** Add your own folders. Tracks rekordbox never analysed get their tempo, beat grid, key and energy from Euphoria's detectors, which agree with rekordbox's BPM on 99% of the tracks both know.
+- **rekordbox library:** read from a copy of rekordbox's database and analysis files, so rekordbox can stay open. Sets export as a rekordbox XML playlist.
+- **Set preparation:** an ordered set with the key, tempo and energy of every transition, next-track suggestions, grid and cue checks, and a headphone preview of each transition.
+- **Mixing:** two decks with sync, key lock, loops, hot cues, slip, rolls, pad effects, a 16-slot sampler, three beat FX units, Smart CFX, Smart Fader, an isolator EQ and a limiter.
+- **Controller:** the Pioneer DDJ-FLX4, mapped like rekordbox, lights included.
+- **Your own folders:** tracks outside rekordbox get their tempo, beat grid, key and energy analysed.
 
 ## Run it
 
