@@ -393,7 +393,14 @@ fn lane(
             canvas(
                 |_, _, _| {},
                 move |bounds, (), window, _| {
-                    lanes::paint_lane(bounds, zoomed.as_deref(), Some(&marks), playhead, window);
+                    lanes::paint_lane(
+                        bounds,
+                        zoomed.as_deref(),
+                        Some(&marks),
+                        playhead,
+                        1.0,
+                        window,
+                    );
                     let zoom = zoomed
                         .as_deref()
                         .map_or(crate::waveform::Zoom::DEFAULT, |waveform| waveform.zoom());
