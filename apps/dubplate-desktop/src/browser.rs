@@ -229,12 +229,6 @@ impl Browser {
         cx.notify();
     }
 
-    /// Discards analyses after a library rescan, so changed or repaired files can be retried.
-    pub fn clear_analyses(&mut self, cx: &mut Context<'_, Self>) {
-        self.analyses.clear();
-        cx.notify();
-    }
-
     /// What the analyser has said about `entry` so far.
     fn analysis_state(&self, entry: &CollectionTrack) -> AnalysisState<'_> {
         match entry
