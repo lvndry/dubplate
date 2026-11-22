@@ -187,7 +187,7 @@ Statuses are as audited on 22 November 2026, on `main` with a second Dubplate ru
 
 **X3 Channel fader curve**, **X4 Crossfader curve**, **X5 Crossfader assign (A, THRU, B)**, **X10 Crossfader off**: Status: **Done** (Settings > Mixer has the curves and the crossfader switch, as rekordbox's Preferences > Controller > Mixer; the assign switches sit under the channel faders, as in its mixer panel).
 
-**X6 Meters.** Channel meters before the fader and a master meter. Status: **Done.** A clip light and peak hold: **Missing.**
+**X6 Meters.** Channel meters before the fader and a master meter. Status: **Done.** The highest peak stays lit for 1.5 s above the falling level, then falls; a peak at full scale turns the top segment red for 2 s, a clip light on every channel meter and the master.
 
 **X7 Master level and limiter.** Status: **Done.**
 
