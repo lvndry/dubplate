@@ -15,6 +15,8 @@ use crate::fonts::MONO_FAMILY;
 use crate::set::running_time;
 use crate::theme;
 
+/// The search field never gets narrower than this: the status beside it gives way first.
+const SEARCH_MIN_WIDTH: Pixels = px(170.0);
 /// Room for the window's close, minimise and zoom buttons, which sit over the header.
 const WINDOW_BUTTONS_WIDTH: Pixels = px(68.0);
 
@@ -75,7 +77,7 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
             div()
                 .flex()
                 .flex_1()
-                .min_w_0()
+                .min_w(SEARCH_MIN_WIDTH)
                 .justify_center()
                 .child(search_field(app.browser.read(cx))),
         )
@@ -164,15 +166,18 @@ fn status(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoElem
     };
     div()
         .flex()
-        .flex_none()
+        .flex_shrink(1.0)
+        .min_w_0()
         .items_center()
-        .gap(px(14.0))
+        .gap(px(10.0))
         .text_size(theme::SMALL_TEXT_SIZE)
         .text_color(theme::MUTED)
         .child(
             div()
                 .id("library-status")
                 .flex()
+                .flex_shrink(1.0)
+                .min_w_0()
                 .items_center()
                 .gap(px(6.0))
                 .h(px(28.0))
@@ -185,19 +190,24 @@ fn status(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoElem
                     this.perform(Command::ToggleLibrary, window, cx);
                 }))
                 .child(dot(library_colour))
-                .child(library_text),
+                .child(div().truncate().child(library_text)),
         )
         .child(
             div()
                 .id("controller-status")
                 .flex()
+                .flex_shrink(1.0)
+                .min_w_0()
                 .items_center()
                 .gap(px(6.0))
                 .child(dot(controller_colour))
-                .child(controller_text),
+                .child(div().truncate().child(controller_text)),
         )
         .child(
             div()
+                .flex_shrink(1.0)
+                .min_w_0()
+                .truncate()
                 .font_family(MONO_FAMILY)
                 .text_color(audio_colour)
                 .child(audio_text),

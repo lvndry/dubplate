@@ -11,7 +11,7 @@ use gpui::prelude::*;
 use gpui::{
     App, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable, MouseButton,
     MouseDownEvent, Pixels, ScrollStrategy, SharedString, Subscription, UniformListScrollHandle,
-    Window, div, px, relative, svg, uniform_list,
+    Window, div, px, svg, uniform_list,
 };
 
 use crate::assets::SEARCH_ICON_PATH;
@@ -29,7 +29,11 @@ const BPM_WIDTH: Pixels = px(72.0);
 const KEY_WIDTH: Pixels = px(56.0);
 const ENERGY_WIDTH: Pixels = px(64.0);
 const TIME_WIDTH: Pixels = px(64.0);
-const SOURCE_WIDTH: Pixels = px(120.0);
+const SOURCE_WIDTH: Pixels = px(96.0);
+/// How the spare width is shared: titles are the longest text in a row, so the title takes half
+/// again as much as the artist.
+const TITLE_SHARE: f32 = 3.0;
+const ARTIST_SHARE: f32 = 2.0;
 const LOAD_WIDTH: Pixels = px(84.0);
 const ROW_GROUP: &str = "track-row";
 
@@ -110,6 +114,7 @@ pub struct Browser {
     selected: Option<TrackIndex>,
     pane: BrowserPane,
     in_set: Arc<HashSet<TrackIndex>>,
+    shows_load: bool,
     missing: Arc<HashSet<TrackIndex>>,
     relinking: bool,
     energies: HashMap<PathBuf, Option<u8>>,
@@ -124,8 +129,7 @@ impl EventEmitter<BrowserEvent> for Browser {}
 impl Browser {
     /// An empty browser, waiting for the library.
     pub fn new(window: &mut Window, cx: &mut Context<'_, Self>) -> Self {
-        let search_input =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Search title or artist"));
+        let search_input = cx.new(|cx| InputState::new(window, cx).placeholder("Search"));
         let subscription = cx.subscribe_in(
             &search_input,
             window,
@@ -146,6 +150,7 @@ impl Browser {
             selected: None,
             pane: BrowserPane::default(),
             in_set: Arc::default(),
+            shows_load: true,
             missing: Arc::default(),
             relinking: false,
             energies: HashMap::new(),
@@ -211,6 +216,26 @@ impl Browser {
         self.missing = missing;
         self.relinking = relinking;
         cx.notify();
+    }
+
+    /// Shows or hides the load buttons, which only make sense where the decks are.
+    pub fn show_load_buttons(&mut self, shown: bool, cx: &mut Context<'_, Self>) {
+        if self.shows_load != shown {
+            self.shows_load = shown;
+            cx.notify();
+        }
+    }
+
+    /// What the last column holds: the load buttons where the decks are, otherwise only Relink
+    /// on tracks whose files are missing, or nothing.
+    fn actions(&self) -> Actions {
+        if self.shows_load {
+            Actions::Load
+        } else if self.missing.is_empty() {
+            Actions::None
+        } else {
+            Actions::RelinkOnly
+        }
     }
 
     /// The selected track.
@@ -422,7 +447,7 @@ impl Browser {
             .when(!self.missing.is_empty(), |table| {
                 table.child(missing_bar(self.missing.len(), self.relinking, cx))
             })
-            .child(header_row())
+            .child(header_row(self.actions()))
             .map(|table| match empty_message {
                 Some(message) => table.child(
                     div()
@@ -459,6 +484,7 @@ impl Browser {
     ) -> impl IntoElement + use<> {
         let entry = collection.track(track);
         let row = &entry.row;
+        let actions = self.actions();
         let energy: SharedString = match entry
             .track
             .file_path
@@ -503,7 +529,8 @@ impl Browser {
                     .flex()
                     .items_center()
                     .gap(px(8.0))
-                    .flex_1()
+                    .flex_basis(px(0.0))
+                    .flex_grow(TITLE_SHARE)
                     .min_w_0()
                     .pl(px(8.0))
                     .pr(theme::GUTTER)
@@ -522,8 +549,9 @@ impl Browser {
             )
             .child(
                 text_cell(row.artist.clone())
-                    .w(relative(0.3))
-                    .flex_none()
+                    .flex_basis(px(0.0))
+                    .flex_grow(ARTIST_SHARE)
+                    .min_w_0()
                     .px(px(8.0))
                     .text_color(theme::MUTED),
             )
@@ -543,30 +571,45 @@ impl Browser {
                     .text_size(theme::SMALL_TEXT_SIZE)
                     .text_color(theme::MUTED),
             )
-            .child(
-                div()
-                    .flex()
-                    .flex_none()
-                    .justify_end()
-                    .gap(px(4.0))
-                    .w(LOAD_WIDTH)
-                    .pr(theme::GUTTER)
-                    .when(!selected, |buttons| {
-                        buttons
-                            .opacity(0.0)
-                            .group_hover(ROW_GROUP, |style| style.opacity(1.0))
-                    })
-                    .map(|buttons| {
-                        if self.missing.contains(&track) {
-                            buttons.child(relink_button(position, track, cx))
-                        } else {
-                            buttons.children(
-                                DeckId::ALL.map(|deck| load_button(position, track, deck, cx)),
-                            )
-                        }
-                    }),
-            )
+            .when(actions != Actions::None, |row| {
+                row.child(
+                    div()
+                        .flex()
+                        .flex_none()
+                        .justify_end()
+                        .gap(px(4.0))
+                        .w(LOAD_WIDTH)
+                        .pr(theme::GUTTER)
+                        .when(!selected, |buttons| {
+                            buttons
+                                .opacity(0.0)
+                                .group_hover(ROW_GROUP, |style| style.opacity(1.0))
+                        })
+                        .map(|buttons| {
+                            if self.missing.contains(&track) {
+                                buttons.child(relink_button(position, track, cx))
+                            } else if actions == Actions::Load {
+                                buttons.children(
+                                    DeckId::ALL.map(|deck| load_button(position, track, deck, cx)),
+                                )
+                            } else {
+                                buttons
+                            }
+                        }),
+                )
+            })
     }
+}
+
+/// What a track row's last column holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Actions {
+    /// The load buttons, and Relink on a missing track.
+    Load,
+    /// Relink on a missing track only.
+    RelinkOnly,
+    /// No column.
+    None,
 }
 
 /// `position` moved by `steps` and kept inside `count` rows, or `None` when there are none.
@@ -576,7 +619,7 @@ fn offset(position: usize, steps: i32, count: usize) -> Option<usize> {
     Some(usize::try_from(moved.max(0)).ok()?.min(last))
 }
 
-fn header_row() -> impl IntoElement {
+fn header_row(actions: Actions) -> impl IntoElement {
     let header = |label: &'static str| {
         div()
             .flex()
@@ -593,8 +636,21 @@ fn header_row() -> impl IntoElement {
         .text_size(theme::SMALL_TEXT_SIZE)
         .text_color(theme::MUTED)
         .font_weight(gpui::FontWeight::MEDIUM)
-        .child(header("Title").flex_1().pl(px(22.0)).pr(theme::GUTTER))
-        .child(header("Artist").w(relative(0.3)).flex_none().px(px(8.0)))
+        .child(
+            header("Title")
+                .flex_basis(px(0.0))
+                .flex_grow(TITLE_SHARE)
+                .min_w_0()
+                .pl(px(22.0))
+                .pr(theme::GUTTER),
+        )
+        .child(
+            header("Artist")
+                .flex_basis(px(0.0))
+                .flex_grow(ARTIST_SHARE)
+                .min_w_0()
+                .px(px(8.0)),
+        )
         .child(
             header("BPM")
                 .w(BPM_WIDTH)
@@ -618,13 +674,15 @@ fn header_row() -> impl IntoElement {
                 .justify_end(),
         )
         .child(header("Source").w(SOURCE_WIDTH).flex_none().px(px(8.0)))
-        .child(
-            header("Load")
-                .w(LOAD_WIDTH)
-                .flex_none()
-                .pr(theme::GUTTER)
-                .justify_end(),
-        )
+        .when(actions != Actions::None, |row| {
+            row.child(
+                header(if actions == Actions::Load { "Load" } else { "" })
+                    .w(LOAD_WIDTH)
+                    .flex_none()
+                    .pr(theme::GUTTER)
+                    .justify_end(),
+            )
+        })
 }
 
 fn text_cell(text: SharedString) -> gpui::Div {

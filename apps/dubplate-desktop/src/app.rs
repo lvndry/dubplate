@@ -678,7 +678,12 @@ impl DubplateApp {
                         .update(cx, |browser, cx| browser.move_selection(direction, cx));
                 }
             }
-            Command::SwitchMode(mode) => self.mode = mode,
+            Command::SwitchMode(mode) => {
+                self.mode = mode;
+                self.browser.update(cx, |browser, cx| {
+                    browser.show_load_buttons(mode == Mode::Perform, cx)
+                });
+            }
             Command::EditSet(edit) => self.edit_set(edit, cx),
             Command::SwitchPrepareFocus => {
                 self.prepare_focus = match self.prepare_focus {
