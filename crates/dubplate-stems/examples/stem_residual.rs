@@ -47,14 +47,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     let stems =
         StemFiles::in_folder(stems_folder).ok_or("the folder does not hold the four stems")?;
+    let plain_track = decoded(&track_path)?;
     let loading = Instant::now();
-    let stem_tracks = stems.load()?;
+    let stem_tracks = stems.load(plain_track.sample_rate())?;
     println!(
-        "loaded the stems in {:.2} s",
+        "loaded the stems and resampled them to {} Hz in {:.2} s",
+        plain_track.sample_rate(),
         loading.elapsed().as_secs_f64()
     );
 
-    let plain = render(&decoded(&track_path)?, from_seconds, seconds)?;
+    let plain = render(&plain_track, from_seconds, seconds)?;
     let separated_track = decoded(&track_path)?;
     separated_track.attach_stems(stem_tracks)?;
     let separated = render(&separated_track, from_seconds, seconds)?;

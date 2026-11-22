@@ -24,6 +24,14 @@ pub enum StemLoadError {
         /// The rate the stems must share.
         sample_rate: u32,
     },
+    /// A stem could not be resampled to the track's rate.
+    #[error("could not resample {}: {reason}", path.display())]
+    Resample {
+        /// The stem file.
+        path: PathBuf,
+        /// What went wrong.
+        reason: String,
+    },
     /// The engine refused the stems, for example because they differ in length.
     #[error(transparent)]
     Engine(#[from] EngineError),
@@ -65,15 +73,21 @@ impl StemFiles {
         &self.directory
     }
 
-    /// Reads the four files into memory for a deck: about 300 MB for seven minutes, which
-    /// takes a fraction of a second. Run it off the audio and interface threads.
-    pub fn load(&self) -> Result<StemTracks, StemLoadError> {
-        let stems = self.paths().map(|path| read_stem(&path, STEMS_SAMPLE_RATE));
+    /// Reads the four files into memory for a deck playing a track at `sample_rate`, the
+    /// track's own rate: stems separated at [`STEMS_SAMPLE_RATE`] are resampled to it, so the
+    /// deck reads stems and track at the same positions. About 320 MB for seven minutes at
+    /// 48 kHz, read and resampled in a few seconds: run it off the audio and interface threads.
+    pub fn load(&self, sample_rate: u32) -> Result<StemTracks, StemLoadError> {
+        let stems = self.paths().map(|path| {
+            let samples = read_stem(&path, STEMS_SAMPLE_RATE)?;
+            resample(&samples, STEMS_SAMPLE_RATE, sample_rate)
+                .map_err(|reason| StemLoadError::Resample { path, reason })
+        });
         let [drums, bass, melody, vocals] = stems;
         let samples = [drums?, bass?, melody?, vocals?];
         Ok(StemTracks::from_interleaved_stereo(
             std::array::from_fn(|stem| samples[stem].as_slice()),
-            STEMS_SAMPLE_RATE,
+            sample_rate,
         )?)
     }
 
@@ -106,6 +120,48 @@ fn read_stem(path: &Path, sample_rate: u32) -> Result<Vec<i16>, StemLoadError> {
         .into_samples::<i16>()
         .collect::<Result<Vec<_>, _>>()
         .map_err(read_error)
+}
+
+/// Interleaved 16-bit stereo `samples` at `source_rate`, resampled to `target_rate` with the
+/// same FFT resampler the separation decodes with. The same samples when the rates match.
+fn resample(samples: &[i16], source_rate: u32, target_rate: u32) -> Result<Vec<i16>, String> {
+    use rubato::audioadapter_buffers::direct::SequentialSliceOfVecs;
+    use rubato::{Fft, FixedSync, Resampler};
+
+    const CHUNK_FRAMES: usize = 4096;
+    const SCALE: f32 = 32_768.0;
+    if source_rate == target_rate {
+        return Ok(samples.to_vec());
+    }
+    let frames = samples.len() / 2;
+    let channels: Vec<Vec<f32>> = (0..2)
+        .map(|channel| {
+            samples
+                .iter()
+                .skip(channel)
+                .step_by(2)
+                .map(|sample| f32::from(*sample) / SCALE)
+                .collect()
+        })
+        .collect();
+    let mut resampler = Fft::<f32>::new(
+        source_rate as usize,
+        target_rate as usize,
+        CHUNK_FRAMES,
+        2,
+        FixedSync::Input,
+    )
+    .map_err(|error| error.to_string())?;
+    let input =
+        SequentialSliceOfVecs::new(&channels, 2, frames).map_err(|error| error.to_string())?;
+    let output = resampler
+        .process_all(&input, frames, None)
+        .map_err(|error| error.to_string())?;
+    Ok(output
+        .take_data()
+        .into_iter()
+        .map(|sample| (sample * SCALE).round().clamp(-SCALE, SCALE - 1.0) as i16)
+        .collect())
 }
 
 /// The stem of the separating network that holds `stem`: the melody is what the network calls
@@ -162,12 +218,15 @@ mod tests {
         for stem in Stem::ALL {
             write_stem(&files.path(stem), &[0; 88_200], STEMS_SAMPLE_RATE);
         }
-        let stems = files.load().unwrap();
+        let stems = files.load(STEMS_SAMPLE_RATE).unwrap();
         assert_eq!(stems.duration_seconds(), 1.0);
+        let resampled = files.load(48_000).unwrap();
+        assert_eq!(resampled.sample_rate(), 48_000);
+        assert!((resampled.duration_seconds() - 1.0).abs() < 1e-3);
 
         write_stem(&files.path(Stem::Bass), &[0; 96_000], 48_000);
         assert!(matches!(
-            files.load(),
+            files.load(STEMS_SAMPLE_RATE),
             Err(StemLoadError::Format { sample_rate, .. }) if sample_rate == STEMS_SAMPLE_RATE
         ));
     }

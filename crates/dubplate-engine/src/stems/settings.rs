@@ -226,6 +226,7 @@ mod tests {
             assert!(gain < previous && gain > 0.0);
             previous = gain;
         }
+        mix.next_gains();
         assert_eq!(mix.next_gains(), [1.0, 1.0, 1.0, 0.0]);
     }
 }

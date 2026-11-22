@@ -646,7 +646,7 @@ mod tests {
             for step in [0.91875, 1.5, 2.0, 4.0, 8.0, -8.0] {
                 for position in [0.0, 0.375, frames as f64 - 0.625] {
                     let (left, right, missing) =
-                        kernel.read_wrapped(track.buffer(), position, step, Some(frames));
+                        kernel.read_wrapped(track.buffer().as_ref(), position, step, Some(frames));
                     assert!(
                         (left - 0.3).abs() < 1e-6,
                         "length {frames}, position {position}, rate {step}: {left}"
