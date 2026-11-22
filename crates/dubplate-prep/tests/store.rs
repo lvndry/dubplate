@@ -5,7 +5,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use dubplate_prep::{
-    CueSource, EqIntent, Seam, SeamStatus, Set, SetEntry, SetId, SetList, SetStore, StoreError,
+    CueSource, EqIntent, GridCorrection, Seam, SeamStatus, Set, SetEntry, SetId, SetList, SetStore,
+    StoreError, TrackGrid,
 };
 use rusqlite::Connection;
 use tempfile::TempDir;
@@ -111,7 +112,7 @@ fn refuses_a_database_newer_than_this_build() {
         result,
         Err(StoreError::NewerSchema {
             found: 99,
-            known: 2
+            known: 3
         })
     ));
 }
@@ -526,5 +527,48 @@ fn a_version_one_file_gains_the_grid_corrections_and_keeps_its_entries() {
     assert_eq!(
         (corrected.grid_offset_ms, corrected.downbeat_shift),
         (-12, 1)
+    );
+}
+
+#[test]
+fn a_track_keeps_one_grid_across_sets_and_decks() {
+    let root = tempfile::tempdir().unwrap();
+    let (_directory_holder, _database_path, mut store) = open_store(root.path());
+    let first_set = store.create_set("Friday", 60).unwrap();
+    let second_set = store.create_set("Saturday", 60).unwrap();
+    store
+        .insert_entry(first_set, SetList::Main, 0, entry("/a.mp3", false))
+        .unwrap();
+    let moved = TrackGrid {
+        correction: GridCorrection {
+            offset_ms: 10,
+            downbeat_shift: 3,
+        },
+        confirmed: true,
+    };
+    store.set_track_grid(Path::new("/a.mp3"), moved).unwrap();
+    store
+        .insert_entry(second_set, SetList::Main, 0, entry("/a.mp3", false))
+        .unwrap();
+    for set in [first_set, second_set] {
+        let kept = store.load_set(set).unwrap().entries[0].clone();
+        assert_eq!(
+            TrackGrid::of(&kept),
+            moved,
+            "a new entry never resets the grid"
+        );
+    }
+    let mut renudged = store.load_set(second_set).unwrap().entries[0].clone();
+    renudged.grid_offset_ms = -5;
+    store
+        .update_entry(second_set, SetList::Main, 0, renudged)
+        .unwrap();
+    let first = store.load_set(first_set).unwrap().entries[0].clone();
+    assert_eq!(first.grid_offset_ms, -5);
+    assert_eq!(
+        store.track_grids().unwrap()[Path::new("/a.mp3")]
+            .correction
+            .offset_ms,
+        -5
     );
 }

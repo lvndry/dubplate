@@ -8,7 +8,7 @@ use gpui::{ClickEvent, Context, FontWeight, MouseButton, Pixels, SharedString, d
 use super::drop_target::accept_drops;
 use super::overview::{self, ENDING_SECONDS};
 use super::slider::{self, SMALL_THUMB};
-use super::{DeckFrame, DubplateApp, pad_grid};
+use super::{DeckFrame, DubplateApp, deck_grid, pad_grid};
 use crate::analysis::{AnalysisState, key_cell, track_key};
 use crate::assets::{PAUSE_ICON_PATH, PLAY_ICON_PATH};
 use crate::collection::{CollectionTrack, TrackOrigin, clock};
@@ -43,6 +43,7 @@ pub(super) fn render(
         .child(title_row(app, deck, frame, entry))
         .child(overview::render(app, deck, frame, cx))
         .child(transport(app, deck, frame, cx))
+        .children(deck_grid::grid_bar(app, deck, cx))
         .child(pad_grid::render(app, deck, cx));
     accept_drops(panel, deck, cx)
 }
@@ -292,6 +293,14 @@ fn transport(
             Lit::when(app.slip(deck)),
             colour,
             Command::ToggleSlip(deck),
+            cx,
+        ))
+        .child(toggle(
+            ("grid", deck.index()),
+            "Grid",
+            Lit::when(app.grid_bar == Some(deck)),
+            colour,
+            Command::ToggleGridBar(deck),
             cx,
         ))
         .child(

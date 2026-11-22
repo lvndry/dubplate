@@ -66,7 +66,9 @@ pub use effects::{EffectTarget, EffectUnitId, EffectUnitState};
 pub use error::EngineError;
 pub use grid::{BeatGrid, GridBeat};
 pub use headphones::HeadphoneSettings;
-pub use jog::DEFAULT_JOG_TICKS_PER_REVOLUTION;
+pub use jog::{
+    DEFAULT_JOG_TICKS_PER_REVOLUTION, NUDGE_SECONDS_PER_REVOLUTION, SCRATCH_SECONDS_PER_REVOLUTION,
+};
 pub use mixer::Renderer;
 pub use output::{AudioOutput, OutputConfig, OutputDevice, SILENT_OUTPUT_NAME};
 pub use pad_effects::PadEffect;
