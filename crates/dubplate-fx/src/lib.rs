@@ -41,6 +41,7 @@ mod dsp;
 mod effect;
 mod effects;
 mod isolator;
+mod limiter;
 mod unit;
 
 pub use beat::{BeatLength, ParseBeatLengthError};
@@ -59,3 +60,4 @@ pub use effects::ping_pong::PingPong;
 pub use effects::reverb::Reverb;
 pub use effects::sweep::SweepFilter;
 pub use isolator::{EqBand, HIGH_CROSSOVER_HZ, Isolator, LOW_CROSSOVER_HZ, MAX_BAND_GAIN};
+pub use limiter::{LIMITER_CEILING, Limiter, LimiterTiming};

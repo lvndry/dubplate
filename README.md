@@ -116,6 +116,12 @@ Key lock, the MASTER TEMPO button of a CDJ, changes a deck's tempo without chang
 
 The stretcher needs to hear about 140 ms of music ahead of what it plays. The track is fully decoded, so the deck reads ahead by that much, round loops as the playhead will, and the stretched beats land within a millisecond of the playhead. After a jump, hot cue or beat jump the stretcher starts again at the new place at once. Scratching, and a record held still, play without key lock, as on a CDJ; at the track's own tempo the deck plays the track untouched. Turning key lock on or off crossfades over 20 ms. In the play example, a switches key lock on the selected deck.
 
+## Master limiter
+
+The master and the headphones each end in a look-ahead limiter, so however hard the decks are pushed no sample passes -0.3 dBFS. It sees peaks 1.5 ms ahead and turns down smoothly before they arrive, holds the gain for 20 ms so a bass note is turned down without distortion, and lets go over 120 ms. Music under the ceiling passes untouched, only delayed by the look-ahead. `Meters::master_limiter_gain` shows how far the master was pushed into it, for a LIMIT light.
+
+The settings came from an A/B on real music pushed 9 dB too hot and on a 40 Hz sine 6 dB over the ceiling. Without the hold, a 1.5 ms look-ahead distorted the bass at -35 dB and a 5 ms one at -60 dB. The 20 ms hold brought it below -150 dB without adding latency.
+
 ## Loops, beat jump and quantize
 
 Beat loops run from a sixteenth of a beat to 32 beats on the beat grid, so a loop on a track whose tempo changes still holds whole beats. LOOP IN and LOOP OUT set a loop by hand, halving and doubling work from the loop's start, and RELOOP/EXIT leaves the loop or goes back to it. Beat jump moves any number of beats either way and takes a loop that is on along with it. Every jump and every turn of a loop crossfades over 5 ms, so none of them clicks.
