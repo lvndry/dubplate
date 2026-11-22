@@ -2,9 +2,11 @@
 //! to another while the decks are stopped, keeping the tracks, their places, the mixer and the
 //! effects as they were.
 
+use std::time::{Duration, Instant};
+
 use dubplate_engine::{
-    AudioOutput, Controller, DeckId, EffectUnitId, EngineError, MasterTempo, OutputConfig,
-    OutputDevice,
+    AudioOutput, Controller, DeckId, DeckSnapshot, EffectUnitId, EngineError, MasterTempo,
+    OutputConfig, OutputDevice,
 };
 use gpui::{Context, SharedString};
 
@@ -63,11 +65,31 @@ fn apply_mixer(controller: &mut Controller, mixer: &MixerPositions) -> Result<()
     controller.set_sampler_volume(mixer.sampler_volume)
 }
 
+/// How long a sound card change waits for the old audio thread to carry out the commands
+/// sent to it before taking what it last published: a stream that died never will.
+const SNAPSHOT_TIMEOUT: Duration = Duration::from_millis(200);
+const SNAPSHOT_RETRY: Duration = Duration::from_millis(5);
+
+/// A deck of `source` to carry over: its state once the audio thread has caught up, or what
+/// it last published when the thread does not answer in time.
+fn deck_snapshot(source: &Controller, deck: DeckId) -> Result<DeckSnapshot, EngineError> {
+    let deadline = Instant::now() + SNAPSHOT_TIMEOUT;
+    loop {
+        match source.snapshot_deck(deck) {
+            Err(EngineError::DeckStatePending) if Instant::now() < deadline => {
+                std::thread::sleep(SNAPSHOT_RETRY);
+            }
+            Err(EngineError::DeckStatePending) => return Ok(source.last_published_deck(deck)),
+            answer => return answer,
+        }
+    }
+}
+
 /// Puts on `target` what `source` has beyond the mixer: the tracks at their places with their
 /// cue points and grids, the headphone buttons, the effect units, the tempo ranges and sync.
 fn carry_over(source: &Controller, target: &mut Controller) -> Result<(), EngineError> {
     for deck in DeckId::ALL {
-        let snapshot = source.snapshot_deck(deck)?;
+        let snapshot = deck_snapshot(source, deck)?;
         target.restore_deck(deck, &snapshot)?;
         let tempo = source.tempo_state(deck);
         if tempo.is_master {
@@ -243,6 +265,28 @@ mod tests {
         assert_eq!(effect.target, EffectTarget::Deck(DeckId::B));
         assert_eq!(effect.beat, BeatLength::HALF);
         assert!((effect.depth - 0.8).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_sound_card_that_stopped_still_hands_over_what_it_last_played() {
+        let (mut source, mut source_renderer) = offline_engine(SAMPLE_RATE);
+        let samples = vec![0.1; SAMPLE_RATE as usize * 10 * 2];
+        let track = Track::from_interleaved_stereo(&samples, SAMPLE_RATE).unwrap();
+        source.load_track(DeckId::A, track).unwrap();
+        source.seek(DeckId::A, 4.0).unwrap();
+        render(&mut source_renderer);
+        drop(source_renderer);
+        source.set_headphone_cue(DeckId::A, true).unwrap();
+
+        let (mut target, mut target_renderer) = offline_engine(SAMPLE_RATE);
+        carry_over(&source, &mut target).unwrap();
+        render(&mut target_renderer);
+        let state = target.deck_state(DeckId::A);
+        assert!(
+            state.loaded,
+            "deck A is carried over though the old stream died"
+        );
+        assert!((state.position_seconds - 4.0).abs() < 1e-3, "{state:?}");
     }
 
     #[test]

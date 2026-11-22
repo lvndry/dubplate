@@ -18,6 +18,7 @@ mod library;
 mod library_panel;
 mod mixer;
 mod notice;
+mod overview;
 mod pad_grid;
 mod pads;
 mod pickup;
@@ -32,7 +33,7 @@ mod track_check;
 mod waveforms;
 
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -61,6 +62,7 @@ use crate::controls::{
     CROSSFADER_STEP, Control, MixerPositions, Orientation, Slider, fraction_at, master_gain_at,
     nudged_tempo_slider, tempo_fader, trim_gain_at,
 };
+use crate::cue_marks::{MarkerPulse, SeenMarks};
 use crate::deck::{
     Deck, DeckContent, GridSource, HotCues, LoadError, PreparedTrack, TrackVisuals, deck_letter,
     prepare_track,
@@ -89,6 +91,7 @@ use crate::waveform::Zoom;
 use crate::waveform_cache::WaveformCache;
 use audition::Audition;
 use notice::{NoticePlace, Notices};
+use overview::DeckOverview;
 use pads::HeldPad;
 use prepare::PrepareFocus;
 use relink::RelinkReview;
@@ -186,6 +189,7 @@ pub struct DubplateApp {
     quit_refused: bool,
     prepare_focus: PrepareFocus,
     next_cursor: usize,
+    queued_suggestions: VecDeque<usize>,
     set_scroll: ScrollHandle,
     prepare_view: Arc<prepare::PrepareViewModel>,
     prepare_generation: u64,
@@ -214,6 +218,7 @@ pub struct DubplateApp {
     output_devices: Vec<OutputDevice>,
     hit_areas: Rc<HitAreas>,
     browser: Entity<Browser>,
+    overviews: [Entity<DeckOverview>; DECK_COUNT],
     help_open: bool,
     notices: Notices,
     focus_handle: FocusHandle,
@@ -367,6 +372,7 @@ impl DubplateApp {
             quit_refused: false,
             prepare_focus: PrepareFocus::Library,
             next_cursor: 0,
+            queued_suggestions: VecDeque::new(),
             set_scroll: ScrollHandle::new(),
             prepare_view: Arc::default(),
             prepare_generation: 0,
@@ -397,6 +403,10 @@ impl DubplateApp {
             output_devices: Vec::new(),
             hit_areas: Rc::default(),
             browser,
+            overviews: [
+                cx.new(|_| DeckOverview::default()),
+                cx.new(|_| DeckOverview::default()),
+            ],
             help_open: false,
             notices: Notices::default(),
             focus_handle,
@@ -1659,7 +1669,12 @@ impl DubplateApp {
                 duration_seconds: self.duration_seconds(deck),
             }
         });
-        let moving = frames.iter().any(|frame| frame.state.playing)
+        for (side, frame) in self.decks.iter_mut().zip(&frames) {
+            notice_new_cue(side, frame.state.cue_point_seconds, now);
+        }
+        let pulsing = self.decks.iter().any(|side| side.marker_pulse.is_some());
+        let moving = pulsing
+            || frames.iter().any(|frame| frame.state.playing)
             || self.master_meter.is_moving()
             || self.deck_meters.iter().any(PeakMeter::is_moving)
             || self
@@ -1676,6 +1691,36 @@ impl DubplateApp {
         self.engine
             .as_ref()
             .map_or(0, |engine| engine.controller.stats().overruns())
+    }
+}
+
+/// Starts a pulse where a cue was just set on `side`, and ends a pulse that is over.
+fn notice_new_cue(side: &mut Deck, cue_point: f64, now: Instant) {
+    if side.visuals().is_none() {
+        side.seen_marks = None;
+        side.marker_pulse = None;
+        return;
+    }
+    let marks = SeenMarks {
+        load_generation: side.load_generation(),
+        cue_point,
+        hot_cues: side.hot_cues,
+    };
+    if let Some(seconds) = side
+        .seen_marks
+        .replace(marks)
+        .and_then(|seen| seen.newly_set(&marks))
+    {
+        side.marker_pulse = Some(MarkerPulse {
+            seconds,
+            started: now,
+        });
+    }
+    if side
+        .marker_pulse
+        .is_some_and(|pulse| pulse.strength(now).is_none())
+    {
+        side.marker_pulse = None;
     }
 }
 
