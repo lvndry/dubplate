@@ -11,13 +11,22 @@ fn playing_deck(fader_echo: bool) -> (Controller, Renderer) {
     let (mut controller, mut renderer) = offline_engine(SAMPLE_RATE);
     controller
         .load_track(DeckId::A, sine_track(440.0, 0.5, 0.5, 20.0, SAMPLE_RATE))
-        .unwrap();
+        .expect("the offline engine takes it");
     controller
-        .set_beat_grid(DeckId::A, Some(BeatGrid::new(124.0, 0.0).unwrap()))
-        .unwrap();
-    controller.set_crossfader(0.0).unwrap();
-    controller.set_fader_echo(fader_echo).unwrap();
-    controller.play(DeckId::A).unwrap();
+        .set_beat_grid(
+            DeckId::A,
+            Some(BeatGrid::new(124.0, 0.0).expect("124 BPM is a valid grid")),
+        )
+        .expect("the offline engine takes it");
+    controller
+        .set_crossfader(0.0)
+        .expect("the offline engine takes it");
+    controller
+        .set_fader_echo(fader_echo)
+        .expect("the offline engine takes it");
+    controller
+        .play(DeckId::A)
+        .expect("the offline engine takes it");
     seconds(&mut renderer, 1.0);
     (controller, renderer)
 }
@@ -34,7 +43,9 @@ fn seconds(renderer: &mut Renderer, seconds: f64) -> Vec<f32> {
 fn pull_fader(controller: &mut Controller, renderer: &mut Renderer, to: f32) {
     for step in 1..=10 {
         let position = 1.0 - (1.0 - to) * step as f32 / 10.0;
-        controller.set_channel_fader(DeckId::A, position).unwrap();
+        controller
+            .set_channel_fader(DeckId::A, position)
+            .expect("the offline engine takes it");
         seconds(renderer, 0.01);
     }
 }
@@ -66,7 +77,9 @@ fn a_fader_closed_fast_leaves_its_echoes_ringing_only_with_the_fader_echo_on() {
 fn controller_reports_the_setting() -> bool {
     let (mut controller, _renderer) = offline_engine(SAMPLE_RATE);
     let off = !controller.fader_echo();
-    controller.set_fader_echo(true).unwrap();
+    controller
+        .set_fader_echo(true)
+        .expect("the offline engine takes it");
     off && controller.fader_echo()
 }
 
