@@ -12,8 +12,8 @@ use std::process::ExitCode;
 use std::time::Instant;
 
 use dubplate_stems::{
-    CurrentExecutable, DEFAULT_CACHE_LIMIT, SeparationPriority, SeparationQueue,
-    StemsLocation, StemsStatus, WorkerThreads, run_worker_if_requested,
+    CurrentExecutable, DEFAULT_CACHE_LIMIT, SeparationPriority, SeparationQueue, StemsLocation,
+    StemsStatus, WorkerThreads, run_worker_if_requested,
 };
 
 fn main() -> ExitCode {

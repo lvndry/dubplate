@@ -145,10 +145,7 @@ mod tests {
             .into_iter()
             .map(WorkerMessage::Stage)
             .chain([
-                WorkerMessage::Progress {
-                    done: 3,
-                    total: 40,
-                },
+                WorkerMessage::Progress { done: 3, total: 40 },
                 WorkerMessage::Ready {
                     entry: "htdemucs-955717e8-00ff".to_owned(),
                 },
@@ -187,7 +184,13 @@ mod tests {
 
     #[test]
     fn lines_that_are_not_messages_are_ignored() {
-        for line in ["", "hello", "progress 1", "progress one two", "stage dancing"] {
+        for line in [
+            "",
+            "hello",
+            "progress 1",
+            "progress one two",
+            "stage dancing",
+        ] {
             assert_eq!(WorkerMessage::parse(line), None, "{line}");
         }
     }
@@ -206,10 +209,7 @@ mod tests {
             WorkerArguments::parse(arguments.to_args().into_iter()),
             Some(Ok(arguments.clone()))
         );
-        assert_eq!(
-            WorkerArguments::parse(["--other".into()].into_iter()),
-            None
-        );
+        assert_eq!(WorkerArguments::parse(["--other".into()].into_iter()), None);
         assert_eq!(WorkerArguments::parse(std::iter::empty()), None);
         assert!(matches!(
             WorkerArguments::parse([WORKER_FLAG.into()].into_iter()),
