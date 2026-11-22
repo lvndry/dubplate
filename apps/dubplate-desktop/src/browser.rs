@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use dubplate_engine::DeckId;
-use dubplate_prep::AudioAnalysis;
+use dubplate_prep::{AudioAnalysis, Key};
 use dubplate_stems::StemsStatus;
 use gpui::component::input::{Input, InputEvent, InputState};
 use gpui::prelude::*;
@@ -27,6 +27,7 @@ use crate::library_view::{
     BpmRange, Column, FilterReference, LibraryView, RangeEnd, Sort, SortDirection,
 };
 use crate::search::{SearchQuery, filter_tracks};
+use crate::search_filter::{SuggestionContext, TrackFacts, complete, suggestions};
 use crate::stems::{StemStatuses, stems_cell};
 use crate::theme;
 use crate::widgets::{Emphasis, InteractiveControl, button, tooltip};
@@ -137,6 +138,8 @@ pub struct Browser {
     library: LibraryStatus,
     crate_index: CrateIndex,
     query: SearchQuery,
+    search_text: String,
+    played: Arc<HashSet<PathBuf>>,
     rows: Vec<TrackIndex>,
     searched_count: usize,
     selected: Option<TrackIndex>,
@@ -160,23 +163,26 @@ impl EventEmitter<BrowserEvent> for Browser {}
 impl Browser {
     /// An empty browser, waiting for the library.
     pub fn new(window: &mut Window, cx: &mut Context<'_, Self>) -> Self {
-        let search_input = cx.new(|cx| InputState::new(window, cx).placeholder("Search"));
+        let search_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Search, or bpm:120-124 key:fits"));
         let subscription = cx.subscribe_in(
             &search_input,
             window,
             |this: &mut Self, input, event: &InputEvent, window, cx| match event {
                 InputEvent::Change => {
                     let text = input.read(cx).value();
-                    this.set_query(SearchQuery::parse(&text), cx);
+                    this.set_search_text(text.to_string(), cx);
                 }
                 InputEvent::PressEnter { .. } => this.focus_table(window, cx),
-                InputEvent::Focus | InputEvent::Blur => {}
+                InputEvent::Focus | InputEvent::Blur => cx.notify(),
             },
         );
         Self {
             library: LibraryStatus::Reading,
             crate_index: CrateIndex::COLLECTION,
             query: SearchQuery::default(),
+            search_text: String::new(),
+            played: Arc::default(),
             rows: Vec::new(),
             searched_count: 0,
             selected: None,
@@ -234,7 +240,10 @@ impl Browser {
     pub fn add_analyses(&mut self, analyses: Vec<AnalysisAnswer>, cx: &mut Context<'_, Self>) {
         self.analyses.extend(analyses);
         let reads_analysis = |column| matches!(column, Column::Bpm | Column::Key | Column::Energy);
-        if self.sort().is_some_and(|sort| reads_analysis(sort.column)) || self.view.is_filtered() {
+        if self.sort().is_some_and(|sort| reads_analysis(sort.column))
+            || self.view.is_filtered()
+            || self.query.has_filters()
+        {
             self.refilter(cx);
         }
         cx.notify();
@@ -324,7 +333,7 @@ impl Browser {
         if reference.is_none() || self.view.reference() == reference.as_ref() {
             return;
         }
-        if self.view.set_reference(reference) {
+        if self.view.set_reference(reference) || self.query.has_filters() {
             self.refilter(cx);
         }
         cx.notify();
@@ -511,10 +520,79 @@ impl Browser {
         cx.notify();
     }
 
-    fn set_query(&mut self, query: SearchQuery, cx: &mut Context<'_, Self>) {
+    fn set_search_text(&mut self, text: String, cx: &mut Context<'_, Self>) {
+        let query = SearchQuery::parse(&text);
+        self.search_text = text;
+        if query == self.query {
+            cx.notify();
+            return;
+        }
         self.query = query;
         self.refilter(cx);
         self.scroll.scroll_to_item(0, ScrollStrategy::Top);
+    }
+
+    /// Marks the tracks a deck played this session, which `played:` filters read.
+    pub fn set_played(&mut self, played: Arc<HashSet<PathBuf>>, cx: &mut Context<'_, Self>) {
+        self.played = played;
+        if self.query.has_filters() {
+            self.refilter(cx);
+        }
+    }
+
+    /// Puts a suggested filter in place of the word being typed, and keeps typing there.
+    fn take_suggestion(&mut self, word: &str, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let text = complete(&self.search_text, word);
+        self.search_input.update(cx, |input, cx| {
+            input.set_value(text.clone(), window, cx);
+            input.focus(window, cx);
+        });
+        self.set_search_text(text, cx);
+    }
+
+    /// What the search filters read of `entry`: the same cells the table shows.
+    fn track_facts<'entry>(
+        &self,
+        entry: &'entry CollectionTrack,
+        track: TrackIndex,
+    ) -> TrackFacts<'entry> {
+        let energy = self.cell_text(entry, track, Column::Energy);
+        TrackFacts {
+            artist: &entry.row.artist,
+            genre: &entry.row.genre,
+            bpm: BpmRange::tempo_of(&self.cell_text(entry, track, Column::Bpm)),
+            key: Key::parse_file_key(&self.cell_text(entry, track, Column::Key)),
+            energy: energy.trim().parse().ok(),
+            played: entry
+                .track
+                .file_path
+                .as_ref()
+                .is_some_and(|path| self.played.contains(path)),
+            rating: entry.track.rating,
+        }
+    }
+
+    /// The filters to offer for what is being typed, from the reference and selected tracks.
+    fn search_suggestions(&self) -> Vec<String> {
+        let reference = self.view.reference();
+        let genre = match (&self.library, self.selected) {
+            (LibraryStatus::Ready(collection), Some(track)) => collection
+                .track(track)
+                .row
+                .genre
+                .split(|character: char| character == '/' || character.is_whitespace())
+                .find(|word| !word.is_empty())
+                .map(str::to_lowercase),
+            _ => None,
+        };
+        let context = SuggestionContext {
+            bpm: reference.and_then(|reference| reference.bpm),
+            key: reference
+                .and_then(|reference| reference.key)
+                .map(|fit| fit.reference()),
+            genre,
+        };
+        suggestions(&self.search_text, &context)
     }
 
     fn choose_crate(&mut self, crate_index: CrateIndex, cx: &mut Context<'_, Self>) {
@@ -531,6 +609,13 @@ impl Browser {
             return;
         };
         let mut rows = filter_tracks(&collection, self.crate_index, &self.query);
+        if self.query.has_filters() {
+            let fits = self.view.reference().and_then(|reference| reference.key);
+            rows.retain(|track| {
+                let facts = self.track_facts(collection.track(*track), *track);
+                self.query.filters_keep(&facts, fits)
+            });
+        }
         self.searched_count = rows.len();
         self.view.apply(self.screen, &mut rows, |track, column| {
             self.cell_text(collection.track(track), track, column)
@@ -613,6 +698,7 @@ impl Browser {
     fn render_table(
         &self,
         collection: Arc<Collection>,
+        searching: bool,
         cx: &mut Context<'_, Self>,
     ) -> impl IntoElement {
         let empty_message: Option<SharedString> = if !self.rows.is_empty() {
@@ -648,6 +734,7 @@ impl Browser {
                 }),
             )
             .child(self.render_filters(cx))
+            .when(searching, |table| table.children(self.render_suggestions(cx)))
             .when(!self.missing.is_empty(), |table| {
                 table.child(missing_bar(self.missing.len(), self.relinking, cx))
             })
@@ -744,6 +831,66 @@ impl Browser {
                     .text_color(theme::MUTED)
                     .child(count),
             )
+    }
+
+    /// The filters the DJ can type, as chips under the filter bar while the search field has
+    /// the keyboard: a click puts one in the search in place of the word being typed.
+    fn render_suggestions(&self, cx: &mut Context<'_, Self>) -> Option<impl IntoElement + use<>> {
+        let words = self.search_suggestions();
+        if words.is_empty() {
+            return None;
+        }
+        Some(
+            div()
+                .id("search-suggestions")
+                .role(gpui::Role::Group)
+                .aria_label("Search filters")
+                .flex()
+                .flex_none()
+                .items_center()
+                .gap(px(6.0))
+                .h(FILTER_BAR_HEIGHT)
+                .px(theme::GUTTER)
+                .border_b_1()
+                .border_color(theme::LINE)
+                .overflow_x_hidden()
+                .child(
+                    div()
+                        .flex_none()
+                        .text_size(theme::TINY_TEXT_SIZE)
+                        .text_color(theme::MUTED)
+                        .child("Filters"),
+                )
+                .children(words.into_iter().enumerate().map(|(position, word)| {
+                    let shared: SharedString = word.into();
+                    div()
+                        .id(("search-suggestion", position))
+                        .accessible_button(format!("Search with {shared}"))
+                        .flex_none()
+                        .px(px(8.0))
+                        .py(px(3.0))
+                        .rounded(theme::CONTROL_RADIUS)
+                        .border_1()
+                        .border_color(theme::LINE)
+                        .font_family(MONO_FAMILY)
+                        .text_size(theme::TINY_TEXT_SIZE)
+                        .text_color(theme::MUTED)
+                        .cursor_pointer()
+                        .hover(|chip| chip.text_color(theme::TEXT).bg(theme::RAISED))
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener({
+                                let shared = shared.clone();
+                                move |this, _: &MouseDownEvent, window, cx| {
+                                    cx.stop_propagation();
+                                    window.prevent_default();
+                                    this.take_suggestion(&shared, window, cx);
+                                }
+                            }),
+                        )
+                        .child(shared)
+                })),
+        )
     }
 
     /// BPM, which turns on a range around the reference track, then its two ends to step.
@@ -1347,12 +1494,13 @@ pub fn search_field(browser: &Browser) -> impl IntoElement + use<> {
 }
 
 impl Render for Browser {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let body = div().flex().size_full().min_h_0().bg(theme::BACKGROUND);
+        let searching = self.search_has_focus(window, cx);
         match self.library.clone() {
             LibraryStatus::Ready(collection) => body
                 .child(self.render_sidebar(&collection, cx))
-                .child(self.render_table(collection, cx)),
+                .child(self.render_table(collection, searching, cx)),
             LibraryStatus::Reading => {
                 body.child(message_panel("Opening your library\u{2026}".into(), None))
             }

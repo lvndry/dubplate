@@ -25,6 +25,7 @@ mod overview;
 mod pad_grid;
 mod pads;
 mod pickup;
+mod played;
 mod prepare;
 mod recording;
 mod relink;
@@ -218,6 +219,8 @@ pub struct DubplateApp {
     waveform_cache: WaveformCache,
     check_cursor_seconds: f64,
     catalogue: Arc<Catalogue>,
+    /// The tracks a deck played this session, by file.
+    played_tracks: Arc<HashSet<PathBuf>>,
     missing: Arc<Vec<Missing>>,
     relinking: bool,
     relink_review: Option<RelinkReview>,
@@ -440,6 +443,7 @@ impl DubplateApp {
             waveform_cache: WaveformCache::default(),
             check_cursor_seconds: 0.0,
             catalogue: Arc::default(),
+            played_tracks: Arc::default(),
             missing: Arc::default(),
             relinking: false,
             relink_review: None,
@@ -1995,6 +1999,7 @@ impl Render for DubplateApp {
         }
         self.modal_active = modal_open;
         let frames = self.advance_frame(window);
+        self.mark_played(&frames, cx);
         let root = div()
             .key_context(WINDOW_CONTEXT)
             .track_focus(&self.focus_handle)

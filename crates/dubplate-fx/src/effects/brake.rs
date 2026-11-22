@@ -3,7 +3,9 @@ use crate::config::EffectConfig;
 use crate::context::BlockTiming;
 use crate::effect::EffectKind;
 use crate::effects::turntable::{Motion, Turntable};
-use crate::unit::{Controls, Frame, Kernel, MixLaw, Unit, implement_effect};
+use crate::unit::{Controls, Frame, Kernel, MixLaw, Unit, engaged, implement_effect};
+
+const FULL_MIX_DEPTH: f32 = 0.25;
 
 /// A turntable stopping: the music slows down and drops in pitch until it stops.
 ///
@@ -12,7 +14,8 @@ use crate::unit::{Controls, Frame, Kernel, MixLaw, Unit, implement_effect};
 /// switched off, which brings the live music straight back. Like a real cartridge, the sound
 /// gets quieter as the record slows.
 ///
-/// The depth knob sets the stop time, from 1/4 beat to 4 beats.
+/// The beat length sets the stop time. The depth knob blends the stop in over its first quarter,
+/// so from there on the music stops completely.
 pub struct Brake {
     unit: Unit<BrakeKernel>,
 }
@@ -34,15 +37,7 @@ impl Controls for Brake {
     }
 
     fn apply_depth(&mut self, depth: f32) {
-        let beats = [
-            BeatLength::QUARTER,
-            BeatLength::HALF,
-            BeatLength::ONE,
-            BeatLength::TWO,
-            BeatLength::FOUR,
-        ];
-        let index = (depth * (beats.len() - 1) as f32).round() as usize;
-        self.apply_beat(beats[index.min(beats.len() - 1)]);
+        self.unit.set_mix(engaged(depth, FULL_MIX_DEPTH));
     }
 
     fn apply_beat(&mut self, beat: BeatLength) {
