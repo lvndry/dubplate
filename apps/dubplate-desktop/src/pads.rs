@@ -76,8 +76,8 @@ impl PadFx {
     }
 }
 
-/// Depth for the echoes and reverbs, which sit under the track.
-const WASH_DEPTH: f32 = 0.6;
+/// Depth for the echoes and reverbs: the trail as loud as the track, on top of it.
+const WASH_DEPTH: f32 = 0.5;
 /// Depth for the other effects, which take the track over.
 const FULL_DEPTH: f32 = 0.85;
 
@@ -114,7 +114,7 @@ const PAD_FX_BANKS: [[PadFx; PAD_COUNT]; 4] = [
         effect(EffectKind::Backspin, BeatLength::ONE),
     ],
     [
-        effect(EffectKind::SweepFilter, BeatLength::FOUR),
+        effect(EffectKind::Filter, BeatLength::FOUR),
         effect(EffectKind::HighPass, BeatLength::ONE),
         effect(EffectKind::LowPass, BeatLength::ONE),
         effect(EffectKind::BandPass, BeatLength::ONE),
@@ -129,7 +129,7 @@ const PAD_FX_BANKS: [[PadFx; PAD_COUNT]; 4] = [
         effect(EffectKind::Echo, BeatLength::QUARTER),
         effect(EffectKind::PingPong, BeatLength::THREE_QUARTERS),
         effect(EffectKind::Reverb, BeatLength::TWO),
-        effect(EffectKind::SweepFilter, BeatLength::EIGHT),
+        effect(EffectKind::Filter, BeatLength::EIGHT),
         effect(EffectKind::Brake, BeatLength::TWO),
         effect(EffectKind::Backspin, BeatLength::TWO),
     ],
@@ -156,7 +156,7 @@ fn effect_name(kind: EffectKind) -> &'static str {
         EffectKind::LowPass => "Low pass",
         EffectKind::HighPass => "High pass",
         EffectKind::BandPass => "Band pass",
-        EffectKind::SweepFilter => "Sweep",
+        EffectKind::Filter => "Filter",
         EffectKind::Flanger => "Flanger",
         EffectKind::Phaser => "Phaser",
         EffectKind::Gate => "Gate",

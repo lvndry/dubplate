@@ -182,7 +182,7 @@ fn moving_a_unit_or_changing_its_effect_never_clicks() {
     let changes: [Step; 6] = [
         |controller| controller.set_effect_kind(FIRST_UNIT, EffectKind::HighPass),
         |controller| controller.set_effect_target(FIRST_UNIT, EffectTarget::Master),
-        |controller| controller.set_effect_kind(FIRST_UNIT, EffectKind::SweepFilter),
+        |controller| controller.set_effect_kind(FIRST_UNIT, EffectKind::Filter),
         |controller| controller.set_effect_target(FIRST_UNIT, EffectTarget::Deck(DeckId::A)),
         |controller| controller.set_effect_kind(FIRST_UNIT, EffectKind::Echo),
         |controller| controller.set_effect_target(FIRST_UNIT, EffectTarget::Deck(DeckId::B)),

@@ -16,6 +16,8 @@ const FIRST_STAGE_QUALITY: f32 = 0.541_196_1;
 const SECOND_STAGE_QUALITY: f32 = 1.306_563;
 const DEFAULT_CUTOFF_HZ: f32 = 1_000.0;
 const DEFAULT_RESONANCE: f32 = 0.25;
+const DEPTH_RESONANCE: f32 = 0.3;
+const SWEEP_CURVE: f32 = 0.7;
 
 /// What a [`Filter`] lets through.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -43,8 +45,10 @@ pub enum FilterSlope {
 /// without clicks, and a high resonance sings without blowing up. Changing the mode crossfades
 /// between the two shapes.
 ///
-/// The depth knob sweeps the cutoff: a low-pass closes from 20 kHz down to 40 Hz, a high-pass
-/// opens from 20 Hz up to 12 kHz, a band-pass moves its band from 100 Hz to 8 kHz.
+/// The depth knob sweeps the cutoff and raises the resonance: a low-pass closes from 20 kHz
+/// down to 40 Hz, a high-pass opens from 20 Hz up to 12 kHz, a band-pass moves its band from
+/// 100 Hz to 8 kHz. The sweep moves fastest at the start of the knob, so a quarter of the way
+/// a low-pass is already at 1.9 kHz and a high-pass at 230 Hz.
 pub struct Filter {
     unit: Unit<FilterKernel>,
 }
@@ -111,8 +115,10 @@ impl Controls for Filter {
             FilterMode::HighPass => (20.0, 12_000.0),
             FilterMode::BandPass => (100.0, 8_000.0),
         };
-        let octaves = open_hz.log2() + (closed_hz.log2() - open_hz.log2()) * depth;
+        let travel = depth.powf(SWEEP_CURVE);
+        let octaves = open_hz.log2() + (closed_hz.log2() - open_hz.log2()) * travel;
         self.set_cutoff_hz(octaves.exp2());
+        self.set_resonance(DEFAULT_RESONANCE + DEPTH_RESONANCE * depth);
     }
 }
 

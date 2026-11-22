@@ -56,8 +56,8 @@ impl SmartCfx {
     /// The effect, its beat length and the most depth the knob gives it.
     fn recipe(self) -> (EffectKind, BeatLength, f32) {
         match self {
-            SmartCfx::Space => (EffectKind::Reverb, BeatLength::ONE, 1.0),
-            SmartCfx::DubEcho => (EffectKind::Echo, BeatLength::THREE_QUARTERS, 0.8),
+            SmartCfx::Space => (EffectKind::Reverb, BeatLength::ONE, 0.6),
+            SmartCfx::DubEcho => (EffectKind::Echo, BeatLength::THREE_QUARTERS, 0.6),
             SmartCfx::Crush => (EffectKind::Crusher, BeatLength::ONE, 0.7),
             SmartCfx::Chop => (EffectKind::Gate, BeatLength::EIGHTH, 1.0),
             SmartCfx::Jet => (EffectKind::Flanger, BeatLength::FOUR, 1.0),

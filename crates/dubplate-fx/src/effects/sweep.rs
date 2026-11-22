@@ -2,9 +2,9 @@ use crate::context::BlockTiming;
 use crate::dsp::filters::SvfCoefficients;
 use crate::dsp::shaping::smoothstep;
 use crate::dsp::smoothing::Smoothed;
-use crate::effect::EffectKind;
 use crate::effects::filter::{FilterSlope, FilterStages, stage_qualities};
-use crate::unit::{Controls, Frame, Kernel, MixLaw, Unit, implement_effect, knob};
+use crate::context::ProcessContext;
+use crate::unit::{Frame, Kernel, MixLaw, Unit, knob};
 
 const CENTRE_DEAD_ZONE: f32 = 0.02;
 const ENGAGE_TRAVEL: f32 = 0.06;
@@ -27,17 +27,29 @@ const HIGH_WEIGHTS: [f32; 3] = [0.0, 0.0, 1.0];
 /// cut at 24 dB per octave by default, and the resonance grows as the knob leaves the centre,
 /// so small moves stay clean and big sweeps sing.
 ///
-/// The depth knob is the filter knob itself: 0 is fully left, 0.5 the centre, 1 fully right.
+/// It is a part of the mixer channel, like the [`crate::Isolator`], so it is always on; moving
+/// the knob back to the centre is what takes it out.
 pub struct SweepFilter {
     unit: Unit<SweepKernel>,
 }
 
 impl SweepFilter {
-    /// Builds a sweep filter at the centre, switched off.
+    /// Builds a sweep filter at the centre.
     pub fn new() -> Self {
-        Self {
-            unit: Unit::new(SweepKernel::new(), 1.0),
-        }
+        let mut unit = Unit::new(SweepKernel::new(), 1.0);
+        unit.set_enabled(true);
+        unit.reset();
+        Self { unit }
+    }
+
+    /// Filters one block of planar stereo audio in place. Real-time safe.
+    pub fn process(&mut self, left: &mut [f32], right: &mut [f32], context: &ProcessContext) {
+        self.unit.process(left, right, context);
+    }
+
+    /// Clears the filter's state and moves every control straight to its target.
+    pub fn reset(&mut self) {
+        self.unit.reset();
     }
 
     /// Sets the knob, from -1 (low-pass fully closed) through 0 (flat) to 1 (high-pass fully
@@ -67,18 +79,6 @@ impl SweepFilter {
 impl Default for SweepFilter {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-implement_effect!(SweepFilter);
-
-impl Controls for SweepFilter {
-    fn effect_kind(&self) -> EffectKind {
-        EffectKind::SweepFilter
-    }
-
-    fn apply_depth(&mut self, depth: f32) {
-        self.set_position(depth * 2.0 - 1.0);
     }
 }
 

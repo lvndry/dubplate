@@ -10,13 +10,17 @@ const MAX_RATE_HZ: f32 = 48_000.0;
 const CONTROL_SMOOTHING_SECONDS: f32 = 0.02;
 const DEFAULT_BITS: f32 = 8.0;
 const DEFAULT_RATE_HZ: f32 = 11_025.0;
+const CRUSHED_BITS: f32 = 3.0;
+const CRUSHED_RATE_HZ: f32 = 1_500.0;
 
 /// A bit crusher with sample-rate reduction, for lo-fi grit.
 ///
 /// It holds each sample for as long as the reduced rate asks and rounds it to fewer levels.
 /// Both controls move continuously, so sweeping them is smooth rather than stepped.
 ///
-/// The depth knob crushes from 16 bits at 48 kHz (clean) down to 3 bits at 1.5 kHz.
+/// The depth knob crushes from 16 bits at 48 kHz (clean) down to 3 bits at 1.5 kHz, along a
+/// curve that does most of its work early: a quarter of the way it is already at 9.5 bits and
+/// 8.5 kHz, a clear lo-fi grit.
 pub struct Crusher {
     unit: Unit<CrusherKernel>,
 }
@@ -57,8 +61,9 @@ impl Controls for Crusher {
     }
 
     fn apply_depth(&mut self, depth: f32) {
-        self.set_bits(MAX_BITS - 13.0 * depth);
-        let octaves = MAX_RATE_HZ.log2() + (1_500.0_f32.log2() - MAX_RATE_HZ.log2()) * depth;
+        let amount = depth.sqrt();
+        self.set_bits(MAX_BITS + (CRUSHED_BITS - MAX_BITS) * amount);
+        let octaves = MAX_RATE_HZ.log2() + (CRUSHED_RATE_HZ.log2() - MAX_RATE_HZ.log2()) * amount;
         self.set_rate_hz(octaves.exp2());
     }
 }
