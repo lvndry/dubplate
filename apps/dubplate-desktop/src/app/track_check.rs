@@ -126,7 +126,11 @@ impl DubplateApp {
             this.update(cx, |this, cx| {
                 if this.detail_pending.as_ref() == Some(&path) {
                     this.detail_pending = None;
-                    this.track_detail = Some((path, Arc::new(detail)));
+                    let needs_drawing = detail.zoomed.is_none();
+                    this.track_detail = Some((path.clone(), Arc::new(detail)));
+                    if needs_drawing {
+                        this.draw_check_waveforms(path, cx);
+                    }
                     cx.notify();
                 }
             })

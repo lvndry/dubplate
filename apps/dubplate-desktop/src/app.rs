@@ -85,6 +85,7 @@ use crate::shortcuts::{Perform, WINDOW_CONTEXT};
 use crate::theme;
 use crate::transport::{self, CueDown, is_at_cue, other_deck};
 use crate::waveform::Zoom;
+use crate::waveform_cache::WaveformCache;
 use audition::Audition;
 use notice::{NoticePlace, Notices};
 use pads::HeldPad;
@@ -192,6 +193,7 @@ pub struct DubplateApp {
     check_generation: u64,
     track_detail: Option<(PathBuf, Arc<TrackDetail>)>,
     detail_pending: Option<PathBuf>,
+    waveform_cache: WaveformCache,
     check_cursor_seconds: f64,
     catalogue: Arc<Catalogue>,
     missing: Arc<Vec<Missing>>,
@@ -371,6 +373,7 @@ impl DubplateApp {
             check_generation: 0,
             track_detail: None,
             detail_pending: None,
+            waveform_cache: WaveformCache::default(),
             check_cursor_seconds: 0.0,
             catalogue: Arc::default(),
             missing: Arc::default(),

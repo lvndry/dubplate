@@ -52,7 +52,7 @@ Each set track has a **ready badge**: Ready, or what is missing (Grid unconfirme
 
 ### Check each track
 
-Select a set track to open its track check: the waveform with the beat grid, rekordbox's phrases and the mix cues. A track rekordbox never analysed shows Dubplate's grid, with no waveform or phrases under it, and its proposed cues come from the grid alone.
+Select a set track to open its track check: the waveform with the beat grid, rekordbox's phrases and the mix cues. A track rekordbox never analysed shows Dubplate's grid over a waveform drawn from its audio (a few seconds the first time; the deck and the track check share it, so each track is drawn once), with no phrases, and its proposed cues come from the grid alone.
 
 | Do | Key |
 | --- | --- |

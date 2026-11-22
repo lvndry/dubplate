@@ -36,6 +36,7 @@ mod tap_tempo;
 mod theme;
 mod transport;
 mod waveform;
+mod waveform_cache;
 mod widgets;
 
 use gpui::prelude::*;
