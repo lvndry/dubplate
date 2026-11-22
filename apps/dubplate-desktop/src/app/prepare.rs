@@ -14,7 +14,8 @@ use dubplate_prep::{
 };
 use gpui::{App, Context};
 
-use super::{DubplateApp, NoticePlace};
+use super::DubplateApp;
+use super::notice::NoticePlace;
 use crate::collection::{TrackIndex, TrackOrigin};
 use crate::commands::{Direction, SetEdit};
 use crate::deck::deck_letter;
@@ -619,12 +620,8 @@ fn unloaded_notice(unloaded: &[(DeckId, String)]) -> Option<String> {
             "Deck {} was not loaded: {title}'s file is missing.",
             deck_letter(*deck)
         )),
-        [(_, first), (_, second)] => Some(format!(
+        [(_, first), (_, second), ..] => Some(format!(
             "Neither deck was loaded: the files of {first} and {second} are missing."
-        )),
-        more => Some(format!(
-            "{} set tracks were not loaded: their files are missing.",
-            more.len()
         )),
     }
 }

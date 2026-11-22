@@ -8,7 +8,8 @@ use dubplate_engine::{
 };
 use gpui::{Context, SharedString};
 
-use super::{BUFFER_FRAMES, DubplateApp, Engine, NoticePlace, error_chain};
+use super::notice::NoticePlace;
+use super::{BUFFER_FRAMES, DubplateApp, Engine, error_chain};
 use crate::controls::{MixerPositions, master_gain_at, tempo_fader, trim_gain_at};
 
 /// Starts the engine on the sound card called `device`, or on the system's default one when

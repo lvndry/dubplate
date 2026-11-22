@@ -10,7 +10,8 @@ use dubplate_library::{FolderScan, LibraryCache};
 use dubplate_prep::ExportLibrary;
 use gpui::{Context, PathPromptOptions};
 
-use super::{DubplateApp, NoticePlace, error_chain};
+use super::notice::NoticePlace;
+use super::{DubplateApp, error_chain};
 use crate::browser::LibraryStatus;
 use crate::collection::{Collection, RekordboxLibrary, folder_name};
 use crate::library::{RekordboxSource, ScanRequest};

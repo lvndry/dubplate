@@ -13,7 +13,8 @@ use dubplate_library::{
 use gpui::prelude::*;
 use gpui::{ClickEvent, Context, FontWeight, MouseButton, PathPromptOptions, div, px};
 
-use super::{DubplateApp, NoticePlace};
+use super::DubplateApp;
+use super::notice::NoticePlace;
 use crate::collection::TrackIndex;
 use crate::relink::{Missing, with_relocations};
 use crate::theme;
