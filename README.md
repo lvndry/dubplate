@@ -136,6 +136,15 @@ While a deck slips, beat sync leaves it alone, because its shadow stays in phase
 
 The effect grows with the square of the knob's travel. An A/B on real music against linear and smoothstep curves showed the square curve kept the first moves under 0.3 dB, had the smallest loudness steps along the sweep and the least boost. Reverb, echo, flanger and phaser sit before the filter, so a closing low-pass darkens their tails; crusher and gate sit after it. A preset switched off rings out.
 
+## Smart Fader
+
+`Controller::set_smart_fader` makes long blends clean for any DJ:
+
+- The two decks share one tempo, with their beats locked. The crossfader moves the tempo from deck A's own BPM at the left to deck B's at the right, gliding there, with both decks equally loud at the half-way point in the middle.
+- Across the middle third of the crossfader the bass swaps: the outgoing deck's LOW turns down to a kill while the incoming deck's comes up to the centre.
+- A LOW knob the DJ turns away from its centre takes over from the swap.
+- Switching Smart Fader off leaves the tempo where it is until the tempo faders are moved through it.
+
 ## Sampler
 
 Sixteen sampler slots, eight on each side of the DDJ-FLX4's pads, each one-shot or loop, with an optional gate that plays only while the pad is held and a gain of its own. A synced slot with a BPM plays at the tempo master's tempo, half or double when closer, and a synced loop starts in phase with the master's beats, as beat sync would put it. Pressing a playing slot starts it again with a crossfade; loops go round sample-accurately. The sampler has its own bus to the master after the channel faders, with a volume and a CUE button for the headphones.

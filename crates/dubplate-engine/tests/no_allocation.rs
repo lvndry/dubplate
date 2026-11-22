@@ -187,7 +187,11 @@ fn run_session(
     controller.set_sync(DeckId::A, SyncMode::Beat)?;
     render_armed(renderer, &mut output[..9600], 2);
 
-    let steps: [Step; 71] = [
+    let steps: [Step; 75] = [
+        |controller| controller.set_smart_fader(true),
+        |controller| controller.set_crossfader(0.6),
+        |controller| controller.set_crossfader(0.9),
+        |controller| controller.set_smart_fader(false),
         |controller| controller.set_smart_cfx(DeckId::A, Some(SmartCfx::DubEcho)),
         |controller| controller.set_filter(DeckId::A, 0.9),
         |controller| controller.set_smart_cfx(DeckId::A, Some(SmartCfx::Space)),

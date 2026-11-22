@@ -75,6 +75,7 @@ pub(crate) struct Deck {
     pad_effects: PadEffects,
     key_shift: f32,
     pending_landing: bool,
+    smart_tempo: bool,
     beat_grid: Option<BeatGrid>,
     fader: TempoFader,
     sync: SyncFollow,
@@ -109,6 +110,7 @@ impl Deck {
             pad_effects: PadEffects::new(output_rate),
             key_shift: 0.0,
             pending_landing: false,
+            smart_tempo: false,
             beat_grid: None,
             fader: TempoFader::default(),
             sync: SyncFollow::default(),
@@ -616,7 +618,7 @@ impl Deck {
     }
 
     fn play_fader_tempo(&mut self, tempo: f64) {
-        if !self.sync.following {
+        if !self.sync.following && !self.smart_tempo {
             self.apply_tempo(tempo);
         }
     }
@@ -688,6 +690,7 @@ impl Deck {
         &mut self,
         master: MasterBeat,
         allow_half_and_double: bool,
+        force_beat_lock: bool,
         retire: &mut RetireQueue,
     ) {
         if !self.sync.following {
@@ -709,7 +712,7 @@ impl Deck {
             }
         };
         let tempo = master.bpm * multiple / own_bpm;
-        let lock_beats = self.sync.mode == SyncMode::Beat
+        let lock_beats = (self.sync.mode == SyncMode::Beat || force_beat_lock)
             && master.running
             && self.playing
             && !self.platter.is_holding()
@@ -777,6 +780,36 @@ impl Deck {
 
     pub(crate) fn set_eq(&mut self, band: EqBand, position: f32) {
         self.strip.set_eq(band, position);
+    }
+
+    pub(crate) fn set_automatic_low(&mut self, position: Option<f32>) {
+        self.strip.set_automatic_low(position);
+    }
+
+    /// The tempo at its own speed, in beats per minute, when the deck has a beat grid.
+    pub(crate) fn own_bpm(&self) -> Option<f64> {
+        self.beat_grid
+            .as_ref()
+            .map(|grid| grid.bpm_at(self.position_seconds()))
+    }
+
+    /// Plays at `bpm` for Smart Fader, or gives the tempo back to the fader with `None`; the
+    /// fader takes over once moved through the playing tempo.
+    pub(crate) fn set_smart_bpm(&mut self, bpm: Option<f64>) {
+        match (bpm, self.own_bpm()) {
+            (Some(bpm), Some(own)) => {
+                if !self.smart_tempo {
+                    self.smart_tempo = true;
+                    self.fader.hand_over();
+                }
+                self.apply_tempo(bpm / own);
+            }
+            _ => {
+                if std::mem::take(&mut self.smart_tempo) {
+                    self.fader.take_back(self.tempo);
+                }
+            }
+        }
     }
 
     pub(crate) fn set_filter(&mut self, position: f32) {

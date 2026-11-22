@@ -16,6 +16,7 @@ use crate::processor::{AudioProcessor, ProcessContext, StereoBlock};
 use crate::recording::RecordingSink;
 use crate::sampler::{SampleSettings, Sampler};
 use crate::smart_cfx::SmartCfx;
+use crate::smart_fader::{TEMPO_GLIDE_SECONDS, bass_swap, shared_bpm};
 use crate::state::{GapDetector, SharedState, encode_loop_length, raise_peak};
 use crate::sync::SyncMode;
 use crate::tempo::{DeckLevel, MasterTempo, TempoMaster, TempoRange};
@@ -180,6 +181,7 @@ pub(crate) enum Command {
         deck: DeckId,
         preset: Option<SmartCfx>,
     },
+    SetSmartFader(bool),
 }
 
 /// Something the audio thread no longer needs. It goes back to the control side to be dropped,
@@ -245,6 +247,8 @@ pub struct Renderer {
     headphone_limiter: Limiter,
     crossfader: f32,
     sync_half_and_double: bool,
+    smart_fader: bool,
+    smart_bpm: Option<f64>,
     commands: Consumer<Command>,
     retire: RetireQueue,
     shared: Arc<SharedState>,
@@ -277,6 +281,8 @@ impl Renderer {
             headphone_limiter: Limiter::new(sample_rate as f32),
             crossfader: 0.5,
             sync_half_and_double: true,
+            smart_fader: false,
+            smart_bpm: None,
             commands,
             retire,
             shared,
@@ -371,6 +377,7 @@ impl Renderer {
         self.master_block.silence();
         self.headphones.begin_block(frame_count);
         let tempo_master = self.choose_tempo_master();
+        self.drive_smart_fader(tempo_master, frame_count);
         self.follow_tempo_master(tempo_master);
         let deck_contexts = self.decks.each_ref().map(|deck| ProcessContext {
             sample_rate: self.sample_rate,
@@ -462,13 +469,55 @@ impl Renderer {
 
     /// Brings every synced deck other than the tempo master to the master's tempo, and with
     /// beat sync to its beats, for the next block.
+    /// Smart Fader: the tempo master plays the tempo the crossfader puts between the two
+    /// decks' own tempos, gliding there, and the LOW knobs swap across the middle of the fader.
+    fn drive_smart_fader(&mut self, master: Option<DeckId>, frame_count: usize) {
+        if !self.smart_fader {
+            return;
+        }
+        let lows = bass_swap(self.crossfader);
+        for (deck, low) in self.decks.iter_mut().zip(lows) {
+            deck.set_automatic_low(Some(low));
+        }
+        let own = self.decks.each_ref().map(Deck::own_bpm);
+        let (Some(master), [Some(bpm_a), Some(bpm_b)]) = (master, own) else {
+            return;
+        };
+        let target = shared_bpm(self.crossfader, bpm_a, bpm_b);
+        let glide = 1.0
+            - (-(frame_count as f64) / (TEMPO_GLIDE_SECONDS * f64::from(self.sample_rate))).exp();
+        let bpm = match self.smart_bpm {
+            Some(current) => current + (target - current) * glide,
+            None => self.decks[master.index()].bpm().unwrap_or(target),
+        };
+        self.smart_bpm = Some(bpm);
+        for deck_id in DeckId::ALL {
+            let smart_bpm = (deck_id == master).then_some(bpm);
+            self.decks[deck_id.index()].set_smart_bpm(smart_bpm);
+        }
+    }
+
+    fn set_smart_fader(&mut self, enabled: bool) {
+        self.smart_fader = enabled;
+        if !enabled {
+            self.smart_bpm = None;
+            for deck in &mut self.decks {
+                deck.set_automatic_low(None);
+                deck.set_smart_bpm(None);
+            }
+        }
+    }
+
     fn follow_tempo_master(&mut self, master: Option<DeckId>) {
         let master_beat = master.and_then(|deck| self.decks[deck.index()].master_beat(deck));
+        let smart = self.smart_fader;
         for deck_id in DeckId::ALL {
             let deck = &mut self.decks[deck_id.index()];
             match master_beat {
-                Some(beat) if beat.deck != deck_id && deck.sync_mode() != SyncMode::Off => {
-                    deck.follow(beat, self.sync_half_and_double, &mut self.retire);
+                Some(beat)
+                    if beat.deck != deck_id && (smart || deck.sync_mode() != SyncMode::Off) =>
+                {
+                    deck.follow(beat, self.sync_half_and_double, smart, &mut self.retire);
                 }
                 _ => deck.stop_following(),
             }
@@ -568,6 +617,7 @@ impl Renderer {
             Command::SetKeyLock { deck, enabled } => {
                 self.decks[deck.index()].set_key_lock(enabled);
             }
+            Command::SetSmartFader(enabled) => self.set_smart_fader(enabled),
             Command::SetSmartCfx { deck, preset } => {
                 self.decks[deck.index()].set_smart_cfx(preset);
             }
