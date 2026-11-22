@@ -56,7 +56,7 @@ use gpui::component::input::{InputEvent, InputState};
 use gpui::prelude::*;
 use gpui::{
     Bounds, Context, Entity, FocusHandle, MouseButton, MouseMoveEvent, MouseUpEvent, Pixels, Point,
-    ScrollHandle, SharedString, StyleRefinement, Subscription, Task, Window, div,
+    ScrollHandle, SharedString, StyleRefinement, Subscription, Task, Window, div, px,
 };
 
 use crate::analysis::{AnalysisPriority, TrackAnalyser, TrackAnalyses};
