@@ -1,10 +1,11 @@
-//! Keeping the library's Match column on the track the room follows: the tempo master's, or
-//! the deck the room hears when no deck leads. The matches are worked out off the interface
+//! Keeping the library's Match column on the track the DJ mixes from: the deck with MASTER
+//! pressed, else the deck the room hears, else the deck loaded last. The matches are worked out off the interface
 //! thread once per change of that track, its tempo or the catalogue.
 
 use std::sync::Arc;
+use std::time::Instant;
 
-use dubplate_engine::DeckId;
+use dubplate_engine::{DeckId, MasterTempo};
 use gpui::Context;
 
 use super::DubplateApp;
@@ -48,7 +49,9 @@ impl DubplateApp {
         cx.spawn(async move |this, cx| {
             let matches = cx
                 .background_executor()
-                .spawn(async move { LibraryMatches::new(&reference, &catalogue.tracks) })
+                .spawn(
+                    async move { LibraryMatches::new(source.deck, &reference, &catalogue.tracks) },
+                )
                 .await;
             this.update(cx, |this, cx| {
                 if this.match_source == Some(source) {
@@ -68,13 +71,28 @@ impl DubplateApp {
         self.match_source = None;
     }
 
-    /// The deck the matches follow: the tempo master, else the deck the room hears.
-    fn match_source(&self) -> Option<MatchSource> {
-        let leading = DeckId::ALL.into_iter().find(|deck| {
-            self.deck(*deck).visuals().is_some()
-                && self.tempo_state(*deck).is_some_and(|state| state.is_master)
+    /// The deck the matches follow: the one the DJ pressed MASTER on, even while it is stopped;
+    /// else the playing deck the room hears; else the deck loaded last, so the DJ can browse
+    /// for the next track before anything plays.
+    fn match_deck(&self) -> Option<DeckId> {
+        let chosen_master =
+            self.engine
+                .as_ref()
+                .ok()
+                .and_then(|engine| match engine.controller.master_tempo() {
+                    MasterTempo::Deck(deck) => Some(deck),
+                    MasterTempo::LouderDeck => None,
+                });
+        let loaded = DeckId::ALL.map(|deck| {
+            let side = self.deck(deck);
+            side.visuals().and(side.loaded_at())
         });
-        let deck = leading.or_else(|| self.on_air_deck())?;
+        reference_deck(chosen_master, self.on_air_deck(), loaded)
+    }
+
+    /// What the matches follow now, when a deck holds a track.
+    fn match_source(&self) -> Option<MatchSource> {
+        let deck = self.match_deck()?;
         Some(MatchSource {
             deck,
             load_generation: self.deck(deck).load_generation(),
@@ -83,5 +101,48 @@ impl DubplateApp {
                 .and_then(|state| state.bpm)
                 .map(|bpm| (bpm * 10.0).round() as i64),
         })
+    }
+}
+
+/// The deck to match against: `chosen_master` when it holds a track, else `on_air`, else the
+/// deck whose track finished loading last, from when each deck's track loaded.
+fn reference_deck(
+    chosen_master: Option<DeckId>,
+    on_air: Option<DeckId>,
+    loaded_at: [Option<Instant>; 2],
+) -> Option<DeckId> {
+    let holds_track = |deck: &DeckId| loaded_at[deck.index()].is_some();
+    chosen_master.filter(holds_track).or(on_air).or_else(|| {
+        DeckId::ALL
+            .into_iter()
+            .filter(holds_track)
+            .max_by_key(|deck| loaded_at[deck.index()])
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+
+    #[test]
+    fn the_reference_is_the_master_then_the_deck_on_air_then_the_last_loaded() {
+        let earlier = Instant::now();
+        let later = earlier + Duration::from_secs(1);
+        let both = [Some(earlier), Some(later)];
+        assert_eq!(
+            reference_deck(Some(DeckId::A), Some(DeckId::B), both),
+            Some(DeckId::A),
+            "MASTER counts even while its deck is stopped"
+        );
+        assert_eq!(
+            reference_deck(Some(DeckId::A), Some(DeckId::B), [None, Some(later)]),
+            Some(DeckId::B),
+            "a master deck without a track does not"
+        );
+        assert_eq!(reference_deck(None, Some(DeckId::A), both), Some(DeckId::A));
+        assert_eq!(reference_deck(None, None, both), Some(DeckId::B));
+        assert_eq!(reference_deck(None, None, [None, None]), None);
     }
 }

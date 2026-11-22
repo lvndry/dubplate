@@ -1028,17 +1028,21 @@ impl Browser {
                         .flex_none()
                         .text_color(theme::TEXT)
                 });
-                let label = div().truncate().child(column.label());
+                let heading: SharedString = match (column, self.matches.heading()) {
+                    (Column::Match, Some(heading)) => heading.to_owned().into(),
+                    _ => column.label().into(),
+                };
+                let label = div().truncate().child(heading.clone());
                 column_box(column)
                     .id(("sort", column as usize))
                     .accessible_button(match direction {
                         Some(SortDirection::Ascending) => {
-                            format!("Sort by {}, ascending", column.label())
+                            format!("Sort by {heading}, ascending")
                         }
                         Some(SortDirection::Descending) => {
-                            format!("Sort by {}, descending", column.label())
+                            format!("Sort by {heading}, descending")
                         }
-                        None => format!("Sort by {}", column.label()),
+                        None => format!("Sort by {heading}"),
                     })
                     .role(gpui::Role::ColumnHeader)
                     .aria_column_index(column as usize + 1)

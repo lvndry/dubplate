@@ -6,7 +6,10 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use dubplate_engine::DeckId;
 use dubplate_prep::{EnergyDirection, PrepTrack, Relation, suggest_next};
+
+use crate::deck::deck_letter;
 
 /// A tempo change bigger than this, in percent, is a big jump for the pitch fader, so the
 /// column marks it.
@@ -102,13 +105,14 @@ impl TrackMatch {
 pub struct LibraryMatches {
     reference: Option<PathBuf>,
     reference_title: String,
+    heading: String,
     tracks: HashMap<PathBuf, TrackMatch>,
 }
 
 impl LibraryMatches {
     /// How every track of `catalogue` mixes after `reference`, ranked as the Next suggestions
     /// rank them with the energy held.
-    pub fn new(reference: &PrepTrack, catalogue: &[PrepTrack]) -> Self {
+    pub fn new(deck: DeckId, reference: &PrepTrack, catalogue: &[PrepTrack]) -> Self {
         let ranks: HashMap<&Path, usize> = suggest_next(
             reference,
             catalogue,
@@ -146,6 +150,7 @@ impl LibraryMatches {
         Self {
             reference: Some(reference.track_path.clone()),
             reference_title: reference.title.clone(),
+            heading: format!("vs {}: {}", deck_letter(deck), reference.title),
             tracks,
         }
     }
@@ -158,6 +163,12 @@ impl LibraryMatches {
     /// Whether `path` is the reference track's own file.
     pub fn is_reference(&self, path: &Path) -> bool {
         self.reference.as_deref() == Some(path)
+    }
+
+    /// The Match column's heading, naming the deck and the track matched against, such as
+    /// "vs A: Kukaya", when there is one.
+    pub fn heading(&self) -> Option<&str> {
+        self.reference.as_ref().map(|_| self.heading.as_str())
     }
 
     /// The title of the track matched against, when there is one.
@@ -196,7 +207,8 @@ mod tests {
             track("same", "8A", 124.0, 6.0),
             track("boost", "10A", 140.0, 8.0),
         ];
-        let matches = LibraryMatches::new(&playing, &catalogue);
+        let matches = LibraryMatches::new(DeckId::A, &playing, &catalogue);
+        assert_eq!(matches.heading(), Some("vs A: playing"));
         let at = |name: &str| *matches.get(Path::new(&format!("/{name}.mp3"))).unwrap();
         assert!(matches.is_reference(Path::new("/playing.mp3")));
         assert!(matches.get(Path::new("/playing.mp3")).is_none());
