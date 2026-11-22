@@ -54,7 +54,7 @@ Ranked by what stops the owner from playing a club night with Dubplate alone, th
 7. **Auto Gain.** Read the gain rekordbox stores for its tracks (djmdMixerParam), measure loudness for folder tracks, and set the trim on load, with a switch in Settings.
 8. **Auto cue on load.** Every track loads cued at its first beat (or first audio above -36 to -78 dB, or the nearest memory or hot cue), never at 0:00 in silence.
 9. **History and tracklists.** Record each play of a minute or more with start time, duration and deck in the play history table that already exists, show a history per session, and export it as TXT, CSV or M3U with timestamps, also beside each recording.
-10. **rekordbox's hot cue colours, names and loops.** Use the stored colour (16-colour palette) and comment on the pads, lanes and overview, and start the loop when a hot loop is called.
+10. **rekordbox's hot cue colours, names and loops (done).** Use the stored colour (16-colour palette) and comment on the pads, lanes and overview, and start the loop when a hot loop is called.
 11. **Browser preview.** P or a click on a preview waveform plays a track in the headphones from that point without loading a deck, with its own volume.
 12. **Waveform zoom.** SHIFT + BROWSE turn and on-screen buttons zoom the lanes from about 4 to 32 seconds across, with a reset.
 13. **Phase meter and beat counter.** A bar per deck showing its beat offset from the master, the bar.beat position, and bars to the next memory cue or mix-out.
@@ -276,7 +276,7 @@ Ranked by what stops the owner from playing a club night with Dubplate alone, th
 | Set and edit cues in prep | Hot cues A to H (16 in Performance), memory cues and loops set while preparing. | 1 PLAYER CUE/LOOP panel | Free | Partial: mix-in and mix-out on set tracks; hot cues set live on the decks and saved per track | P0 |
 | Save hot cues and memory cues | Cues are stored with the track and exported to USB. | Automatic | Free | Partial: cues made in Dubplate are kept per track in Dubplate's database, in place of rekordbox's, and go into the XML export; no USB export yet | P0 |
 | Memory cue colours and comments | Colour per memory cue, comment shown on CDJs. | MEMORY panel | Free | Missing | P1 |
-| Hot cue colours and comments | Colour per hot cue (16 colours), comment shown on CDJ-3000. | HOT CUE panel | Free | Missing (rekordbox's colours ignored) | P1 |
+| Hot cue colours and comments | Colour per hot cue (16 colours), comment shown on CDJ-3000. | HOT CUE panel | Free | Partial: rekordbox's colours and names shown on the pads, lane flags and overview, kept and exported; not editable yet | P1 |
 | Hot cue colour scheme | CDJ (green cues, amber loops), COLD1, COLD2, COLORFUL. | Preferences > View > Color | Free | Missing | P3 |
 | Intelligent Cue Creation | Sets hot and memory cues during analysis from phrases and the DJ's own cue habits learned from a 30-track playlist; Manual mode repeats every N bars. | Preferences > Analysis > CUE Analysis | Core | Partial: proposes mix-in and mix-out from phrases or the grid (Y accepts) | P1 |
 | Cue at the first downbeat | Sets the cue on 1.1 bars at analysis. | CUE Analysis > Set to 1.1 Bars | Core | Missing | P1 |
@@ -356,7 +356,7 @@ These are features of the players. Dubplate prepares for them once it writes USB
 | --- | --- | --- | --- | --- | --- |
 | Track filter on CDJs | BPM (±0 to 6% range, RESET = 130 BPM), related key, rating, colour and My Tag (AND/OR) from the master player; saved per stick. | CDJ TRACK FILTER | Free | Missing | P1 |
 | My Tag and rating on CDJs | Browse and filter by My Tag; rate on the CDJ-3000X. | CDJ browse, INFO | Free | Missing | P1 |
-| Hot cues A to H with colours and names | 8 hot cues; HOT CUE COLOR on shows rekordbox's colour per cue, loops orange; comments shown. | CDJ pads | Free | Missing | P0 |
+| Hot cues A to H with colours and names | 8 hot cues; HOT CUE COLOR on shows rekordbox's colour per cue, loops orange; comments shown. | CDJ pads | Free | Done on screen (own colour, else the COLORFUL default for the pad, hot loops orange); the FLX4's pads only light on or off | P0 |
 | Hot Cue Auto Load | Off, rekordbox SETTING (flagged tracks) or On. | CDJ UTILITY | Free | Missing | P2 |
 | Memory cues and active loops | CUE/LOOP CALL steps through memory cues; active loops engage when reached. | CDJ | Free | Partial: memory cues and loops are called, saved and deleted; a called loop is not armed yet | P0 |
 | Waveform colour on CDJ | Blue, RGB or 3-band, overview and zoomed; phrase strip on 3000X. | CDJ SHORTCUT > Device settings | Free | Missing | P1 |
@@ -453,7 +453,7 @@ These are features of the players. Dubplate prepares for them once it writes USB
 | Reverse | Plays backwards; slip reverse plays 8 beats back and returns in time. | Controller, keyboard S | Free (FLX4) | Missing | P2 |
 | Hot cues A to H | Set on an empty pad, call on a full one, quantized; a stopped deck plays from it. | Pads | Free (FLX4) | Done: set, call and delete live, saved per track and exported to XML | P0 |
 | Hot cues I to P | 16 hot cues per track in Performance mode (FLX4 reaches A to H). | Pads, scroll | Free | Missing | P3 |
-| Hot cue loops | A pad pressed during a loop stores the loop; calling it starts the loop. | Pads | Free (FLX4) | Missing: rekordbox's hot loops play as plain cues | P1 |
+| Hot cue loops | A pad pressed during a loop stores the loop; calling it starts the loop. | Pads | Free (FLX4) | Done | P1 |
 | Hot cue colours on screen | Each hot cue's own colour from the 16-colour palette. | Pads, waveform | Free | Partial: one fixed pastel per pad letter | P1 |
 | Hot cue names | Comment on each hot cue, shown on the pad. | Pads | Free | Missing | P1 |
 | Delete a hot cue | SHIFT + pad, or the x on the pad. | FLX4 SHIFT + pad | Free (FLX4) | Done (live only) | P0 |
@@ -480,7 +480,7 @@ These are features of the players. Dubplate prepares for them once it writes USB
 | Loop in and out adjust | With a loop on, IN or OUT then the jog moves that point. | FLX4 IN/OUT + jog | Free (FLX4) | Partial: OUT alone moves the loop end to the playhead; no jog adjust of either point | P1 |
 | Halve and double | CUE/LOOP CALL while looping. | FLX4 | Free (FLX4) | Done | P0 |
 | Reloop and exit | Leave the loop or go back into it. | FLX4 4 BEAT/EXIT, deck | Free (FLX4) | Done | P0 |
-| Saved loops | Memory loops and hot loops, 10 per track, orange icon. | MEMORY CUE, HOT CUE | Free | Partial: drawn on the overview; not callable, not savable | P1 |
+| Saved loops | Memory loops and hot loops, 10 per track, orange icon. | MEMORY CUE, HOT CUE | Free | Partial: drawn on the overview, called and saved as memory and hot loops; no limit on hot loops beyond the 8 pads | P1 |
 | Active loop | A saved loop marked active engages when the playhead reaches it; SHIFT + 4 BEAT/EXIT toggles it. | FLX4 SHIFT + 4 BEAT/EXIT | Free (FLX4) | Missing | P2 |
 | Loop roll | Rolls of 1/32 to 4 beats while held, slipping back in time. | PAD FX, BEAT FX ROLL | Free (FLX4) | Done (1/16 to 8 beats) | P1 |
 | Slicer | 8 slices of a 2 to 16 bar range on the pads, rolls of 1/64 to 1/8 of the range, slicer or slicer loop mode. | SLICER pad mode | Free | Missing | P2 |

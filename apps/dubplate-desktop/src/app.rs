@@ -52,7 +52,7 @@ use dubplate_engine::{
 };
 use dubplate_midi::{Feedback, PadMode};
 use dubplate_prep::{AnalysisQueue, GridCorrection, TrackGrid, TrackIdentity};
-use dubplate_rekordbox::{HotCue, HotCuePad, TrackCues, cue_milliseconds};
+use dubplate_rekordbox::{HotCue, HotCuePad, TrackCues};
 use gpui::component::input::{InputEvent, InputState};
 use gpui::prelude::*;
 use gpui::{
@@ -97,6 +97,7 @@ use crate::transport::{self, CueDown, is_at_cue, other_deck};
 use crate::waveform::Zoom;
 use crate::waveform_cache::WaveformCache;
 use audition::Audition;
+use cues::new_cue_span;
 use notice::{NoticePlace, Notices};
 use overview::DeckOverview;
 use pads::HeldPad;
@@ -1063,23 +1064,33 @@ impl DubplateApp {
     }
 
     /// A hot cue pad, as in rekordbox: a set pad plays from its cue, whether the deck was
-    /// playing or not; an empty pad takes the beat nearest to what the DJ hears now.
+    /// playing or not, and a hot loop starts its loop; an empty pad keeps the loop that is on
+    /// as a hot loop, else takes the beat nearest to what the DJ hears now.
     fn press_hot_cue(&mut self, deck: DeckId, pad: HotCuePad, cx: &mut Context<'_, Self>) {
         if self.deck(deck).visuals().is_none() {
             return;
         }
-        match self.deck(deck).cues.hot_cue(pad).map(HotCue::start_seconds) {
-            Some(seconds) => {
+        let called = self
+            .deck(deck)
+            .cues
+            .hot_cue(pad)
+            .map(|cue| (cue.start_seconds(), cue.loop_end_seconds()));
+        match called {
+            Some((start, loop_end)) => {
                 self.decks[deck.index()].cue_preview = false;
-                self.engine_command(cx, |controller| controller.hot_cue(deck, seconds));
+                self.engine_command(cx, |controller| match loop_end {
+                    Some(end) => controller.hot_loop(deck, start, end),
+                    None => controller.hot_cue(deck, start),
+                });
             }
             None => {
-                let seconds = self.quantized(deck, self.heard_seconds(deck));
-                self.edit_cues(
-                    deck,
-                    |cues| cues.set_hot_cue(pad, HotCue::at(cue_milliseconds(seconds))),
-                    cx,
-                );
+                let heard = self.quantized(deck, self.heard_seconds(deck));
+                let (start_ms, loop_end_ms) = new_cue_span(self.active_loop(deck), heard);
+                let cue = HotCue {
+                    loop_end_ms,
+                    ..HotCue::at(start_ms)
+                };
+                self.edit_cues(deck, |cues| cues.set_hot_cue(pad, cue), cx);
             }
         }
     }

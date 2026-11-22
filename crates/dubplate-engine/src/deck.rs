@@ -368,6 +368,37 @@ impl Deck {
         }
     }
 
+    /// A hot loop: the loop from `start_seconds` to `end_seconds` goes on and the deck goes to
+    /// its start as a hot cue does, in rhythm while playing and playing from it when stopped.
+    pub(crate) fn hot_loop(
+        &mut self,
+        start_seconds: f64,
+        end_seconds: f64,
+        retire: &mut RetireQueue,
+    ) {
+        let rate = self.source_rate();
+        let region = LoopRegion {
+            start: self.clamp_position(start_seconds * rate),
+            end: self.clamp_position(end_seconds * rate),
+            active: true,
+            length: None,
+        };
+        if region.length_frames() <= 0.0 {
+            self.hot_cue(start_seconds, retire);
+            return;
+        }
+        self.start_slipping_loop();
+        self.looping.pending_start = None;
+        self.looping.region = Some(region);
+        if self.playing {
+            let target = region.fold(self.in_phase(region.start));
+            self.jump_to_frame(target, retire);
+        } else {
+            self.jump_to_frame(region.start, retire);
+            self.play();
+        }
+    }
+
     /// Jumps by `beats` beats, forwards or backwards, keeping the place in the beat. A loop
     /// that is on moves with the playhead.
     pub(crate) fn beat_jump(&mut self, beats: f64, retire: &mut RetireQueue) {

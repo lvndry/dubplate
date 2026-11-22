@@ -876,6 +876,29 @@ impl Controller {
         self.send(Command::HotCue { deck, seconds })
     }
 
+    /// A hot loop from `start_seconds` to `end_seconds`: the loop goes on and the deck goes to
+    /// its start as [`Controller::hot_cue`] does, in rhythm while playing, playing from it when
+    /// stopped.
+    pub fn hot_loop(
+        &mut self,
+        deck: DeckId,
+        start_seconds: f64,
+        end_seconds: f64,
+    ) -> Result<(), EngineError> {
+        check_range(
+            "hot loop start",
+            start_seconds,
+            0.0,
+            MAX_TRACK_SECONDS as f64,
+        )?;
+        check_range("hot loop end", end_seconds, 0.0, MAX_TRACK_SECONDS as f64)?;
+        self.send(Command::HotLoop {
+            deck,
+            start_seconds,
+            end_seconds,
+        })
+    }
+
     /// Jumps by `beats` beats on the beat grid, forwards when positive, keeping the place in
     /// the beat. With a loop on, the loop moves with the playhead. Without a grid, beats count
     /// at 120 BPM.

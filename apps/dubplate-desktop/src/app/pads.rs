@@ -244,6 +244,13 @@ impl DubplateApp {
         });
     }
 
+    /// The start and end of the loop a deck is going round, in seconds, when one is on.
+    pub(super) fn active_loop(&self, deck: DeckId) -> Option<(f64, f64)> {
+        self.loop_state(deck)
+            .filter(|state| state.active)
+            .and_then(|state| Some((state.start_seconds?, state.end_seconds?)))
+    }
+
     /// A deck's loop, when the engine runs.
     pub(super) fn loop_state(&self, deck: DeckId) -> Option<dubplate_engine::LoopState> {
         self.engine

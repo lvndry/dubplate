@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use dubplate_engine::DeckId;
-use dubplate_rekordbox::TrackCues;
+use dubplate_rekordbox::{HotCuePad, TrackCues};
 use gpui::prelude::*;
 use gpui::{
     Bounds, Context, FontWeight, MouseButton, MouseDownEvent, MouseMoveEvent, PathBuilder, Pixels,
@@ -25,7 +25,7 @@ use crate::fonts::MONO_FAMILY;
 use crate::phrases::{PhraseSpan, Section, phrase_at};
 use crate::theme;
 use crate::waveform::{BandLevels, LaneLoop, LoopLook};
-use crate::widgets::{InteractiveControl, adjusted_value};
+use crate::widgets::{InteractiveControl, adjusted_value, tooltip};
 
 /// The overview's height: the cue row, the bands and the phrase strip.
 pub(super) const OVERVIEW_HEIGHT: Pixels = px(42.0);
@@ -92,14 +92,15 @@ impl Render for DeckOverview {
         let Some(content) = self.content.clone() else {
             return div().size_full();
         };
-        let letters: Vec<(f32, char, Rgba)> = content
+        let letters: Vec<(f32, HotCuePad, Rgba, String)> = content
             .cues
             .hot_cues()
             .map(|(pad, cue)| {
                 (
                     (cue.start_seconds() / content.duration).clamp(0.0, 1.0) as f32,
-                    pad.letter(),
-                    theme::HOT_CUE_TINTS[pad.index()],
+                    pad,
+                    theme::hot_cue_colour(pad, cue),
+                    cue.name.clone(),
                 )
             })
             .collect();
@@ -114,8 +115,9 @@ impl Render for DeckOverview {
                 .absolute()
                 .size_full(),
             )
-            .children(letters.into_iter().map(|(fraction, letter, tint)| {
+            .children(letters.into_iter().map(|(fraction, pad, tint, name)| {
                 div()
+                    .id(("overview-hot-cue", pad.index()))
                     .absolute()
                     .top_0()
                     .left(relative(fraction))
@@ -132,7 +134,8 @@ impl Render for DeckOverview {
                     .line_height(px(CUE_ROW - 1.0))
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(theme::ON_DECK)
-                    .child(letter.to_string())
+                    .when(!name.is_empty(), |letter| letter.tooltip(tooltip(name)))
+                    .child(pad.letter().to_string())
             }))
     }
 }
@@ -240,7 +243,7 @@ fn paint_content(bounds: Bounds<Pixels>, content: &OverviewContent, window: &mut
                 &area,
                 area.x_of(cue.start_seconds()),
                 1.0,
-                theme::MEMORY_CUE,
+                theme::memory_cue_colour(cue),
                 window,
             );
         }
