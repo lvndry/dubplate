@@ -7,7 +7,7 @@ use rtrb::{Consumer, Producer};
 use crate::curves::{Ramp, channel_fader_gain, crossfader_gains};
 use crate::deck::{Deck, DeckId};
 use crate::denormals::FlushDenormals;
-use crate::effects::{EffectChange, EffectRack, EffectTarget, EffectUnitId};
+use crate::effects::{Bus, EffectChange, EffectRack, EffectUnitId};
 use crate::grid::BeatGrid;
 use crate::headphones::Headphones;
 use crate::jog::JogInput;
@@ -426,7 +426,7 @@ impl Renderer {
             self.headphones.listen(deck_id, &deck.block);
             deck.apply_channel_gain();
             self.effects
-                .process(EffectTarget::Deck(deck_id), &mut deck.block, context);
+                .process(Bus::Deck(deck_id), &mut deck.block, context);
             let peak = deck.mix_into(&mut self.master_block);
             raise_peak(&self.shared.decks[deck_id.index()].peak, peak);
         }
@@ -446,11 +446,8 @@ impl Renderer {
         for processor in self.master_inserts.iter_mut().flatten() {
             processor.process(&mut self.master_block, &master_context);
         }
-        self.effects.process(
-            EffectTarget::Master,
-            &mut self.master_block,
-            &master_context,
-        );
+        self.effects
+            .process(Bus::Master, &mut self.master_block, &master_context);
         starved |= self.render_preview(frame_count);
         self.headphones
             .finish(&self.master_block, &self.preview.block);
