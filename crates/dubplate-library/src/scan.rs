@@ -145,17 +145,28 @@ pub fn scan_folder(
         };
         first = false;
         for entry in entries {
-            let path = match entry {
-                Ok(entry) => entry.path(),
+            let entry = match entry {
+                Ok(entry) => entry,
                 Err(error) => {
                     problems.push(problem(&directory, &error));
                     continue;
                 }
             };
+            let path = entry.path();
             if is_hidden(&path) {
                 continue;
             }
-            if path.is_dir() {
+            // The folder listing already says what each entry is, without asking the disk
+            // again. Only a symbolic link has to be followed to know where it leads.
+            let plain_entry = entry
+                .file_type()
+                .ok()
+                .filter(|file_type| !file_type.is_symlink());
+            let is_folder = match plain_entry {
+                Some(file_type) => file_type.is_dir(),
+                None => path.is_dir(),
+            };
+            if is_folder {
                 pending.push(path);
                 continue;
             }
@@ -163,7 +174,11 @@ pub fn scan_folder(
                 continue;
             }
             progress.fetch_add(1, Ordering::Relaxed);
-            match read_track(&path, &known) {
+            let read = match plain_entry {
+                Some(_) => read_resolved_track(canonical.join(entry.file_name()), &known),
+                None => read_track(&path, &known),
+            };
+            match read {
                 Ok(track) => {
                     if seen_files.insert(track.path.clone()) {
                         tracks.push(track);
@@ -234,6 +249,15 @@ pub(crate) fn read_track(
     known: &HashMap<&Path, &LibraryTrack>,
 ) -> Result<LibraryTrack, String> {
     let path = path.canonicalize().map_err(|error| error.to_string())?;
+    read_resolved_track(path, known)
+}
+
+/// The track at `path`, already free of symbolic links, reusing what `known` read when the
+/// file has not changed.
+fn read_resolved_track(
+    path: PathBuf,
+    known: &HashMap<&Path, &LibraryTrack>,
+) -> Result<LibraryTrack, String> {
     let metadata = std::fs::metadata(&path).map_err(|error| error.to_string())?;
     if !metadata.is_file() {
         return Err("not a regular file".to_owned());
@@ -440,6 +464,22 @@ mod tests {
         let found = scan(root.path(), None);
         assert_eq!(names(&found), ["Track.wav"]);
         assert_eq!(found.tracks[0].path, original.canonicalize().unwrap());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn tracks_in_a_folder_reached_through_a_link_are_listed_by_their_real_path() {
+        let root = tempfile::tempdir().unwrap();
+        let real = root.path().join("Real/Crate");
+        write_wav(&real.join("Deep/Track.wav"));
+        let linked = root.path().join("Linked");
+        std::os::unix::fs::symlink(&real, &linked).unwrap();
+        let found = scan(&linked, None);
+        let expected = real.join("Deep/Track.wav").canonicalize().unwrap();
+        assert_eq!(found.tracks.len(), 1);
+        assert_eq!(found.tracks[0].path, expected);
+        let rescan = scan(&linked, Some(&found));
+        assert_eq!(rescan.tracks, found.tracks);
     }
 
     #[test]
