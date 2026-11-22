@@ -31,6 +31,11 @@ const OVERVIEW_BAR_WIDTH: f32 = 2.0;
 const LABEL_ROOM: f32 = 0.05;
 /// Bars in a phrase, how often the overview draws a stronger bar line.
 const BARS_PER_PHRASE: usize = 8;
+/// Room for the grid button in both its states, so the controls beside it stay put when it
+/// changes.
+const CONFIRM_WIDTH: Pixels = px(136.0);
+/// Room for a mix cue time up to `59:59`, so setting a cue never moves the controls.
+const CUE_TIME_WIDTH: Pixels = px(40.0);
 
 impl DubplateApp {
     /// The selected set track's entry and what its analysis holds, once read.
@@ -253,6 +258,8 @@ fn controls(
                 .id("confirm-grid")
                 .flex()
                 .items_center()
+                .justify_center()
+                .w(CONFIRM_WIDTH)
                 .h(px(24.0))
                 .px(px(8.0))
                 .rounded(px(5.0))
@@ -281,6 +288,9 @@ fn controls(
         .child(key_button("mix-in", "In", SetEdit::MixInAtPlayhead, cx))
         .child(
             div()
+                .w(CUE_TIME_WIDTH)
+                .flex()
+                .justify_end()
                 .font_family(MONO_FAMILY)
                 .text_size(theme::SMALL_TEXT_SIZE)
                 .child(cue(entry.mix_in_ms)),
@@ -288,6 +298,9 @@ fn controls(
         .child(key_button("mix-out", "Out", SetEdit::MixOutAtPlayhead, cx))
         .child(
             div()
+                .w(CUE_TIME_WIDTH)
+                .flex()
+                .justify_end()
                 .font_family(MONO_FAMILY)
                 .text_size(theme::SMALL_TEXT_SIZE)
                 .child(cue(entry.mix_out_ms)),
