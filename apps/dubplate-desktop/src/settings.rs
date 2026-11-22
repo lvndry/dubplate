@@ -27,13 +27,15 @@ pub enum SettingsError {
         /// What went wrong.
         source: std::io::Error,
     },
-    /// The file is not valid settings.
-    #[error("{path} is not valid: {source}")]
+    /// The file is not valid settings. A copy is kept before anything can overwrite it.
+    #[error("{path} is not valid, a copy is kept at {backup}: {source}")]
     Parse {
         /// The settings file.
         path: PathBuf,
+        /// Where the unreadable file was copied.
+        backup: PathBuf,
         /// What is wrong.
-        source: toml::de::Error,
+        source: Box<toml::de::Error>,
     },
     /// The settings could not be written as TOML.
     #[error("the settings could not be written: {0}")]
@@ -41,9 +43,10 @@ pub enum SettingsError {
 }
 
 /// Everything Dubplate remembers. Settings missing from the file take their default, so a file
-/// from an older version still loads.
+/// from an older version still loads, and settings this version does not know are ignored, so
+/// going back a version keeps the DJ's folders, sound card and the rest.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 pub struct Settings {
     /// Whether a playing deck refuses a new track.
     pub lock_playing_deck: bool,
@@ -165,9 +168,19 @@ impl Settings {
                 });
             }
         };
-        toml::from_str(&text).map_err(|source| SettingsError::Parse {
-            path: path.to_path_buf(),
-            source,
+        toml::from_str(&text).map_err(|source| {
+            let backup = path.with_extension("toml.unreadable");
+            if let Err(copy_error) = std::fs::copy(path, &backup) {
+                return SettingsError::Io {
+                    path: backup,
+                    source: copy_error,
+                };
+            }
+            SettingsError::Parse {
+                path: path.to_path_buf(),
+                backup,
+                source: Box::new(source),
+            }
         })
     }
 
@@ -261,5 +274,29 @@ mod tests {
         std::fs::write(&path, "lock_playing_deck = \"sometimes\"\n").unwrap();
         let error = Settings::load(&path).unwrap_err();
         assert!(error.to_string().contains(FILE_NAME), "{error}");
+        let backup = path.with_extension("toml.unreadable");
+        assert_eq!(
+            std::fs::read_to_string(backup).unwrap(),
+            "lock_playing_deck = \"sometimes\"\n",
+            "the unreadable file is kept before a save can replace it"
+        );
+    }
+
+    #[test]
+    fn settings_from_a_newer_version_keep_everything_this_version_knows() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join(FILE_NAME);
+        std::fs::write(
+            &path,
+            "audio_device = \"DDJ-FLX4\"\nmusic_folders = [\"/Music/Amapiano\"]\n\
+             a_setting_from_the_future = true\n\n[another_future_table]\nlevel = 3\n",
+        )
+        .unwrap();
+        let settings = Settings::load(&path).unwrap();
+        assert_eq!(settings.audio_device.as_deref(), Some("DDJ-FLX4"));
+        assert_eq!(
+            settings.music_folders,
+            vec![PathBuf::from("/Music/Amapiano")]
+        );
     }
 }
