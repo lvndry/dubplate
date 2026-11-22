@@ -6,6 +6,7 @@ mod audio;
 mod deck_panel;
 mod drop_target;
 mod effects_strip;
+mod energy;
 mod header;
 mod help;
 mod knob;
@@ -52,6 +53,7 @@ use crate::deck::{
     Deck, DeckContent, HotCues, LoadError, PreparedTrack, TrackVisuals, prepare_track,
 };
 use crate::effects::{EffectUnitSetting, search, step_beat, step_effect};
+use crate::energy::EnergyRatings;
 use crate::fonts::UI_FAMILY;
 use crate::frame_stats::FrameStats;
 use crate::hardware::{
@@ -174,6 +176,8 @@ pub struct DubplateApp {
     detail_pending: Option<PathBuf>,
     check_cursor_seconds: f64,
     catalogue: Arc<Catalogue>,
+    energy: EnergyRatings,
+    energy_collecting: bool,
     effect_menu: Option<EffectUnitId>,
     refocus_window: bool,
     effect_search: Entity<InputState>,
@@ -295,6 +299,8 @@ impl DubplateApp {
             detail_pending: None,
             check_cursor_seconds: 0.0,
             catalogue: Arc::default(),
+            energy: EnergyRatings::new(None),
+            energy_collecting: false,
             effect_menu: None,
             refocus_window: false,
             effect_search,

@@ -239,9 +239,11 @@ impl DubplateApp {
             this.update(cx, |this, cx| {
                 if this.library_generation == generation {
                     this.catalogue = Arc::new(catalogue);
+                    this.restore_energy();
                     this.show_library(LibraryStatus::Ready(Arc::new(collection)), cx);
                     this.forget_track_checks();
                     this.set_changed(cx);
+                    this.request_library_energy(cx);
                 }
             })
             .ok();
