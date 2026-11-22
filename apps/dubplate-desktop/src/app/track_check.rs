@@ -475,9 +475,9 @@ fn overview(
                     }
                     for (index, seconds) in bars.iter().enumerate() {
                         let colour = if index % BARS_PER_PHRASE == 0 {
-                            theme::DOWNBEAT_LINE
+                            theme::PHRASE_LINE
                         } else {
-                            theme::BEAT_LINE
+                            theme::BAR_LINE
                         };
                         let line = gpui::Bounds::new(
                             bounds.origin + point(px(x_of(*seconds)), px(0.0)),
