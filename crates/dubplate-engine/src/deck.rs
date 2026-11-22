@@ -1099,6 +1099,11 @@ impl Deck {
         result
     }
 
+    /// The channel fader and crossfader gain the deck is heading to.
+    pub(crate) fn channel_gain(&self) -> f32 {
+        self.channel_gain.target()
+    }
+
     /// Applies the channel fader and crossfader gain to the deck's block.
     pub(crate) fn apply_channel_gain(&mut self) {
         let (left_channel, right_channel) = self.block.channels_mut();

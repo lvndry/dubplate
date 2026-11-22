@@ -29,6 +29,7 @@ mod decode;
 mod denormals;
 mod effects;
 mod error;
+mod fader_echo;
 mod grid;
 mod headphones;
 mod jog;

@@ -68,6 +68,7 @@ pub fn offline_engine(sample_rate: u32) -> (Controller, Renderer) {
         sampler_cue: false,
         smart_cfx: [None; DECK_COUNT],
         smart_fader: false,
+        fader_echo: false,
         jog_ticks_per_revolution: DEFAULT_JOG_TICKS_PER_REVOLUTION,
     };
     let renderer = Renderer::new(
@@ -104,6 +105,7 @@ pub struct Controller {
     sampler_cue: bool,
     smart_cfx: [Option<SmartCfx>; DECK_COUNT],
     smart_fader: bool,
+    fader_echo: bool,
     jog_ticks_per_revolution: u32,
 }
 
@@ -418,6 +420,21 @@ impl Controller {
     /// Whether Smart Fader is on.
     pub fn smart_fader(&self) -> bool {
         self.smart_fader
+    }
+
+    /// The fader echo, the afro house echo out: while it is on, a deck whose channel fader or
+    /// crossfader side closes fast echoes the last of its music on the half beat as it goes,
+    /// and the echoes ring on after the fader is shut. A fader left part way stops echoing
+    /// after a quarter of a second, and opening it stops the echo taking in music.
+    pub fn set_fader_echo(&mut self, enabled: bool) -> Result<(), EngineError> {
+        self.send(Command::SetFaderEcho(enabled))?;
+        self.fader_echo = enabled;
+        Ok(())
+    }
+
+    /// Whether the fader echo is on.
+    pub fn fader_echo(&self) -> bool {
+        self.fader_echo
     }
 
     /// Turns Smart CFX on a channel with `preset`, or back to the plain filter with `None`. The

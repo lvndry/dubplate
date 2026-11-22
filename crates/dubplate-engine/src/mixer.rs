@@ -8,6 +8,7 @@ use crate::curves::{Ramp, channel_fader_gain, crossfader_gains};
 use crate::deck::{Deck, DeckId};
 use crate::denormals::FlushDenormals;
 use crate::effects::{Bus, EffectChange, EffectRack, EffectUnitId};
+use crate::fader_echo::FaderEcho;
 use crate::grid::BeatGrid;
 use crate::headphones::Headphones;
 use crate::jog::JogInput;
@@ -209,6 +210,7 @@ pub(crate) enum Command {
         preset: Option<SmartCfx>,
     },
     SetSmartFader(bool),
+    SetFaderEcho(bool),
 }
 
 /// Something the audio thread no longer needs. It goes back to the control side to be dropped,
@@ -277,6 +279,8 @@ pub struct Renderer {
     sync_half_and_double: bool,
     smart_fader: bool,
     smart_bpm: Option<f64>,
+    fader_echo: bool,
+    fader_echoes: [FaderEcho; DECK_COUNT],
     commands: Consumer<QueuedCommand>,
     retire: RetireQueue,
     shared: Arc<SharedState>,
@@ -312,6 +316,8 @@ impl Renderer {
             sync_half_and_double: true,
             smart_fader: false,
             smart_bpm: None,
+            fader_echo: false,
+            fader_echoes: std::array::from_fn(|_| FaderEcho::new(sample_rate)),
             commands,
             retire,
             shared,
@@ -431,6 +437,12 @@ impl Renderer {
             raise_peak(&shared.pre_fader_peak, deck.block.peak());
             self.headphones.listen(deck_id, &deck.block);
             deck.apply_channel_gain();
+            self.fader_echoes[deck_id.index()].process(
+                self.fader_echo,
+                deck.channel_gain(),
+                &mut deck.block,
+                context,
+            );
             self.effects
                 .process(Bus::Deck(deck_id), &mut deck.block, context);
             let peak = deck.mix_into(&mut self.master_block);
@@ -673,6 +685,7 @@ impl Renderer {
                 self.decks[deck.index()].set_stem_settings(settings);
             }
             Command::SetSmartFader(enabled) => self.set_smart_fader(enabled),
+            Command::SetFaderEcho(enabled) => self.fader_echo = enabled,
             Command::SetSmartCfx { deck, preset } => {
                 self.decks[deck.index()].set_smart_cfx(preset);
             }
