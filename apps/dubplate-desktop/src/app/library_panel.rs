@@ -112,6 +112,10 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
                 .child(section_title("Sound card"))
                 .children(output_rows)
                 .child(section_title("Decks"))
+                .child(key_lock_row(app, cx))
+                .child(section_title("Sound card"))
+                .children(output_rows)
+                .child(section_title("Decks"))
                 .child(setting_switch(
                     "auto-cue-saved",
                     "Cue at the first memory or hot cue",
@@ -184,28 +188,6 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
         )
 }
 
-/// A setting that is on or off: its name and what it does, and a switch at the end of the row.
-fn setting_switch(
-    id: &'static str,
-    name: &'static str,
-    detail: &'static str,
-    on: bool,
-    command: Command,
-    cx: &mut Context<'_, DubplateApp>,
-) -> impl IntoElement + use<> {
-    div()
-        .id(id)
-        .accessible_toggle(format!("{name}. {detail}"), on)
-        .flex()
-        .items_center()
-        .gap(px(12.0))
-        .py(px(8.0))
-        .border_t_1()
-        .border_color(theme::ROW_LINE)
-        .cursor_pointer()
-        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-            this.perform(command, window, cx);
-        }))
 /// Whether the crossfader is in use, with what Off means. rekordbox has no single switch for
 /// it; DJs set both channels' crossfader assign to THRU, which Off does at once.
 fn crossfader_row(on: bool, cx: &mut Context<'_, DubplateApp>) -> impl IntoElement + use<> {
@@ -221,15 +203,6 @@ fn crossfader_row(on: bool, cx: &mut Context<'_, DubplateApp>) -> impl IntoEleme
             div()
                 .flex()
                 .flex_col()
-                .flex_1()
-                .min_w_0()
-                .gap(px(2.0))
-                .child(div().child(name))
-                .child(
-                    div()
-                        .text_size(theme::SMALL_TEXT_SIZE)
-                        .text_color(theme::MUTED)
-                        .child(detail),
                 .gap(px(2.0))
                 .child(div().text_size(theme::SMALL_TEXT_SIZE).child("Crossfader"))
                 .child(
@@ -241,19 +214,6 @@ fn crossfader_row(on: bool, cx: &mut Context<'_, DubplateApp>) -> impl IntoEleme
         )
         .child(
             div()
-                .flex()
-                .flex_none()
-                .items_center()
-                .w(px(30.0))
-                .h(px(18.0))
-                .p(px(2.0))
-                .rounded_full()
-                .bg(if on { theme::OK } else { theme::TRACK })
-                .when(on, |track| track.justify_end())
-                .child(div().size(px(14.0)).rounded_full().bg(theme::THUMB)),
-        )
-}
-
                 .id("crossfader-switch")
                 .role(gpui::Role::RadioGroup)
                 .aria_label("Crossfader")
@@ -418,6 +378,58 @@ fn paint_curve(bounds: Bounds<Pixels>, picture: CurvePicture, colour: Rgba, wind
             ));
         }
     }
+}
+
+/// A setting that is on or off: its name and what it does, and a switch at the end of the row.
+fn setting_switch(
+    id: &'static str,
+    name: &'static str,
+    detail: &'static str,
+    on: bool,
+    command: Command,
+    cx: &mut Context<'_, DubplateApp>,
+) -> impl IntoElement + use<> {
+    div()
+        .id(id)
+        .accessible_toggle(format!("{name}. {detail}"), on)
+        .flex()
+        .items_center()
+        .gap(px(12.0))
+        .py(px(8.0))
+        .border_t_1()
+        .border_color(theme::ROW_LINE)
+        .cursor_pointer()
+        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+            this.perform(command, window, cx);
+        }))
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .flex_1()
+                .min_w_0()
+                .gap(px(2.0))
+                .child(div().child(name))
+                .child(
+                    div()
+                        .text_size(theme::SMALL_TEXT_SIZE)
+                        .text_color(theme::MUTED)
+                        .child(detail),
+                ),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_none()
+                .items_center()
+                .w(px(30.0))
+                .h(px(18.0))
+                .p(px(2.0))
+                .rounded_full()
+                .bg(if on { theme::OK } else { theme::TRACK })
+                .when(on, |track| track.justify_end())
+                .child(div().size(px(14.0)).rounded_full().bg(theme::THUMB)),
+        )
 }
 
 fn section_title(text: &'static str) -> impl IntoElement {
