@@ -76,6 +76,8 @@ pub const METER_OFF: Rgba = white_alpha(0.07);
 pub const METER_HOT: Rgba = hex(0xF5B78E);
 /// Behind the selected browser row.
 pub const SELECTED_ROW: Rgba = white_alpha(0.05);
+/// The title of a track played this session, dimmed as rekordbox dims played tracks.
+pub const PLAYED_TITLE: Rgba = with_alpha(0xEEEFF1, 0.45);
 /// Between browser rows.
 pub const ROW_LINE: Rgba = white_alpha(0.045);
 /// Behind the cue letters on the zoomed waveforms.
