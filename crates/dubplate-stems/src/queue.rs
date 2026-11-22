@@ -43,10 +43,7 @@ pub struct SeparationQueue {
 impl SeparationQueue {
     /// Starts the queue's thread, named `dubplate-stems`, which separates into `location` with
     /// workers from `launcher`.
-    pub fn start(
-        location: StemsLocation,
-        launcher: impl WorkerLauncher,
-    ) -> std::io::Result<Self> {
+    pub fn start(location: StemsLocation, launcher: impl WorkerLauncher) -> std::io::Result<Self> {
         let (events, event_receiver) = channel();
         let (update_sender, updates) = channel();
         let scheduler = Scheduler {
@@ -205,7 +202,11 @@ impl Scheduler {
                 }
                 Event::Worker { job, message } => self.heard(job, message),
                 Event::WorkerDone { job } => {
-                    if self.running.as_ref().is_some_and(|running| running.job == job) {
+                    if self
+                        .running
+                        .as_ref()
+                        .is_some_and(|running| running.job == job)
+                    {
                         self.finish_running();
                     }
                 }

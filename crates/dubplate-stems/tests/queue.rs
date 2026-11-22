@@ -22,7 +22,7 @@ struct Fixture {
 impl Fixture {
     fn new() -> Self {
         Self {
-            folder: tempfile::tempdir().unwrap(),
+            folder: tempfile::tempdir().expect("a temporary folder"),
         }
     }
 
@@ -40,7 +40,7 @@ impl Fixture {
 
     fn track(&self, name: &str) -> PathBuf {
         let path = self.folder.path().join(format!("{name}.m4a"));
-        std::fs::write(&path, name.as_bytes()).unwrap();
+        std::fs::write(&path, name.as_bytes()).expect("a track file");
         path
     }
 
@@ -64,7 +64,7 @@ impl Fixture {
                 .arg(&pid_file);
             command
         })
-        .unwrap()
+        .expect("the queue starts")
     }
 
     /// Waits until the stand-in worker wrote its process id.
@@ -186,7 +186,9 @@ fn a_track_with_stems_is_found_after_a_relaunch_without_a_worker() {
     {
         let queue = fixture.queue(SEPARATES);
         queue.request(track.clone(), SeparationPriority::Set);
-        wait_for(&queue, &track, |status| matches!(status, StemsStatus::Ready(_)));
+        wait_for(&queue, &track, |status| {
+            matches!(status, StemsStatus::Ready(_))
+        });
     }
     let relaunched = fixture.queue("echo 'failed no worker should start'; exit 1");
     let other = fixture.track("never-separated");
@@ -214,9 +216,11 @@ fn cancelling_stops_the_worker_at_once_and_cleans_up_after_it() {
     let queue = fixture.queue(SEPARATES_SLOWLY);
     let track = fixture.track("cancelled");
     queue.request(track.clone(), SeparationPriority::Now);
-    wait_for(&queue, &track, |status| {
-        matches!(status, StemsStatus::Separating(progress) if progress.fraction() > 0.0)
-    });
+    wait_for(
+        &queue,
+        &track,
+        |status| matches!(status, StemsStatus::Separating(progress) if progress.fraction() > 0.0),
+    );
     let pid = fixture.worker_pid();
     assert!(is_running(pid));
 
@@ -241,9 +245,11 @@ fn cancelling_everything_forgets_the_waiting_tracks_too() {
         (first.clone(), SeparationPriority::Set),
         (second.clone(), SeparationPriority::Shortlist),
     ]);
-    wait_for(&queue, &first, |status| {
-        matches!(status, StemsStatus::Separating(progress) if progress.fraction() > 0.0)
-    });
+    wait_for(
+        &queue,
+        &first,
+        |status| matches!(status, StemsStatus::Separating(progress) if progress.fraction() > 0.0),
+    );
     let pid = fixture.worker_pid();
     queue.cancel_all();
     let mut stopped = Vec::new();
@@ -264,9 +270,11 @@ fn dropping_the_queue_stops_the_worker_before_it_returns() {
     let queue = fixture.queue(SEPARATES_SLOWLY);
     let track = fixture.track("dropped");
     queue.request(track.clone(), SeparationPriority::Now);
-    wait_for(&queue, &track, |status| {
-        matches!(status, StemsStatus::Separating(progress) if progress.fraction() > 0.0)
-    });
+    wait_for(
+        &queue,
+        &track,
+        |status| matches!(status, StemsStatus::Separating(progress) if progress.fraction() > 0.0),
+    );
     let pid = fixture.worker_pid();
     let asked = Instant::now();
     drop(queue);
