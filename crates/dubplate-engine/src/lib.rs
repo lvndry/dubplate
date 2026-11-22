@@ -58,7 +58,9 @@ pub use curves::{
 };
 pub use deck::DeckId;
 pub use decode::decode_file;
-pub use dubplate_fx::{BeatLength, EffectKind, EqBand, LIMITER_CEILING};
+pub use dubplate_fx::{
+    BeatLength, EffectKind, EqBand, HIGH_CROSSOVER_HZ, LIMITER_CEILING, LOW_CROSSOVER_HZ,
+};
 pub use effects::{EffectTarget, EffectUnitId, EffectUnitState};
 pub use error::EngineError;
 pub use grid::{BeatGrid, GridBeat};
