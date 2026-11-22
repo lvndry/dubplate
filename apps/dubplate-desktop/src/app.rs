@@ -2148,7 +2148,8 @@ impl DubplateApp {
                 .hardware
                 .as_ref()
                 .is_some_and(|hardware| hardware.dispatcher.held.any_shown(now))
-            || self.pad_notes.iter().flatten().any(|note| note.shows(now));
+            || self.pad_notes.iter().flatten().any(|note| note.shows(now))
+            || self.recording.is_some();
         let moving = pulsing
             || frames.iter().any(|frame| frame.state.playing)
             || self.master_meter.is_moving()
