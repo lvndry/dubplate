@@ -23,6 +23,7 @@ mod search;
 mod set;
 mod settings;
 mod shortcuts;
+mod tap_tempo;
 mod theme;
 mod transport;
 mod waveform;

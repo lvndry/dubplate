@@ -88,9 +88,15 @@ fn title_row(
             (_, None) => ("No track".into(), "".into(), theme::MUTED),
         };
     let tempo = frame.state.tempo;
-    let bpm = entry
-        .and_then(|entry| entry.track.bpm)
-        .map_or_else(|| "--.--".to_owned(), |bpm| format!("{:.2}", bpm * tempo));
+    let playing_bpm = app
+        .tempo_state(deck)
+        .and_then(|state| state.bpm)
+        .or_else(|| {
+            entry
+                .and_then(|entry| entry.track.bpm)
+                .map(|bpm| bpm * tempo)
+        });
+    let bpm = playing_bpm.map_or_else(|| "--.--".to_owned(), |bpm| format!("{bpm:.2}"));
     let pitch = format!("{:+.1}%", (tempo - 1.0) * 100.0).replace('-', "\u{2212}");
     let remaining = frame.duration_seconds.map_or_else(
         || "\u{2212}-:--".to_owned(),

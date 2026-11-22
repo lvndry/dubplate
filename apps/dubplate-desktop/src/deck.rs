@@ -13,6 +13,7 @@ use dubplate_rekordbox::{HotCuePad, TrackAnalysis};
 use crate::collection::{CollectionTrack, TrackOrigin};
 use crate::playhead::PlayheadClock;
 use crate::prep::GridCorrection;
+use crate::tap_tempo::TapTempo;
 use crate::waveform::{BeatMarks, OverviewWaveform, Zoom, ZoomedWaveform};
 
 /// A track made ready for a deck on a background thread.
@@ -248,6 +249,10 @@ pub struct Deck {
     pub clock: PlayheadClock,
     /// Whether CUE is held down at the cue point, playing until it is let go, as on a CDJ.
     pub cue_preview: bool,
+    /// The taps on this deck's tempo, and whether the deck's grid came from them.
+    pub tap_tempo: TapTempo,
+    /// Whether the deck's beat grid was tapped by the DJ, so more taps may change it.
+    pub tapped_grid: bool,
     load_generation: u64,
 }
 
@@ -260,6 +265,8 @@ impl Deck {
         self.content = DeckContent::Loading;
         self.hot_cues = hot_cues;
         self.cue_preview = false;
+        self.tap_tempo = TapTempo::default();
+        self.tapped_grid = false;
         self.load_generation
     }
 
