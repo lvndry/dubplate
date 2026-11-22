@@ -111,10 +111,11 @@ impl ZoomedWaveform {
     }
 }
 
-/// A track's whole-track waveform as one level per column, from 0.0 to 1.0.
+/// A track's whole-track waveform as the three bands' levels per column, from 0.0 to 1.0, so
+/// the overview can show where the lows drop out and come back.
 #[derive(Debug, Clone, PartialEq)]
 pub struct OverviewWaveform {
-    levels: Vec<f32>,
+    levels: Vec<BandLevels>,
 }
 
 impl OverviewWaveform {
@@ -138,20 +139,21 @@ impl OverviewWaveform {
             detail_levels(waveforms)?
         };
         Some(Self {
-            levels: normalized(levels)
-                .into_iter()
-                .map(BandLevels::loudest)
-                .collect(),
+            levels: normalized(levels),
         })
     }
 
-    /// The level of each of `bar_count` bars across the whole track: the loudest column under
-    /// each bar.
-    pub fn bars(&self, bar_count: usize) -> Vec<f32> {
+    /// The bands of each of `bar_count` bars across the whole track: each band's loudest
+    /// column under the bar.
+    pub fn bars(&self, bar_count: usize) -> Vec<BandLevels> {
         (0..bar_count)
             .map(|bar| {
                 let columns = covered_columns(bar, bar_count, self.levels.len());
-                self.levels[columns].iter().copied().fold(0.0, f32::max)
+                self.levels[columns]
+                    .iter()
+                    .fold(BandLevels::default(), |loudest, column| {
+                        loudest.max(*column)
+                    })
             })
             .collect()
     }
@@ -718,8 +720,13 @@ mod tests {
             ..Waveforms::default()
         };
         let overview = OverviewWaveform::from_waveforms(&waveforms).unwrap();
-        assert_eq!(overview.bars(2), [1.0, 0.5]);
-        assert_eq!(overview.bars(4), [0.25, 1.0, 0.5, 0.0]);
+        let loudest = |bars: Vec<BandLevels>| -> Vec<f32> {
+            bars.into_iter().map(BandLevels::loudest).collect()
+        };
+        assert_eq!(loudest(overview.bars(2)), [1.0, 0.5]);
+        assert_eq!(loudest(overview.bars(4)), [0.25, 1.0, 0.5, 0.0]);
+        let second = overview.bars(4)[1];
+        assert_eq!((second.low, second.mid, second.high), (0.0, 1.0, 0.0));
         assert_eq!(overview.bars(8).len(), 8);
     }
 }

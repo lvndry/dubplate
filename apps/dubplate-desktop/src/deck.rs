@@ -14,10 +14,11 @@ use dubplate_rekordbox::analysis::BeatGrid;
 use dubplate_rekordbox::{HotCuePad, TrackAnalysis};
 
 use crate::collection::{CollectionTrack, TrackOrigin};
+use crate::phrases::{PhraseSpan, phrase_spans};
 use crate::playhead::PlayheadClock;
 use crate::prep::chosen_grid;
 use crate::tap_tempo::TapTempo;
-use crate::waveform::{BeatMarks, OverviewWaveform, Zoom, ZoomedWaveform};
+use crate::waveform::{BandLevels, BeatMarks, OverviewWaveform, Zoom, ZoomedWaveform};
 
 /// A track made ready for a deck on a background thread.
 pub struct PreparedTrack {
@@ -26,6 +27,7 @@ pub struct PreparedTrack {
     zoomed: Option<ZoomedWaveform>,
     overview: Option<OverviewWaveform>,
     beats: BeatMarks,
+    phrases: Vec<PhraseSpan>,
     /// The tempo and first downbeat, for the engine's beat-synced effects.
     pub beat_grid: Option<dubplate_engine::BeatGrid>,
     /// Where the beat grid comes from, when the track has one.
@@ -77,6 +79,8 @@ pub struct TrackVisuals {
     pub overview: Option<Rc<RefCell<OverviewBars>>>,
     /// The beat grid.
     pub beats: Arc<BeatMarks>,
+    /// rekordbox's phrases in seconds, for the overview's phrase strip.
+    pub phrases: Arc<[PhraseSpan]>,
     /// Why rekordbox's analysis could not be read, if it could not.
     pub analysis_problem: Option<String>,
 }
@@ -91,6 +95,7 @@ impl TrackVisuals {
                 .take()
                 .map(|waveform| Rc::new(RefCell::new(OverviewBars::new(waveform)))),
             beats: Arc::new(std::mem::take(&mut prepared.beats)),
+            phrases: std::mem::take(&mut prepared.phrases).into(),
             analysis_problem: prepared.analysis_problem.take(),
         }
     }
@@ -106,7 +111,7 @@ impl TrackVisuals {
 /// changes.
 pub struct OverviewBars {
     waveform: OverviewWaveform,
-    bars: Vec<f32>,
+    bars: Vec<BandLevels>,
 }
 
 impl OverviewBars {
@@ -117,8 +122,8 @@ impl OverviewBars {
         }
     }
 
-    /// The level of each of `bar_count` bars.
-    pub fn bars(&mut self, bar_count: usize) -> &[f32] {
+    /// The bands of each of `bar_count` bars.
+    pub fn bars(&mut self, bar_count: usize) -> &[BandLevels] {
         if self.bars.len() != bar_count {
             self.bars = self.waveform.bars(bar_count);
         }
@@ -192,6 +197,14 @@ pub fn prepare_track(
             .and_then(|analysis| ZoomedWaveform::from_waveforms(&analysis.waveforms, zoom)),
         overview: rekordbox
             .and_then(|analysis| OverviewWaveform::from_waveforms(&analysis.waveforms)),
+        phrases: rekordbox
+            .and_then(|analysis| {
+                Some(phrase_spans(
+                    analysis.song_structure.as_ref()?,
+                    analysis.beat_grid.as_ref()?,
+                ))
+            })
+            .unwrap_or_default(),
         beats,
         beat_grid,
         grid_source,
@@ -303,6 +316,8 @@ pub struct Deck {
     pub tap_tempo: TapTempo,
     /// Where the deck's beat grid comes from, when it has one.
     pub grid_source: Option<GridSource>,
+    /// Where the pointer is over the deck's overview, from 0.0 to 1.0.
+    pub overview_hover: Option<f32>,
     load_generation: u64,
     committed_generation: u64,
     pending: Option<(Arc<CollectionTrack>, HotCues)>,
@@ -403,6 +418,7 @@ mod tests {
             zoomed: None,
             overview: None,
             beats: Arc::default(),
+            phrases: Arc::default(),
             analysis_problem: None,
         }
     }

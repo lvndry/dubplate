@@ -22,6 +22,7 @@ mod loading;
 mod macos_identity;
 mod meter;
 mod pads;
+mod phrases;
 mod playhead;
 mod prep;
 mod recording;

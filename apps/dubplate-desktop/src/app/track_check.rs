@@ -517,9 +517,9 @@ fn overview(
                     let x_of = |seconds: f32| seconds / duration_f32 * width;
                     if let Some(overview) = &overview {
                         let count = (width / OVERVIEW_BAR_SPACING).floor().max(0.0) as usize;
-                        for (index, level) in overview.bars(count).iter().enumerate() {
+                        for (index, levels) in overview.bars(count).iter().enumerate() {
                             let left = index as f32 * OVERVIEW_BAR_SPACING;
-                            let bar_height = (level * (height - 6.0)).max(1.0);
+                            let bar_height = (levels.loudest() * (height - 6.0)).max(1.0);
                             let bar = gpui::Bounds::new(
                                 bounds.origin + point(px(left), px((height - bar_height) / 2.0)),
                                 size(px(OVERVIEW_BAR_WIDTH), px(bar_height)),

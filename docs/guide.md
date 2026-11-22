@@ -97,6 +97,8 @@ On the FLX4, everything works as in rekordbox's FLX4 layout:
 - BEAT FX: FX SELECT, BEAT left and right, the CH SELECT lever, LEVEL/DEPTH and ON/OFF.
 - SMART CFX turns both filter knobs into the chosen preset (Space, Dub echo, Crush, Chop, Jet, Phase; SHIFT + SMART CFX steps through them). SMART FADER makes the crossfader glide a shared tempo and swap the bass for you; a LOW knob you turn takes over.
 
+Each deck's **overview** shows the whole track in rekordbox's three bands (lows blue, mids gold, highs white), so drops and breakdowns read at a glance, with the hot cues as coloured letters on top, memory cues as red triangles, the set's mix-in (green) and mix-out (lavender), saved loops in yellow, a tick every minute, and a strip along the bottom coloured by phrase (intro, build, drop, breakdown, outro). The last 30 seconds are tinted and the time left turns amber. Hover it to read the time and phrase under the pointer; click to jump there. The scrolling waveforms above show an active loop as a tinted band with its length, a loop waiting for RELOOP as an outline, and the slip shadow playhead while slipping.
+
 On screen, each deck also has Sync, Master, Key lock and Slip, and the compact effects strip drives the three effect units. Press ? for every keyboard shortcut.
 
 ## 5. Record

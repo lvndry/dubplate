@@ -18,6 +18,7 @@ mod library;
 mod library_panel;
 mod mixer;
 mod notice;
+mod overview;
 mod pad_grid;
 mod pads;
 mod prepare;
@@ -85,6 +86,7 @@ use crate::transport::{self, CueDown, is_at_cue, other_deck};
 use crate::waveform::Zoom;
 use audition::Audition;
 use notice::{NoticePlace, Notices};
+use overview::DeckOverview;
 use pads::HeldPad;
 use prepare::PrepareFocus;
 use relink::RelinkReview;
@@ -209,6 +211,7 @@ pub struct DubplateApp {
     output_devices: Vec<OutputDevice>,
     hit_areas: Rc<HitAreas>,
     browser: Entity<Browser>,
+    overviews: [Entity<DeckOverview>; DECK_COUNT],
     help_open: bool,
     notices: Notices,
     focus_handle: FocusHandle,
@@ -390,6 +393,10 @@ impl DubplateApp {
             output_devices: Vec::new(),
             hit_areas: Rc::default(),
             browser,
+            overviews: [
+                cx.new(|_| DeckOverview::default()),
+                cx.new(|_| DeckOverview::default()),
+            ],
             help_open: false,
             notices: Notices::default(),
             focus_handle,
