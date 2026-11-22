@@ -308,10 +308,19 @@ pub enum Command {
     ChooseCfxColour(Option<SmartCfx>),
     /// SMART FADER: the crossfader moves a shared tempo and swaps the bass.
     ToggleSmartFader,
-    /// Play the track selected in the browser in the headphones, or stop it.
+    /// Play the selected track in the headphones, or stop it: the set track when the keys are on
+    /// the set, else the library's.
     PreviewSelected,
-    /// Load the track selected in the browser.
+    /// Load the selected track, the set track when the keys are on the set, else the library's.
     LoadSelected(DeckId),
+    /// Show the selected track's file in Finder, as Finder's Show in Enclosing Folder.
+    RevealSelected,
+    /// Copy the selected track's file path, as Finder's Copy as Pathname.
+    CopySelectedPath,
+    /// Separate the selected track's stems now.
+    SeparateSelectedStems,
+    /// Look for the moved file of the selected track.
+    RelinkSelected,
     /// Load the track playing on the other deck at the same place, as pressing LOAD twice does.
     InstantDouble(DeckId),
     /// Change a deck's tempo by one step.

@@ -49,6 +49,8 @@ Each set track has a **ready badge**: Ready, or what is missing (Grid unconfirme
 
 ### Dig through the library
 
+- Right-click a track, or Control-click it, in the library or the set for what you can do with it: load it on deck A or B, preview it in the headphones, add it to the set or insert it after the selected set track (or remove it from the set), separate its stems, relink it when its file moved, **Show in Finder** (Option+Command+R) and **Copy File Path** (Option+Command+C). Each item shows its key, and items that do not apply are dimmed.
+
 - Click a column header to sort by it, again to reverse it, and a third time to go back to the crate's own order. Prepare and Perform each remember their sort.
 - The search field matches titles, artists, genres, comments and the folders a track is filed in, so `amapiano warmup` finds the tracks in your amapiano/warmup folder. The Genre column shows the genre tag, or those folders when the track has none.
 - Type filters in the same field, mixed with words: `bpm:120-124` (or `bpm:120`, `bpm:120+`), `key:8A` (any notation) or `key:fits` (what mixes after the reference track, as Key fits), `genre:amapiano`, `artist:kabza`, `energy:6+` (or `energy:4-6`), `played:no` (not played for a minute or more on a deck this session; the Hide played chip next to Key fits puts it in or takes it out) and `rated:4+` (rekordbox stars). While the search field has the keyboard, chips under the filter bar suggest them from the track you are mixing from; click one to put it in.

@@ -12,7 +12,7 @@ use dubplate_prep::{
     AudioAnalysis, EnergyDirection, GridCorrection, PrepTrack, ReadyProblem, ReadyReport, SetEntry,
     SetTrack, SetWarning, StoreError, WarningPosition, set_warnings, suggest_next,
 };
-use dubplate_stems::VocalPresence;
+use dubplate_stems::{StemsStatus, VocalPresence};
 use gpui::{App, Context, SharedString};
 
 use super::DubplateApp;
@@ -27,6 +27,7 @@ use crate::prep::{
 };
 use crate::set::{SetEditor, SetTrackRef};
 use crate::stems::stems_cell;
+use crate::track_menu::{RowFacts, RowPlace};
 
 /// How many tracks the Next panel suggests.
 const SUGGESTIONS: usize = 5;
@@ -73,6 +74,8 @@ pub(super) struct SetRow {
     pub stems: SharedString,
     /// Where the vocals sound near its start and end, known once it has stems.
     pub vocals: Option<VocalPresence>,
+    /// What its context menu offers.
+    pub menu: RowFacts,
 }
 
 /// How long the suggestions wait for the selection to settle before ranking the library again,
@@ -227,7 +230,7 @@ impl DubplateApp {
         .detach();
     }
 
-    fn selected_set_path(&self) -> Option<PathBuf> {
+    pub(super) fn selected_set_path(&self) -> Option<PathBuf> {
         self.set_editor
             .as_ref()?
             .set()
@@ -668,6 +671,19 @@ impl DubplateApp {
                     })
                     .and_then(|track| track.track.length_seconds)
                     .map(|seconds| Duration::from_secs(u64::from(seconds)));
+                let file_present = !ready
+                    .problems
+                    .iter()
+                    .any(|problem| matches!(problem, ReadyProblem::FileMissing));
+                let menu = RowFacts {
+                    place: RowPlace::Set,
+                    file_present,
+                    has_path: true,
+                    can_separate: matches!(
+                        self.stems.status(&entry.track_path),
+                        StemsStatus::None | StemsStatus::Failed(_)
+                    ),
+                };
                 SetRow {
                     position,
                     track,
@@ -677,6 +693,7 @@ impl DubplateApp {
                     free_into_next: editor.is_free_after(position),
                     stems: stems_cell(self.stems.status(&entry.track_path)),
                     vocals: self.stems.vocals(&entry.track_path),
+                    menu,
                 }
             })
             .collect()

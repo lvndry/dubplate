@@ -41,7 +41,7 @@ fn preview_start(track: &CollectionTrack) -> f64 {
 impl DubplateApp {
     /// Plays the track selected in the library in the headphones, or stops the one playing.
     pub(super) fn toggle_track_preview(&mut self, cx: &mut Context<'_, Self>) {
-        let Some(selected) = self.browser.read(cx).selected() else {
+        let Some(selected) = self.selected_track(cx) else {
             return;
         };
         let same = self
