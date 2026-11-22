@@ -6,7 +6,7 @@ A walk through Dubplate from an empty library to a recorded mix. Dubplate reads 
 
 ```sh
 cd ~/github/dubplate
-cargo run --release -p dubplate-desktop
+cargo app
 ```
 
 The first build takes a few minutes. Plug the FLX4 in before or after starting; the header shows it as soon as it is connected.

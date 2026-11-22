@@ -40,7 +40,7 @@ use dubplate_engine::{
     TempoRange, TempoState,
 };
 use dubplate_midi::{Feedback, PadMode};
-use dubplate_prep::{EnergyQueue, GridCorrection};
+use dubplate_prep::{AnalysisQueue, GridCorrection};
 use dubplate_rekordbox::HotCuePad;
 use gpui::component::input::{InputEvent, InputState};
 use gpui::prelude::*;
@@ -311,10 +311,10 @@ impl DubplateApp {
             .and_then(|path| SetEditor::open(&path).map_err(|error| error.to_string()))
             .map_err(|problem| problems.push(format!("Sets cannot be kept: {problem}")))
             .ok();
-        let energy_queue = Settings::energy_cache_path()
+        let analysis_queue = Settings::analysis_cache_path()
             .map_err(|error| error.to_string())
-            .and_then(|path| EnergyQueue::start(path).map_err(|error| error.to_string()))
-            .map_err(|problem| problems.push(format!("Energy cannot be rated: {problem}")))
+            .and_then(|path| AnalysisQueue::start(path).map_err(|error| error.to_string()))
+            .map_err(|problem| problems.push(format!("Tracks cannot be analysed: {problem}")))
             .ok();
         let sources = LibrarySources::new(
             settings.library.music_folders.clone(),
@@ -363,7 +363,7 @@ impl DubplateApp {
             audition: None,
             audition_generation: 0,
             energy: EnergyRatings::new(
-                energy_queue.map(|queue| Box::new(queue) as Box<dyn EnergyAnalyser>),
+                analysis_queue.map(|queue| Box::new(queue) as Box<dyn EnergyAnalyser>),
             ),
             energy_collecting: false,
             recording: None,
