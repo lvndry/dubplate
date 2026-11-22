@@ -60,6 +60,21 @@ impl BeatGrid {
     /// A grid through every beat of `beats`, in order, as rekordbox stores it. Each beat's BPM
     /// holds until the next beat; the last one carries on to the end of the track.
     pub fn from_beats(beats: &[GridBeat]) -> Result<Self, EngineError> {
+        Self::from_beats_with_downbeat(beats, 0)
+    }
+
+    /// A complete grid whose beat at `downbeat_index` starts a bar (beat zero).
+    /// Beats before that downbeat retain their timing and have negative beat positions.
+    pub fn from_beats_with_downbeat(
+        beats: &[GridBeat],
+        downbeat_index: usize,
+    ) -> Result<Self, EngineError> {
+        if downbeat_index >= beats.len() {
+            return Err(EngineError::InvalidParameter {
+                name: "downbeat index",
+                value: downbeat_index as f64,
+            });
+        }
         let longest = MAX_TRACK_SECONDS as f64;
         let mut starts: Vec<(usize, GridBeat)> = Vec::new();
         let mut previous_seconds = f64::NEG_INFINITY;
@@ -97,7 +112,7 @@ impl BeatGrid {
                     None => beat.bpm / 60.0,
                 };
                 Segment {
-                    first_beat: *index as f64,
+                    first_beat: *index as f64 - downbeat_index as f64,
                     start_seconds: beat.seconds,
                     beats_per_second,
                 }

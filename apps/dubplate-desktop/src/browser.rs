@@ -16,7 +16,7 @@ use gpui::{
     Window, div, px, svg, uniform_list,
 };
 
-use crate::analysis::{AnalysisState, bpm_cell, energy_cell, key_cell};
+use crate::analysis::{AnalysisAnswer, AnalysisState, bpm_cell, energy_cell, key_cell};
 use crate::assets::{ARROW_DOWN_PATH, ARROW_UP_PATH, CLOSE_ICON_PATH, SEARCH_ICON_PATH};
 use crate::collection::{Collection, CollectionTrack, CrateIndex, CrateKind, TrackIndex};
 use crate::commands::{Direction, Mode};
@@ -27,7 +27,7 @@ use crate::library_view::{
 };
 use crate::search::{SearchQuery, filter_tracks};
 use crate::theme;
-use crate::widgets::{Emphasis, button, tooltip};
+use crate::widgets::{Emphasis, InteractiveControl, button, tooltip};
 
 const ROW_HEIGHT: Pixels = px(32.0);
 const SIDEBAR_WIDTH: Pixels = px(200.0);
@@ -137,10 +137,11 @@ pub struct Browser {
     view: LibraryView,
     missing: Arc<HashSet<TrackIndex>>,
     relinking: bool,
-    analyses: HashMap<PathBuf, Option<Arc<AudioAnalysis>>>,
+    analyses: HashMap<PathBuf, Result<Arc<AudioAnalysis>, String>>,
     search_input: Entity<InputState>,
     table_focus: FocusHandle,
     scroll: UniformListScrollHandle,
+    detail_scroll: gpui::ScrollHandle,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -179,6 +180,7 @@ impl Browser {
             search_input,
             table_focus: cx.focus_handle(),
             scroll: UniformListScrollHandle::new(),
+            detail_scroll: gpui::ScrollHandle::new(),
             _subscriptions: vec![subscription],
         }
     }
@@ -217,17 +219,19 @@ impl Browser {
         cx.notify();
     }
 
-    /// Shows what the analyses just made found, `None` for a track that could not be analysed.
-    pub fn add_analyses(
-        &mut self,
-        analyses: Vec<(PathBuf, Option<Arc<AudioAnalysis>>)>,
-        cx: &mut Context<'_, Self>,
-    ) {
+    /// Shows completed analyses, retaining the error when a track could not be analysed.
+    pub fn add_analyses(&mut self, analyses: Vec<AnalysisAnswer>, cx: &mut Context<'_, Self>) {
         self.analyses.extend(analyses);
         let reads_analysis = |column| matches!(column, Column::Bpm | Column::Key | Column::Energy);
         if self.sort().is_some_and(|sort| reads_analysis(sort.column)) || self.view.is_filtered() {
             self.refilter(cx);
         }
+        cx.notify();
+    }
+
+    /// Discards analyses after a library rescan, so changed or repaired files can be retried.
+    pub fn clear_analyses(&mut self, cx: &mut Context<'_, Self>) {
+        self.analyses.clear();
         cx.notify();
     }
 
@@ -239,7 +243,8 @@ impl Browser {
             .as_ref()
             .and_then(|path| self.analyses.get(path))
         {
-            Some(answer) => AnalysisState::of_answer(answer.as_ref()),
+            Some(Ok(answer)) => AnalysisState::Found(answer),
+            Some(Err(_)) => AnalysisState::Failed,
             None => AnalysisState::Waiting,
         }
     }
@@ -477,6 +482,7 @@ impl Browser {
 
     fn select(&mut self, track: Option<TrackIndex>, cx: &mut Context<'_, Self>) {
         self.selected = track;
+        self.detail_scroll.set_offset(gpui::point(px(0.0), px(0.0)));
         cx.notify();
     }
 
@@ -543,6 +549,7 @@ impl Browser {
                 };
                 div()
                     .id(("crate", crate_index.position()))
+                    .accessible_toggle(entry.name.clone(), chosen)
                     .flex()
                     .flex_none()
                     .items_center()
@@ -592,8 +599,16 @@ impl Browser {
         } else {
             Some("This crate is empty.".into())
         };
+        let list_collection = Arc::clone(&collection);
         div()
             .id("track-table")
+            .role(gpui::Role::Grid)
+            .aria_row_count(self.rows.len() + 1)
+            .aria_column_count(Column::ALL.len() + usize::from(self.actions() != Actions::None))
+            .aria_label("Library tracks")
+            .aria_description("Use Up and Down to select a track. Full title and artist appear below the list. Shift Left or Shift Right loads a deck.")
+            .tab_index(0)
+            .focus_visible(|style| style.border_1().border_color(theme::TEXT))
             .track_focus(&self.table_focus)
             .flex()
             .flex_col()
@@ -628,7 +643,7 @@ impl Browser {
                             range
                                 .map(|position| {
                                     let track = this.rows[position];
-                                    this.render_row(&collection, position, track, cx)
+                                    this.render_row(&list_collection, position, track, cx)
                                 })
                                 .collect::<Vec<_>>()
                         }),
@@ -636,6 +651,43 @@ impl Browser {
                     .flex_1()
                     .track_scroll(&self.scroll),
                 ),
+            })
+            .when_some(self.selected, |table, selected| {
+                let entry = collection.track(selected);
+                table.child(
+                    div().id("selected-track-details")
+                        .accessible_button(format!("Selected track: {} by {}", entry.row.title, entry.row.artist))
+                        .role(gpui::Role::Group)
+                        .aria_description("Full track details. Use Up, Down, Page Up or Page Down to scroll, and Home or End to reach either end.")
+                        .track_scroll(&self.detail_scroll)
+                        .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _, cx| {
+                            let stroke = &event.keystroke;
+                            if stroke.modifiers.platform || stroke.modifiers.control || stroke.modifiers.alt { return; }
+                            let scroll = &this.detail_scroll;
+                            let offset = scroll.offset();
+                            let page = scroll.bounds().size.height.max(px(24.0));
+                            let y = match stroke.key.as_str() {
+                                "up" => offset.y + px(24.0),
+                                "down" => offset.y - px(24.0),
+                                "pageup" => offset.y + page,
+                                "pagedown" => offset.y - page,
+                                "home" => px(0.0),
+                                "end" => -scroll.max_offset().y,
+                                _ => return,
+                            };
+                            scroll.set_offset(gpui::point(offset.x, y.clamp(-scroll.max_offset().y, px(0.0))));
+                            cx.stop_propagation();
+                            cx.notify();
+                        }))
+                        .flex_none().min_w_0().max_h(px(120.0)).overflow_y_scroll()
+                        .px(theme::GUTTER).py(px(8.0))
+                        .border_t_1().border_color(theme::LINE)
+                        .child(div().font_weight(gpui::FontWeight::MEDIUM).child(entry.row.title.clone()))
+                        .child(div().text_color(theme::MUTED).child(entry.row.artist.clone()))
+                        .when_some(entry.track.file_path.as_ref().and_then(|path| self.analyses.get(path)).and_then(|answer| answer.as_ref().err()), |details, problem| {
+                            details.child(div().text_color(theme::ALERT).child(format!("Analysis failed: {problem}. Rescan this music folder to retry.")))
+                        })
+                )
             })
     }
 
@@ -732,7 +784,7 @@ impl Browser {
                 )
             })
             .when(reference_key.is_none(), |chip| {
-                chip.opacity(0.5).cursor_default()
+                chip.opacity(0.5).cursor_default().tab_stop(false)
             })
             .tooltip(tooltip(explanation))
             .when(reference_key.is_some(), |chip| {
@@ -746,6 +798,9 @@ impl Browser {
         let actions = self.actions();
         let sort = self.sort();
         div()
+            .id("library-column-headers")
+            .role(gpui::Role::Row)
+            .aria_row_index(1)
             .flex()
             .flex_none()
             .items_center()
@@ -770,6 +825,18 @@ impl Browser {
                 let label = div().truncate().child(column.label());
                 column_box(column)
                     .id(("sort", column as usize))
+                    .accessible_button(match direction {
+                        Some(SortDirection::Ascending) => {
+                            format!("Sort by {}, ascending", column.label())
+                        }
+                        Some(SortDirection::Descending) => {
+                            format!("Sort by {}, descending", column.label())
+                        }
+                        None => format!("Sort by {}", column.label()),
+                    })
+                    .role(gpui::Role::ColumnHeader)
+                    .aria_column_index(column as usize + 1)
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .h_full()
                     .gap(px(4.0))
                     .when(column == Column::Title, |header| header.pl(px(22.0)))
@@ -790,6 +857,10 @@ impl Browser {
             .when(actions != Actions::None, |row| {
                 row.child(
                     div()
+                        .id("action-column-header")
+                        .role(gpui::Role::ColumnHeader)
+                        .aria_column_index(Column::ALL.len() + 1)
+                        .aria_label("Track actions")
                         .flex()
                         .items_center()
                         .justify_end()
@@ -820,6 +891,16 @@ impl Browser {
         };
         div()
             .id(("track", position))
+            .role(gpui::Role::Row)
+            .aria_row_index(position + 2)
+            .aria_label(format!("{} by {}", entry.row.title, entry.row.artist))
+            .aria_selected(selected)
+            .aria_position_in_set(position + 1)
+            .aria_size_of_set(self.rows.len())
+            .when(selected, |row| row.aria_active_descendant())
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                this.select(Some(track), cx);
+            }))
             .group(ROW_GROUP)
             .flex()
             .items_center()
@@ -844,7 +925,11 @@ impl Browser {
             .on_drag(dragged, |dragged, _, _, cx| cx.new(|_| dragged.clone()))
             .children(Column::ALL.map(|column| {
                 let text = self.cell_text(entry, track, column);
-                let cell = column_box(column);
+                let cell = column_box(column)
+                    .id(("track-cell", column as usize))
+                    .role(gpui::Role::Cell)
+                    .aria_column_index(column as usize + 1)
+                    .aria_label(text.clone());
                 match column {
                     Column::Title => cell
                         .gap(px(8.0))
@@ -893,17 +978,16 @@ impl Browser {
             .when(actions != Actions::None, |row| {
                 row.child(
                     div()
+                        .id("actions-cell")
+                        .role(gpui::Role::Cell)
+                        .aria_column_index(Column::ALL.len() + 1)
+                        .aria_label("Track actions")
                         .flex()
                         .flex_none()
                         .justify_end()
                         .gap(px(4.0))
                         .w(LOAD_WIDTH)
                         .pr(theme::GUTTER)
-                        .when(!selected, |buttons| {
-                            buttons
-                                .opacity(0.0)
-                                .group_hover(ROW_GROUP, |style| style.opacity(1.0))
-                        })
                         .map(|buttons| {
                             if missing {
                                 buttons.child(relink_button(position, track, cx))
@@ -959,6 +1043,7 @@ fn column_box(column: Column) -> gpui::Div {
 fn filter_chip(id: &'static str, label: &'static str, on: bool) -> gpui::Stateful<gpui::Div> {
     div()
         .id(id)
+        .accessible_toggle(label, on)
         .flex()
         .flex_none()
         .items_center()
@@ -996,6 +1081,12 @@ fn bpm_stepper(end: RangeEnd, bpm: u16, cx: &mut Context<'_, Browser>) -> impl I
         };
         div()
             .id(("bpm-step", index))
+            .accessible_button(match (end, direction) {
+                (RangeEnd::Lowest, Direction::Down) => "Decrease minimum BPM",
+                (RangeEnd::Lowest, Direction::Up) => "Increase minimum BPM",
+                (RangeEnd::Highest, Direction::Down) => "Decrease maximum BPM",
+                (RangeEnd::Highest, Direction::Up) => "Increase maximum BPM",
+            })
             .flex()
             .items_center()
             .justify_center()
@@ -1034,6 +1125,7 @@ fn clear_button(
 ) -> impl IntoElement {
     div()
         .id(id)
+        .accessible_button("Clear BPM filter")
         .flex()
         .items_center()
         .justify_center()
@@ -1062,6 +1154,7 @@ fn load_button(
     let colour = theme::deck_colour(deck);
     div()
         .id(("load", position * 2 + deck.index()))
+        .accessible_button(format!("Load track on deck {}", deck_letter(deck)))
         .flex()
         .items_center()
         .justify_center()
@@ -1131,6 +1224,7 @@ fn relink_button(
 ) -> impl IntoElement + use<> {
     div()
         .id(("relink", position))
+        .accessible_button("Relink track")
         .flex()
         .items_center()
         .h(px(22.0))

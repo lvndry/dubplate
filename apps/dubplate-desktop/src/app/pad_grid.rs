@@ -18,6 +18,7 @@ use crate::pads::{
     mode_label, pad_fx, semitones_label,
 };
 use crate::theme;
+use crate::widgets::{InteractiveControl, shift_activation};
 
 const PAD_HEIGHT: Pixels = px(38.0);
 const TAB_HEIGHT: Pixels = px(24.0);
@@ -83,6 +84,14 @@ fn mode_tabs(
                     };
                     div()
                         .id(("pad-mode", deck.index() * 4 + button))
+                        .accessible_toggle(
+                            format!(
+                                "Deck {} {} pad mode",
+                                crate::deck::deck_letter(deck),
+                                mode_label(shown)
+                            ),
+                            selected,
+                        )
                         .flex()
                         .items_center()
                         .h(TAB_HEIGHT)
@@ -100,6 +109,15 @@ fn mode_tabs(
                                     .hover(|tab| tab.text_color(theme::TEXT))
                             }
                         })
+                        .aria_description(
+                            "Enter selects this pad mode. Shift Enter selects its alternate mode.",
+                        )
+                        .on_key_down(cx.listener(move |this, event, window, cx| {
+                            if shift_activation(event) {
+                                this.perform(Command::SetPadMode(deck, shift_mode), window, cx);
+                                cx.stop_propagation();
+                            }
+                        }))
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
                             let chosen = if event.modifiers().shift {
@@ -127,6 +145,12 @@ fn sampler_controls(
     let toggle = |id: &'static str, label: &'static str, on: bool, enabled: bool| {
         div()
             .id((id, deck.index()))
+            .when(enabled, |button| {
+                button.accessible_toggle(
+                    format!("Deck {} sample {label}", crate::deck::deck_letter(deck)),
+                    on,
+                )
+            })
             .flex()
             .items_center()
             .h(TAB_HEIGHT)
@@ -155,9 +179,11 @@ fn sampler_controls(
             .child(label)
     };
     let option = |id, label, on: bool, option: SampleOption| {
-        toggle(id, label, on, selected.is_some()).on_click(cx.listener(
-            move |this, _: &ClickEvent, _, cx| this.toggle_sample_option(deck, option, cx),
-        ))
+        toggle(id, label, on, selected.is_some()).when(selected.is_some(), |button| {
+            button.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                this.toggle_sample_option(deck, option, cx)
+            }))
+        })
     };
     div()
         .flex()
@@ -205,6 +231,10 @@ fn loop_buttons(
     let button = |id: &'static str, label: &'static str, action: LoopAction| {
         div()
             .id((id, deck.index()))
+            .accessible_button(format!(
+                "Deck {} loop {label}",
+                crate::deck::deck_letter(deck)
+            ))
             .flex()
             .items_center()
             .h(TAB_HEIGHT)
@@ -257,6 +287,15 @@ fn pads(
             let playable = loaded && face.playable;
             div()
                 .id(("pad", deck.index() * PAD_COUNT + pad))
+                .when(playable, |button| {
+                    button.accessible_button(format!(
+                        "Deck {} pad {}: {} {}",
+                        crate::deck::deck_letter(deck),
+                        pad + 1,
+                        face.title,
+                        face.detail
+                    ))
+                })
                 .flex()
                 .flex_col()
                 .justify_center()
@@ -287,6 +326,13 @@ fn pads(
                     pad_button
                         .cursor_pointer()
                         .hover(|pad_button| pad_button.border_color(theme::MUTED))
+                        .aria_description("Enter plays this pad. Shift Enter performs its alternate action, such as deleting a hot cue.")
+                        .on_key_down(cx.listener(move |this, event, window, cx| {
+                            if shift_activation(event) {
+                                this.perform(Command::Pad(PadPress { deck, pad, mode: None, press: Press::Tap, shift: true }), window, cx);
+                                cx.stop_propagation();
+                            }
+                        }))
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
                             let press = PadPress {

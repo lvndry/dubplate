@@ -244,7 +244,7 @@ impl DubplateApp {
         };
         let scans = self.sources.chosen_scans();
         let relinks = self.settings.library.relink_map();
-        let set = self.set_editor.as_ref().map(|editor| editor.set().clone());
+        let set = self.set_editor.as_ref().map(|editor| editor.snapshot());
         cx.spawn(async move |this, cx| {
             let (collection, catalogue, missing, moved_files) = cx
                 .background_executor()
@@ -273,7 +273,9 @@ impl DubplateApp {
                 if this.library_generation == generation {
                     this.follow_moved_set_files(&moved_files, cx);
                     this.catalogue = Arc::new(catalogue);
-                    this.restore_analyses();
+                    this.analyses.refresh();
+                    this.browser
+                        .update(cx, |browser, cx| browser.clear_analyses(cx));
                     this.show_library(LibraryStatus::Ready(Arc::new(collection)), cx);
                     this.show_missing(missing, cx);
                     this.forget_track_checks();
@@ -296,16 +298,14 @@ impl DubplateApp {
         if moved_files.is_empty() {
             return;
         }
-        let Some(editor) = &mut self.set_editor else {
-            return;
-        };
-        if let Err(error) = editor.follow_files(moved_files) {
-            self.show_notice(
-                NoticePlace::Window,
-                format!("The set could not follow a moved file: {error}"),
-                cx,
-            );
-        }
+        let moved_files = moved_files.clone();
+        self.queue_set_edit(
+            move |editor| editor.follow_files(&moved_files),
+            |this, (), _| {
+                this.forget_track_checks();
+            },
+            cx,
+        );
     }
 
     fn show_library(&mut self, status: LibraryStatus, cx: &mut Context<'_, Self>) {

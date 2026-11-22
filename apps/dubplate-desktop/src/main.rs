@@ -100,12 +100,15 @@ fn claim_instance() -> Option<InstanceLock> {
     };
     match InstanceLock::acquire(&path) {
         Ok(lock) => Some(lock),
-        Err(error @ InstanceError::AlreadyRunning { process_id }) => {
+        Err(error @ InstanceError::AlreadyRunning { .. }) => {
             eprintln!(
                 "error: {error}. Quit it before starting another: two would play through the same speakers and both answer the controller."
             );
             #[cfg(target_os = "macos")]
-            if let Some(process_id) = process_id {
+            if let InstanceError::AlreadyRunning {
+                process_id: Some(process_id),
+            } = error
+            {
                 macos_identity::bring_to_front(process_id);
             }
             std::process::exit(1);
