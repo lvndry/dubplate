@@ -6,8 +6,9 @@ use crate::MAX_BLOCK_FRAMES;
 use crate::curves::Ramp;
 use crate::looping::LoopRegion;
 use crate::mixer::RetireQueue;
+use crate::stems::{PART_CHANNELS, mix_parts};
 use crate::track::TrackBuffer;
-use crate::voice::Voice;
+use crate::voice::{StemGains, Voice};
 
 const CHANNELS: usize = 2;
 /// The most input one block can take: a deck at four times its tempo with a full nudge.
@@ -29,6 +30,43 @@ pub(crate) struct KeyLockBlock<'track> {
     /// Track frames per output frame at the track's own speed: the sample rate conversion.
     pub(crate) unit_step: f64,
     pub(crate) active_loop: Option<LoopRegion>,
+    /// The deck plays the track's stems, so they and the track are stretched side by side and
+    /// mixed after.
+    pub(crate) stems: bool,
+}
+
+/// A time-stretcher with its buffers, for stereo or for every stem side by side.
+struct Stretcher {
+    stretch: Stretch,
+    channels: usize,
+    input: Vec<f32>,
+    output: Vec<f32>,
+    priming: Vec<f32>,
+}
+
+impl Stretcher {
+    /// Builds and warms up a stretcher of `channels` channels. This allocates.
+    fn new(channels: usize, output_rate: u32) -> Self {
+        let mut stretch = Stretch::preset_default(channels as u32, output_rate);
+        let priming_frames = stretch.input_latency() * 2 + stretch.output_latency();
+        let priming = vec![0.0; priming_frames * channels];
+        let input = vec![0.0; MAX_INPUT_FRAMES * channels];
+        let mut output = vec![0.0; MAX_BLOCK_FRAMES * channels];
+        stretch.seek(&priming, 1.0);
+        stretch.process(&input, &mut output);
+        stretch.reset();
+        Self {
+            stretch,
+            channels,
+            input,
+            output,
+            priming,
+        }
+    }
+
+    fn priming_frames(&self) -> usize {
+        self.priming.len() / self.channels
+    }
 }
 
 /// Key lock, the master tempo of a CDJ: the deck changes tempo without changing pitch.
@@ -43,11 +81,10 @@ pub(crate) struct KeyLockBlock<'track> {
 /// into the stretched sound. Turning key lock on or off crossfades with the plain sound. Everything is allocated up front, so the audio thread never
 /// allocates.
 pub(crate) struct KeyLock {
-    stretch: Stretch,
+    stereo: Stretcher,
+    stems: Option<Stretcher>,
+    stretching_stems: bool,
     feeder: Voice,
-    input: Vec<f32>,
-    output: Vec<f32>,
-    priming: Vec<f32>,
     input_latency: f64,
     output_latency: f64,
     engaged: bool,
@@ -61,28 +98,34 @@ pub(crate) struct KeyLock {
 }
 
 impl KeyLock {
-    /// Builds the stretcher for `output_rate`. This allocates, so it runs before the renderer
-    /// reaches the audio thread.
+    /// Builds the stereo stretcher for `output_rate`. This allocates, so it runs before the
+    /// renderer reaches the audio thread.
     pub(crate) fn new(output_rate: u32, declick_frames: u32) -> Self {
-        let mut stretch = Stretch::preset_default(CHANNELS as u32, output_rate);
-        let input_latency = stretch.input_latency();
-        let output_latency = stretch.output_latency();
-        let priming_frames = input_latency * 2 + output_latency;
-        let priming = vec![0.0; priming_frames * CHANNELS];
-        let input = vec![0.0; MAX_INPUT_FRAMES * CHANNELS];
-        let mut output = vec![0.0; MAX_BLOCK_FRAMES * CHANNELS];
-        stretch.seek(&priming, 1.0);
-        stretch.process(&input, &mut output);
-        stretch.reset();
+        Self::build(output_rate, declick_frames, None)
+    }
+
+    /// Builds the stereo stretcher and one for a track's stems side by side, for a deck. This
+    /// allocates, so it runs before the renderer reaches the audio thread.
+    pub(crate) fn with_stems(output_rate: u32, declick_frames: u32) -> Self {
+        Self::build(
+            output_rate,
+            declick_frames,
+            Some(Stretcher::new(PART_CHANNELS, output_rate)),
+        )
+    }
+
+    fn build(output_rate: u32, declick_frames: u32, stems: Option<Stretcher>) -> Self {
+        let stereo = Stretcher::new(CHANNELS, output_rate);
+        let input_latency = stereo.stretch.input_latency();
+        let output_latency = stereo.stretch.output_latency();
         let mix_frames = (f64::from(output_rate) * MIX_SECONDS).round().max(1.0) as u32;
         let mut feeder = Voice::new(declick_frames);
         feeder.transport.jump_to(1.0);
         Self {
-            stretch,
+            stereo,
+            stems,
+            stretching_stems: false,
             feeder,
-            input,
-            output,
-            priming,
             input_latency: input_latency as f64,
             output_latency: output_latency as f64,
             engaged: false,
@@ -96,12 +139,29 @@ impl KeyLock {
         }
     }
 
+    /// The feeder and the stretcher in use: the stems' while the deck plays stems, the stereo
+    /// one otherwise.
+    fn feeder_and_stretcher(&mut self) -> (&mut Voice, &mut Stretcher) {
+        let stretcher = match &mut self.stems {
+            Some(stems) if self.stretching_stems => stems,
+            _ => &mut self.stereo,
+        };
+        (&mut self.feeder, stretcher)
+    }
+
     /// Shifts the stretched sound's pitch by `semitones`, for key shift, or to follow the tempo
     /// when key lock is off.
     pub(crate) fn set_transpose(&mut self, semitones: f32) {
         if semitones != self.transpose_semitones {
             self.transpose_semitones = semitones;
-            self.stretch.set_transpose_factor_semitones(semitones, None);
+            self.stereo
+                .stretch
+                .set_transpose_factor_semitones(semitones, None);
+            if let Some(stems) = &mut self.stems {
+                stems
+                    .stretch
+                    .set_transpose_factor_semitones(semitones, None);
+            }
         }
     }
 
@@ -120,6 +180,11 @@ impl KeyLock {
         }
     }
 
+    /// Whether the stretcher is running, or fading out.
+    pub(crate) fn is_engaged(&self) -> bool {
+        self.engaged
+    }
+
     /// Whether the stretched sound is fully in, so the deck's own reads are not heard.
     pub(crate) fn is_fully_in(&self) -> bool {
         self.frames_ready > 0 && self.mix.current() >= 1.0 && self.mix.target() >= 1.0
@@ -136,6 +201,11 @@ impl KeyLock {
         self.frames_ready = 0;
         if block.wanted && !self.engaged {
             self.engaged = true;
+            self.needs_priming = true;
+        }
+        let stretching_stems = block.stems && self.stems.is_some();
+        if stretching_stems != self.stretching_stems {
+            self.stretching_stems = stretching_stems;
             self.needs_priming = true;
         }
         let stretched_sound_ready = self.hold_frames == 0 && !self.needs_priming;
@@ -165,18 +235,21 @@ impl KeyLock {
         self.lead = lead;
         let count = (self.owed_frames.floor().max(0.0) as usize).min(MAX_INPUT_FRAMES);
         self.owed_frames -= count as f64;
-        let input = &mut self.input[..count * CHANNELS];
+        let stretching_stems = self.stretching_stems;
+        let (feeder, stretcher) = self.feeder_and_stretcher();
+        let channels = stretcher.channels;
         read_ahead(
-            &mut self.feeder,
-            input,
+            feeder,
+            &mut stretcher.input[..count * channels],
+            stretching_stems,
             unit_step,
             block.active_loop,
             retire,
             starved,
         );
-        self.stretch.process(
-            &self.input[..count * CHANNELS],
-            &mut self.output[..frames * CHANNELS],
+        stretcher.stretch.process(
+            &stretcher.input[..count * channels],
+            &mut stretcher.output[..frames * channels],
         );
         self.hold_frames = self.hold_frames.saturating_sub(frames);
         self.frames_ready = frames;
@@ -199,18 +272,23 @@ impl KeyLock {
         if let Some(previous) = previous {
             retire.track(previous);
         }
-        let priming_frames = self.priming.len() / CHANNELS;
-        self.feeder.position = block.playhead + lead - priming_frames as f64 * block.unit_step;
-        self.feeder.transport.jump_to(1.0);
+        let stretching_stems = self.stretching_stems;
+        let (feeder, stretcher) = self.feeder_and_stretcher();
+        feeder.position =
+            block.playhead + lead - stretcher.priming_frames() as f64 * block.unit_step;
+        feeder.transport.jump_to(1.0);
         read_ahead(
-            &mut self.feeder,
-            &mut self.priming,
+            feeder,
+            &mut stretcher.priming,
+            stretching_stems,
             block.unit_step,
             None,
             retire,
             starved,
         );
-        self.stretch.seek(&self.priming, playback_rate.max(0.01));
+        stretcher
+            .stretch
+            .seek(&stretcher.priming, playback_rate.max(0.01));
         self.owed_frames = block.advance / block.unit_step;
         self.needs_priming = false;
         self.mix.jump_to(0.0);
@@ -218,20 +296,32 @@ impl KeyLock {
     }
 
     /// The playhead's frame `index` of the block: the stretched sound over the plain resampled
-    /// one from `voice`, in the share the key lock fade has reached.
+    /// one from `voice`, in the share the key lock fade has reached. Stretched stems are mixed
+    /// at `stem_gains` after stretching, so a stem's level changes as fast with key lock as
+    /// without it.
     #[inline]
     pub(crate) fn playhead_frame(
         &mut self,
         index: usize,
         voice: &Voice,
         step: f64,
+        stem_gains: &StemGains,
         starved: &mut bool,
     ) -> (f32, f32) {
         let mix = self.mix.next_value();
-        let stretched_left = self.output[index * CHANNELS];
-        let stretched_right = self.output[index * CHANNELS + 1];
+        let (stretched_left, stretched_right) = match &self.stems {
+            Some(stems) if self.stretching_stems => {
+                let frame = &stems.output[index * PART_CHANNELS..(index + 1) * PART_CHANNELS];
+                let track = (frame[PART_CHANNELS - 2], frame[PART_CHANNELS - 1]);
+                mix_parts(track, frame, stem_gains)
+            }
+            _ => (
+                self.stereo.output[index * CHANNELS],
+                self.stereo.output[index * CHANNELS + 1],
+            ),
+        };
         let (plain_left, plain_right) = if mix < 1.0 {
-            voice.read_playhead(step, starved)
+            voice.read_playhead(step, stem_gains, starved)
         } else {
             (0.0, 0.0)
         };
@@ -243,17 +333,24 @@ impl KeyLock {
 }
 
 /// Reads frames at the track's own speed into interleaved `input`, going round `active_loop`
-/// with a crossfade where the playhead will.
+/// with a crossfade where the playhead will: stereo frames of the track, or every stem side by
+/// side followed by the track when `stems`.
 fn read_ahead(
     feeder: &mut Voice,
     input: &mut [f32],
+    stems: bool,
     unit_step: f64,
     active_loop: Option<LoopRegion>,
     retire: &mut RetireQueue,
     starved: &mut bool,
 ) {
-    for [left, right] in input.as_chunks_mut::<CHANNELS>().0 {
-        (*left, *right) = feeder.next_frame(1.0, unit_step, false, retire, starved);
+    let channels = if stems { PART_CHANNELS } else { CHANNELS };
+    for frame in input.chunks_exact_mut(channels) {
+        if stems {
+            frame.copy_from_slice(&feeder.next_part_frame(unit_step, retire, starved));
+        } else {
+            (frame[0], frame[1]) = feeder.next_frame(1.0, unit_step, false, retire, starved);
+        }
         let previous = feeder.position;
         feeder.position += unit_step;
         if let Some(wrapped) = active_loop.and_then(|region| region.wrap(previous, feeder.position))
