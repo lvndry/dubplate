@@ -54,9 +54,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use dubplate_engine::{
-    AudioOutput, Controller, DECK_COUNT, DeckId, DeckState, EFFECT_UNIT_COUNT, EffectTarget,
-    EffectUnitId, EffectUnitState, EngineError, HeadphoneSettings, MasterTempo, OutputDevice,
-    SyncMode, TempoRange, TempoState,
+    AudioOutput, Controller, DECK_COUNT, DeckId, DeckState, EFFECT_UNIT_COUNT, EffectKind,
+    EffectTarget, EffectUnitId, EffectUnitState, EngineError, HeadphoneSettings, MasterTempo,
+    OutputDevice, SyncMode, TempoRange, TempoState,
 };
 use dubplate_midi::{Feedback, PadMode};
 use dubplate_prep::{AnalysisQueue, GridCorrection, TrackGrid, TrackIdentity};
@@ -82,7 +82,10 @@ use crate::deck::{
     prepare_track,
 };
 use crate::devices::{BufferSize, DeviceAccess};
-use crate::effects::{EffectUnitSetting, search, step_effect, step_parameter};
+use crate::effects::{
+    EffectUnitSetting, PickerMove, PickerRow, picker_position, picker_rows, search, step_effect,
+    step_highlight, step_parameter,
+};
 use crate::fonts::UI_FAMILY;
 use crate::frame_stats::FrameStats;
 use crate::glitches::GlitchWatch;
@@ -150,6 +153,7 @@ struct HitAreas {
     overviews: [Cell<Option<Bounds<Pixels>>>; DECK_COUNT],
     check_overview: Cell<Option<Bounds<Pixels>>>,
     effect_levels: [Cell<Option<Bounds<Pixels>>>; EFFECT_UNIT_COUNT],
+    effect_strip: Cell<Option<Bounds<Pixels>>>,
 }
 
 /// What the pointer is turning or sliding while the button is held.
@@ -262,6 +266,9 @@ pub struct DubplateApp {
     recording_skip_reported: bool,
     smart_cfx_menu: bool,
     effect_menu: Option<EffectMenu>,
+    /// The effect the picker's arrow keys and Enter are on, when moved from the unit's own.
+    effect_highlight: Option<EffectKind>,
+    effect_picker_scroll: ScrollHandle,
     fx_select_presses: u64,
     refocus_window: bool,
     effect_search: Entity<InputState>,
@@ -351,11 +358,8 @@ impl DubplateApp {
                 InputEvent::Change => cx.notify(),
                 InputEvent::PressEnter { .. } => {
                     let query = input.read(cx).value().to_string();
-                    let first = search(&query)
-                        .into_iter()
-                        .flat_map(|(_, effects)| effects)
-                        .next();
-                    if let (Some(menu), Some(kind)) = (this.effect_menu, first) {
+                    let picked = this.effect_highlighted(&picker_rows(&search(&query)));
+                    if let (Some(menu), Some(kind)) = (this.effect_menu, picked) {
                         this.edit_effect(menu.unit, EffectEdit::Kind(kind), cx);
                     }
                     this.close_effect_menu(cx);
@@ -518,6 +522,8 @@ impl DubplateApp {
             recording_skip_reported: false,
             smart_cfx_menu: false,
             effect_menu: None,
+            effect_highlight: None,
+            effect_picker_scroll: ScrollHandle::new(),
             fx_select_presses: 0,
             refocus_window: false,
             effect_search,
@@ -1684,6 +1690,10 @@ impl DubplateApp {
             unit,
             opening: MenuOpening::FxSelect,
         });
+        self.scroll_picker_to(
+            self.effect_unit(unit).map(|state| state.kind),
+            &picker_rows(&search("")),
+        );
         cx.spawn(async move |this, cx| {
             cx.background_executor().timer(FX_SELECT_GLANCE).await;
             this.update(cx, |this, cx| {
@@ -1718,6 +1728,11 @@ impl DubplateApp {
             unit,
             opening: MenuOpening::Pointer,
         });
+        self.effect_highlight = None;
+        self.scroll_picker_to(
+            self.effect_unit(unit).map(|state| state.kind),
+            &picker_rows(&search("")),
+        );
         self.effect_search.update(cx, |input, cx| {
             input.set_value("", window, cx);
             input.focus(window, cx);
@@ -1726,6 +1741,42 @@ impl DubplateApp {
     }
 
     /// Closes the effect picker and gives the keys back to the window.
+    /// The effect the picker's highlight is on among `rows`: the one the arrows moved to, else
+    /// the unit's own, else the first shown.
+    pub(super) fn effect_highlighted(&self, rows: &[PickerRow]) -> Option<EffectKind> {
+        let shown = |kind: &EffectKind| picker_position(rows, *kind).is_some();
+        let own = self
+            .effect_menu
+            .and_then(|menu| self.effect_unit(menu.unit))
+            .map(|state| state.kind);
+        self.effect_highlight
+            .filter(shown)
+            .or(own.filter(shown))
+            .or_else(|| rows.first().and_then(|row| row.effects.first().copied()))
+    }
+
+    /// Moves the picker's highlight with an arrow key and scrolls it into view.
+    pub(super) fn move_effect_highlight(
+        &mut self,
+        direction: PickerMove,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let query = self.effect_search.read(cx).value().to_string();
+        let rows = picker_rows(&search(&query));
+        if let Some(from) = self.effect_highlighted(&rows) {
+            self.effect_highlight = step_highlight(&rows, from, direction);
+            self.scroll_picker_to(self.effect_highlight, &rows);
+            cx.notify();
+        }
+    }
+
+    /// Scrolls the picker's list so `kind`'s row shows.
+    fn scroll_picker_to(&self, kind: Option<EffectKind>, rows: &[PickerRow]) {
+        if let Some((row, _)) = kind.and_then(|kind| picker_position(rows, kind)) {
+            self.effect_picker_scroll.scroll_to_item(row);
+        }
+    }
+
     pub(super) fn close_effect_menu(&mut self, cx: &mut Context<'_, Self>) {
         if let Some(menu) = self.effect_menu.take() {
             if menu.opening == MenuOpening::Pointer {

@@ -8,14 +8,16 @@ use dubplate_engine::{DeckId, EffectTarget, EffectUnitId, EffectUnitState, Relea
 use gpui::component::input::Input;
 use gpui::prelude::*;
 use gpui::{
-    ClickEvent, Context, FontWeight, MouseButton, MouseDownEvent, Pixels, Rgba, SharedString,
-    canvas, deferred, div, px, relative, svg,
+    ClickEvent, Context, FontWeight, KeyDownEvent, MouseButton, MouseDownEvent, Pixels, Rgba,
+    SharedString, canvas, deferred, div, px, relative, svg,
 };
 
 use super::{DubplateApp, HitAreas, Lever, MenuOpening};
 use crate::assets::CHEVRON_DOWN_PATH;
 use crate::commands::{Command, Direction, EffectEdit};
-use crate::effects::{effect_label, parameter_label, search, target_letter};
+use crate::effects::{
+    PickerMove, effect_label, parameter_label, picker_rows, search, target_letter,
+};
 use crate::fonts::MONO_FAMILY;
 use crate::theme;
 use crate::widgets::{InteractiveControl, adjusted_value};
@@ -23,7 +25,16 @@ use crate::widgets::{InteractiveControl, adjusted_value};
 const STRIP_HEIGHT: Pixels = px(46.0);
 const UNIT_HEIGHT: Pixels = px(32.0);
 const LEVEL_WIDTH: Pixels = px(52.0);
-const MENU_WIDTH: Pixels = px(300.0);
+const MENU_WIDTH: Pixels = px(372.0);
+/// The tallest the picker grows, enough for every effect at once on a large window.
+const MENU_HEIGHT: Pixels = px(560.0);
+/// The picker never shrinks below this, so a few rows always show.
+const MENU_SMALLEST: Pixels = px(160.0);
+/// The gap the picker keeps from the window's edge.
+const MENU_MARGIN: Pixels = px(8.0);
+const GROUP_WIDTH: Pixels = px(58.0);
+const PICK_WIDTH: Pixels = px(96.0);
+const PICK_HEIGHT: Pixels = px(24.0);
 
 pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoElement {
     let show_focus = app.hardware_connected();
@@ -44,7 +55,15 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
             strip = strip.child(unit_row(app, unit, state, focused, lever, cx));
         }
     }
-    strip
+    let hit_areas = Rc::clone(&app.hit_areas);
+    strip.relative().child(
+        canvas(
+            move |bounds, _, _| hit_areas.effect_strip.set(Some(bounds)),
+            |_, (), _, _| {},
+        )
+        .absolute()
+        .size_full(),
+    )
 }
 
 fn unit_row(
@@ -421,8 +440,10 @@ fn lever_reading(lever: Lever) -> impl IntoElement {
         )
 }
 
-/// The effect picker. Opened with the pointer it has a search field and stays open; opened by
-/// FX SELECT it only shows the effects with the chosen one highlighted.
+/// The effect picker. Opened with the pointer it has a search field and stays open, the arrow
+/// keys move its highlight and Enter picks; opened by FX SELECT it only shows the effects with
+/// the chosen one highlighted. It opens downward or upward, whichever side of the strip has
+/// more room, no taller than that room, and its list scrolls under the pinned search field.
 fn picker(
     app: &DubplateApp,
     unit: EffectUnitId,
@@ -437,10 +458,22 @@ fn picker(
         String::new()
     };
     let current = state.kind;
-    let mut groups = div().flex().flex_col().gap(px(8.0));
-    let found = search(&query);
-    if found.is_empty() {
-        groups = groups.child(
+    let rows = picker_rows(&search(&query));
+    let highlighted = if searching {
+        app.effect_highlighted(&rows)
+    } else {
+        Some(current)
+    };
+    let mut list = div()
+        .id(("effect-list", unit.index()))
+        .flex()
+        .flex_col()
+        .flex_1()
+        .min_h_0()
+        .overflow_y_scroll()
+        .track_scroll(&app.effect_picker_scroll);
+    if rows.is_empty() {
+        list = list.child(
             div()
                 .px(px(2.0))
                 .text_size(theme::SMALL_TEXT_SIZE)
@@ -448,11 +481,12 @@ fn picker(
                 .child("No effect has that name."),
         );
     }
-    for (name, effects) in found {
-        let mut grid = div().flex().flex_wrap().gap(px(2.0));
-        for kind in effects {
+    for row in rows {
+        let mut effects = div().flex().gap(px(2.0));
+        for kind in row.effects {
             let chosen = kind == current;
-            grid = grid.child(
+            let lit = Some(kind) == highlighted;
+            effects = effects.child(
                 div()
                     .id(SharedString::from(format!(
                         "pick-{}-{}",
@@ -462,62 +496,89 @@ fn picker(
                     .accessible_toggle(effect_label(kind), chosen)
                     .flex()
                     .items_center()
-                    .w(px(92.0))
-                    .h(px(28.0))
-                    .px(px(8.0))
-                    .rounded(px(5.0))
+                    .gap(px(4.0))
+                    .w(PICK_WIDTH)
+                    .h(PICK_HEIGHT)
+                    .px(px(6.0))
+                    .rounded(px(4.0))
+                    .border_1()
+                    .border_color(if lit { theme::TEXT } else { theme::PANEL })
                     .text_size(theme::SMALL_TEXT_SIZE)
                     .cursor_pointer()
                     .when(chosen, |button| {
                         button.bg(theme::RAISED).font_weight(FontWeight::MEDIUM)
-                    })
-                    .when(chosen && !searching, |button| {
-                        button.border_1().border_color(theme::TEXT)
                     })
                     .hover(|button| button.bg(theme::RAISED))
                     .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                         this.perform(Command::Effect(unit, EffectEdit::Kind(kind)), window, cx);
                         this.close_effect_menu(cx);
                     }))
+                    .when(chosen, |button| {
+                        button.child(div().size(px(5.0)).rounded(px(3.0)).bg(theme::TEXT))
+                    })
                     .child(effect_label(kind)),
             );
         }
-        groups = groups.child(
+        list = list.child(
             div()
                 .flex()
-                .flex_col()
-                .gap(px(4.0))
+                .items_center()
+                .when(row.group.is_some(), |row| row.pt(px(5.0)))
                 .child(
                     div()
+                        .w(GROUP_WIDTH)
+                        .flex_none()
                         .px(px(2.0))
                         .text_size(theme::TINY_TEXT_SIZE)
+                        .font_weight(FontWeight::MEDIUM)
                         .text_color(theme::MUTED)
-                        .child(name),
+                        .children(row.group),
                 )
-                .child(grid),
+                .child(effects),
         );
     }
-    deferred(
-        div()
-            .id(("effect-menu", unit.index()))
-            .absolute()
-            .left_0()
-            .top(px(38.0))
-            .w(MENU_WIDTH)
-            .p(px(8.0))
-            .flex()
-            .flex_col()
-            .gap(px(8.0))
-            .rounded(px(10.0))
-            .border_1()
-            .border_color(theme::LINE)
-            .bg(theme::PANEL)
-            .shadow_lg()
-            .occlude()
-            .on_mouse_down_out(cx.listener(|this, _, _, cx| this.close_effect_menu(cx)))
-            .when(searching, |picker| {
-                picker.child(
+    let room = picker_room(app);
+    let picker = div()
+        .id(("effect-menu", unit.index()))
+        .absolute()
+        .left_0()
+        .map(|picker| match room {
+            PickerRoom::Below(_) => picker.top(px(38.0)),
+            PickerRoom::Above(_) => picker.bottom(px(38.0)),
+        })
+        .max_h(room.height())
+        .w(MENU_WIDTH)
+        .p(px(8.0))
+        .flex()
+        .flex_col()
+        .gap(px(6.0))
+        .rounded(px(10.0))
+        .border_1()
+        .border_color(theme::LINE)
+        .bg(theme::PANEL)
+        .shadow_lg()
+        .occlude()
+        .on_mouse_down_out(cx.listener(|this, _, _, cx| this.close_effect_menu(cx)))
+        .when(searching, |picker| {
+            picker
+                .capture_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                    let direction = match event.keystroke.key.as_str() {
+                        "up" => PickerMove::Up,
+                        "down" => PickerMove::Down,
+                        "left" if this.effect_search.read(cx).value().is_empty() => {
+                            PickerMove::Left
+                        }
+                        "right" if this.effect_search.read(cx).value().is_empty() => {
+                            PickerMove::Right
+                        }
+                        _ => return,
+                    };
+                    this.move_effect_highlight(direction, cx);
+                    cx.stop_propagation();
+                }))
+                .child(
                     div()
+                        .flex_none()
                         .h(px(30.0))
                         .px(px(8.0))
                         .flex()
@@ -528,8 +589,38 @@ fn picker(
                         .bg(theme::BACKGROUND)
                         .child(Input::new(&app.effect_search).appearance(false)),
                 )
-            })
-            .child(groups),
-    )
-    .with_priority(1)
+        })
+        .child(list);
+    deferred(picker).with_priority(1)
+}
+
+/// Where the effect picker has room, and how tall it may be there.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum PickerRoom {
+    Below(Pixels),
+    Above(Pixels),
+}
+
+impl PickerRoom {
+    fn height(self) -> Pixels {
+        match self {
+            PickerRoom::Below(height) | PickerRoom::Above(height) => height,
+        }
+    }
+}
+
+/// The side of the strip the picker opens on: below it when the whole list fits there or
+/// below has more room, else above it.
+fn picker_room(app: &DubplateApp) -> PickerRoom {
+    let window_height = app.window_size.height;
+    let Some(strip) = app.hit_areas.effect_strip.get() else {
+        return PickerRoom::Below(MENU_HEIGHT);
+    };
+    let below = window_height - strip.bottom() - MENU_MARGIN;
+    let above = strip.top() - MENU_MARGIN;
+    if below >= MENU_HEIGHT || below >= above {
+        PickerRoom::Below(below.min(MENU_HEIGHT).max(MENU_SMALLEST))
+    } else {
+        PickerRoom::Above(above.min(MENU_HEIGHT).max(MENU_SMALLEST))
+    }
 }
