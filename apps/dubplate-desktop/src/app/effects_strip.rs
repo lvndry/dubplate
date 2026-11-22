@@ -244,6 +244,8 @@ fn targets(
         }))
 }
 
+/// The level bar. The controller's LEVEL/DEPTH knob sets it the moment it reports, so the bar
+/// always shows where the knob sits.
 fn level_bar(
     app: &DubplateApp,
     unit: EffectUnitId,

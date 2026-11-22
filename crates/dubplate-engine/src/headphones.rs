@@ -114,12 +114,28 @@ impl Headphones {
             .zip(self.cue_block.left().iter().zip(self.cue_block.right()))
             .zip(master.left().iter().zip(master.right()))
             .zip(preview.left().iter().zip(preview.right()));
+        let settled =
+            self.cue_gain.is_settled() && self.master_gain.is_settled() && self.level.is_settled();
+        if settled {
+            let cue_gain = self.cue_gain.current();
+            let master_gain = self.master_gain.current();
+            let level = self.level.current();
+            for (
+                (((left, right), (cue_left, cue_right)), (master_left, master_right)),
+                (preview_left, preview_right),
+            ) in frames
+            {
+                *left = (cue_left * cue_gain + master_left * master_gain + preview_left) * level;
+                *right =
+                    (cue_right * cue_gain + master_right * master_gain + preview_right) * level;
+            }
+            return;
+        }
         for (
             (((left, right), (cue_left, cue_right)), (master_left, master_right)),
-            preview_frame,
+            (preview_left, preview_right),
         ) in frames
         {
-            let (preview_left, preview_right) = preview_frame;
             let cue_gain = self.cue_gain.next_value();
             let master_gain = self.master_gain.next_value();
             let level = self.level.next_value();
