@@ -4,6 +4,7 @@
 use std::path::{Path, PathBuf};
 
 use dubplate_library::{DataFolder, LibrarySettings};
+use dubplate_stems::StemsLocation;
 use serde::{Deserialize, Serialize};
 
 use crate::commands::Mode;
@@ -161,6 +162,11 @@ impl Settings {
     /// Where what Dubplate's analysis found in each track is kept between launches.
     pub fn analysis_cache_path() -> Result<PathBuf, SettingsError> {
         Ok(data_folder()?.analysis_cache())
+    }
+
+    /// Where separated stems and the separation model are kept.
+    pub fn stems_location() -> Result<StemsLocation, SettingsError> {
+        Ok(StemsLocation::in_data_folder(&data_folder()?))
     }
 
     /// The file that keeps a second Dubplate from starting beside this one.

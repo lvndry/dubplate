@@ -31,11 +31,14 @@ mod set;
 mod settings;
 mod shortcuts;
 mod single_instance;
+mod stems;
 mod tap_tempo;
 mod theme;
 mod transport;
 mod waveform;
 mod widgets;
+
+use std::process::ExitCode;
 
 use gpui::prelude::*;
 use gpui::{
@@ -58,7 +61,10 @@ gpui::actions!(
 
 const APP_NAME: &str = "Dubplate";
 
-fn main() {
+fn main() -> ExitCode {
+    if let Some(exit) = dubplate_stems::run_worker_if_requested() {
+        return exit;
+    }
     let _instance_lock = claim_instance();
     #[cfg(target_os = "macos")]
     macos_identity::set_app_name(APP_NAME);
@@ -85,6 +91,7 @@ fn main() {
                 cx.quit();
             }
         });
+    ExitCode::SUCCESS
 }
 
 /// Makes this the one running Dubplate, or brings the running one to the front and quits. When

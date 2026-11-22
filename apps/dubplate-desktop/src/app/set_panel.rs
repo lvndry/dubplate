@@ -25,6 +25,8 @@ use crate::theme;
 use crate::widgets::{Emphasis, InteractiveControl, button};
 
 const PANEL_WIDTH: Pixels = px(420.0);
+/// What to do when two tracks with stems sing over each other across a seam.
+const VOCALS_OUT: &str = "vocals out on the outgoing track";
 const ROW_HEIGHT: Pixels = px(40.0);
 const CURVE_HEIGHT: Pixels = px(36.0);
 const CURVE_STROKE: Pixels = px(1.5);
@@ -412,6 +414,7 @@ fn track_row(
                         .gap(px(8.0))
                         .font_family(MONO_FAMILY)
                         .text_size(theme::SMALL_TEXT_SIZE)
+                        .child(div().text_color(theme::MUTED).child(row.stems.clone()))
                         .child(div().text_color(theme::MUTED).child(energy))
                         .child(key)
                         .child(div().text_color(theme::MUTED).child(bpm)),
@@ -497,7 +500,13 @@ fn seam_row(
     let tempo_warned = shown
         .iter()
         .any(|warning| matches!(warning.kind, WarningKind::TempoGap { .. }));
-    let seam_warnings: Vec<String> = shown.iter().map(|warning| warning.kind.label()).collect();
+    let seam_warnings: Vec<String> = shown
+        .iter()
+        .map(|warning| match warning.kind {
+            WarningKind::VocalsOverlap => format!("{}: {VOCALS_OUT}", warning.kind.label()),
+            _ => warning.kind.label(),
+        })
+        .collect();
     let line = seam
         .map(|seam| seam.line(key_warned, tempo_warned))
         .unwrap_or_default();

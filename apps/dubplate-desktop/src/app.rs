@@ -27,6 +27,8 @@ mod sampler;
 mod set_panel;
 mod slider;
 mod smart;
+mod stems;
+mod stems_strip;
 mod track_check;
 mod waveforms;
 
@@ -80,6 +82,7 @@ use crate::relink::Missing;
 use crate::set::SetEditor;
 use crate::settings::Settings;
 use crate::shortcuts::{Perform, WINDOW_CONTEXT};
+use crate::stems::TrackStems;
 use crate::theme;
 use crate::transport::{self, CueDown, is_at_cue, other_deck};
 use crate::waveform::Zoom;
@@ -199,6 +202,8 @@ pub struct DubplateApp {
     audition_generation: u64,
     analyses: TrackAnalyses,
     analysis_collecting: bool,
+    stems: TrackStems,
+    stems_changed: bool,
     recording: Option<Recording>,
     recording_skip_reported: bool,
     smart_cfx_menu: bool,
@@ -239,6 +244,14 @@ impl DubplateApp {
                 BrowserEvent::ImportRekordbox => this.set_rekordbox_import(true, cx),
                 BrowserEvent::RelinkAll => this.start_relink(None, cx),
                 BrowserEvent::Relink(track) => this.start_relink(Some(track), cx),
+                BrowserEvent::SeparateStems(track) => {
+                    let path = this
+                        .collection()
+                        .and_then(|collection| collection.track(track).track.file_path.clone());
+                    if let Some(path) = path {
+                        this.separate_stems_now(path, cx);
+                    }
+                }
                 BrowserEvent::Sorted { screen, sort } => {
                     this.settings
                         .library_sort
@@ -317,6 +330,19 @@ impl DubplateApp {
             .and_then(|path| AnalysisQueue::start(path).map_err(|error| error.to_string()))
             .map_err(|problem| problems.push(format!("Tracks cannot be analysed: {problem}")))
             .ok();
+        let stems = match Settings::stems_location() {
+            Ok(location) => {
+                let (stems, problem) = TrackStems::start(location);
+                if let Some(problem) = problem {
+                    problems.push(format!("Tracks cannot be separated into stems: {problem}"));
+                }
+                stems
+            }
+            Err(error) => {
+                problems.push(format!("Tracks cannot be separated into stems: {error}"));
+                TrackStems::start_unavailable()
+            }
+        };
         let sources = LibrarySources::new(
             settings.library.music_folders.clone(),
             settings.library.import_rekordbox,
@@ -380,6 +406,8 @@ impl DubplateApp {
                 analysis_queue.map(|queue| Box::new(queue) as Box<dyn TrackAnalyser>),
             ),
             analysis_collecting: false,
+            stems,
+            stems_changed: true,
             recording: None,
             recording_skip_reported: false,
             smart_cfx_menu: false,
@@ -402,6 +430,7 @@ impl DubplateApp {
         app.restore_library_sorts(cx);
         app.start_library(cx);
         app.start_set_session(cx);
+        Self::keep_collecting_stems(cx);
         if let Some(problem) = problems.into_iter().next() {
             app.show_notice(NoticePlace::Window, problem, cx);
         }
@@ -720,6 +749,7 @@ impl DubplateApp {
             Ok(visuals) => {
                 let needs_waveform = visuals.zoomed.is_none();
                 self.decks[deck.index()].commit_load(generation, visuals, grid_source);
+                self.reset_deck_stems(deck, cx);
                 self.signal_controllers(Feedback::TrackLoaded(controller_deck(deck)));
                 self.give_deck_analysed_grid(deck, cx);
                 self.refresh_filter_reference(cx);
@@ -842,6 +872,7 @@ impl DubplateApp {
             Command::MakeTempoMaster(deck) => self.engine_command(cx, |controller| {
                 controller.set_master_tempo(MasterTempo::Deck(deck))
             }),
+            Command::Stems(deck, action) => self.apply_stem_action(deck, action, cx),
             Command::ToggleKeyLock(deck) => {
                 let locked = self.key_lock(deck);
                 self.engine_command(cx, |controller| controller.set_key_lock(deck, !locked));
@@ -1154,6 +1185,7 @@ impl DubplateApp {
                 self.mixer.headphone_level = fraction;
                 self.engine_command(cx, |controller| controller.set_headphone_level(fraction));
             }
+            Control::StemLevel(deck, stem) => self.set_stem_level(deck, stem, fraction, cx),
             Control::SamplerVolume => {
                 self.mixer.sampler_volume = fraction;
                 self.settings.sampler.volume = fraction;

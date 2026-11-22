@@ -1,10 +1,10 @@
 //! What the keyboard does, so the decks can be played without a controller. The key bindings
 //! and the help overlay both come from [`SHORTCUTS`].
 
-use dubplate_engine::DeckId;
+use dubplate_engine::{DeckId, Stem};
 use gpui::{Action, KeyBinding};
 
-use crate::commands::{Command, Direction, LoopAction, Mode, PadPress, Press, SetEdit};
+use crate::commands::{Command, Direction, LoopAction, Mode, PadPress, Press, SetEdit, StemAction};
 
 /// How far one press of [ or ] moves a set track's grid, in milliseconds.
 pub const GRID_NUDGE_MS: i32 = 5;
@@ -82,7 +82,7 @@ const fn pad(keystroke: &'static str, deck: DeckId, pad: usize) -> Shortcut {
 }
 
 /// Every keyboard shortcut.
-pub const SHORTCUTS: [Shortcut; 76] = [
+pub const SHORTCUTS: [Shortcut; 88] = [
     outside_text("space", Command::TogglePlay(DeckId::A)),
     outside_text("shift-space", Command::TogglePlay(DeckId::B)),
     outside_text("c", Command::Cue(DeckId::A, Press::Tap)),
@@ -157,6 +157,45 @@ pub const SHORTCUTS: [Shortcut; 76] = [
     outside_text("shift-t", Command::TapTempo(DeckId::B)),
     outside_text("k", Command::ToggleKeyLock(DeckId::A)),
     outside_text("shift-k", Command::ToggleKeyLock(DeckId::B)),
+    outside_text(
+        "q",
+        Command::Stems(DeckId::A, StemAction::Toggle(Stem::Drums)),
+    ),
+    outside_text(
+        "shift-q",
+        Command::Stems(DeckId::B, StemAction::Toggle(Stem::Drums)),
+    ),
+    outside_text(
+        "w",
+        Command::Stems(DeckId::A, StemAction::Toggle(Stem::Bass)),
+    ),
+    outside_text(
+        "shift-w",
+        Command::Stems(DeckId::B, StemAction::Toggle(Stem::Bass)),
+    ),
+    outside_text(
+        "e",
+        Command::Stems(DeckId::A, StemAction::Toggle(Stem::Melody)),
+    ),
+    outside_text(
+        "shift-e",
+        Command::Stems(DeckId::B, StemAction::Toggle(Stem::Melody)),
+    ),
+    outside_text(
+        "r",
+        Command::Stems(DeckId::A, StemAction::Toggle(Stem::Vocals)),
+    ),
+    outside_text(
+        "shift-r",
+        Command::Stems(DeckId::B, StemAction::Toggle(Stem::Vocals)),
+    ),
+    outside_text("v", Command::Stems(DeckId::A, StemAction::Instrumental)),
+    outside_text(
+        "shift-v",
+        Command::Stems(DeckId::B, StemAction::Instrumental),
+    ),
+    outside_text("a", Command::Stems(DeckId::A, StemAction::Acapella)),
+    outside_text("shift-a", Command::Stems(DeckId::B, StemAction::Acapella)),
     outside_text("u", Command::ToggleSlip(DeckId::A)),
     outside_text("shift-u", Command::ToggleSlip(DeckId::B)),
     outside_text("m", Command::CyclePadMode(DeckId::A)),
@@ -293,6 +332,24 @@ pub fn help_sections() -> Vec<HelpSection> {
                 line(&["-", "="], "Tempo down / up, deck A"),
                 line(&["shift--", "shift-="], "Tempo down / up, deck B"),
                 line(&["k", "shift-k"], "Key lock, deck A / deck B"),
+                line(&["q", "shift-q"], "Drums stem out or back, deck A / deck B"),
+                line(&["w", "shift-w"], "Bass stem out or back, deck A / deck B"),
+                line(
+                    &["e", "shift-e"],
+                    "Melody stem out or back, deck A / deck B",
+                ),
+                line(
+                    &["r", "shift-r"],
+                    "Vocals stem out or back, deck A / deck B",
+                ),
+                line(
+                    &["v", "shift-v"],
+                    "Instrumental, the vocals out, deck A / deck B",
+                ),
+                line(
+                    &["a", "shift-a"],
+                    "Acapella, only the vocals, deck A / deck B",
+                ),
                 line(&["u", "shift-u"], "Slip, deck A / deck B"),
                 line(&["l", "shift-l"], "Four-beat loop or exit, deck A / deck B"),
                 line(
@@ -428,6 +485,7 @@ mod tests {
                 }),
                 Command::CyclePadMode(DeckId::A) => Command::CyclePadMode(DeckId::B),
                 Command::ToggleKeyLock(DeckId::A) => Command::ToggleKeyLock(DeckId::B),
+                Command::Stems(DeckId::A, action) => Command::Stems(DeckId::B, action),
                 Command::TapTempo(DeckId::A) => Command::TapTempo(DeckId::B),
                 Command::ToggleSlip(DeckId::A) => Command::ToggleSlip(DeckId::B),
                 Command::Loop(DeckId::A, action) => Command::Loop(DeckId::B, action),

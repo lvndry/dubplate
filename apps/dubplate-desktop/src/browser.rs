@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use dubplate_engine::DeckId;
 use dubplate_prep::AudioAnalysis;
+use dubplate_stems::StemsStatus;
 use gpui::component::input::{Input, InputEvent, InputState};
 use gpui::prelude::*;
 use gpui::{
@@ -26,6 +27,7 @@ use crate::library_view::{
     BpmRange, Column, FilterReference, LibraryView, RangeEnd, Sort, SortDirection,
 };
 use crate::search::{SearchQuery, filter_tracks};
+use crate::stems::{StemStatuses, stems_cell};
 use crate::theme;
 use crate::widgets::{Emphasis, InteractiveControl, button, tooltip};
 
@@ -34,6 +36,9 @@ const SIDEBAR_WIDTH: Pixels = px(200.0);
 const BPM_WIDTH: Pixels = px(72.0);
 const KEY_WIDTH: Pixels = px(56.0);
 const ENERGY_WIDTH: Pixels = px(64.0);
+const STEMS_WIDTH: Pixels = px(72.0);
+/// What a track without stems offers in the Stems column on hover.
+const SEPARATE_LABEL: &str = "Separate";
 const TIME_WIDTH: Pixels = px(64.0);
 const SOURCE_WIDTH: Pixels = px(88.0);
 /// How the spare width is shared: titles are the longest text in a row, so the title takes the
@@ -79,6 +84,8 @@ pub enum BrowserEvent {
     RelinkAll,
     /// Find the moved file of one missing track.
     Relink(TrackIndex),
+    /// Separate a track into stems, ahead of every other track waiting.
+    SeparateStems(TrackIndex),
     /// The DJ sorted a screen's tracks by another column, or went back to the crate's order.
     Sorted {
         /// The screen.
@@ -138,6 +145,7 @@ pub struct Browser {
     missing: Arc<HashSet<TrackIndex>>,
     relinking: bool,
     analyses: HashMap<PathBuf, Result<Arc<AudioAnalysis>, String>>,
+    stems: StemStatuses,
     search_input: Entity<InputState>,
     table_focus: FocusHandle,
     scroll: UniformListScrollHandle,
@@ -177,6 +185,7 @@ impl Browser {
             missing: Arc::default(),
             relinking: false,
             analyses: HashMap::new(),
+            stems: StemStatuses::default(),
             search_input,
             table_focus: cx.focus_handle(),
             scroll: UniformListScrollHandle::new(),
@@ -227,6 +236,25 @@ impl Browser {
             self.refilter(cx);
         }
         cx.notify();
+    }
+
+    /// Shows where each track's stems stand.
+    pub fn set_stems(&mut self, stems: StemStatuses, cx: &mut Context<'_, Self>) {
+        self.stems = stems;
+        if self.sort().is_some_and(|sort| sort.column == Column::Stems) {
+            self.refilter(cx);
+        }
+        cx.notify();
+    }
+
+    /// Where the stems of `entry` stand.
+    fn stems_status(&self, entry: &CollectionTrack) -> &StemsStatus {
+        entry
+            .track
+            .file_path
+            .as_ref()
+            .and_then(|path| self.stems.get(path))
+            .unwrap_or(&StemsStatus::None)
     }
 
     /// What the analyser has said about `entry` so far.
@@ -359,6 +387,7 @@ impl Browser {
             Column::Bpm => bpm_cell(entry, self.analysis_state(entry)),
             Column::Key => key_cell(entry, self.analysis_state(entry)),
             Column::Energy => energy_cell(self.analysis_state(entry)),
+            Column::Stems => stems_cell(self.stems_status(entry)),
             Column::Time => row.time.clone(),
             Column::Source => {
                 if self.missing.contains(&track) {
@@ -954,6 +983,33 @@ impl Browser {
                         .font_family(MONO_FAMILY)
                         .text_size(theme::SMALL_TEXT_SIZE)
                         .child(text),
+                    Column::Stems => {
+                        let status = self.stems_status(entry);
+                        let separable =
+                            matches!(status, StemsStatus::None | StemsStatus::Failed(_))
+                                && entry.track.file_path.is_some()
+                                && !missing;
+                        cell.font_family(MONO_FAMILY)
+                            .text_size(theme::SMALL_TEXT_SIZE)
+                            .text_color(theme::MUTED)
+                            .when(separable, |cell| {
+                                cell.cursor_pointer()
+                                    .child(
+                                        div()
+                                            .opacity(0.0)
+                                            .group_hover(ROW_GROUP, |label| label.opacity(1.0))
+                                            .hover(|label| label.text_color(theme::TEXT))
+                                            .child(SEPARATE_LABEL),
+                                    )
+                                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                        cx.stop_propagation()
+                                    })
+                                    .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {
+                                        cx.emit(BrowserEvent::SeparateStems(track));
+                                    }))
+                            })
+                            .when(!separable, |cell| cell.child(text))
+                    }
                     Column::Time => cell
                         .font_family(MONO_FAMILY)
                         .text_size(theme::SMALL_TEXT_SIZE)
@@ -1028,6 +1084,7 @@ fn column_box(column: Column) -> gpui::Div {
         Column::Bpm => fixed(cell, BPM_WIDTH).justify_end(),
         Column::Key => fixed(cell, KEY_WIDTH),
         Column::Energy => fixed(cell, ENERGY_WIDTH).justify_end(),
+        Column::Stems => fixed(cell, STEMS_WIDTH).justify_end(),
         Column::Time => fixed(cell, TIME_WIDTH).justify_end(),
         Column::Source => fixed(cell, SOURCE_WIDTH),
     }

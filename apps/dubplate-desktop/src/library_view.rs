@@ -26,6 +26,8 @@ pub enum Column {
     Key,
     /// The energy, from 1 to 10.
     Energy,
+    /// Whether the track's stems are separated, being separated or not asked for.
+    Stems,
     /// The length.
     Time,
     /// rekordbox or the music folder.
@@ -34,13 +36,14 @@ pub enum Column {
 
 impl Column {
     /// Every column, in the table's order.
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Title,
         Self::Artist,
         Self::Genre,
         Self::Bpm,
         Self::Key,
         Self::Energy,
+        Self::Stems,
         Self::Time,
         Self::Source,
     ];
@@ -54,6 +57,7 @@ impl Column {
             Self::Bpm => "BPM",
             Self::Key => "Key",
             Self::Energy => "Energy",
+            Self::Stems => "Stems",
             Self::Time => "Time",
             Self::Source => "Source",
         }
@@ -68,6 +72,7 @@ impl Column {
             Self::Bpm => "bpm",
             Self::Key => "key",
             Self::Energy => "energy",
+            Self::Stems => "stems",
             Self::Time => "time",
             Self::Source => "source",
         }
@@ -85,7 +90,7 @@ impl Column {
             return None;
         }
         match self {
-            Self::Title | Self::Artist | Self::Genre | Self::Source => {
+            Self::Title | Self::Artist | Self::Genre | Self::Stems | Self::Source => {
                 Some(CellValue::Text(text.to_lowercase()))
             }
             Self::Bpm | Self::Energy => text

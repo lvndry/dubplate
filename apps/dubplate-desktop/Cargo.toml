@@ -19,6 +19,7 @@ dubplate-library = { version = "0.1.0", path = "../../crates/dubplate-library" }
 dubplate-midi = { version = "0.1.0", path = "../../crates/dubplate-midi" }
 dubplate-prep = { version = "0.1.0", path = "../../crates/dubplate-prep" }
 dubplate-rekordbox = { version = "0.1.0", path = "../../crates/dubplate-rekordbox" }
+dubplate-stems = { version = "0.1.0", path = "../../crates/dubplate-stems" }
 gpui = { version = "=0.9.1", package = "gpui-kit" }
 hound = "3.5.1"
 jiff = "1.0.2"

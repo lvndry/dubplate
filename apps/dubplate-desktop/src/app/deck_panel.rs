@@ -50,6 +50,7 @@ pub(super) fn render(
         .child(title_row(app, deck, frame, entry))
         .child(overview(app, deck, frame, entry, cx))
         .child(transport(app, deck, frame, cx))
+        .child(super::stems_strip::render(app, deck, cx))
         .child(pad_grid::render(app, deck, cx));
     accept_drops(panel, deck, cx)
 }

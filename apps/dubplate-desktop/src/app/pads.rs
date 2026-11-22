@@ -9,6 +9,7 @@ use gpui::Context;
 use super::DubplateApp;
 use super::notice::NoticePlace;
 use super::sampler::sampler_slot;
+use super::stems::stem_pad_action;
 use crate::commands::{LoopAction, PadPress, Press};
 use crate::deck::pad_position;
 use crate::pads::{
@@ -125,7 +126,12 @@ impl DubplateApp {
                     }
                 });
             }
-            PadMode::BeatLoop | PadMode::PadFx1 | PadMode::PadFx2 | PadMode::Sampler => {}
+            PadMode::BeatLoop => {
+                if let Some(action) = stem_pad_action(press.pad) {
+                    self.apply_stem_action(deck, action, cx);
+                }
+            }
+            PadMode::PadFx1 | PadMode::PadFx2 | PadMode::Sampler => {}
         }
     }
 
