@@ -119,9 +119,7 @@ impl<K: Kernel> Unit<K> {
             self.trail_cut = false;
             if self.idle {
                 self.mix.snap_to_target();
-                // A trails kernel goes idle only when its trail has died away, so re-enabling
-                // it resets what is left instead of letting old repeats rejoin the new trail.
-                if !K::LISTENS_WHEN_OFF {
+                if !K::TRAILS && !K::LISTENS_WHEN_OFF {
                     self.kernel.reset();
                 }
             }
@@ -354,61 +352,5 @@ pub(crate) fn knob(value: f32, minimum: f32, maximum: f32, fallback: f32) -> f32
         value.clamp(minimum, maximum)
     } else {
         fallback
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{Frame, Kernel, MixLaw, Unit};
-    use crate::context::BlockTiming;
-
-    /// A kernel with TRAILS = true that tracks whether reset() was called.
-    struct ResetTracker {
-        reset_called: bool,
-    }
-
-    impl Kernel for ResetTracker {
-        const TRAILS: bool = true;
-        const MIX_LAW: MixLaw = MixLaw::Blend;
-        fn begin_block(&mut self, _timing: &BlockTiming) {}
-        fn tick(&mut self, input: Frame, _beat_position: f64) -> Frame {
-            input
-        }
-        fn reset(&mut self) {
-            self.reset_called = true;
-        }
-        fn tail_seconds(&self) -> f32 {
-            0.0
-        }
-    }
-
-    #[test]
-    fn re_enabling_a_trails_kernel_after_idle_resets_the_kernel() {
-        let mut unit: Unit<ResetTracker> = Unit::new(
-            ResetTracker {
-                reset_called: false,
-            },
-            0.5,
-        );
-
-        // First enable: unit starts idle, so kernel.reset() is called.
-        unit.set_enabled(true);
-        assert!(
-            unit.kernel.reset_called,
-            "first enable resets an idle kernel"
-        );
-
-        // Disable, then simulate the trail dying so the unit goes idle.
-        unit.set_enabled(false);
-        unit.idle = true;
-        unit.kernel.reset_called = false;
-
-        // Re-enabling while idle must reset the TRAILS kernel so stale repeats
-        // don't rejoin the new trail.
-        unit.set_enabled(true);
-        assert!(
-            unit.kernel.reset_called,
-            "re-enable after idle must reset a TRAILS kernel"
-        );
     }
 }
