@@ -6,6 +6,7 @@ use serde::Serialize;
 use tempfile::TempDir;
 
 use crate::analysis::TrackAnalysis;
+use crate::cue_colors::{MemoryCueColor, PaletteColor};
 use crate::error::Error;
 use crate::model::{Cue, CueKind, Playlist, PlaylistKind, Track};
 
@@ -157,7 +158,7 @@ impl Library {
     /// Reads every cue and saved loop, ordered by track and position.
     pub fn cues(&self) -> Result<Vec<Cue>, Error> {
         let mut statement = self.connection.prepare(
-            "SELECT ID, ContentID, Kind, InMsec, OutMsec, Color, Comment
+            "SELECT ID, ContentID, Kind, InMsec, OutMsec, Color, Comment, ColorTableIndex
              FROM djmdCue
              WHERE rb_local_deleted = 0
              ORDER BY ContentID, InMsec, ID",
@@ -250,18 +251,30 @@ fn cue_from_row(row: &Row<'_>) -> rusqlite::Result<Cue> {
     let kind: i64 = row.get::<_, Option<i64>>(2)?.unwrap_or(0);
     let start: Option<i64> = row.get(3)?;
     let end: Option<i64> = row.get(4)?;
+    let kind = CueKind::from_rekordbox_kind(kind);
+    let color: Option<i64> = row.get(5)?;
+    let color_table_index: Option<i64> = row.get(7)?;
     Ok(Cue {
         id: row.get(0)?,
         track_id: row.get(1)?,
-        kind: CueKind::from_rekordbox_kind(kind),
+        kind,
         start_ms: start
             .and_then(|value| u32::try_from(value).ok())
             .unwrap_or(0),
         loop_end_ms: end
             .filter(|value| *value > 0)
             .and_then(|value| u32::try_from(value).ok()),
-        color: row.get(5)?,
-        comment: row.get(6)?,
+        hot_cue_color: match kind {
+            CueKind::Hot { .. } => color_table_index.and_then(PaletteColor::from_index),
+            CueKind::Memory | CueKind::Unknown { .. } => None,
+        },
+        memory_color: match kind {
+            CueKind::Memory => color.and_then(MemoryCueColor::from_rekordbox),
+            CueKind::Hot { .. } | CueKind::Unknown { .. } => None,
+        },
+        comment: row
+            .get::<_, Option<String>>(6)?
+            .filter(|comment| !comment.is_empty()),
     })
 }
 

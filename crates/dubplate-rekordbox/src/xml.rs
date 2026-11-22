@@ -8,7 +8,9 @@
 
 use std::path::Path;
 
+use crate::cue_colors::{PaletteColor, Rgb};
 use crate::model::HotCuePad;
+use crate::track_cues::TrackCues;
 
 /// The `DJ_PLAYLISTS` version of the format.
 const FORMAT_VERSION: &str = "1.0.0";
@@ -62,7 +64,7 @@ pub struct XmlTrack {
     /// The beat grid: a marker where it starts and wherever its tempo or its beats change.
     pub tempos: Vec<TempoMarker>,
     /// Memory cues, hot cues and saved loops.
-    pub position_marks: Vec<PositionMark>,
+    pub cues: TrackCues,
 }
 
 /// Where a stretch of the beat grid starts, its tempo, and where that first beat is in its bar.
@@ -74,28 +76,6 @@ pub struct TempoMarker {
     pub tempo_hundredths: u16,
     /// Where the first beat falls in its bar, from 1 (the downbeat) to 4.
     pub beat_in_bar: u16,
-}
-
-/// A cue or a saved loop.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PositionMark {
-    /// The name rekordbox shows beside it.
-    pub name: String,
-    /// Where it is, in milliseconds from the start of the track.
-    pub start_ms: u32,
-    /// Where the loop ends, for a saved loop.
-    pub loop_end_ms: Option<u32>,
-    /// A memory cue, or a hot cue on its pad.
-    pub slot: MarkSlot,
-}
-
-/// Whether a cue is a memory cue or sits on a hot cue pad.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MarkSlot {
-    /// A memory cue.
-    Memory,
-    /// A hot cue on a pad.
-    Hot(HotCuePad),
 }
 
 /// A playlist of collection tracks.
@@ -177,7 +157,7 @@ fn write_track(out: &mut String, track: &XmlTrack) {
     optional_attribute(out, "Label", track.label.as_deref());
     optional_attribute(out, "Tonality", track.tonality.as_deref());
     attribute(out, "Location", &location_uri(&track.location));
-    if track.tempos.is_empty() && track.position_marks.is_empty() {
+    if track.tempos.is_empty() && track.cues.is_empty() {
         out.push_str("/>\n");
         return;
     }
@@ -190,29 +170,64 @@ fn write_track(out: &mut String, track: &XmlTrack) {
         attribute(out, "Battito", &battito(tempo.beat_in_bar).to_string());
         out.push_str("/>\n");
     }
-    for mark in &track.position_marks {
-        write_position_mark(out, mark);
+    for cue in track.cues.memory_cues() {
+        write_position_mark(
+            out,
+            &PositionMark {
+                name: &cue.name,
+                start_ms: cue.start_ms,
+                loop_end_ms: cue.loop_end_ms,
+                pad: None,
+                color: None,
+            },
+        );
+    }
+    for (pad, cue) in track.cues.hot_cues() {
+        write_position_mark(
+            out,
+            &PositionMark {
+                name: &cue.name,
+                start_ms: cue.start_ms,
+                loop_end_ms: cue.loop_end_ms,
+                pad: Some(pad),
+                color: cue.color.map(PaletteColor::rgb),
+            },
+        );
     }
     out.push_str("    </TRACK>\n");
 }
 
-fn write_position_mark(out: &mut String, mark: &PositionMark) {
+/// One `POSITION_MARK`: a memory cue or a hot cue, either of which may be a loop.
+struct PositionMark<'a> {
+    name: &'a str,
+    start_ms: u32,
+    loop_end_ms: Option<u32>,
+    pad: Option<HotCuePad>,
+    color: Option<Rgb>,
+}
+
+fn write_position_mark(out: &mut String, mark: &PositionMark<'_>) {
     out.push_str("      <POSITION_MARK");
-    attribute(out, "Name", &mark.name);
-    attribute(out, "Type", mark_type(mark));
+    attribute(out, "Name", mark.name);
+    attribute(out, "Type", mark_type(mark.loop_end_ms));
     attribute(out, "Start", &seconds(mark.start_ms));
     optional_attribute(out, "End", mark.loop_end_ms.map(seconds).as_deref());
-    let number = match mark.slot {
-        MarkSlot::Memory => "-1".to_owned(),
-        MarkSlot::Hot(pad) => pad.index().to_string(),
+    let number = match mark.pad {
+        Some(pad) => pad.index().to_string(),
+        None => "-1".to_owned(),
     };
     attribute(out, "Num", &number);
+    if let Some(color) = mark.color {
+        attribute(out, "Red", &color.red.to_string());
+        attribute(out, "Green", &color.green.to_string());
+        attribute(out, "Blue", &color.blue.to_string());
+    }
     out.push_str("/>\n");
 }
 
 /// The `Type` of a position mark: `0` for a cue, `4` for a loop.
-fn mark_type(mark: &PositionMark) -> &'static str {
-    match mark.loop_end_ms {
+fn mark_type(loop_end_ms: Option<u32>) -> &'static str {
+    match loop_end_ms {
         Some(_) => "4",
         None => "0",
     }
@@ -375,6 +390,49 @@ mod tests {
         assert_eq!(
             location_uri(Path::new(r"C:\Music\Track.mp3")),
             "file://localhost/C:/Music/Track.mp3"
+        );
+    }
+
+    #[test]
+    fn cues_are_written_memory_first_then_hot_cues_by_pad_with_their_own_colours() {
+        use crate::track_cues::{HotCue, MemoryCue};
+        let mut cues = TrackCues::new(
+            Default::default(),
+            vec![MemoryCue {
+                name: "Break".to_owned(),
+                ..MemoryCue::at(64_000)
+            }],
+        );
+        cues.set_hot_cue(HotCuePad::B, HotCue::at(1_500));
+        cues.set_hot_cue(
+            HotCuePad::A,
+            HotCue {
+                start_ms: 30_000,
+                loop_end_ms: Some(32_000),
+                color: PaletteColor::from_index(42),
+                name: "Roll".to_owned(),
+            },
+        );
+        let track = XmlTrack {
+            track_id: 1,
+            location: PathBuf::from("/Music/a.mp3"),
+            cues,
+            ..XmlTrack::default()
+        };
+        let mut out = String::new();
+        write_track(&mut out, &track);
+        let marks: Vec<&str> = out
+            .lines()
+            .filter(|line| line.contains("POSITION_MARK"))
+            .map(str::trim)
+            .collect();
+        assert_eq!(
+            marks,
+            [
+                r#"<POSITION_MARK Name="Break" Type="0" Start="64.000" Num="-1"/>"#,
+                r#"<POSITION_MARK Name="Roll" Type="4" Start="30.000" End="32.000" Num="0" Red="230" Green="40" Blue="40"/>"#,
+                r#"<POSITION_MARK Name="" Type="0" Start="1.500" Num="1"/>"#,
+            ]
         );
     }
 
