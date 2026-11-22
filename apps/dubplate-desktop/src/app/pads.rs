@@ -215,6 +215,15 @@ impl DubplateApp {
             .is_ok_and(|engine| engine.controller.slip_state(deck).enabled)
     }
 
+    /// Where a slipping deck would be now, while a roll, scratch or loop slips: the ghost
+    /// playhead the lanes draw.
+    pub(super) fn slip_shadow(&self, deck: DeckId) -> Option<f64> {
+        self.engine
+            .as_ref()
+            .ok()
+            .and_then(|engine| engine.controller.slip_state(deck).shadow_seconds)
+    }
+
     /// A loop button, as on rekordbox: 4 BEAT/EXIT starts a four-beat loop or leaves the one
     /// that is on, and the CUE/LOOP CALL arrows halve or double a loop that is on.
     pub(super) fn loop_button(

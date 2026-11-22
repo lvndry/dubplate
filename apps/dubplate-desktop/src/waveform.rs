@@ -314,6 +314,62 @@ impl LaneView {
     }
 }
 
+/// How a lane draws a deck's loop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoopLook {
+    /// The playhead goes round it: a tinted band with solid edges.
+    Active,
+    /// Set but left, waiting for RELOOP: a dim outline.
+    Set,
+    /// LOOP IN pressed, waiting for LOOP OUT: a band growing from the in point to the
+    /// playhead.
+    Pending,
+}
+
+/// A deck's loop as a lane draws it, from the engine's [`dubplate_engine::LoopState`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LaneLoop {
+    /// Where it starts, in seconds of the track.
+    pub start_seconds: f64,
+    /// Where it ends; the playhead while it waits for LOOP OUT.
+    pub end_seconds: f64,
+    /// How it is drawn.
+    pub look: LoopLook,
+    /// Its length in beats, for a beat loop or a roll.
+    pub length: Option<dubplate_engine::BeatLength>,
+}
+
+impl LaneLoop {
+    /// The loop of `state` with the playhead at `playhead_seconds`, or `None` without one.
+    pub fn of(state: &dubplate_engine::LoopState, playhead_seconds: f64) -> Option<Self> {
+        if let Some(start_seconds) = state.pending_start_seconds {
+            return Some(Self {
+                start_seconds,
+                end_seconds: playhead_seconds.max(start_seconds),
+                look: LoopLook::Pending,
+                length: None,
+            });
+        }
+        Some(Self {
+            start_seconds: state.start_seconds?,
+            end_seconds: state.end_seconds?,
+            look: if state.active {
+                LoopLook::Active
+            } else {
+                LoopLook::Set
+            },
+            length: state.length,
+        })
+    }
+
+    /// The loop's left and right edges in `view`, kept to the lane, or `None` off screen.
+    pub fn span(&self, view: &LaneView) -> Option<Range<f32>> {
+        let left = view.x_of(self.start_seconds).max(0.0);
+        let right = view.x_of(self.end_seconds).min(view.width);
+        (right > left).then_some(left..right)
+    }
+}
+
 /// A beat of the grid, as the lanes draw it.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BeatMark {
@@ -570,6 +626,54 @@ mod tests {
         assert!(right_edge >= 100.0, "{right_edge}");
         assert_eq!(view.x_of(1.0), 50.0);
         assert_eq!(view.seconds_on_screen(), 0.375..1.625);
+    }
+
+    #[test]
+    fn a_loop_is_drawn_between_its_edges_and_a_pending_one_up_to_the_playhead() {
+        use dubplate_engine::{BeatLength, LoopState};
+
+        let view = LaneView {
+            width: 600.0,
+            playhead_seconds: 10.0,
+            zoom: Zoom::DEFAULT,
+            tempo: 1.0,
+        };
+        let active = LoopState {
+            start_seconds: Some(9.0),
+            end_seconds: Some(11.0),
+            active: true,
+            length: Some(BeatLength::FOUR),
+            pending_start_seconds: None,
+        };
+        let drawn = LaneLoop::of(&active, 10.0).unwrap();
+        assert_eq!(drawn.look, LoopLook::Active);
+        assert_eq!(drawn.span(&view), Some(150.0..450.0));
+        let exited = LoopState {
+            active: false,
+            ..active
+        };
+        assert_eq!(LaneLoop::of(&exited, 10.0).unwrap().look, LoopLook::Set);
+        let waiting = LoopState {
+            start_seconds: None,
+            end_seconds: None,
+            active: false,
+            length: None,
+            pending_start_seconds: Some(9.5),
+        };
+        let pending = LaneLoop::of(&waiting, 10.0).unwrap();
+        assert_eq!(pending.look, LoopLook::Pending);
+        assert_eq!(pending.span(&view), Some(225.0..300.0));
+        let none = LoopState {
+            pending_start_seconds: None,
+            ..waiting
+        };
+        assert_eq!(LaneLoop::of(&none, 10.0), None);
+        let far = LaneLoop {
+            start_seconds: 30.0,
+            end_seconds: 32.0,
+            ..drawn
+        };
+        assert_eq!(far.span(&view), None, "a loop off screen is not drawn");
     }
 
     #[test]

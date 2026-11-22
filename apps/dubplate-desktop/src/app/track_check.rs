@@ -387,6 +387,7 @@ fn lane(
                         Some(&marks),
                         playhead,
                         1.0,
+                        None,
                         window,
                     );
                     let zoom = zoomed
