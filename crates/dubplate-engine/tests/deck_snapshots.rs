@@ -84,6 +84,30 @@ fn snapshots_also_reject_unpublished_tempo_commands() {
 }
 
 #[test]
+fn a_deck_whose_audio_stopped_still_gives_what_it_last_published() {
+    let (mut controller, mut renderer) = offline_engine(48_000);
+    controller.load_track(DeckId::A, track(48_000)).unwrap();
+    controller.seek(DeckId::A, 3.0).unwrap();
+    flush(&mut renderer);
+    controller.seek(DeckId::A, 7.0).unwrap();
+    drop(renderer);
+    assert!(matches!(
+        controller.snapshot_deck(DeckId::A),
+        Err(EngineError::DeckStatePending)
+    ));
+    let known = controller.last_published_deck(DeckId::A);
+    let (mut target, mut target_renderer) = offline_engine(48_000);
+    target.restore_deck(DeckId::A, &known).unwrap();
+    flush(&mut target_renderer);
+    let restored = target.deck_state(DeckId::A);
+    assert!(restored.loaded);
+    assert!(
+        (restored.position_seconds - 3.0).abs() < 1e-6,
+        "the place it last published: {restored:?}"
+    );
+}
+
+#[test]
 fn full_queue_cannot_partially_replace_a_prepared_track() {
     let (mut controller, mut renderer) = offline_engine(48_000);
     controller.load_track(DeckId::A, track(48_000)).unwrap();
