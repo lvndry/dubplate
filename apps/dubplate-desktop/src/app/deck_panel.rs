@@ -17,6 +17,7 @@ use crate::controls::{Slider, tempo_range_label};
 use crate::deck::DeckContent;
 use crate::deck::deck_letter;
 use crate::fonts::MONO_FAMILY;
+use crate::hardware::HeldControl;
 use crate::pads::semitones_label;
 use crate::theme;
 use crate::widgets::{InteractiveControl, tooltip};
@@ -268,6 +269,8 @@ fn transport(
                 .bg(theme::active().raised)
                 .border_1()
                 .border_color(theme::active().line)
+                .when(app.shows_pressed(HeldControl::Cue(deck)), pressed)
+                .active(|button| button.bg(theme::active().pressed))
                 .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                     this.perform(Command::Cue(deck, Press::Tap), window, cx);
                 }))
@@ -284,6 +287,9 @@ fn transport(
                     play.bg(theme::active().raised)
                         .border_1()
                         .border_color(theme::active().line)
+                })
+                .when(app.shows_pressed(HeldControl::Play(deck)), |play| {
+                    play.border_1().border_color(theme::active().text)
                 })
                 .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                     this.perform(Command::TogglePlay(deck), window, cx);
@@ -303,14 +309,17 @@ fn transport(
                         }),
                 ),
         )
-        .child(toggle(
-            ("sync", deck.index()),
-            "Sync",
-            sync_lit(tempo),
-            colour,
-            Command::ToggleSync(deck),
-            cx,
-        ))
+        .child(
+            toggle(
+                ("sync", deck.index()),
+                "Sync",
+                sync_lit(tempo),
+                colour,
+                Command::ToggleSync(deck),
+                cx,
+            )
+            .when(app.shows_pressed(HeldControl::Sync(deck)), pressed),
+        )
         .child(toggle(
             ("master", deck.index()),
             "Master",
@@ -439,7 +448,7 @@ fn toggle(
     colour: gpui::Rgba,
     command: Command,
     cx: &mut Context<'_, DubplateApp>,
-) -> impl IntoElement + use<> {
+) -> gpui::Stateful<gpui::Div> {
     button(id)
         .accessible_toggle(
             format!(
@@ -464,6 +473,14 @@ fn toggle(
             this.perform(command, window, cx);
         }))
         .child(label)
+}
+
+/// A control's face while its twin on the controller is pressed.
+fn pressed(control: gpui::Stateful<gpui::Div>) -> gpui::Stateful<gpui::Div> {
+    control
+        .bg(theme::active().pressed)
+        .border_1()
+        .border_color(theme::active().text)
 }
 
 fn button(id: (&'static str, usize)) -> gpui::Stateful<gpui::Div> {

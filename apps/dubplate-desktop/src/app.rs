@@ -44,6 +44,7 @@ mod smart;
 mod stems;
 mod stems_strip;
 mod track_check;
+mod track_preview;
 mod waveforms;
 
 use std::cell::{Cell, RefCell};
@@ -92,7 +93,7 @@ use crate::fonts::UI_FAMILY;
 use crate::frame_stats::FrameStats;
 use crate::glitches::GlitchWatch;
 use crate::hardware::{
-    DeckLights, Hardware, Lights, LinkEvent, Surface, controller_deck, meter_level,
+    DeckLights, Hardware, HeldControl, Lights, LinkEvent, Surface, controller_deck, meter_level,
 };
 use crate::history::{PlayHistory, PlayWatch, SessionRecord};
 use crate::library::{LibrarySources, RekordboxSource};
@@ -119,9 +120,10 @@ use cues::new_cue_span;
 use notice::{NoticePlace, Notices};
 use overview::DeckOverview;
 use pad_fx_editor::PadFxEditing;
-use pads::HeldPad;
+use pads::{HeldPad, PadNote};
 use prepare::PrepareFocus;
 use relink::RelinkReview;
+use track_preview::TrackPreview;
 
 /// How far a pinch goes to zoom the lanes one level: a quarter more or less.
 const PINCH_STEP: f32 = 0.25;
@@ -259,6 +261,9 @@ pub struct DubplateApp {
     relink_review: Option<RelinkReview>,
     audition: Option<Audition>,
     audition_generation: u64,
+    /// The library track playing in the headphones.
+    track_preview: Option<TrackPreview>,
+    preview_generation: u64,
     analyses: TrackAnalyses,
     analysis_collecting: bool,
     stems: TrackStems,
@@ -288,6 +293,8 @@ pub struct DubplateApp {
     focus_handle: FocusHandle,
     last_frame: Instant,
     frame_stats: Option<Rc<RefCell<FrameStats>>>,
+    /// What each deck's last pad press did, shown over its lane.
+    pad_notes: [Option<PadNote>; DECK_COUNT],
     /// The scrolling waveforms' zoom, shared by both lanes so they keep one time axis.
     lane_zoom: Zoom,
     /// How far a pinch on the lanes has gone since it last changed the zoom.
@@ -523,6 +530,8 @@ impl DubplateApp {
             relink_review: None,
             audition: None,
             audition_generation: 0,
+            track_preview: None,
+            preview_generation: 0,
             analyses: TrackAnalyses::new(
                 analysis_queue.map(|queue| Box::new(queue) as Box<dyn TrackAnalyser>),
             ),
@@ -555,6 +564,7 @@ impl DubplateApp {
             focus_handle,
             last_frame: Instant::now(),
             frame_stats: FrameStats::from_environment().map(|stats| Rc::new(RefCell::new(stats))),
+            pad_notes: Default::default(),
             lane_zoom,
             pinch: 0.0,
             menu_state: None,
@@ -630,6 +640,14 @@ impl DubplateApp {
     /// keeps some rows.
     pub(super) fn short_window(&self) -> bool {
         self.window_size.height < SHORT_WINDOW_HEIGHT
+    }
+
+    /// Whether `control`'s twin on the controller is pressed, or was tapped a moment ago, so the
+    /// control on screen shows the press.
+    pub(super) fn shows_pressed(&self, control: HeldControl) -> bool {
+        self.hardware
+            .as_ref()
+            .is_some_and(|hardware| hardware.dispatcher.held.shows(control, Instant::now()))
     }
 
     /// Turns Lock playing deck on or off and remembers it.
@@ -1073,6 +1091,7 @@ impl DubplateApp {
                     .is_some_and(|headphones| headphones.master_cue);
                 self.engine_command(cx, |controller| controller.set_master_cue(!cued));
             }
+            Command::PreviewSelected => self.toggle_track_preview(cx),
             Command::LoadSelected(deck) => {
                 if let Some(track) = self.browser.read(cx).selected() {
                     self.load(deck, LoadSource::Collection(track), cx);
@@ -2100,7 +2119,12 @@ impl DubplateApp {
         for (side, frame) in self.decks.iter_mut().zip(&frames) {
             notice_new_cue(side, frame.state.cue_point_seconds, now);
         }
-        let pulsing = self.decks.iter().any(|side| side.marker_pulse.is_some());
+        let pulsing = self.decks.iter().any(|side| side.marker_pulse.is_some())
+            || self
+                .hardware
+                .as_ref()
+                .is_some_and(|hardware| hardware.dispatcher.held.any_shown(now))
+            || self.pad_notes.iter().flatten().any(|note| note.shows(now));
         let moving = pulsing
             || frames.iter().any(|frame| frame.state.playing)
             || self.master_meter.is_moving()

@@ -118,6 +118,8 @@ pub struct Theme {
     pub meter_hot: Rgba,
     /// Behind the selected browser row.
     pub selected_row: Rgba,
+    /// The face of a control while it is pressed, by hand on the controller or with the pointer.
+    pub pressed: Rgba,
     /// The title of a track played this session, dimmed as rekordbox dims played tracks.
     pub played_title: Rgba,
     /// A key that follows smoothly in the library's Match column: same key, one step, relative.
@@ -191,6 +193,7 @@ impl Theme {
             meter_off: with_alpha(palette.ink, 0.07 * lines),
             meter_hot: hex(palette.decks[0]),
             selected_row: with_alpha(palette.ink, 0.05 * lines),
+            pressed: with_alpha(palette.ink, 0.16 * lines),
             played_title: with_alpha(palette.text, 0.45),
             key_smooth: hex(palette.ok),
             key_lift: hex(palette.bands[0]),

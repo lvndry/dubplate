@@ -9,6 +9,7 @@ use dubplate_midi::{
     JogMode, Layer, PadIndex, Position, Switch,
 };
 
+use super::held::HeldControls;
 use crate::commands::{Command, Direction, EffectEdit, JogMotion, LoopAction, PadPress, Press};
 use crate::controls::{Control, MixerPositions};
 
@@ -136,6 +137,8 @@ pub struct Dispatcher {
     beat_fx: BeatFxSection,
     master_pickup: Pickup,
     release_held: bool,
+    /// Which buttons with a twin on screen are down, for the screen to show the press.
+    pub held: HeldControls,
 }
 
 impl Default for Dispatcher {
@@ -147,6 +150,7 @@ impl Default for Dispatcher {
             beat_fx: BeatFxSection::default(),
             master_pickup: Pickup::default(),
             release_held: false,
+            held: HeldControls::default(),
         }
     }
 }
@@ -179,7 +183,10 @@ impl Dispatcher {
             Action::Button {
                 button,
                 state: edge,
-            } => self.button(button, edge, event.layer, now, surface),
+            } => {
+                self.held.note(button, edge, now);
+                self.button(button, edge, event.layer, now, surface)
+            }
             Action::Continuous { control, position } => self.continuous(control, position, surface),
             Action::Encoder {
                 encoder: Encoder::Browse,

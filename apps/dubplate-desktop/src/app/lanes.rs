@@ -273,6 +273,27 @@ fn beat_counter(reading: BeatReading) -> impl IntoElement {
         }))
 }
 
+/// What a pad press just did, just right of the playhead at the top of the lane: the jump, the
+/// loop length or the effect held, in the deck's colour.
+fn pad_note(text: SharedString, colour: Rgba) -> impl IntoElement {
+    div()
+        .absolute()
+        .top(px(2.0))
+        .left(relative(0.5))
+        .ml(px(8.0))
+        .px(px(5.0))
+        .py(px(1.0))
+        .rounded(px(3.0))
+        .bg(theme::faded(colour, 0.22))
+        .border_1()
+        .border_color(theme::faded(colour, 0.6))
+        .text_color(theme::active().text)
+        .font_family(MONO_FAMILY)
+        .text_size(px(10.0))
+        .font_weight(FontWeight::SEMIBOLD)
+        .child(text)
+}
+
 fn lane(
     app: &DubplateApp,
     deck: DeckId,
@@ -471,7 +492,13 @@ fn lane(
                 .font_weight(FontWeight::SEMIBOLD)
                 .child(deck_letter(deck)),
         )
-        .children(reading.map(beat_counter));
+        .children(reading.map(beat_counter))
+        .children(
+            app.pad_notes[deck.index()]
+                .as_ref()
+                .filter(|note| note.shows(Instant::now()))
+                .map(|note| pad_note(note.text.clone(), theme::deck_colour(deck))),
+        );
     accept_drops(lane, deck, cx)
 }
 

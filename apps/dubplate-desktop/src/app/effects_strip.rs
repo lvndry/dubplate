@@ -19,6 +19,7 @@ use crate::effects::{
     PickerMove, effect_label, parameter_label, picker_rows, search, target_letter,
 };
 use crate::fonts::MONO_FAMILY;
+use crate::hardware::HeldControl;
 use crate::theme;
 use crate::widgets::{InteractiveControl, adjusted_value};
 
@@ -98,7 +99,13 @@ fn unit_row(
         .child(targets(unit, &state, cx))
         .when_some(lever, |row, lever| row.child(lever_reading(lever)))
         .child(level_bar(app, unit, state.depth, cx))
-        .child(on_button(unit, state.enabled, accent, cx))
+        .child(on_button(
+            unit,
+            state.enabled,
+            accent,
+            focused && app.shows_pressed(HeldControl::BeatFxOn),
+            cx,
+        ))
         .child(release_button(unit, &state, cx))
         .when_some(menu, |row, menu| {
             row.child(picker(app, unit, &state, menu.opening, cx))
@@ -352,6 +359,7 @@ fn on_button(
     unit: EffectUnitId,
     enabled: bool,
     accent: Rgba,
+    pressed: bool,
     cx: &mut Context<'_, DubplateApp>,
 ) -> impl IntoElement + use<> {
     div()
@@ -372,6 +380,12 @@ fn on_button(
                     .bg(theme::active().raised)
                     .text_color(theme::active().muted)
             }
+        })
+        .when(pressed, |button| {
+            button
+                .border_1()
+                .border_color(theme::active().text)
+                .text_color(theme::active().text)
         })
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
