@@ -2,12 +2,14 @@
 //! them into [`crate::commands::Command`]s, and showing the decks on their lights.
 
 mod dispatch;
+mod held;
 mod lights;
 mod link;
 
 use std::time::{Duration, Instant};
 
 pub use dispatch::{Dispatcher, Surface, controller_deck};
+pub use held::HeldControl;
 pub use lights::{DeckLights, Lights, meter_level};
 pub use link::LinkEvent;
 

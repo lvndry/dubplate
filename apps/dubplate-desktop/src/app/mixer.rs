@@ -12,6 +12,7 @@ use crate::commands::{CfxScope, Command};
 use crate::controls::{Control, Slider};
 use crate::deck::deck_letter;
 use crate::fonts::MONO_FAMILY;
+use crate::hardware::HeldControl;
 use crate::meter::{HOT_FROM, PeakMeter, SEGMENTS};
 use crate::theme;
 use crate::widgets::InteractiveControl;
@@ -161,6 +162,7 @@ fn smart_buttons(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl I
                     app.smart_cfx_on(),
                     theme::TEXT,
                     Command::ToggleSmartCfx,
+                    app.shows_pressed(HeldControl::SmartCfx),
                     cx,
                 ))
                 .child(
@@ -193,6 +195,7 @@ fn smart_buttons(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl I
             app.smart_fader_on(),
             theme::TEXT,
             Command::ToggleSmartFader,
+            app.shows_pressed(HeldControl::SmartFader),
             cx,
         ))
         .when(app.smart_cfx_menu, |row| {
@@ -265,6 +268,7 @@ fn headphones(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl Into
             cued(DeckId::A),
             theme::deck_colour(DeckId::A),
             Command::ToggleHeadphoneCue(DeckId::A),
+            app.shows_pressed(HeldControl::HeadphoneCue(DeckId::A)),
             cx,
         ))
         .child(
@@ -286,6 +290,7 @@ fn headphones(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl Into
                     master_cued,
                     theme::TEXT,
                     Command::ToggleMasterCue,
+                    false,
                     cx,
                 ))
                 .child(knob::render(
@@ -303,6 +308,7 @@ fn headphones(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl Into
             cued(DeckId::B),
             theme::deck_colour(DeckId::B),
             Command::ToggleHeadphoneCue(DeckId::B),
+            app.shows_pressed(HeldControl::HeadphoneCue(DeckId::B)),
             cx,
         ))
 }
@@ -314,6 +320,7 @@ fn cue_button(
     on: bool,
     colour: gpui::Rgba,
     command: Command,
+    pressed: bool,
     cx: &mut Context<'_, DubplateApp>,
 ) -> impl IntoElement + use<> {
     let accessible_name = match id.0 {
@@ -348,6 +355,13 @@ fn cue_button(
                     .hover(|button| button.text_color(theme::TEXT))
             }
         })
+        .when(pressed, |button| {
+            button
+                .bg(theme::PRESSED)
+                .border_color(theme::TEXT)
+                .text_color(theme::TEXT)
+        })
+        .active(|button| button.bg(theme::PRESSED))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
             this.perform(command, window, cx);

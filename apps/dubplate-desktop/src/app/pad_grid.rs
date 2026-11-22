@@ -15,6 +15,7 @@ use crate::commands::PadFxEdit;
 use crate::commands::{Command, LoopAction, PadPress, Press, StemAction};
 use crate::controls::Control;
 use crate::fonts::MONO_FAMILY;
+use crate::hardware::HeldControl;
 use crate::pad_fx::PadFxLayer;
 use crate::pads::{
     BEAT_LOOP_LENGTHS, KEY_PADS_DOWN_PAD, KEY_PADS_UP_PAD, LONGER_JUMPS_PAD, PAD_COUNT,
@@ -321,7 +322,15 @@ fn loop_buttons(
 ) -> impl IntoElement + use<> {
     let looping = app.loop_state(deck).is_some_and(|state| state.active);
     let colour = theme::deck_colour(deck);
+    let held = |action: LoopAction| {
+        app.shows_pressed(match action {
+            LoopAction::In => HeldControl::LoopIn(deck),
+            LoopAction::Out => HeldControl::LoopOut(deck),
+            LoopAction::FourBeatOrExit => HeldControl::FourBeat(deck),
+        })
+    };
     let button = |id: &'static str, label: &'static str, action: LoopAction| {
+        let pressed = held(action);
         div()
             .id((id, deck.index()))
             .accessible_button(format!(
@@ -347,6 +356,13 @@ fn loop_buttons(
                         .hover(|button| button.text_color(theme::TEXT))
                 }
             })
+            .when(pressed, |button| {
+                button
+                    .bg(theme::PRESSED)
+                    .border_color(theme::TEXT)
+                    .text_color(theme::TEXT)
+            })
+            .active(|button| button.bg(theme::PRESSED))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                 this.perform(Command::Loop(deck, action), window, cx);
@@ -373,11 +389,14 @@ fn pads(
     let loaded =
         app.deck(deck).visuals().is_some() || app.pad_modes[deck.index()] == PadMode::Sampler;
     let faces = faces(app, deck);
+    let held: [bool; PAD_COUNT] =
+        std::array::from_fn(|pad| app.shows_pressed(HeldControl::Pad(deck, pad)));
     div()
         .flex()
         .gap(px(4.0))
         .children(faces.into_iter().enumerate().map(|(pad, face)| {
             let playable = loaded && face.playable;
+            let pressed = held.get(pad).copied().unwrap_or(false);
             div()
                 .id(("pad", deck.index() * PAD_COUNT + pad))
                 .when(playable, |button| {
@@ -415,6 +434,10 @@ fn pads(
                             .text_color(theme::MUTED)
                     }
                 })
+                .when(pressed, |pad_button| {
+                    pad_button.bg(theme::PRESSED).border_color(theme::TEXT)
+                })
+                .active(|pad_button| pad_button.bg(theme::PRESSED))
                 .when(playable, |pad_button| {
                     pad_button
                         .cursor_pointer()
