@@ -3,6 +3,7 @@
 //! tracks from music folders and from rekordbox alike. Every edit saves at once and can be
 //! undone for the session.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -240,72 +241,64 @@ impl SetEditor {
         Ok(())
     }
 
-    /// Points the set's entries and seams that name the file `from` at its new place `to`, as
-    /// one step to undo.
+    /// Points the set's entries and seams that name the file `from` at its new place `to`.
     pub fn relink(&mut self, from: &Path, to: &Path) -> Result<(), StoreError> {
-        let renamed = |path: &PathBuf| {
-            if path == from {
-                to.to_path_buf()
-            } else {
-                path.clone()
+        self.follow_files(&HashMap::from([(from.to_path_buf(), to.to_path_buf())]))
+    }
+
+    /// Points the set's entries and seams at the new places of files that moved, each keyed by
+    /// its old place. Where a file lives is not an edit to undo, so this is no step of its own,
+    /// and the sets kept for undo follow the files too: undoing an edit never sends a track
+    /// back to a place its file left.
+    pub fn follow_files(&mut self, moves: &HashMap<PathBuf, PathBuf>) -> Result<(), StoreError> {
+        let moved = |path: &PathBuf| moves.get(path).cloned();
+        let mut changed_entries = Vec::new();
+        for list in [SetList::Main, SetList::Backups] {
+            let entries = self
+                .set
+                .entries
+                .iter()
+                .filter(|entry| entry.is_backup == list.is_backup());
+            for (position, entry) in entries.enumerate() {
+                if let Some(track_path) = moved(&entry.track_path) {
+                    let followed = SetEntry {
+                        track_path,
+                        ..entry.clone()
+                    };
+                    changed_entries.push((list, position, followed));
+                }
             }
-        };
-        let main: Vec<(usize, SetEntry)> = self
-            .tracks()
-            .into_iter()
-            .enumerate()
-            .filter(|(_, entry)| entry.track_path == from)
-            .map(|(position, entry)| {
-                (
-                    position,
-                    SetEntry {
-                        track_path: to.to_path_buf(),
-                        ..entry.clone()
-                    },
-                )
-            })
-            .collect();
-        let backups: Vec<(usize, SetEntry)> = self
-            .backups()
-            .into_iter()
-            .enumerate()
-            .filter(|(_, entry)| entry.track_path == from)
-            .map(|(position, entry)| {
-                (
-                    position,
-                    SetEntry {
-                        track_path: to.to_path_buf(),
-                        ..entry.clone()
-                    },
-                )
-            })
-            .collect();
-        let seams: Vec<Seam> = self
+        }
+        let changed_seams: Vec<Seam> = self
             .set
             .seams
             .iter()
-            .filter(|seam| seam.from_track_path == from || seam.to_track_path == from)
-            .map(|seam| Seam {
-                from_track_path: renamed(&seam.from_track_path),
-                to_track_path: renamed(&seam.to_track_path),
-                ..seam.clone()
+            .filter(|seam| {
+                moves.contains_key(&seam.from_track_path) || moves.contains_key(&seam.to_track_path)
             })
+            .map(|seam| follow_seam(seam, moves))
             .collect();
-        if main.is_empty() && backups.is_empty() && seams.is_empty() {
+        if changed_entries.is_empty() && changed_seams.is_empty() {
             return Ok(());
         }
-        self.edit(|store, id| {
-            for (position, entry) in main {
-                store.update_entry(id, SetList::Main, position, entry)?;
+        for (list, position, entry) in changed_entries {
+            self.store.update_entry(self.id, list, position, entry)?;
+        }
+        for seam in changed_seams {
+            self.store.set_seam(self.id, seam)?;
+        }
+        self.set = self.store.load_set(self.id)?;
+        for kept in &mut self.undo {
+            for entry in &mut kept.entries {
+                if let Some(track_path) = moved(&entry.track_path) {
+                    entry.track_path = track_path;
+                }
             }
-            for (position, entry) in backups {
-                store.update_entry(id, SetList::Backups, position, entry)?;
+            for seam in &mut kept.seams {
+                *seam = follow_seam(seam, moves);
             }
-            for seam in seams {
-                store.set_seam(id, seam)?;
-            }
-            Ok(())
-        })
+        }
+        Ok(())
     }
 
     /// Keeps a track as a backup, or stops keeping it.
@@ -377,6 +370,16 @@ impl SetEditor {
     }
 }
 
+/// `seam` with each end at its file's new place, when that file moved.
+fn follow_seam(seam: &Seam, moves: &HashMap<PathBuf, PathBuf>) -> Seam {
+    let followed = |path: &PathBuf| moves.get(path).unwrap_or(path).clone();
+    Seam {
+        from_track_path: followed(&seam.from_track_path),
+        to_track_path: followed(&seam.to_track_path),
+        ..seam.clone()
+    }
+}
+
 fn entry(track: SetTrackRef) -> SetEntry {
     SetEntry {
         track_path: track.path,
@@ -429,7 +432,7 @@ mod tests {
     }
 
     #[test]
-    fn a_relinked_file_keeps_its_place_its_cues_and_its_backup_in_one_undo() {
+    fn a_relinked_file_keeps_its_place_its_cues_and_its_backup_through_undo() {
         let directory = tempfile::tempdir().unwrap();
         let mut editor = editor(&directory);
         editor.add(track("a")).unwrap();
@@ -444,7 +447,13 @@ mod tests {
         assert_eq!(editor.backups()[0].track_path, to);
         assert_eq!(editor.position(&to), Some(1));
         editor.undo().unwrap();
-        assert_eq!(editor.tracks()[1].track_path, from);
+        assert!(editor.backups().is_empty(), "undo takes back the last edit");
+        assert_eq!(
+            editor.tracks()[1].track_path,
+            to,
+            "and leaves the track where its file is now"
+        );
+        assert_eq!(editor.tracks()[1].mix_in_ms, Some(4_000));
     }
 
     #[test]
