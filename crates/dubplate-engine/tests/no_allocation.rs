@@ -151,6 +151,7 @@ fn run_session(
         controller.set_effect_target(unit, target)?;
         controller.set_effect_enabled(unit, true)?;
     }
+    let recording = controller.start_recording(0.5)?;
     controller.set_key_lock(DeckId::A, true)?;
     controller.set_key_lock(DeckId::B, true)?;
     controller.set_tempo(DeckId::A, 1.07)?;
@@ -260,6 +261,12 @@ fn run_session(
         render_armed(renderer, &mut output[..4800], 2);
     }
     render_armed(renderer, &mut output, 2);
+    assert!(
+        recording.dropped_frames() > 0,
+        "the full tap keeps dropping without allocating"
+    );
+    controller.stop_recording()?;
+    render_armed(renderer, &mut output[..4800], 2);
     let mut odd_sized = vec![0.0_f32; 1999 * 3];
     render_armed(renderer, &mut odd_sized, 3);
     let mut four_channels = vec![0.0_f32; 2048 * 4];
