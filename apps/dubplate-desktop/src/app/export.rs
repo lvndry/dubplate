@@ -1,5 +1,6 @@
 //! Export to rekordbox: the set written as a rekordbox XML file where the DJ chooses in the
-//! system's save dialog, then a notice saying how to bring it into rekordbox.
+//! system's save dialog, with the cues the DJ made in Dubplate, then a notice saying how to
+//! bring it into rekordbox.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -49,6 +50,7 @@ impl DubplateApp {
         let needs_rekordbox = set.entries.iter().any(|entry| entry.rekordbox_id.is_some());
         let scans = self.sources.chosen_scans();
         let relinks = self.settings.library.relink_map();
+        let track_cues = self.track_cues.clone();
         cx.spawn(async move |this, cx| {
             let path = match chosen.await {
                 Ok(Ok(Some(path))) => with_xml_extension(path),
@@ -86,6 +88,7 @@ impl DubplateApp {
                         &scans,
                         &relinks,
                     )
+                    .with_track_cues(&track_cues)
                     .export(&set);
                     export
                         .write_to(&path)
