@@ -546,6 +546,7 @@ impl DubplateApp {
                     .is_some_and(|headphones| headphones.is_cued(deck));
                 self.engine_command(cx, |controller| controller.set_headphone_cue(deck, !cued));
             }
+            Command::TapTempo(deck) => self.tap_tempo(deck, cx),
             Command::ToggleMasterCue => {
                 let cued = self
                     .headphones()
@@ -967,6 +968,39 @@ impl DubplateApp {
         }
         self.update_lights();
         cx.notify();
+    }
+
+    /// A tap on a deck's beat. Enough taps give a track without a beat grid its tempo and its
+    /// beats, so sync and the effects follow it. A track with rekordbox's grid keeps it.
+    fn tap_tempo(&mut self, deck: DeckId, cx: &mut Context<'_, Self>) {
+        if self.deck(deck).visuals().is_none() {
+            return;
+        }
+        let has_grid = self
+            .engine
+            .as_ref()
+            .is_ok_and(|engine| engine.controller.beat_grid(deck).is_some());
+        if has_grid && !self.deck(deck).tapped_grid {
+            self.show_notice(
+                NoticePlace::Deck(deck),
+                "This track keeps rekordbox's beat grid; tap tempo is for tracks without one.",
+                cx,
+            );
+            return;
+        }
+        let heard = self.heard_seconds(deck);
+        let Some(tapped) = self.decks[deck.index()].tap_tempo.tap(heard) else {
+            return;
+        };
+        let grid = match dubplate_engine::BeatGrid::new(tapped.bpm, tapped.first_beat_seconds) {
+            Ok(grid) => grid,
+            Err(error) => {
+                self.show_notice(NoticePlace::Deck(deck), error.to_string(), cx);
+                return;
+            }
+        };
+        self.decks[deck.index()].tapped_grid = true;
+        self.engine_command(cx, |controller| controller.set_beat_grid(deck, Some(grid)));
     }
 
     /// The DJ's fix of a track's grid, when the track is in the set.
