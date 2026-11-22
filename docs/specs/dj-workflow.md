@@ -23,7 +23,7 @@ Statuses are as audited on 22 November 2026, on `main` with a second Dubplate ru
 
 ## At every window size
 
-**V1 Nothing breaks when the window is small.** Must: at the smallest window (1100 × 700) every control a DJ needs while playing stays visible and usable, and text shortens to words, not fragments. Status: **Done** for the decks, the header and the lanes: the tempo slider wraps under the buttons, titles end in "…", the header shows status dots with tooltips, and the lanes get lower in a short window. **Gap**: the effect strip still cuts its third unit at the narrowest width.
+**V1 Nothing breaks when the window is small.** Must: at the smallest window (1100 × 700) every control a DJ needs while playing stays visible and usable, and text shortens to words, not fragments. Status: **Done** for the decks, the header and the lanes: the tempo slider wraps under the buttons, titles end in "…", the header shows status dots with tooltips, and the lanes get lower in a short window. The effect strip puts a unit that does not fit on a second row instead of cutting it.
 
 **V2 Readouts never jitter.** Must: numbers use tabular figures and fixed widths so a changing value never moves its neighbours. Status: **Done** for the deck readouts and the browser, which use the monospaced face.
 
@@ -41,7 +41,7 @@ Statuses are as audited on 22 November 2026, on `main` with a second Dubplate ru
 
 **L1 Load to a deck.** Must: ready within half a second, cued at the first memory or hot cue when it has one, else at its first sound on the beat (rekordbox's Load Setting and Auto Cue, Preferences > Controller > Deck). See: title, artist, BPM, key, time left, the scrolling waveform with its grid, the overview with its cues, the cue marker. FLX4: CUE lit (at the cue point), PLAY blinking (paused), the load signal. Status: **Done** (Settings > Decks switches either rule off).
 
-**L2 A track Dubplate has to analyse.** Must: the waveform, BPM, key and grid appear as soon as they are ready, and the deck says "Analysing" until then. Status: **Done** on the deck ("Analysing…" where the BPM goes). **Gap**: the header's "N to analyse" counts every library track, rekordbox's analysed ones and missing files included, so it barely moves; it should count only what Dubplate will analyse.
+**L2 A track Dubplate has to analyse.** Must: the waveform, BPM, key and grid appear as soon as they are ready, and the deck says "Analysing" until then. Status: **Done** on the deck ("Analysing…" where the BPM goes). The header's "N to analyse" counts only the tracks with nothing to show until Dubplate's analysis arrives: rekordbox's analysed tracks, missing files and tracks a rescan is confirming are left out, so it counts down to nothing.
 
 **L3 Load onto a playing deck.** Must: refused while Lock playing deck is on, with a notice; the playing deck untouched. rekordbox: Preferences > Controller > Deck > Eject/Load Lock. Status: **Done.**
 
@@ -77,7 +77,7 @@ Statuses are as audited on 22 November 2026, on `main` with a second Dubplate ru
 
 **T2 Tempo range.** SHIFT + BEAT SYNC steps ±6, ±10, ±16, WIDE. See: the range beside the tempo. Status: **Done.**
 
-**T3 Fine tempo by key.** Must: 0.02% steps, a CDJ's finest at ±6. Status: **Gap** (0.1% a press).
+**T3 Fine tempo by key.** Must: 0.02% steps, a CDJ's finest at ±6. Status: **Done**: each press moves the range's finest step, 0.02% at ±6, 0.04% at ±10 and ±16, 0.5% at WIDE.
 
 **T4 BEAT SYNC.** Must: takes the master's BPM and beat phase at once and follows it. See: SYNC lit (armed while it waits for a master); the beat lines line up. FLX4: BEAT SYNC lit. Status: **Done.**
 
@@ -87,7 +87,7 @@ Statuses are as audited on 22 November 2026, on `main` with a second Dubplate ru
 
 **T7 Key lock.** Status: **Done.**
 
-**T8 Key shift and key sync.** Status: key shift **Done** (Key Shift and Keyboard pad modes); key sync **Missing** ([inventory 24](feature-inventory.md#top-40-gaps)).
+**T8 Key shift and key sync.** Status: key shift **Done** (Key Shift and Keyboard pad modes); key sync **Done**: the deck's Key sync button or Option+K (Shift+Option+K for deck B) moves the key to the other deck's Camelot number, the same key or its relative, by the fewest semitones, and lights while it holds; a second press puts the track's own key back.
 
 **T9 Tap tempo.** Status: **Done.**
 

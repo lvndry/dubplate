@@ -308,10 +308,19 @@ pub enum Command {
     ChooseCfxColour(Option<SmartCfx>),
     /// SMART FADER: the crossfader moves a shared tempo and swaps the bass.
     ToggleSmartFader,
-    /// Play the track selected in the browser in the headphones, or stop it.
+    /// Play the selected track in the headphones, or stop it: the set track when the keys are on
+    /// the set, else the library's.
     PreviewSelected,
-    /// Load the track selected in the browser.
+    /// Load the selected track, the set track when the keys are on the set, else the library's.
     LoadSelected(DeckId),
+    /// Show the selected track's file in Finder, as Finder's Show in Enclosing Folder.
+    RevealSelected,
+    /// Copy the selected track's file path, as Finder's Copy as Pathname.
+    CopySelectedPath,
+    /// Separate the selected track's stems now.
+    SeparateSelectedStems,
+    /// Look for the moved file of the selected track.
+    RelinkSelected,
     /// Load the track playing on the other deck at the same place, as pressing LOAD twice does.
     InstantDouble(DeckId),
     /// Change a deck's tempo by one step.
@@ -324,6 +333,8 @@ pub enum Command {
     CycleTempoRange(DeckId),
     /// Key lock, a CDJ's MASTER TEMPO: tempo changes keep the track's pitch.
     ToggleKeyLock(DeckId),
+    /// KEY SYNC: move a deck's key to match the other deck's, or back to the track's own key.
+    KeySync(DeckId),
     /// Choose whether a track loaded on a deck starts with key lock on, from Settings.
     SetKeyLockOnNewTracks(bool),
     /// Choose whether a channel fader or crossfader closed fast echoes the outgoing deck, from

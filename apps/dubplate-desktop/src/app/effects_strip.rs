@@ -23,8 +23,9 @@ use crate::hardware::HeldControl;
 use crate::theme;
 use crate::widgets::{InteractiveControl, adjusted_value};
 
-const STRIP_HEIGHT: Pixels = px(46.0);
 const UNIT_HEIGHT: Pixels = px(32.0);
+/// The space above and below a row of units: a one-row strip is 46 px tall.
+const STRIP_PADDING: Pixels = px(7.0);
 const LEVEL_WIDTH: Pixels = px(52.0);
 const MENU_WIDTH: Pixels = px(372.0);
 /// The tallest the picker grows, enough for every effect at once on a large window.
@@ -41,12 +42,16 @@ const PICK_HEIGHT: Pixels = px(24.0);
 
 pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoElement {
     let show_focus = app.hardware_connected();
+    // A window too narrow for the three units side by side puts the last on a second row
+    // rather than cutting it off: every unit stays whole and in reach.
     let mut strip = div()
         .flex()
+        .flex_wrap()
         .flex_none()
         .items_center()
-        .gap(px(10.0))
-        .h(STRIP_HEIGHT)
+        .gap_x(px(10.0))
+        .gap_y(px(6.0))
+        .py(STRIP_PADDING)
         .px(theme::GUTTER)
         .border_b_1()
         .border_color(theme::active().line)
@@ -86,6 +91,7 @@ fn unit_row(
     div()
         .relative()
         .flex()
+        .flex_none()
         .items_center()
         .gap(px(6.0))
         .h(UNIT_HEIGHT)
