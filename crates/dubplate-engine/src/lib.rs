@@ -51,7 +51,7 @@ mod track;
 mod voice;
 
 pub use channel::ChannelSettings;
-pub use controller::{Controller, DeckRestorePolicy, DeckSnapshot, offline_engine};
+pub use controller::{Controller, DeckSnapshot, offline_engine};
 pub use cpal;
 pub use curves::{
     channel_fader_gain, crossfader_gains, decibels_to_gain, eq_gain, gain_to_decibels,
