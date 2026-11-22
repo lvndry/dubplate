@@ -117,10 +117,10 @@ mod tests {
         let broken = AutoGain::of(Some(40.0), None).unwrap();
         assert!(close(broken.decibels, 15.0));
         assert_eq!(AutoGain::of(Some(f32::NAN), None), None);
-        assert_eq!(
-            channel_gain(1.0, Some(broken)),
-            MAX_GAIN,
-            "TRIM +9 dB and AUTO +15 dB stop at the engine's most"
+        let loudest = channel_gain(1.0, Some(broken));
+        assert!(
+            close(decibels_of(loudest), 24.0) && loudest <= MAX_GAIN,
+            "TRIM +9 dB and AUTO +15 dB make +24 dB, within the engine's most: {loudest}"
         );
     }
 
