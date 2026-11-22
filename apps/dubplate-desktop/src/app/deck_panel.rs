@@ -277,9 +277,13 @@ fn transport(
             button(("play", deck.index()))
                 .accessible_toggle(format!("Deck {} Play or pause", deck_letter(deck)), playing)
                 .w(px(44.0))
-                .when(playing, |play| play.bg(colour).text_color(theme::active().on_deck))
+                .when(playing, |play| {
+                    play.bg(colour).text_color(theme::active().on_deck)
+                })
                 .when(!playing, |play| {
-                    play.bg(theme::active().raised).border_1().border_color(theme::active().line)
+                    play.bg(theme::active().raised)
+                        .border_1()
+                        .border_color(theme::active().line)
                 })
                 .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                     this.perform(Command::TogglePlay(deck), window, cx);
@@ -292,7 +296,11 @@ fn transport(
                             PLAY_ICON_PATH
                         })
                         .size(px(13.0))
-                        .text_color(if playing { theme::active().on_deck } else { theme::active().text }),
+                        .text_color(if playing {
+                            theme::active().on_deck
+                        } else {
+                            theme::active().text
+                        }),
                 ),
         )
         .child(toggle(

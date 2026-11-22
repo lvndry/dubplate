@@ -14,8 +14,8 @@ use crate::commands::Mode;
 use crate::controls::{DEFAULT_MASTER_LEVEL, DEFAULT_SAMPLER_VOLUME, MixerPositions};
 use crate::effects::EffectUnitSetting;
 use crate::library_view::SortSetting;
-use crate::theme::ThemeId;
 use crate::pad_fx::PadFxSetting;
+use crate::theme::ThemeId;
 
 /// Why the settings could not be read or written.
 #[derive(Debug, thiserror::Error)]

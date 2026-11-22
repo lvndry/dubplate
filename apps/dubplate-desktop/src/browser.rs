@@ -1167,7 +1167,10 @@ impl Browser {
                         .text_size(theme::TINY_TEXT_SIZE)
                         .text_color(theme::active().muted)
                         .cursor_pointer()
-                        .hover(|chip| chip.text_color(theme::active().text).bg(theme::active().raised))
+                        .hover(|chip| {
+                            chip.text_color(theme::active().text)
+                                .bg(theme::active().raised)
+                        })
                         .on_mouse_down(
                             MouseButton::Left,
                             cx.listener({
@@ -1333,7 +1336,9 @@ impl Browser {
                     .when(column == Column::Title, |header| header.pl(px(22.0)))
                     .cursor_pointer()
                     .hover(|header| header.text_color(theme::active().text))
-                    .when(direction.is_some(), |header| header.text_color(theme::active().text))
+                    .when(direction.is_some(), |header| {
+                        header.text_color(theme::active().text)
+                    })
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                         this.click_header(column, cx);
                     }))
@@ -1452,7 +1457,9 @@ impl Browser {
                                 .truncate()
                                 .min_w_0()
                                 .font_weight(gpui::FontWeight::MEDIUM)
-                                .when(played, |title| title.text_color(theme::active().played_title))
+                                .when(played, |title| {
+                                    title.text_color(theme::active().played_title)
+                                })
                                 .when(missing, |title| title.text_color(theme::active().muted))
                                 .child(text),
                         )
@@ -1641,9 +1648,14 @@ fn sidebar_row(
         .pr(px(8.0))
         .rounded(theme::SMALL_RADIUS)
         .cursor_pointer()
-        .text_color(if chosen { theme::active().text } else { theme::active().muted })
+        .text_color(if chosen {
+            theme::active().text
+        } else {
+            theme::active().muted
+        })
         .when(chosen, |row| {
-            row.bg(theme::active().raised).font_weight(gpui::FontWeight::MEDIUM)
+            row.bg(theme::active().raised)
+                .font_weight(gpui::FontWeight::MEDIUM)
         })
         .hover(|row| row.text_color(theme::active().text))
         .border_1()
@@ -1687,7 +1699,10 @@ fn filter_chip(id: &'static str, label: &'static str, on: bool) -> gpui::Statefu
             } else {
                 chip.border_color(theme::active().line)
                     .text_color(theme::active().muted)
-                    .hover(|chip| chip.text_color(theme::active().text).bg(theme::active().panel))
+                    .hover(|chip| {
+                        chip.text_color(theme::active().text)
+                            .bg(theme::active().panel)
+                    })
             }
         })
         .child(label)
@@ -1718,7 +1733,11 @@ fn bpm_stepper(end: RangeEnd, bpm: u16, cx: &mut Context<'_, Browser>) -> impl I
             .rounded(px(5.0))
             .text_color(theme::active().muted)
             .cursor_pointer()
-            .hover(|arrow| arrow.bg(theme::active().raised).text_color(theme::active().text))
+            .hover(|arrow| {
+                arrow
+                    .bg(theme::active().raised)
+                    .text_color(theme::active().text)
+            })
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                 this.step_bpm_range(end, direction, cx);
@@ -1756,7 +1775,11 @@ fn clear_button(
         .rounded(px(5.0))
         .text_color(theme::active().muted)
         .cursor_pointer()
-        .hover(|button| button.bg(theme::active().raised).text_color(theme::active().text))
+        .hover(|button| {
+            button
+                .bg(theme::active().raised)
+                .text_color(theme::active().text)
+        })
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_click(on_click)
         .tooltip(tooltip("Show every tempo"))
@@ -1818,7 +1841,12 @@ fn missing_bar(count: usize, relinking: bool, cx: &mut Context<'_, Browser>) -> 
                 .flex()
                 .items_center()
                 .gap(px(8.0))
-                .child(div().size(px(6.0)).rounded_full().bg(theme::active().attention))
+                .child(
+                    div()
+                        .size(px(6.0))
+                        .rounded_full()
+                        .bg(theme::active().attention),
+                )
                 .child(format!(
                     "{count} file{} moved or missing since rekordbox last saw {}",
                     if count == 1 { "" } else { "s" },
@@ -1907,7 +1935,11 @@ pub fn search_field(browser: &Browser) -> impl IntoElement + use<> {
 
 impl Render for Browser {
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
-        let body = div().flex().size_full().min_h_0().bg(theme::active().background);
+        let body = div()
+            .flex()
+            .size_full()
+            .min_h_0()
+            .bg(theme::active().background);
         let searching = self.search_has_focus(window, cx);
         match self.library.clone() {
             LibraryStatus::Ready(collection) => {

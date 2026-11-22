@@ -166,7 +166,11 @@ fn summary(
                     div()
                         .font_family(MONO_FAMILY)
                         .text_size(theme::SMALL_TEXT_SIZE)
-                        .text_color(if over { theme::active().attention } else { theme::active().text })
+                        .text_color(if over {
+                            theme::active().attention
+                        } else {
+                            theme::active().text
+                        })
                         .child(format!(
                             "{} / {}",
                             running_time(total),
@@ -204,7 +208,11 @@ fn export_button(cx: &mut Context<'_, DubplateApp>) -> impl IntoElement + use<> 
         .px(px(6.0))
         .rounded(theme::SMALL_RADIUS)
         .cursor_pointer()
-        .hover(|button| button.bg(theme::active().raised).text_color(theme::active().text))
+        .hover(|button| {
+            button
+                .bg(theme::active().raised)
+                .text_color(theme::active().text)
+        })
         .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.export_set(cx)))
         .child("Export to rekordbox\u{2026}")
 }
@@ -354,8 +362,9 @@ fn track_row(
         .px(theme::GUTTER)
         .cursor_pointer()
         .when(selected, |row| {
-            row.bg(theme::active().selected_row)
-                .when(focused, |row| row.border_l_2().border_color(theme::active().text))
+            row.bg(theme::active().selected_row).when(focused, |row| {
+                row.border_l_2().border_color(theme::active().text)
+            })
         })
         .hover(|row| row.bg(theme::active().selected_row))
         .on_mouse_down(
@@ -418,7 +427,11 @@ fn track_row(
                         .gap(px(8.0))
                         .font_family(MONO_FAMILY)
                         .text_size(theme::SMALL_TEXT_SIZE)
-                        .child(div().text_color(theme::active().muted).child(row.stems.clone()))
+                        .child(
+                            div()
+                                .text_color(theme::active().muted)
+                                .child(row.stems.clone()),
+                        )
                         .child(div().text_color(theme::active().muted).child(energy))
                         .child(key)
                         .child(div().text_color(theme::active().muted).child(bpm)),
@@ -573,8 +586,14 @@ fn seam_row(
                 } else {
                     theme::active().muted
                 })
-                .when(audition.is_some(), |button| button.bg(theme::active().raised))
-                .hover(|button| button.bg(theme::active().raised).text_color(theme::active().text))
+                .when(audition.is_some(), |button| {
+                    button.bg(theme::active().raised)
+                })
+                .hover(|button| {
+                    button
+                        .bg(theme::active().raised)
+                        .text_color(theme::active().text)
+                })
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     this.toggle_audition_of(position, cx);

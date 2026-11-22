@@ -10,8 +10,8 @@ use dubplate_midi::PadMode;
 use dubplate_prep::GridEdit;
 
 use crate::controls::Control;
-use crate::theme::ThemeId;
 use crate::pad_fx::{PadFxLayer, PadFxPreset};
+use crate::theme::ThemeId;
 
 /// Which way a control moves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

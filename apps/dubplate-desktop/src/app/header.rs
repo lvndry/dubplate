@@ -56,7 +56,12 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
                 .items_center()
                 .gap(px(8.0))
                 .w(px(120.0))
-                .child(svg().path(LOGO_PATH).size(px(20.0)).text_color(theme::active().text))
+                .child(
+                    svg()
+                        .path(LOGO_PATH)
+                        .size(px(20.0))
+                        .text_color(theme::active().text),
+                )
                 .child(
                     div()
                         .text_size(px(19.0))
@@ -126,7 +131,9 @@ fn status(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoElem
                 theme::active().muted,
                 format!("Scanning\u{2026} {files} files").into(),
             ),
-            (None, LibraryStatus::Reading) => (theme::active().muted, "Opening library\u{2026}".into()),
+            (None, LibraryStatus::Reading) => {
+                (theme::active().muted, "Opening library\u{2026}".into())
+            }
             (None, LibraryStatus::Ready(collection)) => (
                 theme::active().ok,
                 match app.analysis_waiting() {
@@ -334,14 +341,22 @@ fn header_switch(
         .rounded(theme::CONTROL_RADIUS)
         .border_1()
         .border_color(theme::active().line)
-        .text_color(if on { theme::active().text } else { theme::active().muted })
+        .text_color(if on {
+            theme::active().text
+        } else {
+            theme::active().muted
+        })
         .cursor_pointer()
         .hover(|button| button.bg(theme::active().raised))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
             this.perform(command, window, cx);
         }))
-        .child(dot(if on { theme::active().ok } else { theme::active().muted }))
+        .child(dot(if on {
+            theme::active().ok
+        } else {
+            theme::active().muted
+        }))
         .child(name)
 }
 

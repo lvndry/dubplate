@@ -262,13 +262,13 @@ fn beat_counter(reading: BeatReading) -> impl IntoElement {
                         ),
                 )
                 .when(phase.bar_offset != 0, |meter| {
-                    meter.child(div().text_color(theme::active().attention).child(SharedString::from(
-                        format!(
+                    meter.child(div().text_color(theme::active().attention).child(
+                        SharedString::from(format!(
                             "{:+} beat{}",
                             phase.bar_offset,
                             if phase.bar_offset.abs() == 1 { "" } else { "s" }
-                        ),
-                    )))
+                        )),
+                    ))
                 })
         }))
 }
@@ -636,7 +636,10 @@ pub(super) fn paint_pulse(bounds: Bounds<Pixels>, x: f32, strength: f32, window:
         bounds.origin + point(px(x - half_width), px(0.0)),
         size(px(half_width * 2.0), bounds.size.height),
     );
-    window.paint_quad(fill(glow, theme::faded(theme::active().text, 0.45 * strength)));
+    window.paint_quad(fill(
+        glow,
+        theme::faded(theme::active().text, 0.45 * strength),
+    ));
 }
 
 /// The tint behind an active loop or one waiting for LOOP OUT, under the waveform.
@@ -834,7 +837,10 @@ mod tests {
         let marks: Vec<(f32, Rgba)> = memory_cue_marks(&cues, &view).collect();
         assert_eq!(
             marks,
-            [(600.0, theme::active().memory_cue), (800.0, theme::active().saved_loop)],
+            [
+                (600.0, theme::active().memory_cue),
+                (800.0, theme::active().saved_loop)
+            ],
             "five seconds either side of the playhead fit; a memory loop takes the loop colour"
         );
         let mut coloured = cues.clone();

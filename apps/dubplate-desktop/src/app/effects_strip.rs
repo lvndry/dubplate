@@ -381,11 +381,15 @@ fn release_button(
         .cursor_pointer()
         .map(|button| {
             if state.releasing {
-                button.bg(theme::active().attention).text_color(theme::active().on_deck)
-            } else {
                 button
-                    .text_color(theme::active().muted)
-                    .hover(|button| button.bg(theme::active().raised).text_color(theme::active().text))
+                    .bg(theme::active().attention)
+                    .text_color(theme::active().on_deck)
+            } else {
+                button.text_color(theme::active().muted).hover(|button| {
+                    button
+                        .bg(theme::active().raised)
+                        .text_color(theme::active().text)
+                })
             }
         })
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())

@@ -176,9 +176,15 @@ fn smart_buttons(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl I
                         .text_size(theme::TINY_TEXT_SIZE)
                         .text_color(theme::active().muted)
                         .cursor_pointer()
-                        .hover(|button| button.bg(theme::active().raised).text_color(theme::active().text))
+                        .hover(|button| {
+                            button
+                                .bg(theme::active().raised)
+                                .text_color(theme::active().text)
+                        })
                         .when(app.smart_cfx_menu, |button| {
-                            button.bg(theme::active().raised).text_color(theme::active().text)
+                            button
+                                .bg(theme::active().raised)
+                                .text_color(theme::active().text)
                         })
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
@@ -234,7 +240,8 @@ fn smart_cfx_menu(current: SmartCfx, cx: &mut Context<'_, DubplateApp>) -> impl 
                     .text_size(theme::SMALL_TEXT_SIZE)
                     .cursor_pointer()
                     .when(chosen, |item| {
-                        item.bg(theme::active().raised).font_weight(FontWeight::MEDIUM)
+                        item.bg(theme::active().raised)
+                            .font_weight(FontWeight::MEDIUM)
                     })
                     .hover(|item| item.bg(theme::active().raised))
                     .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {

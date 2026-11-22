@@ -351,7 +351,10 @@ fn paint_motion(bounds: Bounds<Pixels>, motion: OverviewMotion, window: &mut Win
     }
     if let Some(progress) = motion.progress {
         let played = progress * area.width;
-        window.paint_quad(fill(area.band_span(0.0, played), theme::active().played_shade));
+        window.paint_quad(fill(
+            area.band_span(0.0, played),
+            theme::active().played_shade,
+        ));
         paint_playhead(&area, area.playhead_left(progress), window);
     }
     if let Some(cue_point) = motion.cue_point {

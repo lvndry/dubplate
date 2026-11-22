@@ -379,7 +379,11 @@ fn stepper(
             .rounded(px(5.0))
             .text_color(theme::active().muted)
             .cursor_pointer()
-            .hover(|arrow| arrow.bg(theme::active().raised).text_color(theme::active().text))
+            .hover(|arrow| {
+                arrow
+                    .bg(theme::active().raised)
+                    .text_color(theme::active().text)
+            })
             .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                 this.perform(Command::PadFx(edit(steps)), window, cx)
             }))

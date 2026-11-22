@@ -391,7 +391,9 @@ fn curve_row(
                         .cursor_pointer()
                         .map(|option| {
                             if choice.chosen {
-                                option.border_color(theme::active().line).bg(theme::active().raised)
+                                option
+                                    .border_color(theme::active().line)
+                                    .bg(theme::active().raised)
                             } else {
                                 option
                                     .border_color(gpui::transparent_black())
@@ -483,9 +485,18 @@ fn setting_switch(
                 .h(px(18.0))
                 .p(px(2.0))
                 .rounded_full()
-                .bg(if on { theme::active().ok } else { theme::active().track })
+                .bg(if on {
+                    theme::active().ok
+                } else {
+                    theme::active().track
+                })
                 .when(on, |track| track.justify_end())
-                .child(div().size(px(14.0)).rounded_full().bg(theme::active().thumb)),
+                .child(
+                    div()
+                        .size(px(14.0))
+                        .rounded_full()
+                        .bg(theme::active().thumb),
+                ),
         )
 }
 
