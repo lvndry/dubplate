@@ -2,7 +2,7 @@
 //! controller. Every input turns into a [`Command`], and the window carries each one out in
 //! one place.
 
-use dubplate_engine::{DeckId, EffectKind, EffectTarget, EffectUnitId};
+use dubplate_engine::{DeckId, EffectKind, EffectTarget, EffectUnitId, SmartCfx};
 use dubplate_midi::PadMode;
 
 use crate::controls::Control;
@@ -167,6 +167,15 @@ pub enum Command {
     AuditionSeam,
     /// Start recording the mix to a file, or stop and close it.
     ToggleRecording,
+    /// SMART CFX: both channels' filter knobs drive the filter and the chosen preset together,
+    /// or go back to the plain filter.
+    ToggleSmartCfx,
+    /// SHIFT + SMART CFX: the next Smart CFX preset.
+    NextSmartCfx,
+    /// Pick a Smart CFX preset, from the screen.
+    ChooseSmartCfx(SmartCfx),
+    /// SMART FADER: the crossfader moves a shared tempo and swaps the bass.
+    ToggleSmartFader,
     /// Load the track selected in the browser.
     LoadSelected(DeckId),
     /// Load the track playing on the other deck at the same place, as pressing LOAD twice does.

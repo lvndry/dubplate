@@ -54,6 +54,8 @@ pub struct Settings {
     pub import_rekordbox: bool,
     /// Each effect unit's effect, target, beat and depth, FX 1 first.
     pub effect_units: Vec<EffectUnitSetting>,
+    /// The Smart CFX preset SMART CFX turns on, by name.
+    pub smart_cfx_preset: Option<String>,
 }
 
 impl Default for Settings {
@@ -64,6 +66,7 @@ impl Default for Settings {
             music_folders: Vec::new(),
             import_rekordbox: false,
             effect_units: Vec::new(),
+            smart_cfx_preset: None,
         }
     }
 }
@@ -154,6 +157,7 @@ mod tests {
                 beat: "2".to_owned(),
                 depth: 0.25,
             }],
+            smart_cfx_preset: Some("dub echo".to_owned()),
         };
         settings.save(&path).unwrap();
         assert_eq!(Settings::load(&path).unwrap(), settings);

@@ -21,6 +21,7 @@ mod prepare;
 mod recording;
 mod set_panel;
 mod slider;
+mod smart;
 mod track_check;
 
 use std::cell::{Cell, RefCell};
@@ -191,6 +192,7 @@ pub struct DubplateApp {
     energy_collecting: bool,
     recording: Option<Recording>,
     recording_skip_reported: bool,
+    smart_cfx_menu: bool,
     effect_menu: Option<EffectUnitId>,
     refocus_window: bool,
     effect_search: Entity<InputState>,
@@ -332,6 +334,7 @@ impl DubplateApp {
             energy_collecting: false,
             recording: None,
             recording_skip_reported: false,
+            smart_cfx_menu: false,
             effect_menu: None,
             refocus_window: false,
             effect_search,
@@ -594,6 +597,13 @@ impl DubplateApp {
             Command::TapTempo(deck) => self.tap_tempo(deck, cx),
             Command::AuditionSeam => self.toggle_seam_audition(cx),
             Command::ToggleRecording => self.toggle_recording(cx),
+            Command::ToggleSmartCfx => self.toggle_smart_cfx(cx),
+            Command::NextSmartCfx => {
+                let next = self.smart_cfx_preset().next();
+                self.choose_smart_cfx(next, cx);
+            }
+            Command::ChooseSmartCfx(preset) => self.choose_smart_cfx(preset, cx),
+            Command::ToggleSmartFader => self.toggle_smart_fader(cx),
             Command::ToggleMasterCue => {
                 let cued = self
                     .headphones()
@@ -1222,6 +1232,8 @@ impl DubplateApp {
             beat_fx_on: self
                 .effect_unit(self.effect_focus)
                 .is_some_and(|unit| unit.enabled),
+            smart_cfx: self.smart_cfx_on(),
+            smart_fader: self.smart_fader_on(),
         };
         if let Some(hardware) = self.hardware.as_mut() {
             hardware.show(lights);
