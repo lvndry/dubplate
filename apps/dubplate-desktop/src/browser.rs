@@ -1,7 +1,8 @@
 //! The browser: the crates on the left and the tracks of the chosen crate on the right, filtered
 //! by the search field. It asks the window to load tracks through [`BrowserEvent`].
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use dubplate_engine::DeckId;
@@ -26,6 +27,7 @@ const ROW_HEIGHT: Pixels = px(32.0);
 const SIDEBAR_WIDTH: Pixels = px(200.0);
 const BPM_WIDTH: Pixels = px(72.0);
 const KEY_WIDTH: Pixels = px(56.0);
+const ENERGY_WIDTH: Pixels = px(64.0);
 const TIME_WIDTH: Pixels = px(64.0);
 const SOURCE_WIDTH: Pixels = px(120.0);
 const LOAD_WIDTH: Pixels = px(84.0);
@@ -104,6 +106,9 @@ pub struct Browser {
     selected: Option<TrackIndex>,
     pane: BrowserPane,
     in_set: Arc<HashSet<TrackIndex>>,
+    energies: HashMap<PathBuf, Option<u8>>,
+    energy_waiting: usize,
+    energy_failed: usize,
     search_input: Entity<InputState>,
     table_focus: FocusHandle,
     scroll: UniformListScrollHandle,
@@ -137,6 +142,9 @@ impl Browser {
             selected: None,
             pane: BrowserPane::default(),
             in_set: Arc::default(),
+            energies: HashMap::new(),
+            energy_waiting: 0,
+            energy_failed: 0,
             search_input,
             table_focus: cx.focus_handle(),
             scroll: UniformListScrollHandle::new(),
@@ -176,6 +184,30 @@ impl Browser {
     pub fn set_marked(&mut self, in_set: Arc<HashSet<TrackIndex>>, cx: &mut Context<'_, Self>) {
         self.in_set = in_set;
         cx.notify();
+    }
+
+    /// Shows the energies just rated, `None` for a track that has none or could not be read.
+    pub fn add_energies(
+        &mut self,
+        ratings: Vec<(PathBuf, Option<u8>)>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.energies.extend(ratings);
+        cx.notify();
+    }
+
+    /// Shows how many tracks are waiting for their energy and how many could not be read.
+    pub fn show_energy_waiting(
+        &mut self,
+        waiting: usize,
+        failed: usize,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if (self.energy_waiting, self.energy_failed) != (waiting, failed) {
+            self.energy_waiting = waiting;
+            self.energy_failed = failed;
+            cx.notify();
+        }
     }
 
     /// The selected track.
@@ -384,7 +416,10 @@ impl Browser {
                     window.focus(&this.table_focus, cx);
                 }),
             )
-            .child(header_row())
+            .child(header_row(energy_status(
+                self.energy_waiting,
+                self.energy_failed,
+            )))
             .map(|table| match empty_message {
                 Some(message) => table.child(
                     div()
@@ -419,7 +454,18 @@ impl Browser {
         track: TrackIndex,
         cx: &mut Context<'_, Self>,
     ) -> impl IntoElement + use<> {
-        let row = &collection.track(track).row;
+        let entry = collection.track(track);
+        let row = &entry.row;
+        let energy: SharedString = match entry
+            .track
+            .file_path
+            .as_ref()
+            .and_then(|path| self.energies.get(path))
+        {
+            Some(Some(rating)) => rating.to_string().into(),
+            Some(None) => "\u{2013}".into(),
+            None => SharedString::default(),
+        };
         let selected = self.selected == Some(track);
         let dragged = DraggedTrack {
             track,
@@ -480,6 +526,7 @@ impl Browser {
             )
             .child(number_cell(row.bpm.clone(), BPM_WIDTH).justify_end())
             .child(number_cell(row.key.clone(), KEY_WIDTH))
+            .child(number_cell(energy, ENERGY_WIDTH).justify_end())
             .child(
                 number_cell(row.time.clone(), TIME_WIDTH)
                     .justify_end()
@@ -518,7 +565,16 @@ fn offset(position: usize, steps: i32, count: usize) -> Option<usize> {
     Some(usize::try_from(moved.max(0)).ok()?.min(last))
 }
 
-fn header_row() -> impl IntoElement {
+/// What the table header says about the energy ratings still to come, quietly.
+fn energy_status(waiting: usize, failed: usize) -> Option<SharedString> {
+    match (waiting, failed) {
+        (0, 0) => None,
+        (0, failed) => Some(format!("energy: {failed} unreadable").into()),
+        (waiting, _) => Some(format!("analysing {waiting}").into()),
+    }
+}
+
+fn header_row(energy_status: Option<SharedString>) -> impl IntoElement {
     let header = |label: &'static str| {
         div()
             .flex()
@@ -535,7 +591,22 @@ fn header_row() -> impl IntoElement {
         .text_size(theme::SMALL_TEXT_SIZE)
         .text_color(theme::MUTED)
         .font_weight(gpui::FontWeight::MEDIUM)
-        .child(header("Title").flex_1().pl(px(22.0)).pr(theme::GUTTER))
+        .child(
+            header("Title")
+                .flex_1()
+                .min_w_0()
+                .overflow_hidden()
+                .gap(px(8.0))
+                .pl(px(22.0))
+                .pr(theme::GUTTER)
+                .children(energy_status.map(|status| {
+                    div()
+                        .text_size(theme::TINY_TEXT_SIZE)
+                        .font_weight(gpui::FontWeight::NORMAL)
+                        .text_color(theme::faded(theme::MUTED, 0.7))
+                        .child(status)
+                })),
+        )
         .child(header("Artist").w(relative(0.3)).flex_none().px(px(8.0)))
         .child(
             header("BPM")
@@ -545,6 +616,13 @@ fn header_row() -> impl IntoElement {
                 .justify_end(),
         )
         .child(header("Key").w(KEY_WIDTH).flex_none().px(px(8.0)))
+        .child(
+            header("Energy")
+                .w(ENERGY_WIDTH)
+                .flex_none()
+                .px(px(8.0))
+                .justify_end(),
+        )
         .child(
             header("Time")
                 .w(TIME_WIDTH)
