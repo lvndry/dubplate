@@ -55,6 +55,8 @@ pub struct Settings {
     pub import_rekordbox: bool,
     /// Each effect unit's effect, target, beat and depth, FX 1 first.
     pub effect_units: Vec<EffectUnitSetting>,
+    /// The Smart CFX preset SMART CFX turns on, by name.
+    pub smart_cfx_preset: Option<String>,
     /// The sampler's volume and the sample in each slot.
     pub sampler: SamplerSetting,
 }
@@ -108,6 +110,7 @@ impl Default for Settings {
             music_folders: Vec::new(),
             import_rekordbox: false,
             effect_units: Vec::new(),
+            smart_cfx_preset: None,
             sampler: SamplerSetting::default(),
         }
     }
@@ -199,6 +202,7 @@ mod tests {
                 beat: "2".to_owned(),
                 depth: 0.25,
             }],
+            smart_cfx_preset: Some("dub echo".to_owned()),
             sampler: SamplerSetting {
                 volume: 0.6,
                 slots: vec![SampleSlotSetting {

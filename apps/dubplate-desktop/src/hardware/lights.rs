@@ -58,6 +58,10 @@ pub struct Lights {
     pub decks: [DeckLights; DECK_COUNT],
     /// BEAT FX ON/OFF.
     pub beat_fx_on: bool,
+    /// SMART CFX.
+    pub smart_cfx: bool,
+    /// SMART FADER.
+    pub smart_fader: bool,
 }
 
 impl Lights {
@@ -101,12 +105,11 @@ impl Lights {
                 layer,
                 on: self.beat_fx_on,
             });
-            for unlit in [Button::SmartCfx, Button::SmartFader] {
-                show(Feedback::Light {
-                    button: unlit,
-                    layer,
-                    on: false,
-                });
+            for (button, on) in [
+                (Button::SmartCfx, self.smart_cfx),
+                (Button::SmartFader, self.smart_fader),
+            ] {
+                show(Feedback::Light { button, layer, on });
             }
         }
     }
@@ -247,6 +250,21 @@ mod tests {
                 [0x9A, 0x02, 0x7F],
             ]
         );
+    }
+
+    #[test]
+    fn smart_cfx_and_smart_fader_light_while_on() {
+        let mapping = flx4();
+        let mut cache = LightCache::default();
+        let mut lights = Lights::default();
+        let first = sent(&mut cache, &mapping, &lights);
+        assert!(first.contains(&[0x96, 0x00, 0x00]), "SMART CFX is dark");
+        assert!(first.contains(&[0x96, 0x01, 0x00]), "SMART FADER is dark");
+        lights.smart_cfx = true;
+        lights.smart_fader = true;
+        let changes = sent(&mut cache, &mapping, &lights);
+        assert!(changes.contains(&[0x96, 0x00, 0x7F]), "{changes:02X?}");
+        assert!(changes.contains(&[0x96, 0x01, 0x7F]), "{changes:02X?}");
     }
 
     #[test]
