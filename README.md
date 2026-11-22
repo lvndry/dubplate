@@ -134,6 +134,14 @@ While a deck slips, beat sync leaves it alone, because its shadow stays in phase
 
 Sixteen sampler slots, eight on each side of the DDJ-FLX4's pads, each one-shot or loop, with an optional gate that plays only while the pad is held and a gain of its own. A synced slot with a BPM plays at the tempo master's tempo, half or double when closer, and a synced loop starts in phase with the master's beats, as beat sync would put it. Pressing a playing slot starts it again with a crossfade; loops go round sample-accurately. The sampler has its own bus to the master after the channel faders, with a volume and a CUE button for the headphones.
 
+## Recording
+
+`Controller::start_recording` returns a `RecordingTap`: the master output exactly as it goes to the speakers, after the master level and the limiter, as interleaved stereo frames at the engine's sample rate. The audio thread copies each block into the tap's buffer without allocating or waiting. Frames that do not fit, because the tap was not read in time, are dropped and counted in `RecordingTap::dropped_frames`. Reading it on a thread of your own and writing a WAV file records the set.
+
+## Preview a seam
+
+`Controller::preview` auditions a transition in the headphones before playing it: two tracks, each from its own start at its own tempo, the second coming in at the planned overlap, with key lock if asked. It plays on the headphone bus only, after the cue mix and before the headphone level and limiter, using the decks' own reader and time-stretcher, and never touches the decks or the master output: a test checks the master stays bit for bit the same while a preview plays. It stops by itself when both tracks end, or after 30 seconds. `Controller::preview_state` says whether it plays and how far it is.
+
 ## Master limiter
 
 The master and the headphones each end in a look-ahead limiter, so however hard the decks are pushed no sample passes -0.3 dBFS. It sees peaks 1.5 ms ahead and turns down smoothly before they arrive, holds the gain for 20 ms so a bass note is turned down without distortion, and lets go over 120 ms. Music under the ceiling passes untouched, only delayed by the look-ahead. `Meters::master_limiter_gain` shows how far the master was pushed into it, for a LIMIT light.

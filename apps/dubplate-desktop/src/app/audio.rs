@@ -72,6 +72,7 @@ fn carry_over(source: &Controller, target: &mut Controller) -> Result<(), Engine
             target.set_cue_point(deck, state.cue_point_seconds)?;
             target.seek(deck, state.position_seconds)?;
         }
+        target.set_key_lock(deck, source.key_lock(deck))?;
         let tempo = source.tempo_state(deck);
         target.set_tempo_range(deck, tempo.tempo_range)?;
         target.set_sync(deck, tempo.sync)?;
@@ -206,6 +207,7 @@ mod tests {
         source.set_master_cue(true).unwrap();
         source.set_tempo_range(DeckId::B, TempoRange::Wide).unwrap();
         source.set_sync(DeckId::A, SyncMode::Beat).unwrap();
+        source.set_key_lock(DeckId::B, true).unwrap();
         let unit = EffectUnitId::ALL[2];
         source.set_effect_kind(unit, EffectKind::Gate).unwrap();
         source
@@ -228,6 +230,7 @@ mod tests {
         assert!(!headphones.is_cued(DeckId::A));
         assert_eq!(target.tempo_state(DeckId::B).tempo_range, TempoRange::Wide);
         assert_eq!(target.tempo_state(DeckId::A).sync, SyncMode::Beat);
+        assert!(target.key_lock(DeckId::B) && !target.key_lock(DeckId::A));
         let effect = target.effect_unit(unit);
         assert_eq!(effect.kind, EffectKind::Gate);
         assert_eq!(effect.target, EffectTarget::Deck(DeckId::B));

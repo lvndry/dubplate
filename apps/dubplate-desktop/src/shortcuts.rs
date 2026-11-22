@@ -6,6 +6,9 @@ use gpui::{Action, KeyBinding};
 
 use crate::commands::{Command, Direction, LoopAction, Mode, PadPress, Press, SetEdit};
 
+/// How far one press of [ or ] moves a set track's grid, in milliseconds.
+pub const GRID_NUDGE_MS: i32 = 5;
+
 /// The key context of the window. Keys that type text only count outside the search field.
 pub const WINDOW_CONTEXT: &str = "Dubplate";
 const OUTSIDE_TEXT_CONTEXT: &str = "Dubplate && !Input";
@@ -65,7 +68,7 @@ const fn pad(keystroke: &'static str, deck: DeckId, pad: usize) -> Shortcut {
 }
 
 /// Every keyboard shortcut.
-pub const SHORTCUTS: [Shortcut; 54] = [
+pub const SHORTCUTS: [Shortcut; 65] = [
     outside_text("space", Command::TogglePlay(DeckId::A)),
     outside_text("shift-space", Command::TogglePlay(DeckId::B)),
     outside_text("c", Command::Cue(DeckId::A, Press::Tap)),
@@ -109,9 +112,20 @@ pub const SHORTCUTS: [Shortcut; 54] = [
     outside_text("f", Command::EditSet(SetEdit::TogglePlanned)),
     outside_text("y", Command::EditSet(SetEdit::AcceptProposedCues)),
     outside_text("b", Command::EditSet(SetEdit::ToggleBackup)),
+    outside_text("g", Command::EditSet(SetEdit::ConfirmGrid)),
+    outside_text("i", Command::EditSet(SetEdit::MixInAtPlayhead)),
+    outside_text("o", Command::EditSet(SetEdit::MixOutAtPlayhead)),
+    outside_text("[", Command::EditSet(SetEdit::NudgeGrid(-GRID_NUDGE_MS))),
+    outside_text("]", Command::EditSet(SetEdit::NudgeGrid(GRID_NUDGE_MS))),
+    outside_text(",", Command::EditSet(SetEdit::ShiftDownbeat(-1))),
+    outside_text(".", Command::EditSet(SetEdit::ShiftDownbeat(1))),
     outside_text("cmd-z", Command::EditSet(SetEdit::Undo)),
     outside_text("tab", Command::SwitchPrepareFocus),
     anywhere("cmd-l", Command::LoadSet),
+    outside_text("t", Command::TapTempo(DeckId::A)),
+    outside_text("shift-t", Command::TapTempo(DeckId::B)),
+    outside_text("k", Command::ToggleKeyLock(DeckId::A)),
+    outside_text("shift-k", Command::ToggleKeyLock(DeckId::B)),
     outside_text("m", Command::CyclePadMode(DeckId::A)),
     outside_text("shift-m", Command::CyclePadMode(DeckId::B)),
     outside_text("l", Command::Loop(DeckId::A, LoopAction::FourBeatOrExit)),
@@ -202,6 +216,11 @@ pub fn help_lines() -> Vec<HelpLine> {
         ),
         line(&["up", "down"], "Select the previous / next track"),
         line(&["/", "cmd-f"], "Search titles and artists"),
+        line(&["k", "shift-k"], "Key lock, deck A / deck B"),
+        line(
+            &["t", "shift-t"],
+            "Tap the tempo of a track without a grid, deck A / deck B",
+        ),
         line(&["m", "shift-m"], "Next pad mode, deck A / deck B"),
         line(&["l", "shift-l"], "Four-beat loop or exit, deck A / deck B"),
         line(&["cmd-1", "cmd-2"], "Prepare / Perform"),
@@ -214,10 +233,11 @@ pub fn help_lines() -> Vec<HelpLine> {
             "Move the selected set track up / down",
         ),
         line(&["backspace", "cmd-z"], "Take out of the set / undo"),
-        line(
-            &["f", "y"],
-            "Seam planned or free / accept the proposed cues",
-        ),
+        line(&["f"], "Seam after the selected set track planned or free"),
+        line(&["g", "y"], "Confirm the grid / accept the proposed cues"),
+        line(&["i", "o"], "Mix-in / mix-out on the bar at the playhead"),
+        line(&["[", "]"], "Grid 5 ms earlier / later"),
+        line(&[",", "."], "Downbeat one beat earlier / later"),
         line(
             &["b", "tab"],
             "Keep as a backup / move between library and set",
@@ -285,6 +305,8 @@ mod tests {
                     ..press
                 }),
                 Command::CyclePadMode(DeckId::A) => Command::CyclePadMode(DeckId::B),
+                Command::ToggleKeyLock(DeckId::A) => Command::ToggleKeyLock(DeckId::B),
+                Command::TapTempo(DeckId::A) => Command::TapTempo(DeckId::B),
                 Command::Loop(DeckId::A, action) => Command::Loop(DeckId::B, action),
                 Command::NudgeTempo(DeckId::A, direction) => {
                     Command::NudgeTempo(DeckId::B, direction)
