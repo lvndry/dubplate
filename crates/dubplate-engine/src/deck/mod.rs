@@ -56,6 +56,13 @@ const KEY_LOCK_TEMPO_TOLERANCE: f64 = 1e-6;
 /// Beats per second loops and beat jumps count on a deck without a beat grid: 120 BPM.
 const FALLBACK_BEATS_PER_SECOND: f64 = 2.0;
 
+/// A loop roll in progress. The loop the deck had before the roll began comes back when it
+/// ends.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Roll {
+    loop_before: Option<LoopRegion>,
+}
+
 /// What rendering one block of a deck found.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct DeckRender {
@@ -74,7 +81,7 @@ pub(crate) struct Deck {
     slip: Slip,
     slipping_loop: bool,
     slipping_touch: bool,
-    roll: Option<Option<LoopRegion>>,
+    roll: Option<Roll>,
     pad_effects: PadEffects,
     key_shift: f32,
     pending_landing: bool,

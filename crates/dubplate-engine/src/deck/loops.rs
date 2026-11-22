@@ -6,7 +6,7 @@ use crate::looping::LoopRegion;
 use crate::pad_effects::PadEffect;
 use crate::retire::RetireQueue;
 
-use super::{Deck, FALLBACK_BEATS_PER_SECOND};
+use super::{Deck, FALLBACK_BEATS_PER_SECOND, Roll};
 
 impl Deck {
     pub(crate) fn set_quantize(&mut self, enabled: bool) {
@@ -230,14 +230,16 @@ impl Deck {
         match length {
             Some(length) => {
                 if self.roll.is_none() {
-                    self.roll = Some(self.looping.region.take());
+                    self.roll = Some(Roll {
+                        loop_before: self.looping.region.take(),
+                    });
                     self.slip.begin(self.voice.position);
                 }
                 self.start_beat_loop(length, retire);
             }
             None => {
-                if let Some(previous) = self.roll.take() {
-                    self.looping.region = previous;
+                if let Some(roll) = self.roll.take() {
+                    self.looping.region = roll.loop_before;
                     self.land(retire);
                 }
             }
