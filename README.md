@@ -7,9 +7,17 @@
 
 Pro DJ software that works with rekordbox libraries and Pioneer CDJs.
 
-Dubplate reads and writes the rekordbox library directly, so tracks, cues, beat grids and playlists stay the same in both programs. It will export USB sticks that play on CDJ and XDJ players, and run DJ sets with every feature included.
+Dubplate reads the rekordbox library directly, so tracks, cues, beat grids and playlists are the same in both programs. Writing back to rekordbox (to copies first) and exporting USB sticks for CDJ and XDJ players are next.
 
 ## Status
+
+To prepare a set and mix it on a DDJ-FLX4, read [the guide](docs/guide.md). What works today:
+
+- **Library:** your own music folders and, if you choose, the rekordbox collection; energy ratings in the background; Relink for files that moved.
+- **Prepare:** an ordered set with next-track suggestions, key, tempo, vocal and energy warnings on each seam, a ready check, grid nudging and mix cues, and a headphone preview of each seam.
+- **Perform:** two decks with sync, key lock, key shift, loops, rolls, slip, hot cues, pad effects, a 16-slot sampler, three beat-synced effect units, Smart CFX, Smart Fader, an isolator EQ, headphone cue and a limiter.
+- **DDJ-FLX4:** every control in rekordbox's FLX4 layout, with its lights.
+- **Recording:** the master as the room hears it, to a 24-bit WAV.
 
 The first piece is a reader for the rekordbox 6 and 7 library. It copies `master.db` to a temporary directory, unlocks the copy and reads tracks, cues, saved loops and the playlist tree. rekordbox's own file is never opened or changed.
 
@@ -36,7 +44,7 @@ cargo run -p dubplate -- rekordbox analysis <track id> --json > analysis.json
 
 ## Run the desktop app
 
-The desktop app opens on your rekordbox collection with two decks, a mixer and the browser. It reads the same key as the command line tool (see "Try it" above) and a copy of rekordbox's `master.db`, so rekordbox can stay open.
+On first launch the desktop app asks for your music folders; importing the rekordbox collection is a separate choice. For the rekordbox collection it reads the same key as the command line tool (see "Try it" above) and a copy of rekordbox's `master.db`, so rekordbox can stay open.
 
 ```
 cargo run --release -p dubplate-desktop
