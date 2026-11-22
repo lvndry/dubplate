@@ -1323,7 +1323,8 @@ impl DubplateApp {
                 channel_fader: self.mixer.channel_faders[deck.index()],
                 is_tempo_master: self.tempo_state(deck).is_some_and(|state| state.is_master),
             }),
-            self.mixer.crossfader,
+            &self.crossfader(),
+            self.channel_fader_curve(),
         )
     }
 
