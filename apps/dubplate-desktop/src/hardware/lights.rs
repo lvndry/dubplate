@@ -31,6 +31,9 @@ pub struct DeckLights {
     pub loop_out: bool,
     /// 4 BEAT/EXIT.
     pub four_beat: bool,
+    /// Whether the jog's top holds the record (vinyl mode) or only nudges (CDJ mode). The
+    /// FLX4 reports platter touches differently in each.
+    pub vinyl_mode: bool,
 }
 
 impl Default for DeckLights {
@@ -46,6 +49,7 @@ impl Default for DeckLights {
             loop_in: false,
             loop_out: false,
             four_beat: false,
+            vinyl_mode: true,
         }
     }
 }
@@ -97,7 +101,10 @@ impl Lights {
                 deck,
                 level: lights.level,
             });
-            show(Feedback::VinylMode { deck, on: true });
+            show(Feedback::VinylMode {
+                deck,
+                on: lights.vinyl_mode,
+            });
         }
         for layer in LAYERS {
             show(Feedback::Light {
@@ -250,6 +257,16 @@ mod tests {
                 [0x9A, 0x02, 0x7F],
             ]
         );
+    }
+
+    #[test]
+    fn cdj_mode_tells_the_flx4_its_jog_only_nudges() {
+        let mapping = flx4();
+        let mut cache = LightCache::default();
+        let mut lights = Lights::default();
+        sent(&mut cache, &mapping, &lights);
+        lights.decks[1].vinyl_mode = false;
+        assert_eq!(sent(&mut cache, &mapping, &lights), [[0x91, 0x17, 0x00]]);
     }
 
     #[test]

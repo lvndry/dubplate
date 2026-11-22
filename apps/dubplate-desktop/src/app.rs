@@ -9,6 +9,7 @@ mod deck_panel;
 mod drop_target;
 mod effects_strip;
 mod export;
+mod feel;
 mod filter_reference;
 mod header;
 mod help;
@@ -416,6 +417,7 @@ impl DubplateApp {
         app.browser
             .update(cx, |browser, cx| browser.show_screen(mode, cx));
         app.restore_effect_units(cx);
+        app.restore_jog_and_quantize(cx);
         app.restore_sampler(cx);
         app.restore_library_sorts(cx);
         app.start_library(cx);
@@ -809,6 +811,9 @@ impl DubplateApp {
                 self.set_pad_mode(deck, next_mode(self.pad_modes[deck.index()]), cx);
             }
             Command::ToggleSlip(deck) => self.toggle_slip(deck, cx),
+            Command::ToggleQuantize => self.toggle_quantize(cx),
+            Command::ToggleLockPlayingDeck => self.toggle_lock_playing_deck(cx),
+            Command::ToggleVinylMode(deck) => self.toggle_vinyl_mode(deck, cx),
             Command::Loop(deck, action) => self.loop_button(deck, action, cx),
             Command::ToggleHeadphoneCue(deck) => {
                 let cued = self
@@ -1063,9 +1068,12 @@ impl DubplateApp {
         (state.position_seconds - latency_seconds * state.tempo).max(0.0)
     }
 
-    /// `seconds` on the beat nearest to it, when the track has a beat grid, as with rekordbox's
-    /// quantize on.
+    /// `seconds` on the beat nearest to it while quantize is on and the track has a beat grid,
+    /// as with rekordbox's quantize; `seconds` itself with quantize off.
     fn quantized(&self, deck: DeckId, seconds: f64) -> f64 {
+        if !self.quantize() {
+            return seconds;
+        }
         self.deck(deck)
             .visuals()
             .and_then(|visuals| visuals.beats.nearest(seconds))
@@ -1509,6 +1517,7 @@ impl DubplateApp {
             loop_in: pad_lights.loop_in,
             loop_out: pad_lights.loop_out,
             four_beat: pad_lights.four_beat,
+            vinyl_mode: self.vinyl_mode(deck),
         }
     }
 

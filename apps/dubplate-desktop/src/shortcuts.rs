@@ -157,6 +157,9 @@ pub const SHORTCUTS: [Shortcut; 76] = [
     outside_text("shift-t", Command::TapTempo(DeckId::B)),
     outside_text("k", Command::ToggleKeyLock(DeckId::A)),
     outside_text("shift-k", Command::ToggleKeyLock(DeckId::B)),
+    outside_text("q", Command::ToggleQuantize),
+    outside_text("v", Command::ToggleVinylMode(DeckId::A)),
+    outside_text("shift-v", Command::ToggleVinylMode(DeckId::B)),
     outside_text("u", Command::ToggleSlip(DeckId::A)),
     outside_text("shift-u", Command::ToggleSlip(DeckId::B)),
     outside_text("m", Command::CyclePadMode(DeckId::A)),
@@ -294,6 +297,11 @@ pub fn help_sections() -> Vec<HelpSection> {
                 line(&["shift--", "shift-="], "Tempo down / up, deck B"),
                 line(&["k", "shift-k"], "Key lock, deck A / deck B"),
                 line(&["u", "shift-u"], "Slip, deck A / deck B"),
+                line(
+                    &["v", "shift-v"],
+                    "Vinyl mode (jog top scratches) or CDJ mode, deck A / deck B",
+                ),
+                line(&["q"], "Quantize on or off, both decks"),
                 line(&["l", "shift-l"], "Four-beat loop or exit, deck A / deck B"),
                 line(
                     &["t", "shift-t"],
@@ -430,6 +438,7 @@ mod tests {
                 Command::ToggleKeyLock(DeckId::A) => Command::ToggleKeyLock(DeckId::B),
                 Command::TapTempo(DeckId::A) => Command::TapTempo(DeckId::B),
                 Command::ToggleSlip(DeckId::A) => Command::ToggleSlip(DeckId::B),
+                Command::ToggleVinylMode(DeckId::A) => Command::ToggleVinylMode(DeckId::B),
                 Command::Loop(DeckId::A, action) => Command::Loop(DeckId::B, action),
                 Command::NudgeTempo(DeckId::A, direction) => {
                     Command::NudgeTempo(DeckId::B, direction)

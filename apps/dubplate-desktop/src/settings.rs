@@ -3,6 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
+use dubplate_engine::DECK_COUNT;
 use dubplate_library::{DataFolder, LibrarySettings};
 use serde::{Deserialize, Serialize};
 
@@ -48,6 +49,10 @@ pub enum SettingsError {
 pub struct Settings {
     /// Whether a playing deck refuses a new track.
     pub lock_playing_deck: bool,
+    /// Whether cues, loops and jumps land on the beat grid.
+    pub quantize: bool,
+    /// Whether each deck's jog top holds the record, deck A first.
+    pub vinyl_mode: [bool; DECK_COUNT],
     /// The sound card last used, by name.
     pub audio_device: Option<String>,
     /// The music folders, whether rekordbox is in the library, and the relinked files.
@@ -208,6 +213,8 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             lock_playing_deck: true,
+            quantize: true,
+            vinyl_mode: [true; DECK_COUNT],
             audio_device: None,
             library: LibrarySettings::default(),
             effect_units: Vec::new(),
@@ -312,6 +319,8 @@ mod tests {
         let path = directory.path().join("nested").join(FILE_NAME);
         let settings = Settings {
             lock_playing_deck: false,
+            quantize: false,
+            vinyl_mode: [true, false],
             audio_device: Some("Studio Speakers".to_owned()),
             library: LibrarySettings {
                 music_folders: vec![

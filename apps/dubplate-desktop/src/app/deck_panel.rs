@@ -276,6 +276,14 @@ fn transport(
             Command::ToggleSlip(deck),
             cx,
         ))
+        .child(toggle(
+            ("vinyl", deck.index()),
+            "Vinyl",
+            Lit::when(app.vinyl_mode(deck)),
+            colour,
+            Command::ToggleVinylMode(deck),
+            cx,
+        ))
         .child(
             div()
                 .flex()

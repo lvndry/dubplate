@@ -156,6 +156,12 @@ pub enum Command {
     CyclePadMode(DeckId),
     /// SLIP: scratches and loops let the track play on underneath, and the deck lands back on it.
     ToggleSlip(DeckId),
+    /// Lock playing deck: a playing deck refuses a new track, as rekordbox's Eject/Load Lock.
+    ToggleLockPlayingDeck,
+    /// QUANTIZE: cues, loops, hot cues and beat jumps land on the beat grid, for both decks.
+    ToggleQuantize,
+    /// VINYL: the jog's top holds the record to scratch, or, off, only nudges as in CDJ mode.
+    ToggleVinylMode(DeckId),
     /// A loop button.
     Loop(DeckId, LoopAction),
     /// A channel's headphone CUE button: hear the channel in the headphones, before its fader.
