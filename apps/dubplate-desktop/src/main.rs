@@ -34,6 +34,7 @@ mod set;
 mod settings;
 mod shortcuts;
 mod single_instance;
+mod space;
 mod tap_tempo;
 mod theme;
 mod transport;
