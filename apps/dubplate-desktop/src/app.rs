@@ -71,7 +71,7 @@ use gpui::{
 use crate::analysis::{AnalysisPriority, TrackAnalyser, TrackAnalyses};
 use crate::browser::{Browser, BrowserEvent, LibraryStatus};
 use crate::collection::{Collection, CollectionTrack, TrackIndex};
-use crate::commands::{AutoCueChoice, Command, EffectEdit, JogMotion, Mode, Press};
+use crate::commands::{AutoCueChoice, Command, Direction, EffectEdit, JogMotion, Mode, Press};
 use crate::controls::{
     CROSSFADER_STEP, Control, MixerPositions, Orientation, Slider, fraction_at, master_gain_at,
     nudged_tempo_slider, tempo_fader, trim_gain_at,
@@ -117,6 +117,8 @@ use pads::HeldPad;
 use prepare::PrepareFocus;
 use relink::RelinkReview;
 
+/// How far a pinch goes to zoom the lanes one level: a quarter more or less.
+const PINCH_STEP: f32 = 0.25;
 /// What the window says when the audio drops out often.
 const GLITCH_NOTICE: &str = "Audio is glitching. A larger buffer in Settings > Audio can help.";
 /// Below this width the header shows the controller and the sound card as dots.
@@ -273,6 +275,10 @@ pub struct DubplateApp {
     focus_handle: FocusHandle,
     last_frame: Instant,
     frame_stats: Option<Rc<RefCell<FrameStats>>>,
+    /// The scrolling waveforms' zoom, shared by both lanes so they keep one time axis.
+    lane_zoom: Zoom,
+    /// How far a pinch on the lanes has gone since it last changed the zoom.
+    pinch: f32,
     /// What the menu bar was last built for.
     menu_state: Option<MenuState>,
     /// The window's size at the last frame, for the layout of small windows.
@@ -378,6 +384,7 @@ impl DubplateApp {
             ..MixerPositions::default()
         });
         let mode = settings.screen();
+        let lane_zoom = Zoom::from_setting(settings.lane_zoom);
         let (mut engine, audio_problem) = audio::start_engine(
             &mixer,
             settings.audio_device.as_deref(),
@@ -527,6 +534,8 @@ impl DubplateApp {
             focus_handle,
             last_frame: Instant::now(),
             frame_stats: FrameStats::from_environment().map(|stats| Rc::new(RefCell::new(stats))),
+            lane_zoom,
+            pinch: 0.0,
             menu_state: None,
             window_size: window.viewport_size(),
             devices,
@@ -548,6 +557,27 @@ impl DubplateApp {
             app.show_notice(NoticePlace::Window, problem, cx);
         }
         app
+    }
+
+    /// Follows a pinch on the lanes: each step of [`PINCH_STEP`] in or out zooms one level.
+    fn pinch_lanes(&mut self, delta: f32, cx: &mut Context<'_, Self>) {
+        self.pinch += delta;
+        while self.pinch.abs() >= PINCH_STEP {
+            let closer = self.pinch > 0.0;
+            self.pinch -= PINCH_STEP.copysign(self.pinch);
+            self.set_lane_zoom(self.lane_zoom.step(closer), cx);
+        }
+    }
+
+    /// Zooms both scrolling waveforms to `zoom` and remembers it.
+    fn set_lane_zoom(&mut self, zoom: Zoom, cx: &mut Context<'_, Self>) {
+        if zoom == self.lane_zoom {
+            return;
+        }
+        self.lane_zoom = zoom;
+        self.settings.lane_zoom = Some(zoom.pixels_per_second());
+        self.save_settings_soon(cx);
+        cx.notify();
     }
 
     /// Builds the menu bar again when what it shows has changed: a set to export, recording,
@@ -1069,6 +1099,10 @@ impl DubplateApp {
                 let position = self.mixer.crossfader + CROSSFADER_STEP * direction.sign() as f32;
                 self.set_control(Control::Crossfader, position.clamp(0.0, 1.0), cx);
             }
+            Command::ZoomLanes(direction) => {
+                self.set_lane_zoom(self.lane_zoom.step(direction == Direction::Up), cx);
+            }
+            Command::ResetLaneZoom => self.set_lane_zoom(Zoom::DEFAULT, cx),
             Command::SetCrossfaderAssign(deck, assign) => {
                 self.set_crossfader_assign(deck, assign, cx);
             }

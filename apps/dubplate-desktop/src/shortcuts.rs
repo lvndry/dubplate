@@ -120,6 +120,9 @@ pub const SHORTCUTS: &[Shortcut] = &[
     outside_text("/", Command::FocusSearch),
     anywhere("cmd-f", Command::FocusSearch),
     anywhere("ctrl-f", Command::FocusSearch),
+    anywhere("cmd-=", Command::ZoomLanes(Direction::Up)),
+    anywhere("cmd--", Command::ZoomLanes(Direction::Down)),
+    anywhere("cmd-0", Command::ResetLaneZoom),
     anywhere("cmd-1", Command::SwitchMode(Mode::Prepare)),
     anywhere("cmd-2", Command::SwitchMode(Mode::Perform)),
     outside_text("enter", Command::EditSet(SetEdit::Add)),
@@ -420,6 +423,10 @@ pub fn help_sections() -> Vec<HelpSection> {
                     "Tap the tempo of a track without a grid, deck A / deck B",
                 ),
                 line(&["left", "right"], "Crossfader towards deck A / deck B"),
+                line(
+                    &["cmd-=", "cmd--", "cmd-0"],
+                    "Zoom the waveforms in / out / back (Shift + BROWSE on the FLX4)",
+                ),
                 line(
                     &["z", "shift-z"],
                     "Crossfader assign A, THRU or B, deck A / deck B",

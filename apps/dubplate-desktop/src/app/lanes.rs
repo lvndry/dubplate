@@ -10,8 +10,8 @@ use dubplate_engine::{BeatLength, DeckId};
 use dubplate_rekordbox::{HotCue, HotCuePad, TrackCues, cue_milliseconds};
 use gpui::prelude::*;
 use gpui::{
-    Bounds, Context, FontWeight, MouseButton, MouseDownEvent, PathBuilder, Pixels, Point, Rgba,
-    SharedString, Window, canvas, div, fill, point, px, relative, size,
+    Bounds, Context, FontWeight, MouseButton, MouseDownEvent, PathBuilder, PinchEvent, Pixels,
+    Point, Rgba, SharedString, Window, canvas, div, fill, point, px, relative, size,
 };
 
 use super::drop_target::accept_drops;
@@ -97,8 +97,13 @@ pub(super) fn render(
         .bg(theme::BACKGROUND)
         .border_b_1()
         .border_color(theme::LINE)
+        .id("lanes")
+        .on_pinch(cx.listener(|this, event: &PinchEvent, _, cx| {
+            this.pinch_lanes(event.delta, cx);
+        }))
         .child(lane(app, DeckId::A, &frames[0], cx))
         .child(lane(app, DeckId::B, &frames[1], cx))
+        .child(zoom_label(app.lane_zoom))
         .child(
             div()
                 .absolute()
@@ -109,6 +114,35 @@ pub(super) fn render(
                 .w(PLAYHEAD_WIDTH)
                 .bg(theme::PLAYHEAD),
         )
+}
+
+/// The lanes' zoom at their top right, one dot per zoom level, lit up to the current one, so
+/// the DJ sees how far in the lanes are zoomed, as rekordbox's enlarged waveform does.
+fn zoom_label(zoom: Zoom) -> impl IntoElement {
+    let current = Zoom::LEVELS
+        .iter()
+        .position(|level| *level == zoom)
+        .unwrap_or_default();
+    div()
+        .id("lane-zoom")
+        .role(gpui::Role::Meter)
+        .aria_label(format!(
+            "Waveform zoom {} of {}",
+            current + 1,
+            Zoom::LEVELS.len()
+        ))
+        .absolute()
+        .top(px(11.0))
+        .right(theme::GUTTER + px(6.0))
+        .flex()
+        .gap(px(2.0))
+        .children((0..Zoom::LEVELS.len()).map(move |level| {
+            div().size(px(3.0)).rounded_full().bg(if level <= current {
+                theme::MUTED
+            } else {
+                theme::METER_OFF
+            })
+        }))
 }
 
 fn lane(
@@ -168,9 +202,7 @@ fn lane(
         ),
         DeckContent::Loaded(_) => None,
     });
-    let zoom = zoomed
-        .as_ref()
-        .map_or(Zoom::DEFAULT, |waveform| waveform.zoom());
+    let zoom = app.lane_zoom;
     let pixels_per_track_second = zoom.pixels_per_track_second(tempo);
     let lane_colour = marks.colour;
     let loop_label = marks.lane_loop.and_then(|lane_loop| {
@@ -229,11 +261,17 @@ fn lane(
                     let started = Instant::now();
                     paint_lane(
                         bounds,
-                        zoomed.as_deref(),
-                        beats.as_deref(),
-                        playhead_seconds,
-                        tempo,
-                        Some(&marks),
+                        LaneContent {
+                            zoomed: zoomed.as_deref(),
+                            beats: beats.as_deref(),
+                            marks: Some(&marks),
+                        },
+                        LaneView {
+                            width: f32::from(bounds.size.width),
+                            playhead_seconds,
+                            zoom,
+                            tempo,
+                        },
                         window,
                     );
                     record_paint(stats.as_ref(), started);
@@ -330,23 +368,24 @@ impl BandColours {
     }
 }
 
+/// What a lane draws: the waveform, the beat grid and the marks over them.
+pub(super) struct LaneContent<'content> {
+    pub zoomed: Option<&'content ZoomedWaveform>,
+    pub beats: Option<&'content BeatMarks>,
+    pub marks: Option<&'content LaneMarks>,
+}
+
 pub(super) fn paint_lane(
     bounds: Bounds<Pixels>,
-    zoomed: Option<&ZoomedWaveform>,
-    beats: Option<&BeatMarks>,
-    playhead_seconds: f64,
-    tempo: f64,
-    marks: Option<&LaneMarks>,
+    content: LaneContent<'_>,
+    view: LaneView,
     window: &mut Window,
 ) {
-    let width = f32::from(bounds.size.width);
-    let zoom = zoomed.map_or(Zoom::DEFAULT, ZoomedWaveform::zoom);
-    let view = LaneView {
-        width,
-        playhead_seconds,
-        zoom,
-        tempo,
-    };
+    let LaneContent {
+        zoomed,
+        beats,
+        marks,
+    } = content;
     if let Some(marks) = marks
         && let Some(lane_loop) = marks.lane_loop
     {
@@ -563,15 +602,41 @@ fn paint_waveform(
         centre_y: height / 2.0,
         tallest: height / 2.0 - 2.0,
     };
-    let visible = view.visible_columns(zoomed.columns().len());
-    for (offset, levels) in zoomed.columns()[visible.range].iter().enumerate() {
-        let x = visible.first_x + offset as f32 * visible.column_width;
-        let colours = if x + visible.column_width <= centre_x {
+    let columns = zoomed.columns();
+    let visible = view.visible_columns_of(columns.len(), zoomed.zoom());
+    if visible.column_width >= 1.0 {
+        for (offset, levels) in columns[visible.range].iter().enumerate() {
+            let x = visible.first_x + offset as f32 * visible.column_width;
+            let colours = if x + visible.column_width <= centre_x {
+                &played
+            } else {
+                &unplayed
+            };
+            area.paint_column(x, visible.column_width, *levels, colours, window);
+        }
+        return;
+    }
+    // Zoomed out past the waveform's own resolution, each pixel shows the loudest of the
+    // columns under it, so peaks stay visible and the quads painted stay one per pixel.
+    let columns_per_pixel = 1.0 / visible.column_width;
+    let first_column = visible.range.start as f32 - visible.first_x * columns_per_pixel;
+    for pixel in 0..width.ceil() as usize {
+        let start = first_column + pixel as f32 * columns_per_pixel;
+        let from = start.max(0.0) as usize;
+        let to = ((start + columns_per_pixel).ceil().max(0.0) as usize).min(columns.len());
+        let Some(levels) = columns
+            .get(from..to)
+            .and_then(|under| under.iter().copied().reduce(BandLevels::max))
+        else {
+            continue;
+        };
+        let x = pixel as f32;
+        let colours = if x + 1.0 <= centre_x {
             &played
         } else {
             &unplayed
         };
-        area.paint_column(x, visible.column_width, *levels, colours, window);
+        area.paint_column(x, 1.0, levels, colours, window);
     }
 }
 

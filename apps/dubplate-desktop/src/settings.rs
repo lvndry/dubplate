@@ -78,6 +78,8 @@ pub struct Settings {
     pub screen: Option<String>,
     /// The master and headphone levels.
     pub levels: LevelsSetting,
+    /// The scrolling waveforms' zoom, in pixels a second.
+    pub lane_zoom: Option<f64>,
     /// Where a track is cued when it loads.
     pub auto_cue: AutoCueSetting,
     /// The fader curves and the crossfader assign switches.
@@ -324,6 +326,7 @@ impl Default for Settings {
             pad_fx: PadFxSetting::default(),
             screen: None,
             levels: LevelsSetting::default(),
+            lane_zoom: None,
             auto_cue: AutoCueSetting::default(),
             mixer: MixerSetting::default(),
             library_sort: LibrarySortSetting::default(),
@@ -478,6 +481,7 @@ mod tests {
                 headphones: 0.3,
                 headphone_mix: 0.7,
             },
+            lane_zoom: Some(75.0),
             auto_cue: AutoCueSetting {
                 saved_cues_first: false,
                 first_sound: true,
