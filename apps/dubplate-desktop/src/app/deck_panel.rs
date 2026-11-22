@@ -1,33 +1,26 @@
 //! A deck: what is loaded, the whole-track waveform, the transport and tempo, and the hot cue
 //! pads.
 
-use std::rc::Rc;
-
 use dubplate_engine::{DeckId, SyncMode, TempoState};
 use gpui::prelude::*;
-use gpui::{
-    ClickEvent, Context, FontWeight, MouseButton, MouseDownEvent, Pixels, SharedString, canvas,
-    div, fill, point, px, size, svg,
-};
+use gpui::{ClickEvent, Context, FontWeight, MouseButton, Pixels, SharedString, div, px, svg};
 
 use super::drop_target::accept_drops;
+use super::overview::{self, ENDING_SECONDS};
 use super::slider::{self, SMALL_THUMB};
-use super::{DeckFrame, DubplateApp, HitAreas, pad_grid};
+use super::{DeckFrame, DubplateApp, pad_grid};
 use crate::analysis::{AnalysisState, key_cell, track_key};
 use crate::assets::{PAUSE_ICON_PATH, PLAY_ICON_PATH};
 use crate::collection::{CollectionTrack, TrackOrigin, clock};
 use crate::commands::{Command, Press};
-use crate::controls::{Orientation, Slider, fraction_at, tempo_range_label};
+use crate::controls::{Slider, tempo_range_label};
+use crate::deck::DeckContent;
 use crate::deck::deck_letter;
-use crate::deck::{DeckContent, pad_position};
 use crate::fonts::MONO_FAMILY;
 use crate::pads::semitones_label;
 use crate::theme;
-use crate::widgets::{InteractiveControl, adjusted_value};
+use crate::widgets::InteractiveControl;
 
-const OVERVIEW_HEIGHT: Pixels = px(22.0);
-const OVERVIEW_BAR_SPACING: f32 = 3.0;
-const OVERVIEW_BAR_WIDTH: f32 = 2.0;
 const BUTTON_HEIGHT: Pixels = px(34.0);
 
 pub(super) fn render(
@@ -48,7 +41,7 @@ pub(super) fn render(
         .py(px(12.0))
         .bg(theme::PANEL)
         .child(title_row(app, deck, frame, entry))
-        .child(overview(app, deck, frame, entry, cx))
+        .child(overview::render(app, deck, frame, cx))
         .child(transport(app, deck, frame, cx))
         .child(super::stems_strip::render(app, deck, cx))
         .child(pad_grid::render(app, deck, cx));
@@ -102,6 +95,9 @@ fn title_row(
         });
     let bpm = playing_bpm.map_or_else(|| "--.--".to_owned(), |bpm| format!("{bpm:.2}"));
     let pitch = format!("{:+.1}%", (tempo - 1.0) * 100.0).replace('-', "\u{2212}");
+    let ending = frame
+        .duration_seconds
+        .is_some_and(|duration| duration - frame.playhead_seconds <= ENDING_SECONDS);
     let remaining = frame.duration_seconds.map_or_else(
         || "\u{2212}-:--".to_owned(),
         |duration| {
@@ -171,7 +167,11 @@ fn title_row(
                 .text_color(theme::MUTED)
                 .child(key)
                 .child(pitch)
-                .child(remaining)
+                .child(
+                    div()
+                        .when(ending, |time| time.text_color(theme::ATTENTION))
+                        .child(remaining),
+                )
                 .child(
                     div()
                         .font_family(crate::fonts::UI_FAMILY)
@@ -197,124 +197,6 @@ fn deck_badge(deck: DeckId) -> impl IntoElement {
         .text_size(theme::SMALL_TEXT_SIZE)
         .font_weight(FontWeight::SEMIBOLD)
         .child(deck_letter(deck))
-}
-
-fn overview(
-    app: &DubplateApp,
-    deck: DeckId,
-    frame: &DeckFrame,
-    entry: Option<&CollectionTrack>,
-    cx: &mut Context<'_, DubplateApp>,
-) -> impl IntoElement {
-    let bars = app
-        .deck(deck)
-        .visuals()
-        .and_then(|visuals| visuals.overview.clone());
-    let progress = frame
-        .duration_seconds
-        .filter(|duration| *duration > 0.0)
-        .map(|duration| (frame.playhead_seconds / duration).clamp(0.0, 1.0) as f32);
-    let cue_marks: Vec<(f32, usize)> = match (entry, frame.duration_seconds) {
-        (Some(_), Some(duration)) if duration > 0.0 => app
-            .deck(deck)
-            .hot_cues
-            .iter()
-            .map(|(pad, seconds)| {
-                (
-                    (seconds / duration).clamp(0.0, 1.0) as f32,
-                    pad_position(pad),
-                )
-            })
-            .collect(),
-        _ => Vec::new(),
-    };
-    let colour = theme::deck_colour(deck);
-    let hit_areas: Rc<HitAreas> = Rc::clone(&app.hit_areas);
-    div()
-        .id(("overview", deck.index()))
-        .accessible_slider(
-            format!("Deck {} track position", deck_letter(deck)),
-            progress.unwrap_or_default(),
-        )
-        .aria_orientation(gpui::Orientation::Horizontal)
-        .map(|element| {
-            crate::widgets::numeric_actions(element, cx, move |this, change, cx| {
-                if let Some(duration) = this
-                    .duration_seconds(deck)
-                    .filter(|duration| *duration > 0.0)
-                {
-                    let fraction = (this.deck_state(deck).position_seconds / duration) as f32;
-                    this.seek_to_fraction(deck, change.apply(fraction), cx);
-                }
-            })
-        })
-        .on_key_down(cx.listener(move |this, event, _, cx| {
-            let duration = this.duration_seconds(deck).unwrap_or(0.0);
-            if duration > 0.0 {
-                let current = (this.deck_state(deck).position_seconds / duration) as f32;
-                if let Some(fraction) = adjusted_value(event, current, 0.0) {
-                    this.seek_to_fraction(deck, fraction, cx);
-                    cx.stop_propagation();
-                }
-            }
-        }))
-        .relative()
-        .h(OVERVIEW_HEIGHT)
-        .px(px(3.0))
-        .rounded(px(4.0))
-        .bg(theme::RAISED)
-        .cursor_pointer()
-        .on_mouse_down(
-            MouseButton::Left,
-            cx.listener(move |this, event: &MouseDownEvent, _, cx| {
-                if let Some(bounds) = this.hit_areas.overviews[deck.index()].get() {
-                    let fraction = fraction_at(event.position, bounds, Orientation::Horizontal);
-                    this.seek_to_fraction(deck, fraction, cx);
-                }
-                cx.stop_propagation();
-            }),
-        )
-        .child(
-            canvas(
-                move |bounds, _, _| hit_areas.overviews[deck.index()].set(Some(bounds)),
-                move |bounds, (), window, _| {
-                    let width = f32::from(bounds.size.width);
-                    let height = f32::from(bounds.size.height);
-                    if let Some(bars) = &bars {
-                        let bar_count = (width / OVERVIEW_BAR_SPACING).floor().max(0.0) as usize;
-                        let mut bars = bars.borrow_mut();
-                        for (bar_index, level) in bars.bars(bar_count).iter().enumerate() {
-                            let left = bar_index as f32 * OVERVIEW_BAR_SPACING;
-                            let played = progress.is_some_and(|progress| {
-                                (left + OVERVIEW_BAR_WIDTH) / width <= progress
-                            });
-                            let bar_height = (level * (height - 6.0)).max(1.0);
-                            let bar = gpui::Bounds::new(
-                                bounds.origin + point(px(left), px((height - bar_height) / 2.0)),
-                                size(px(OVERVIEW_BAR_WIDTH), px(bar_height)),
-                            );
-                            let opacity = if played { 0.3 } else { 0.9 };
-                            window.paint_quad(fill(bar, theme::faded(colour, opacity)));
-                        }
-                    }
-                    for (fraction, pad_index) in &cue_marks {
-                        let mark = gpui::Bounds::new(
-                            bounds.origin + point(px(fraction * width - 1.0), px(0.0)),
-                            size(px(2.0), px(5.0)),
-                        );
-                        window.paint_quad(fill(mark, theme::HOT_CUE_TINTS[*pad_index]));
-                    }
-                    if let Some(progress) = progress {
-                        let head = gpui::Bounds::new(
-                            bounds.origin + point(px(progress * width - 1.0), px(0.0)),
-                            size(px(2.0), bounds.size.height),
-                        );
-                        window.paint_quad(fill(head, theme::TEXT));
-                    }
-                },
-            )
-            .size_full(),
-        )
 }
 
 fn transport(
