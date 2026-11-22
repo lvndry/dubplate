@@ -63,11 +63,28 @@ impl Deck {
         start: usize,
         end: usize,
     ) {
+        self.play_through(
+            |left, right, context| effect.process(left, right, context),
+            audio,
+            start,
+            end,
+        );
+    }
+
+    /// Runs `process` over frames `start..end` of `audio` in blocks, for processors that are
+    /// not an [`Effect`], such as the channel's sweep filter.
+    pub fn play_through(
+        &mut self,
+        mut process: impl FnMut(&mut [f32], &mut [f32], &ProcessContext),
+        audio: &mut Stereo,
+        start: usize,
+        end: usize,
+    ) {
         let mut block_start = start;
         while block_start < end {
             let block_end = (block_start + BLOCK_FRAMES).min(end);
             let context = ProcessContext::new(SAMPLE_RATE, self.tempo_bpm, self.beat_position);
-            effect.process(
+            process(
                 &mut audio.left[block_start..block_end],
                 &mut audio.right[block_start..block_end],
                 &context,

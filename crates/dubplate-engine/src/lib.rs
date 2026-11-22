@@ -78,7 +78,7 @@ pub use recording::RecordingTap;
 pub use sampler::{SAMPLER_SLOTS, SampleMode, SampleSettings, SamplerState, SlotState};
 pub use smart_cfx::SmartCfx;
 pub use state::{DeckState, EngineStats, LoopState, Meters, PlatterState, SlipState, TempoState};
-pub use stems::Stem;
+pub use stems::{Stem, StemLevel, StemSettings, StemTracks};
 pub use sync::SyncMode;
 pub use tempo::{BeatClock, MasterTempo, TempoRange};
 pub use track::{DecodeStatus, MAX_SAMPLE_RATE, MAX_TRACK_SECONDS, MIN_SAMPLE_RATE, Track};

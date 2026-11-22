@@ -13,7 +13,7 @@ members = [
 ]
 
 [workspace.dependencies]
-euphoria-core = { git = "https://github.com/lvndry/euphoria", rev = "50492196c9347ab5b315ddbc2a5a544964436c4c", default-features = false }
+euphoria-core = { git = "https://github.com/lvndry/euphoria", rev = "514e7058e438e7bc1ad79bfcc5aa35217866641e", default-features = false }
 rusqlite = { version = "0.42.0", features = ["bundled-sqlcipher-vendored-openssl", "backup"] }
 
 [workspace.package]
