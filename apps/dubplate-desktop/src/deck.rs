@@ -356,14 +356,14 @@ impl Deck {
         self.load_generation
     }
 
+    /// The load the deck shows and plays, while a track is loaded.
+    pub fn loaded_generation(&self) -> Option<u64> {
+        self.visuals().map(|_| self.committed_generation)
+    }
+
     /// Whether a load result with `generation` is the latest one asked for.
     pub fn is_current_load(&self, generation: u64) -> bool {
         self.load_generation == generation
-    }
-
-    /// The load number of the track on the deck, once one is loaded.
-    pub fn loaded_generation(&self) -> Option<u64> {
-        self.track.as_ref().map(|_| self.committed_generation)
     }
 
     /// Whether a background visual still belongs to the committed track. A pending or

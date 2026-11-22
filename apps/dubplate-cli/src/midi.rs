@@ -90,7 +90,7 @@ fn monitor(device: Option<&str>, lights: bool) -> Result<()> {
     let mut reported_drops = 0;
     loop {
         if let Some(output) = output.as_mut() {
-            output.keep_alive(Instant::now())?;
+            output.service(Instant::now())?;
         }
         let mut idle = true;
         while let Some(event) = events.pop() {

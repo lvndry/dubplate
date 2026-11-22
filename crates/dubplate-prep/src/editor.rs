@@ -10,8 +10,8 @@ use std::time::Duration;
 use dubplate_rekordbox::TrackCues;
 
 use crate::{
-    CueSource, EqIntent, GridEdit, Seam, SeamStatus, Set, SetEntry, SetId, SetList, SetStore,
-    StoreError, TrackGrid, TrackIdentity,
+    CueSource, EqIntent, GridEdit, Play, PlayId, RecordedPlay, Seam, SeamStatus, Set, SetEntry,
+    SetId, SetList, SetStore, StoreError, TrackGrid, TrackIdentity,
 };
 
 /// The name of the set made on first launch.
@@ -327,6 +327,22 @@ impl SetEditor {
         self.set = self.store.replace_set(previous)?;
         self.undo.pop();
         Ok(true)
+    }
+
+    /// Records a play in the history kept beside the set. Plays are not set edits: undo
+    /// never takes one back.
+    pub fn record_play(&mut self, play: &Play) -> Result<PlayId, StoreError> {
+        self.store.record_play(play)
+    }
+
+    /// Sets how long a recorded play has played in all.
+    pub fn set_play_length(&mut self, id: PlayId, played: Duration) -> Result<(), StoreError> {
+        self.store.set_play_length(id, played)
+    }
+
+    /// Every recorded play, newest first.
+    pub fn play_history(&self) -> Result<Vec<RecordedPlay>, StoreError> {
+        self.store.play_history()
     }
 
     /// Carries out one change on the store, then reads the set back, keeping what it was for

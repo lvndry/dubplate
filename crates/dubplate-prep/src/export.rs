@@ -53,7 +53,8 @@ pub struct ExportTrack {
 }
 
 impl ExportTrack {
-    fn location(&self) -> &Path {
+    /// Where the track's audio file is now.
+    pub fn location(&self) -> &Path {
         self.track
             .file_path
             .as_deref()
@@ -158,7 +159,7 @@ fn follows_marker(anchor: &Beat, beats_since: usize, beat: &Beat) -> bool {
 
 /// `cues` with the DJ's mix-in and mix-out as named memory cues. A memory cue at the very
 /// place of a mix cue gives way to it; a saved loop there stays.
-fn with_mix_cues(entry: &SetEntry, cues: &TrackCues) -> TrackCues {
+pub fn with_mix_cues(entry: &SetEntry, cues: &TrackCues) -> TrackCues {
     let mix_cues: Vec<(u32, &str)> = [
         (entry.mix_in_ms, MIX_IN_CUE_NAME),
         (entry.mix_out_ms, MIX_OUT_CUE_NAME),
@@ -339,12 +340,7 @@ impl<'a> ExportLibrary<'a> {
     /// Exports `set`, its backups included, reading each rekordbox track's beat grid from
     /// rekordbox's analysis files. Disk work: run it off the interface thread.
     pub fn export(&self, set: &Set) -> SetExport {
-        let mut problems = Vec::new();
-        let tracks: Vec<ExportTrack> = set
-            .entries
-            .iter()
-            .map(|entry| self.resolve(entry, &mut problems))
-            .collect();
+        let (tracks, mut problems) = self.tracks(set);
         for track in &tracks {
             if !track.location().is_file() {
                 problems.push(format!(
@@ -366,6 +362,25 @@ impl<'a> ExportLibrary<'a> {
             new_to_rekordbox: new_to_rekordbox.len(),
             problems,
         }
+    }
+
+    /// The tracks of `set`, backups included, in the set's order, each with its file where it is
+    /// now, rekordbox's grid and the cues to export, and what could not be read as it should,
+    /// one sentence each. Reads rekordbox's analysis files: run it off the interface thread.
+    pub fn tracks(&self, set: &Set) -> (Vec<ExportTrack>, Vec<String>) {
+        let mut problems = Vec::new();
+        let tracks = set
+            .entries
+            .iter()
+            .map(|entry| self.resolve(entry, &mut problems))
+            .collect();
+        (tracks, problems)
+    }
+
+    /// rekordbox's `share` directory, which holds its analysis files, when the export reads
+    /// rekordbox's collection.
+    pub fn share_directory(&self) -> Option<&'a Path> {
+        self.share_directory
     }
 
     /// Where the file of `entry` is now: rekordbox's track for it, found by its rekordbox id or

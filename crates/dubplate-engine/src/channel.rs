@@ -46,6 +46,7 @@ pub(crate) struct ChannelStrip {
     eq_positions: [f32; 3],
     automatic_low: Option<f32>,
     filter: SweepFilter,
+    filter_knob: f32,
     smart_cfx: SmartCfxRack,
     filter_context: dubplate_fx::ProcessContext,
 }
@@ -62,6 +63,7 @@ impl ChannelStrip {
             eq_positions: [KNOB_CENTRE; 3],
             automatic_low: None,
             filter,
+            filter_knob: KNOB_CENTRE,
             smart_cfx: SmartCfxRack::new(sample_rate),
             filter_context: dubplate_fx::ProcessContext::new(sample_rate as f32, 0.0, 0.0),
         }
@@ -93,12 +95,24 @@ impl ChannelStrip {
     }
 
     pub(crate) fn set_filter(&mut self, position: f32) {
-        self.filter.set_position(position * 2.0 - 1.0);
+        self.filter_knob = position;
         self.smart_cfx.set_knob(position);
+        self.apply_filter();
     }
 
     pub(crate) fn set_smart_cfx(&mut self, preset: Option<SmartCfx>) {
         self.smart_cfx.select(preset);
+        self.apply_filter();
+    }
+
+    /// Turns the filter with the knob, or holds it open while a preset plays without it.
+    fn apply_filter(&mut self) {
+        let position = if self.smart_cfx.filters() {
+            self.filter_knob * 2.0 - 1.0
+        } else {
+            0.0
+        };
+        self.filter.set_position(position);
     }
 
     pub(crate) fn set_filter_resonance(&mut self, resonance: f32) {

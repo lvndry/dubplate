@@ -26,7 +26,8 @@ impl BandLevels {
         self.low.max(self.mid).max(self.high)
     }
 
-    fn max(self, other: Self) -> Self {
+    /// The louder of `self` and `other` in each band.
+    pub fn max(self, other: Self) -> Self {
         Self {
             low: self.low.max(other.low),
             mid: self.mid.max(other.mid),
@@ -55,6 +56,54 @@ impl Zoom {
     pub const DEFAULT: Self = Self {
         pixels_per_second: DETAIL_COLUMNS_PER_SECOND as f64,
     };
+
+    /// The zooms of the scrolling lanes, widest view first: from about 30 seconds across a
+    /// laptop's lanes to about 3, as rekordbox's enlarged waveform zooms.
+    pub const LEVELS: [Self; 7] = [
+        Self::at(37.5),
+        Self::at(50.0),
+        Self::at(75.0),
+        Self::at(100.0),
+        Self::DEFAULT,
+        Self::at(225.0),
+        Self::at(300.0),
+    ];
+
+    const fn at(pixels_per_second: f64) -> Self {
+        Self { pixels_per_second }
+    }
+
+    /// The next zoom of [`Zoom::LEVELS`] in (`closer` true) or out, staying at the ends. A
+    /// zoom between two levels moves to the next one in that direction.
+    pub fn step(self, closer: bool) -> Self {
+        let levels = Self::LEVELS.into_iter();
+        let next = if closer {
+            levels
+                .filter(|level| level.pixels_per_second > self.pixels_per_second)
+                .min_by(|first, second| {
+                    first.pixels_per_second.total_cmp(&second.pixels_per_second)
+                })
+        } else {
+            levels
+                .filter(|level| level.pixels_per_second < self.pixels_per_second)
+                .max_by(|first, second| {
+                    first.pixels_per_second.total_cmp(&second.pixels_per_second)
+                })
+        };
+        next.unwrap_or(self)
+    }
+
+    /// The zoom kept in the settings as `pixels_per_second`, or the default when that is not
+    /// one of [`Zoom::LEVELS`].
+    pub fn from_setting(pixels_per_second: Option<f64>) -> Self {
+        pixels_per_second
+            .and_then(|kept| {
+                Self::LEVELS
+                    .into_iter()
+                    .find(|level| (level.pixels_per_second - kept).abs() < 1e-6)
+            })
+            .unwrap_or(Self::DEFAULT)
+    }
 
     /// A zoom of `pixels_per_second`, at least one pixel a second.
     #[cfg(test)]
@@ -300,9 +349,17 @@ impl LaneView {
 
     /// The columns of a waveform made at this view's zoom (one column per pixel at the
     /// track's own tempo) that fall on screen, and where they go.
+    #[cfg(test)]
     pub fn visible_columns(&self, column_count: usize) -> VisibleColumns {
-        let column_width = self.pixels_per_track_second() / self.zoom.pixels_per_second();
-        let left_column = self.seconds_on_screen().start * self.zoom.pixels_per_second();
+        self.visible_columns_of(column_count, self.zoom)
+    }
+
+    /// The columns of a waveform made at `made_at` that fall on screen, and where they go:
+    /// columns narrower than a pixel when the view is zoomed out further than the waveform was
+    /// made, wider when zoomed in.
+    pub fn visible_columns_of(&self, column_count: usize, made_at: Zoom) -> VisibleColumns {
+        let column_width = self.pixels_per_track_second() / made_at.pixels_per_second();
+        let left_column = self.seconds_on_screen().start * made_at.pixels_per_second();
         let columns_across = f64::from(self.width) / column_width;
         let first = left_column.floor().max(0.0);
         let last = (left_column + columns_across).ceil().max(0.0);
@@ -379,7 +436,48 @@ pub struct BeatMark {
     pub seconds: f64,
     /// Whether it starts a bar.
     pub downbeat: bool,
+    /// The bar it is in, 1 for the bar of the first downbeat and 0 before it.
+    pub bar: u32,
+    /// Where it falls in its bar, from 1, the downbeat, to 4.
+    pub beat_in_bar: u16,
 }
+
+/// Where a playhead is in the bars of a beat grid, as a CDJ's beat counter reads it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BeatPosition {
+    /// The bar, 1 for the bar of the first downbeat.
+    pub bar: u32,
+    /// The beat in the bar, from 1 to 4.
+    pub beat: u16,
+    /// How far the playhead is from this beat to the next, from 0.0 to 1.0.
+    pub fraction: f64,
+}
+
+impl BeatPosition {
+    /// The beats since the start of the bar, from 0.0 to just under 4.0.
+    fn beats_into_bar(self) -> f64 {
+        f64::from(self.beat.saturating_sub(1)) + self.fraction
+    }
+
+    /// How far these beats are ahead of `master`'s, in beats from -0.5 to 0.5: positive when
+    /// they come early. 0 when the two decks' beats land together.
+    pub fn phase_offset(self, master: Self) -> f64 {
+        let difference = self.fraction - master.fraction;
+        difference - difference.round()
+    }
+
+    /// How many whole beats this deck's downbeat is ahead of `master`'s, from -2 to 2, once
+    /// the beats are in phase: 0 when the bars line up.
+    pub fn bar_offset(self, master: Self) -> i32 {
+        let difference =
+            self.beats_into_bar() - master.beats_into_bar() - self.phase_offset(master);
+        let wrapped = difference - BEATS_PER_BAR * (difference / BEATS_PER_BAR).round();
+        wrapped.round() as i32
+    }
+}
+
+/// The beats in a bar of the grids rekordbox writes.
+const BEATS_PER_BAR: f64 = 4.0;
 
 /// A track's beat grid in seconds, for drawing.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -394,12 +492,37 @@ impl BeatMarks {
             marks: grid
                 .beats
                 .iter()
-                .map(|beat| BeatMark {
-                    seconds: f64::from(beat.time_ms) / 1000.0,
-                    downbeat: beat.is_downbeat(),
+                .scan(0_u32, |bar, beat| {
+                    if beat.is_downbeat() {
+                        *bar += 1;
+                    }
+                    Some(BeatMark {
+                        seconds: f64::from(beat.time_ms) / 1000.0,
+                        downbeat: beat.is_downbeat(),
+                        bar: *bar,
+                        beat_in_bar: beat.beat_in_bar,
+                    })
                 })
                 .collect(),
         }
+    }
+
+    /// Where `seconds` falls in the bars, between the first beat and the last; `None` outside.
+    pub fn position(&self, seconds: f64) -> Option<BeatPosition> {
+        let next = self.marks.partition_point(|mark| mark.seconds <= seconds);
+        let current = self.marks.get(next.checked_sub(1)?)?;
+        let following = self.marks.get(next)?;
+        let span = following.seconds - current.seconds;
+        let fraction = if span > 0.0 {
+            ((seconds - current.seconds) / span).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        Some(BeatPosition {
+            bar: current.bar,
+            beat: current.beat_in_bar,
+            fraction,
+        })
     }
 
     /// The beats between `range.start` and `range.end` seconds.
@@ -441,6 +564,8 @@ mod tests {
                 .map(|seconds| BeatMark {
                     seconds,
                     downbeat: false,
+                    bar: 0,
+                    beat_in_bar: 2,
                 })
                 .to_vec(),
         };
@@ -728,5 +853,89 @@ mod tests {
         let second = overview.bars(4)[1];
         assert_eq!((second.low, second.mid, second.high), (0.0, 1.0, 0.0));
         assert_eq!(overview.bars(8).len(), 8);
+    }
+
+    #[test]
+    fn zoom_steps_through_the_levels_and_stays_at_the_ends() {
+        assert_eq!(Zoom::DEFAULT.step(true), Zoom::new(225.0));
+        assert_eq!(Zoom::DEFAULT.step(false), Zoom::new(100.0));
+        assert_eq!(Zoom::new(300.0).step(true), Zoom::new(300.0));
+        assert_eq!(Zoom::new(37.5).step(false), Zoom::new(37.5));
+        assert_eq!(Zoom::new(120.0).step(true), Zoom::DEFAULT);
+        assert_eq!(Zoom::from_setting(Some(75.0)), Zoom::new(75.0));
+        assert_eq!(Zoom::from_setting(Some(80.0)), Zoom::DEFAULT);
+        assert_eq!(Zoom::from_setting(None), Zoom::DEFAULT);
+    }
+
+    #[test]
+    fn a_zoomed_out_view_puts_several_columns_in_a_pixel() {
+        let view = LaneView {
+            width: 100.0,
+            playhead_seconds: 10.0,
+            zoom: Zoom::new(50.0),
+            tempo: 1.0,
+        };
+        let visible = view.visible_columns_of(10_000, Zoom::DEFAULT);
+        assert!((visible.column_width - 1.0 / 3.0).abs() < 1e-6);
+        assert_eq!(visible.range, 1350..1650);
+    }
+
+    fn grid_marks(bpm: f64, first_beat_ms: u32, beats: u16) -> BeatMarks {
+        let beat_ms = 60_000.0 / bpm;
+        let grid = BeatGrid {
+            beats: (0..beats)
+                .map(|index| Beat {
+                    beat_in_bar: index % 4 + 1,
+                    tempo_hundredths: (bpm * 100.0) as u16,
+                    time_ms: first_beat_ms + (f64::from(index) * beat_ms) as u32,
+                })
+                .collect(),
+        };
+        BeatMarks::from_grid(&grid)
+    }
+
+    #[test]
+    fn the_beat_counter_reads_bar_and_beat() {
+        let marks = grid_marks(120.0, 1000, 64);
+        assert_eq!(marks.position(0.5), None, "before the first beat");
+        let position = marks.position(1.0 + 4.5 * 0.5).unwrap();
+        assert_eq!((position.bar, position.beat), (2, 1));
+        assert!((position.fraction - 0.5).abs() < 1e-3);
+        assert_eq!(marks.position(99.0), None, "after the last beat");
+    }
+
+    #[test]
+    fn the_phase_meter_measures_beats_and_bars_between_two_decks() {
+        let master = BeatPosition {
+            bar: 9,
+            beat: 1,
+            fraction: 0.1,
+        };
+        let early = BeatPosition {
+            bar: 3,
+            beat: 1,
+            fraction: 0.2,
+        };
+        assert!((early.phase_offset(master) - 0.1).abs() < 1e-9);
+        assert_eq!(early.bar_offset(master), 0);
+        let late_across_the_beat = BeatPosition {
+            bar: 3,
+            beat: 4,
+            fraction: 0.95,
+        };
+        assert!((late_across_the_beat.phase_offset(master) + 0.15).abs() < 1e-9);
+        assert_eq!(late_across_the_beat.bar_offset(master), 0);
+        let two_beats_ahead = BeatPosition {
+            bar: 3,
+            beat: 3,
+            fraction: 0.1,
+        };
+        assert_eq!(two_beats_ahead.bar_offset(master).abs(), 2);
+        let one_beat_behind = BeatPosition {
+            bar: 3,
+            beat: 4,
+            fraction: 0.1,
+        };
+        assert_eq!(one_beat_behind.bar_offset(master), -1);
     }
 }

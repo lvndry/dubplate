@@ -39,14 +39,15 @@ pub use euphoria_core::key::Key;
 pub use export::{
     ExportError, ExportLibrary, ExportTrack, MIX_IN_CUE_NAME, MIX_OUT_CUE_NAME,
     REKORDBOX_IMPORT_STEPS, RekordboxCollection, SetExport, default_export_folder,
-    export_file_name, file_track, folder_track, rekordbox_xml, tempo_markers,
+    export_file_name, file_track, folder_track, rekordbox_xml, tempo_markers, with_mix_cues,
 };
 pub use grid::{BEATS_PER_BAR, GridCorrection, GridEdit, TrackGrid};
 pub use identity::TrackIdentity;
 pub use ready::{ReadyProblem, ReadyReport, Severity, TrackReadiness, ready_report};
 pub use session::{SetCompletion, SetJob, SetSession, SetSessionError};
 pub use store::{
-    CueSource, EqIntent, Seam, SeamStatus, Set, SetEntry, SetId, SetList, SetStore, StoreError,
+    CueSource, EqIntent, Play, PlayDeck, PlayId, RecordedPlay, Seam, SeamStatus, Set, SetEntry,
+    SetId, SetList, SetStore, StoreError,
 };
 pub use suggestion::{KeyFit, Suggestion, suggest_next};
 pub use track::PrepTrack;

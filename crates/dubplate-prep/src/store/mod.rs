@@ -16,12 +16,14 @@ use thiserror::Error;
 use crate::grid::{GridCorrection, TrackGrid};
 
 mod cues;
+mod history;
 mod types;
 
+pub use history::{Play, PlayDeck, PlayId, RecordedPlay};
 pub use types::{CueSource, EqIntent, Seam, SeamStatus, Set, SetEntry, SetId, SetList};
 
 /// The highest schema version `MIGRATIONS` can bring a database to.
-const SCHEMA_VERSION: u32 = 4;
+const SCHEMA_VERSION: u32 = 5;
 
 /// One migration per schema version, index = target version - 1.
 const MIGRATIONS: &[&str] = &[
@@ -131,6 +133,35 @@ CREATE INDEX track_cue_track ON track_cue (identity_kind, identity);
 
 PRAGMA user_version = 4;
 "#,
+    r#"
+CREATE TABLE play_history_v4 (
+    id INTEGER PRIMARY KEY,
+    set_id INTEGER REFERENCES sets(id) ON DELETE SET NULL,
+    track_path TEXT NOT NULL,
+    rekordbox_id TEXT,
+    title TEXT NOT NULL DEFAULT '',
+    artist TEXT NOT NULL DEFAULT '',
+    started_at INTEGER NOT NULL,
+    seconds_played REAL NOT NULL DEFAULT 0,
+    deck TEXT NOT NULL
+);
+
+INSERT INTO play_history_v4 (set_id, track_path, rekordbox_id, started_at, deck)
+SELECT
+    CASE WHEN off_plan OR set_id NOT IN (SELECT id FROM sets) THEN NULL ELSE set_id END,
+    track_path,
+    rekordbox_id,
+    played_at,
+    deck
+FROM play_history
+ORDER BY played_at;
+
+DROP TABLE play_history;
+ALTER TABLE play_history_v4 RENAME TO play_history;
+CREATE INDEX play_history_started_at ON play_history (started_at);
+
+PRAGMA user_version = 5;
+"#,
 ];
 
 /// A position no real entry can hold while one is in the middle of moving.
@@ -178,6 +209,9 @@ pub enum StoreError {
     /// An entry position the operation referred to is not in the set.
     #[error("position {0} is not in the set")]
     PositionNotFound(usize),
+    /// A play the operation referred to is not in the history.
+    #[error("play {0} is not in the history")]
+    PlayNotFound(PlayId),
     /// A SQLite operation failed.
     #[error("set store error: {0}")]
     Database(#[from] rusqlite::Error),
@@ -218,7 +252,7 @@ impl SetStore {
         }
 
         let existing = path.exists();
-        let connection = Connection::open(path)?;
+        let mut connection = Connection::open(path)?;
         connection.pragma_update(None, "journal_mode", "wal")?;
 
         let user_version: i64 =
@@ -258,7 +292,9 @@ impl SetStore {
         for (index, migration) in MIGRATIONS.iter().enumerate() {
             let target_version = u32::try_from(index).unwrap_or(u32::MAX).saturating_add(1);
             if target_version > user_version {
-                connection.execute_batch(migration)?;
+                let transaction = connection.transaction()?;
+                transaction.execute_batch(migration)?;
+                transaction.commit()?;
             }
         }
 
@@ -294,8 +330,8 @@ impl SetStore {
         Ok(())
     }
 
-    /// Deletes a set and everything that belongs to it: entries, seams,
-    /// snapshots and play history.
+    /// Deletes a set and everything that belongs to it: entries, seams and
+    /// snapshots. Its plays stay in the history, no longer tied to a set.
     pub fn delete_set(&mut self, set: SetId) -> Result<(), StoreError> {
         let transaction = self.transaction()?;
         let deleted = transaction.execute("DELETE FROM sets WHERE id = ?1", (set.as_i64(),))?;
@@ -380,7 +416,7 @@ impl SetStore {
 
     /// Replaces a set's metadata, entries and seams atomically, returning the saved set.
     ///
-    /// A failed write leaves the previous set intact. Revisions and play history remain
+    /// A failed write leaves the previous set intact. Revisions and plays remain
     /// attached to the same set; its creation time does not change.
     pub fn replace_set(&mut self, set: &Set) -> Result<Set, StoreError> {
         let mut transaction = self.transaction()?;
@@ -599,33 +635,6 @@ impl SetStore {
         let revision_id = transaction.last_insert_rowid();
         transaction.commit()?;
         Ok(revision_id)
-    }
-
-    /// Records a track being played for a set, on a deck, planned or off plan.
-    pub fn record_play(
-        &mut self,
-        set: SetId,
-        track_path: &Path,
-        rekordbox_id: Option<&str>,
-        deck_label: &str,
-        off_plan: bool,
-    ) -> Result<(), StoreError> {
-        let mut transaction = self.transaction()?;
-        touch_set(&mut transaction, set)?;
-        transaction.execute(
-            "INSERT INTO play_history (set_id, track_path, rekordbox_id, played_at, deck, off_plan)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            (
-                set.as_i64(),
-                &track_path.to_string_lossy(),
-                rekordbox_id,
-                now_unix_millis(),
-                deck_label,
-                off_plan,
-            ),
-        )?;
-        transaction.commit()?;
-        Ok(())
     }
 
     fn transaction(&mut self) -> Result<Transaction<'_>, StoreError> {
