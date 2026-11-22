@@ -19,6 +19,7 @@ mod grid_controls;
 mod header;
 mod help;
 mod history;
+mod key_sync;
 mod knob;
 mod lane_drag;
 mod lanes;
@@ -1143,6 +1144,7 @@ impl DubplateApp {
                 let locked = self.key_lock(deck);
                 self.engine_command(cx, |controller| controller.set_key_lock(deck, !locked));
             }
+            Command::KeySync(deck) => self.toggle_key_sync(deck, cx),
             Command::CycleTempoRange(deck) => {
                 let range = self.tempo_range(deck).next();
                 self.engine_command(cx, |controller| controller.set_tempo_range(deck, range));

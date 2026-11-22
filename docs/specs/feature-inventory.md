@@ -362,7 +362,7 @@ These are features of the players. Dubplate prepares for them once it writes USB
 | Waveform colour on CDJ | Blue, RGB or 3-band, overview and zoomed; phrase strip on 3000X. | CDJ SHORTCUT > Device settings | Free | Missing | P1 |
 | Beat countdown | Bars and beats to the next memory cue. | CDJ waveform screen | Free | Missing | P1 |
 | Key display on CDJ | Classic or alphanumeric as set in rekordbox; green when related to the master's key. | CDJ, Preferences > DJ System > General | Free | Missing | P2 |
-| Key sync and key shift | Shifts to the nearest related key (same, dominant, subdominant, relatives); semitone shift. | CDJ KEY SYNC, KEY SHIFT | Free | Missing | P2 |
+| Key sync and key shift | Shifts to the nearest related key (same, dominant, subdominant, relatives); semitone shift. | CDJ KEY SYNC, KEY SHIFT | Free | Done | P2 |
 | Beat sync and instant doubles | Needs rekordbox grids; hold BEAT SYNC for instant doubles. | CDJ | Free | Missing | P1 |
 | Quantize and beat jump values | Quantize 1/8 to 1; beat jump 1/2 to 64 (default 16). | CDJ UTILITY | Free | Missing | P2 |
 | Jog screen | Artwork, slip, sync, vinyl, master, cue marker; custom image on 3000X. | CDJ jog | Free | Missing | P3 |
@@ -508,7 +508,7 @@ These are features of the players. Dubplate prepares for them once it writes USB
 | BPM sync or beat sync | Sync type preference: tempo only, or tempo and phase. | Preferences > Controller > Deck | Free | Partial: beat sync, dropping to tempo sync when nudged; no preference | P2 |
 | Double and half sync | Allows sync at x2 or x1/2 of the master; SYNC RATE button cycles x1, x2, x1/2. | Preferences > Controller > Deck, deck | Free | Partial: automatic half/double lock; no SYNC RATE button | P2 |
 | Tempo master | MASTER button or hold BEAT SYNC; moves on when the master track ends. | Deck, FLX4 | Free (FLX4) | Done | P0 |
-| Key sync | Shifts the deck's key to match the other deck; stays until KEY RESET. | Deck KEY SYNC | Free | Missing | P1 |
+| Key sync | Shifts the deck's key to match the other deck; stays until KEY RESET. | Deck KEY SYNC | Free | Done | P1 |
 | Semitone up and down | One semitone per click on the deck. | Deck | Free | Partial: Key Shift pads; no deck buttons | P2 |
 | Key shift range | -12 to +12 semitones. | KEY SHIFT pad mode | Free (FLX4) | Done | P2 |
 | Tap tempo | SHIFT + channel CUE taps the BPM. | FLX4 | Free (FLX4) | Done | P2 |

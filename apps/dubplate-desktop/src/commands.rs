@@ -324,6 +324,8 @@ pub enum Command {
     CycleTempoRange(DeckId),
     /// Key lock, a CDJ's MASTER TEMPO: tempo changes keep the track's pitch.
     ToggleKeyLock(DeckId),
+    /// KEY SYNC: move a deck's key to match the other deck's, or back to the track's own key.
+    KeySync(DeckId),
     /// Choose whether a track loaded on a deck starts with key lock on, from Settings.
     SetKeyLockOnNewTracks(bool),
     /// A stems control of a deck: mute or bring back a stem, or a one-touch mix.

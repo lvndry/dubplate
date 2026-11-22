@@ -87,7 +87,7 @@ Statuses are as audited on 22 November 2026, on `main` with a second Dubplate ru
 
 **T7 Key lock.** Status: **Done.**
 
-**T8 Key shift and key sync.** Status: key shift **Done** (Key Shift and Keyboard pad modes); key sync **Missing** ([inventory 24](feature-inventory.md#top-40-gaps)).
+**T8 Key shift and key sync.** Status: key shift **Done** (Key Shift and Keyboard pad modes); key sync **Done**: the deck's Key sync button or Option+K (Shift+Option+K for deck B) moves the key to the other deck's Camelot number, the same key or its relative, by the fewest semitones, and lights while it holds; a second press puts the track's own key back.
 
 **T9 Tap tempo.** Status: **Done.**
 
