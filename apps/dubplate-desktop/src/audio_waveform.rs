@@ -395,7 +395,7 @@ mod tests {
         let zoomed = ZoomedWaveform::from_waveforms(&waveforms, Zoom::DEFAULT).unwrap();
         assert_eq!(zoomed.columns().len(), 300);
         let overview = OverviewWaveform::from_waveforms(&waveforms).unwrap();
-        assert!(overview.bars(100).iter().all(|level| *level > 0.9));
+        assert!(overview.bars(100).iter().all(|level| level.loudest() > 0.9));
     }
 
     #[test]
