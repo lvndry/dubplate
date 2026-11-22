@@ -1,20 +1,14 @@
 //! Level control shared by the effects that add a trail on top of the music: echo, ping-pong
 //! and reverb.
 //!
-//! Three pieces keep those effects at club-safe levels without touching the dry signal:
-//!
-//! - [`loop_loudness_gain`] scales a trail by its feedback, so the knob that sets how long the
-//!   trail lasts does not also set how loud it is.
+//! - [`loop_loudness_gain`] measures how much a trail piles up at a given feedback, so the knob
+//!   that sets how long the trail lasts does not also make it boom.
 //! - [`FeedbackGovernor`] lowers the feedback whenever the trail would build up past the level of
 //!   the music that went in.
-//! - [`Headroom`] holds the trail under whatever room the dry signal leaves below full scale.
+//!
+//! The master limiter, not the effects, keeps the mix from clipping.
 
 use crate::dsp::shaping::flush_denormal;
-
-/// The loudest the dry and wet signals may add up to: -0.3 dBFS, just under full scale.
-const HEADROOM_CEILING: f32 = 0.966;
-const HEADROOM_HOLD_SECONDS: f32 = 0.02;
-const HEADROOM_RELEASE_SECONDS: f32 = 0.06;
 
 const GOVERNOR_HOLD_MARGIN_SECONDS: f32 = 0.05;
 const GOVERNOR_REFERENCE_RELEASE_SECONDS: f32 = 4.0;
@@ -158,66 +152,9 @@ impl FeedbackGovernor {
     }
 }
 
-/// Holds an effect's trail under the room the dry signal leaves below [`HEADROOM_CEILING`].
-///
-/// It follows the peak level of the dry and of the trail on each channel and picks the one wet
-/// gain for both channels that keeps `dry + wet` under the ceiling, so the dry signal is never
-/// touched and the stereo image never shifts. The trail is pushed down at once when a peak
-/// arrives, usually a kick, and comes back over about a tenth of a second, so the repeats
-/// bloom in the gaps between beats.
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct Headroom {
-    dry: [PeakFollower; 2],
-    wet: [PeakFollower; 2],
-}
-
-impl Headroom {
-    pub(crate) const fn new() -> Self {
-        Self {
-            dry: [PeakFollower::new(); 2],
-            wet: [PeakFollower::new(); 2],
-        }
-    }
-
-    pub(crate) fn prepare(&mut self, sample_rate: f32) {
-        for follower in self.dry.iter_mut().chain(&mut self.wet) {
-            follower.prepare(HEADROOM_HOLD_SECONDS, HEADROOM_RELEASE_SECONDS, sample_rate);
-        }
-    }
-
-    pub(crate) fn reset(&mut self) {
-        for follower in self.dry.iter_mut().chain(&mut self.wet) {
-            follower.reset();
-        }
-    }
-
-    /// Returns `wanted_gain`, lowered as far as needed for `dry * dry_gain + wet * gain` to stay
-    /// under the ceiling on both channels. It updates the peak followers and returns the clamped
-    /// gain for the wet signal.
-    #[inline]
-    pub(crate) fn limit_wet_gain(
-        &mut self,
-        dry: [f32; 2],
-        dry_gain: f32,
-        wet: [f32; 2],
-        wanted_gain: f32,
-    ) -> f32 {
-        let mut gain = wanted_gain;
-        for channel in 0..2 {
-            let dry_level = self.dry[channel].next(dry[channel].abs()) * dry_gain;
-            let wet_level = self.wet[channel].next(wet[channel].abs());
-            let room = (HEADROOM_CEILING - dry_level).max(0.0);
-            if wet_level * gain > room {
-                gain = room / wet_level;
-            }
-        }
-        gain
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{FeedbackGovernor, HEADROOM_CEILING, Headroom, PeakFollower, loop_loudness_gain};
+    use super::{FeedbackGovernor, PeakFollower, loop_loudness_gain};
 
     const SAMPLE_RATE: f32 = 48_000.0;
 
@@ -260,23 +197,5 @@ mod tests {
             gain = governor.next(0.8, 1.6);
         }
         assert!((gain - 0.5).abs() < 0.01, "gain {gain}");
-    }
-
-    #[test]
-    fn headroom_keeps_the_sum_under_the_ceiling() {
-        let mut headroom = Headroom::new();
-        headroom.prepare(SAMPLE_RATE);
-        let gain = headroom.limit_wet_gain([0.9, -0.2], 1.0, [0.5, 0.1], 1.0);
-        assert!(0.9 + 0.5 * gain <= HEADROOM_CEILING + 1e-6);
-        let mut headroom = Headroom::new();
-        headroom.prepare(SAMPLE_RATE);
-        assert_eq!(
-            headroom.limit_wet_gain([0.2, 0.2], 1.0, [0.3, 0.3], 1.0),
-            1.0
-        );
-        assert_eq!(
-            headroom.limit_wet_gain([1.0, 0.0], 1.0, [0.3, 0.3], 1.0),
-            0.0
-        );
     }
 }

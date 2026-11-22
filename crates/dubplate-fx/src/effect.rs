@@ -5,6 +5,7 @@ use crate::beat::BeatLength;
 use crate::config::EffectConfig;
 use crate::context::ProcessContext;
 use crate::effects::backspin::Backspin;
+use crate::effects::beat_filter::BeatFilter;
 use crate::effects::brake::Brake;
 use crate::effects::crusher::Crusher;
 use crate::effects::echo::Echo;
@@ -14,7 +15,10 @@ use crate::effects::gate::Gate;
 use crate::effects::phaser::Phaser;
 use crate::effects::ping_pong::PingPong;
 use crate::effects::reverb::Reverb;
-use crate::effects::sweep::SweepFilter;
+
+/// The name the beat filter had when it was the mixer's one-knob filter, still read from saved
+/// settings.
+const FORMER_FILTER_NAME: &str = "sweep";
 
 /// A DJ effect that processes stereo audio in place on the audio thread.
 ///
@@ -82,8 +86,8 @@ pub enum EffectKind {
     HighPass,
     /// A resonant band-pass filter.
     BandPass,
-    /// The one-knob filter of a DJ mixer: low-pass to the left, high-pass to the right.
-    SweepFilter,
+    /// A low-pass filter that sweeps down and back up in time with the beat.
+    Filter,
     /// A beat-synced jet flanger.
     Flanger,
     /// A beat-synced phaser.
@@ -104,7 +108,7 @@ impl EffectKind {
         Self::Echo,
         Self::PingPong,
         Self::Reverb,
-        Self::SweepFilter,
+        Self::Filter,
         Self::LowPass,
         Self::HighPass,
         Self::BandPass,
@@ -125,7 +129,7 @@ impl EffectKind {
             Self::LowPass => "low-pass",
             Self::HighPass => "high-pass",
             Self::BandPass => "band-pass",
-            Self::SweepFilter => "sweep",
+            Self::Filter => "filter",
             Self::Flanger => "flanger",
             Self::Phaser => "phaser",
             Self::Gate => "gate",
@@ -171,7 +175,11 @@ impl FromStr for EffectKind {
     type Err = ParseEffectKindError;
 
     fn from_str(text: &str) -> Result<Self, Self::Err> {
-        let wanted = text.trim().to_ascii_lowercase();
+        let lowercase = text.trim().to_ascii_lowercase();
+        let wanted = match lowercase.as_str() {
+            FORMER_FILTER_NAME => Self::Filter.name(),
+            other => other,
+        };
         Self::ALL
             .into_iter()
             .find(|kind| kind.name() == wanted)
@@ -192,7 +200,7 @@ pub fn create(kind: EffectKind, config: &EffectConfig) -> Box<dyn Effect> {
         EffectKind::LowPass => Box::new(Filter::new(FilterMode::LowPass)),
         EffectKind::HighPass => Box::new(Filter::new(FilterMode::HighPass)),
         EffectKind::BandPass => Box::new(Filter::new(FilterMode::BandPass)),
-        EffectKind::SweepFilter => Box::new(SweepFilter::new()),
+        EffectKind::Filter => Box::new(BeatFilter::new()),
         EffectKind::Flanger => Box::new(Flanger::new(config)),
         EffectKind::Phaser => Box::new(Phaser::new()),
         EffectKind::Gate => Box::new(Gate::new()),
@@ -212,5 +220,6 @@ mod tests {
             assert_eq!(kind.name().parse::<EffectKind>(), Ok(kind));
         }
         assert!("wah".parse::<EffectKind>().is_err());
+        assert_eq!("sweep".parse::<EffectKind>(), Ok(EffectKind::Filter));
     }
 }
