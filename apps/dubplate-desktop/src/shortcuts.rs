@@ -299,7 +299,10 @@ pub fn help_sections() -> Vec<HelpSection> {
             title: "Library",
             lines: vec![
                 line(&["up", "down"], "Select the previous / next track"),
-                line(&["/", "cmd-f"], "Search titles and artists"),
+                line(
+                    &["/", "cmd-f"],
+                    "Search titles, artists, genres, folders and comments",
+                ),
                 line(
                     &["shift-left", "shift-right"],
                     "Load the selected track on deck A / deck B",

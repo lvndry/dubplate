@@ -45,6 +45,6 @@ pub use session::{SetCompletion, SetJob, SetSession, SetSessionError};
 pub use store::{
     CueSource, EqIntent, Seam, SeamStatus, Set, SetEntry, SetId, SetList, SetStore, StoreError,
 };
-pub use suggestion::{Suggestion, suggest_next};
+pub use suggestion::{KeyFit, Suggestion, suggest_next};
 pub use track::PrepTrack;
 pub use warnings::{SetTrack, SetWarning, WarningKind, WarningPosition, set_warnings};

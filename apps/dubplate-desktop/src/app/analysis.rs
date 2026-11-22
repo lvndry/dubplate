@@ -141,6 +141,7 @@ impl DubplateApp {
         self.refresh_prepare_view(cx);
         self.browser
             .update(cx, |browser, cx| browser.add_analyses(answered, cx));
+        self.refresh_filter_reference(cx);
         cx.notify();
     }
 

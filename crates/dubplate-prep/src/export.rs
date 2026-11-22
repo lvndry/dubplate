@@ -488,6 +488,8 @@ pub fn folder_track(found: &LibraryTrack) -> Track {
         title: found.title.clone(),
         artist: found.artist.clone(),
         album: found.album.clone(),
+        genre: found.genre.clone(),
+        comment: found.comment.clone(),
         key: found.key.clone(),
         bpm: found.bpm.map(f64::from),
         length_seconds: found

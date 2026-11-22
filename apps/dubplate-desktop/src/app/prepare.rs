@@ -393,6 +393,7 @@ impl DubplateApp {
         self.prepare_focus = PrepareFocus::Set;
         self.next_cursor = 0;
         self.refresh_prepare_view(cx);
+        self.refresh_filter_reference(cx);
         self.ensure_track_detail(cx);
         cx.notify();
     }
@@ -413,6 +414,7 @@ impl DubplateApp {
         self.next_cursor = 0;
         self.reveal_set_selection();
         self.refresh_prepare_view(cx);
+        self.refresh_filter_reference(cx);
     }
 
     /// Each track row is followed by its seam; reveal keyboard and insertion selections.
@@ -526,6 +528,7 @@ impl DubplateApp {
         });
         self.check_set_tracks(cx);
         self.reveal_set_selection();
+        self.refresh_filter_reference(cx);
         self.ensure_track_detail(cx);
         self.request_set_analysis(cx);
         self.refresh_prepare_view(cx);

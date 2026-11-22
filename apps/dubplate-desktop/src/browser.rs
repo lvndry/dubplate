@@ -1,5 +1,6 @@
 //! The browser: the crates on the left and the tracks of the chosen crate on the right, filtered
-//! by the search field. It asks the window to load tracks through [`BrowserEvent`].
+//! by the search field and the quick filters, and sorted by the column the DJ clicked. It asks
+//! the window to load tracks through [`BrowserEvent`].
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -16,14 +17,17 @@ use gpui::{
 };
 
 use crate::analysis::{AnalysisAnswer, AnalysisState, bpm_cell, energy_cell, key_cell};
-use crate::assets::SEARCH_ICON_PATH;
+use crate::assets::{ARROW_DOWN_PATH, ARROW_UP_PATH, CLOSE_ICON_PATH, SEARCH_ICON_PATH};
 use crate::collection::{Collection, CollectionTrack, CrateIndex, CrateKind, TrackIndex};
-use crate::commands::Direction;
+use crate::commands::{Direction, Mode};
 use crate::deck::deck_letter;
 use crate::fonts::MONO_FAMILY;
+use crate::library_view::{
+    BpmRange, Column, FilterReference, LibraryView, RangeEnd, Sort, SortDirection,
+};
 use crate::search::{SearchQuery, filter_tracks};
 use crate::theme;
-use crate::widgets::{Emphasis, InteractiveControl, button};
+use crate::widgets::{Emphasis, InteractiveControl, button, tooltip};
 
 const ROW_HEIGHT: Pixels = px(32.0);
 const SIDEBAR_WIDTH: Pixels = px(200.0);
@@ -31,11 +35,14 @@ const BPM_WIDTH: Pixels = px(72.0);
 const KEY_WIDTH: Pixels = px(56.0);
 const ENERGY_WIDTH: Pixels = px(64.0);
 const TIME_WIDTH: Pixels = px(64.0);
-const SOURCE_WIDTH: Pixels = px(96.0);
-/// How the spare width is shared: titles are the longest text in a row, so the title takes half
-/// again as much as the artist.
+const SOURCE_WIDTH: Pixels = px(88.0);
+/// How the spare width is shared: titles are the longest text in a row, so the title takes the
+/// most; the genre gets room for a folder and its subfolder, such as `afro house / warmup`.
 const TITLE_SHARE: f32 = 3.0;
-const ARTIST_SHARE: f32 = 2.0;
+const ARTIST_SHARE: f32 = 1.5;
+const GENRE_SHARE: f32 = 2.0;
+const FILTER_BAR_HEIGHT: Pixels = px(40.0);
+const FILTER_HEIGHT: Pixels = px(28.0);
 const LOAD_WIDTH: Pixels = px(84.0);
 /// What the source column says of a track whose file is not where rekordbox says it is.
 const MISSING_SOURCE: &str = "File missing";
@@ -72,6 +79,13 @@ pub enum BrowserEvent {
     RelinkAll,
     /// Find the moved file of one missing track.
     Relink(TrackIndex),
+    /// The DJ sorted a screen's tracks by another column, or went back to the crate's order.
+    Sorted {
+        /// The screen.
+        screen: Mode,
+        /// The new sort.
+        sort: Option<Sort>,
+    },
 }
 
 /// Which side of the browser a controller's browse knob moves through, as rekordbox's tree view
@@ -115,10 +129,12 @@ pub struct Browser {
     crate_index: CrateIndex,
     query: SearchQuery,
     rows: Vec<TrackIndex>,
+    searched_count: usize,
     selected: Option<TrackIndex>,
     pane: BrowserPane,
     in_set: Arc<HashSet<TrackIndex>>,
-    shows_load: bool,
+    screen: Mode,
+    view: LibraryView,
     missing: Arc<HashSet<TrackIndex>>,
     relinking: bool,
     analyses: HashMap<PathBuf, Result<Arc<AudioAnalysis>, String>>,
@@ -152,10 +168,12 @@ impl Browser {
             crate_index: CrateIndex::COLLECTION,
             query: SearchQuery::default(),
             rows: Vec::new(),
+            searched_count: 0,
             selected: None,
             pane: BrowserPane::default(),
             in_set: Arc::default(),
-            shows_load: true,
+            screen: Mode::Perform,
+            view: LibraryView::default(),
             missing: Arc::default(),
             relinking: false,
             analyses: HashMap::new(),
@@ -204,6 +222,10 @@ impl Browser {
     /// Shows completed analyses, retaining the error when a track could not be analysed.
     pub fn add_analyses(&mut self, analyses: Vec<AnalysisAnswer>, cx: &mut Context<'_, Self>) {
         self.analyses.extend(analyses);
+        let reads_analysis = |column| matches!(column, Column::Bpm | Column::Key | Column::Energy);
+        if self.sort().is_some_and(|sort| reads_analysis(sort.column)) || self.view.is_filtered() {
+            self.refilter(cx);
+        }
         cx.notify();
     }
 
@@ -237,21 +259,137 @@ impl Browser {
     ) {
         self.missing = missing;
         self.relinking = relinking;
+        if self
+            .sort()
+            .is_some_and(|sort| sort.column == Column::Source)
+        {
+            self.refilter(cx);
+        }
         cx.notify();
     }
 
-    /// Shows or hides the load buttons, which only make sense where the decks are.
-    pub fn show_load_buttons(&mut self, shown: bool, cx: &mut Context<'_, Self>) {
-        if self.shows_load != shown {
-            self.shows_load = shown;
-            cx.notify();
+    /// Shows the tracks as `screen` has them: sorted its way, with the load buttons only where
+    /// the decks are.
+    pub fn show_screen(&mut self, screen: Mode, cx: &mut Context<'_, Self>) {
+        if self.screen == screen {
+            return;
+        }
+        let resort = self.view.sort(self.screen) != self.view.sort(screen);
+        self.screen = screen;
+        if resort {
+            self.refilter(cx);
+            self.reveal_selection();
+        }
+        cx.notify();
+    }
+
+    /// Sorts `screen`'s tracks by `sort`, as the DJ left them.
+    pub fn restore_sort(&mut self, screen: Mode, sort: Option<Sort>, cx: &mut Context<'_, Self>) {
+        self.view.set_sort(screen, sort);
+        if screen == self.screen {
+            self.refilter(cx);
+        }
+    }
+
+    /// The track the quick filters start from, when there is one.
+    pub fn set_filter_reference(
+        &mut self,
+        reference: Option<FilterReference>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if reference.is_none() || self.view.reference() == reference.as_ref() {
+            return;
+        }
+        if self.view.set_reference(reference) {
+            self.refilter(cx);
+        }
+        cx.notify();
+    }
+
+    fn sort(&self) -> Option<Sort> {
+        self.view.sort(self.screen)
+    }
+
+    fn click_header(&mut self, column: Column, cx: &mut Context<'_, Self>) {
+        let sort = Sort::after_click(self.sort(), column);
+        self.view.set_sort(self.screen, sort);
+        cx.emit(BrowserEvent::Sorted {
+            screen: self.screen,
+            sort,
+        });
+        self.refilter(cx);
+        self.reveal_selection();
+    }
+
+    fn toggle_bpm_filter(&mut self, cx: &mut Context<'_, Self>) {
+        let selected_bpm = self.selected_bpm();
+        self.view.toggle_bpm_range(selected_bpm);
+        self.refilter(cx);
+        self.reveal_selection();
+    }
+
+    /// The selected track's tempo, where a BPM range starts when there is no reference.
+    fn selected_bpm(&self) -> Option<f64> {
+        let LibraryStatus::Ready(collection) = &self.library else {
+            return None;
+        };
+        let track = self.selected?;
+        BpmRange::tempo_of(&self.cell_text(collection.track(track), track, Column::Bpm))
+    }
+
+    fn step_bpm_range(&mut self, end: RangeEnd, direction: Direction, cx: &mut Context<'_, Self>) {
+        self.view.step_bpm_range(end, direction);
+        self.refilter(cx);
+        self.reveal_selection();
+    }
+
+    fn toggle_key_filter(&mut self, cx: &mut Context<'_, Self>) {
+        self.view.toggle_key_filter();
+        self.refilter(cx);
+        self.reveal_selection();
+    }
+
+    /// What a track's cell in `column` says. Sorting and the quick filters read the same text,
+    /// so they always agree with what the table shows.
+    fn cell_text(
+        &self,
+        entry: &CollectionTrack,
+        track: TrackIndex,
+        column: Column,
+    ) -> SharedString {
+        let row = &entry.row;
+        match column {
+            Column::Title => row.title.clone(),
+            Column::Artist => row.artist.clone(),
+            Column::Genre => row.genre.clone(),
+            Column::Bpm => bpm_cell(entry, self.analysis_state(entry)),
+            Column::Key => key_cell(entry, self.analysis_state(entry)),
+            Column::Energy => energy_cell(self.analysis_state(entry)),
+            Column::Time => row.time.clone(),
+            Column::Source => {
+                if self.missing.contains(&track) {
+                    MISSING_SOURCE.into()
+                } else {
+                    row.source.clone()
+                }
+            }
+        }
+    }
+
+    /// Scrolls the selected track into the middle of the table.
+    fn reveal_selection(&self) {
+        if let Some(position) = self
+            .selected
+            .and_then(|track| self.rows.iter().position(|row| *row == track))
+        {
+            self.scroll.scroll_to_item(position, ScrollStrategy::Center);
         }
     }
 
     /// What the last column holds: the load buttons where the decks are, otherwise only Relink
     /// on tracks whose files are missing, or nothing.
     fn actions(&self) -> Actions {
-        if self.shows_load {
+        if self.screen == Mode::Perform {
             Actions::Load
         } else if self.missing.is_empty() {
             Actions::None
@@ -361,12 +499,18 @@ impl Browser {
     }
 
     fn refilter(&mut self, cx: &mut Context<'_, Self>) {
-        self.rows = match &self.library {
-            LibraryStatus::Ready(collection) => {
-                filter_tracks(collection, self.crate_index, &self.query)
-            }
-            LibraryStatus::Reading | LibraryStatus::Unchosen => Vec::new(),
+        let LibraryStatus::Ready(collection) = self.library.clone() else {
+            self.rows = Vec::new();
+            self.searched_count = 0;
+            cx.notify();
+            return;
         };
+        let mut rows = filter_tracks(&collection, self.crate_index, &self.query);
+        self.searched_count = rows.len();
+        self.view.apply(self.screen, &mut rows, |track, column| {
+            self.cell_text(collection.track(track), track, column)
+        });
+        self.rows = rows;
         if self
             .selected
             .is_none_or(|selected| !self.rows.contains(&selected))
@@ -448,6 +592,8 @@ impl Browser {
     ) -> impl IntoElement {
         let empty_message: Option<SharedString> = if !self.rows.is_empty() {
             None
+        } else if self.searched_count > 0 {
+            Some("No track matches the filters.".into())
         } else if !self.query.is_empty() {
             Some("No track matches the search.".into())
         } else {
@@ -458,7 +604,7 @@ impl Browser {
             .id("track-table")
             .role(gpui::Role::Grid)
             .aria_row_count(self.rows.len() + 1)
-            .aria_column_count(if self.actions() == Actions::None { 7 } else { 8 })
+            .aria_column_count(Column::ALL.len() + usize::from(self.actions() != Actions::None))
             .aria_label("Library tracks")
             .aria_description("Use Up and Down to select a track. Full title and artist appear below the list. Shift Left or Shift Right loads a deck.")
             .tab_index(0)
@@ -476,10 +622,11 @@ impl Browser {
                     window.focus(&this.table_focus, cx);
                 }),
             )
+            .child(self.render_filters(cx))
             .when(!self.missing.is_empty(), |table| {
                 table.child(missing_bar(self.missing.len(), self.relinking, cx))
             })
-            .child(header_row(self.actions()))
+            .child(self.render_header(cx))
             .map(|table| match empty_message {
                 Some(message) => table.child(
                     div()
@@ -544,6 +691,188 @@ impl Browser {
             })
     }
 
+    /// The quick filters above the tracks, and how many tracks they leave.
+    fn render_filters(&self, cx: &mut Context<'_, Self>) -> impl IntoElement + use<> {
+        let count = if self.view.is_filtered() {
+            format!("{} of {}", self.rows.len(), self.searched_count)
+        } else {
+            let count = self.rows.len();
+            format!("{count} track{}", if count == 1 { "" } else { "s" })
+        };
+        div()
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap(px(8.0))
+            .h(FILTER_BAR_HEIGHT)
+            .px(theme::GUTTER)
+            .border_b_1()
+            .border_color(theme::LINE)
+            .child(self.bpm_filter(cx))
+            .child(self.key_filter(cx))
+            .child(div().flex_1())
+            .child(
+                div()
+                    .flex_none()
+                    .font_family(MONO_FAMILY)
+                    .text_size(theme::TINY_TEXT_SIZE)
+                    .text_color(theme::MUTED)
+                    .child(count),
+            )
+    }
+
+    /// BPM, which turns on a range around the reference track, then its two ends to step.
+    fn bpm_filter(&self, cx: &mut Context<'_, Self>) -> impl IntoElement + use<> {
+        let range = self.view.bpm_range();
+        let toggle = filter_chip("bpm-filter", "BPM", range.is_some())
+            .tooltip(tooltip(if range.is_some() {
+                "Show every tempo"
+            } else {
+                "Only tracks in a tempo range, a few BPM either side of the selected track"
+            }))
+            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.toggle_bpm_filter(cx)));
+        let Some(range) = range else {
+            return toggle.into_any_element();
+        };
+        div()
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap(px(2.0))
+            .h(FILTER_HEIGHT)
+            .pr(px(2.0))
+            .rounded(theme::CONTROL_RADIUS)
+            .border_1()
+            .border_color(theme::LINE)
+            .bg(theme::PANEL)
+            .child(toggle.border_0())
+            .child(bpm_stepper(RangeEnd::Lowest, range.lowest, cx))
+            .child(div().text_color(theme::MUTED).child("\u{2013}"))
+            .child(bpm_stepper(RangeEnd::Highest, range.highest, cx))
+            .child(clear_button(
+                "bpm-filter-clear",
+                cx.listener(|this, _: &ClickEvent, _, cx| this.toggle_bpm_filter(cx)),
+            ))
+            .into_any_element()
+    }
+
+    /// Key fits: only the tracks whose key follows the reference track's as the Next
+    /// suggestions would have it.
+    fn key_filter(&self, cx: &mut Context<'_, Self>) -> impl IntoElement + use<> {
+        let reference_key = self
+            .view
+            .reference()
+            .and_then(|reference| Some((reference, reference.key?.reference())));
+        let on = self.view.key_filter_on() && reference_key.is_some();
+        let explanation: SharedString = match reference_key {
+            Some((reference, key)) => format!(
+                "Only tracks whose key mixes well after {} ({}): the same key, one step on \
+                 the wheel, or the relative key",
+                reference.title,
+                key.camelot()
+            )
+            .into(),
+            None => "Select a set track with a key, or play a deck, to see what fits it".into(),
+        };
+        filter_chip("key-filter", "Key fits", on)
+            .when_some(reference_key, |chip, (_, key)| {
+                chip.child(
+                    div()
+                        .font_family(MONO_FAMILY)
+                        .text_size(theme::TINY_TEXT_SIZE)
+                        .child(key.camelot()),
+                )
+            })
+            .when(reference_key.is_none(), |chip| {
+                chip.opacity(0.5).cursor_default().tab_stop(false)
+            })
+            .tooltip(tooltip(explanation))
+            .when(reference_key.is_some(), |chip| {
+                chip.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                    this.toggle_key_filter(cx);
+                }))
+            })
+    }
+
+    fn render_header(&self, cx: &mut Context<'_, Self>) -> impl IntoElement + use<> {
+        let actions = self.actions();
+        let sort = self.sort();
+        div()
+            .id("library-column-headers")
+            .role(gpui::Role::Row)
+            .aria_row_index(1)
+            .flex()
+            .flex_none()
+            .items_center()
+            .h(px(30.0))
+            .text_size(theme::SMALL_TEXT_SIZE)
+            .text_color(theme::MUTED)
+            .font_weight(gpui::FontWeight::MEDIUM)
+            .children(Column::ALL.map(|column| {
+                let direction = sort
+                    .filter(|sort| sort.column == column)
+                    .map(|sort| sort.direction);
+                let arrow = direction.map(|direction| {
+                    svg()
+                        .path(match direction {
+                            SortDirection::Ascending => ARROW_UP_PATH,
+                            SortDirection::Descending => ARROW_DOWN_PATH,
+                        })
+                        .size(px(11.0))
+                        .flex_none()
+                        .text_color(theme::TEXT)
+                });
+                let label = div().truncate().child(column.label());
+                column_box(column)
+                    .id(("sort", column as usize))
+                    .accessible_button(match direction {
+                        Some(SortDirection::Ascending) => {
+                            format!("Sort by {}, ascending", column.label())
+                        }
+                        Some(SortDirection::Descending) => {
+                            format!("Sort by {}, descending", column.label())
+                        }
+                        None => format!("Sort by {}", column.label()),
+                    })
+                    .role(gpui::Role::ColumnHeader)
+                    .aria_column_index(column as usize + 1)
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .h_full()
+                    .gap(px(4.0))
+                    .when(column == Column::Title, |header| header.pl(px(22.0)))
+                    .cursor_pointer()
+                    .hover(|header| header.text_color(theme::TEXT))
+                    .when(direction.is_some(), |header| header.text_color(theme::TEXT))
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        this.click_header(column, cx);
+                    }))
+                    .map(|header| {
+                        if column.is_numeric() {
+                            header.children(arrow).child(label)
+                        } else {
+                            header.child(label).children(arrow)
+                        }
+                    })
+            }))
+            .when(actions != Actions::None, |row| {
+                row.child(
+                    div()
+                        .id("action-column-header")
+                        .role(gpui::Role::ColumnHeader)
+                        .aria_column_index(Column::ALL.len() + 1)
+                        .aria_label("Track actions")
+                        .flex()
+                        .items_center()
+                        .justify_end()
+                        .h_full()
+                        .w(LOAD_WIDTH)
+                        .flex_none()
+                        .pr(theme::GUTTER)
+                        .child(if actions == Actions::Load { "Load" } else { "" }),
+                )
+            })
+    }
+
     fn render_row(
         &self,
         collection: &Collection,
@@ -552,29 +881,19 @@ impl Browser {
         cx: &mut Context<'_, Self>,
     ) -> impl IntoElement + use<> {
         let entry = collection.track(track);
-        let row = &entry.row;
         let actions = self.actions();
-        let analysis = self.analysis_state(entry);
         let selected = self.selected == Some(track);
         let missing = self.missing.contains(&track);
+        let in_set = self.in_set.contains(&track);
         let dragged = DraggedTrack {
             track,
-            title: row.title.clone(),
+            title: entry.row.title.clone(),
         };
         div()
             .id(("track", position))
             .role(gpui::Role::Row)
             .aria_row_index(position + 2)
-            .aria_label(format!(
-                "{} by {}. BPM {}. Key {}. Energy {}. Duration {}. {}",
-                row.title,
-                row.artist,
-                bpm_cell(entry, analysis),
-                key_cell(entry, analysis),
-                energy_cell(analysis),
-                row.time,
-                row.source
-            ))
+            .aria_label(format!("{} by {}", entry.row.title, entry.row.artist))
             .aria_selected(selected)
             .aria_position_in_set(position + 1)
             .aria_size_of_set(self.rows.len())
@@ -604,108 +923,64 @@ impl Browser {
                 }),
             )
             .on_drag(dragged, |dragged, _, _, cx| cx.new(|_| dragged.clone()))
-            .child(
-                div()
-                    .id("title-cell")
+            .children(Column::ALL.map(|column| {
+                let text = self.cell_text(entry, track, column);
+                let cell = column_box(column)
+                    .id(("track-cell", column as usize))
                     .role(gpui::Role::Cell)
-                    .aria_column_index(1)
-                    .aria_label(row.title.clone())
-                    .flex()
-                    .items_center()
-                    .gap(px(8.0))
-                    .flex_basis(px(0.0))
-                    .flex_grow(TITLE_SHARE)
-                    .min_w_0()
-                    .pl(px(8.0))
-                    .pr(theme::GUTTER)
-                    .child(
-                        div()
-                            .size(px(6.0))
-                            .flex_none()
-                            .rounded_full()
-                            .when(self.in_set.contains(&track), |dot| dot.bg(theme::OK)),
-                    )
-                    .child(
-                        text_cell(row.title.clone())
-                            .min_w_0()
-                            .font_weight(gpui::FontWeight::MEDIUM)
-                            .when(missing, |title| title.text_color(theme::MUTED)),
-                    ),
-            )
-            .child(
-                text_cell(row.artist.clone())
-                    .id("artist-cell")
-                    .role(gpui::Role::Cell)
-                    .aria_column_index(2)
-                    .aria_label(row.artist.clone())
-                    .flex_basis(px(0.0))
-                    .flex_grow(ARTIST_SHARE)
-                    .min_w_0()
-                    .px(px(8.0))
-                    .text_color(theme::MUTED),
-            )
-            .child(
-                number_cell(bpm_cell(entry, analysis), BPM_WIDTH)
-                    .id("bpm-cell")
-                    .role(gpui::Role::Cell)
-                    .aria_column_index(3)
-                    .aria_label(bpm_cell(entry, analysis))
-                    .justify_end(),
-            )
-            .child(
-                number_cell(key_cell(entry, analysis), KEY_WIDTH)
-                    .id("key-cell")
-                    .role(gpui::Role::Cell)
-                    .aria_column_index(4)
-                    .aria_label(key_cell(entry, analysis)),
-            )
-            .child(
-                number_cell(energy_cell(analysis), ENERGY_WIDTH)
-                    .id("energy-cell")
-                    .role(gpui::Role::Cell)
-                    .aria_column_index(5)
-                    .aria_label(energy_cell(analysis))
-                    .justify_end(),
-            )
-            .child(
-                number_cell(row.time.clone(), TIME_WIDTH)
-                    .id("duration-cell")
-                    .role(gpui::Role::Cell)
-                    .aria_column_index(6)
-                    .aria_label(row.time.clone())
-                    .justify_end()
-                    .text_color(theme::MUTED),
-            )
-            .child(
-                text_cell(if missing {
-                    MISSING_SOURCE.into()
-                } else {
-                    row.source.clone()
-                })
-                .id("source-cell")
-                .role(gpui::Role::Cell)
-                .aria_column_index(7)
-                .aria_label(if missing {
-                    MISSING_SOURCE.into()
-                } else {
-                    row.source.clone()
-                })
-                .w(SOURCE_WIDTH)
-                .flex_none()
-                .px(px(8.0))
-                .text_size(theme::SMALL_TEXT_SIZE)
-                .text_color(if missing {
-                    theme::ATTENTION
-                } else {
-                    theme::MUTED
-                }),
-            )
+                    .aria_column_index(column as usize + 1)
+                    .aria_label(text.clone());
+                match column {
+                    Column::Title => cell
+                        .gap(px(8.0))
+                        .pl(px(8.0))
+                        .child(
+                            div()
+                                .size(px(6.0))
+                                .flex_none()
+                                .rounded_full()
+                                .when(in_set, |dot| dot.bg(theme::OK)),
+                        )
+                        .child(
+                            div()
+                                .truncate()
+                                .min_w_0()
+                                .font_weight(gpui::FontWeight::MEDIUM)
+                                .when(missing, |title| title.text_color(theme::MUTED))
+                                .child(text),
+                        ),
+                    Column::Artist => cell
+                        .text_color(theme::MUTED)
+                        .child(div().truncate().min_w_0().child(text)),
+                    Column::Genre => cell
+                        .text_size(theme::SMALL_TEXT_SIZE)
+                        .text_color(theme::MUTED)
+                        .child(div().truncate().min_w_0().child(text)),
+                    Column::Bpm | Column::Key | Column::Energy => cell
+                        .font_family(MONO_FAMILY)
+                        .text_size(theme::SMALL_TEXT_SIZE)
+                        .child(text),
+                    Column::Time => cell
+                        .font_family(MONO_FAMILY)
+                        .text_size(theme::SMALL_TEXT_SIZE)
+                        .text_color(theme::MUTED)
+                        .child(text),
+                    Column::Source => cell
+                        .text_size(theme::SMALL_TEXT_SIZE)
+                        .text_color(if missing {
+                            theme::ATTENTION
+                        } else {
+                            theme::MUTED
+                        })
+                        .child(div().truncate().min_w_0().child(text)),
+                }
+            }))
             .when(actions != Actions::None, |row| {
                 row.child(
                     div()
                         .id("actions-cell")
                         .role(gpui::Role::Cell)
-                        .aria_column_index(8)
+                        .aria_column_index(Column::ALL.len() + 1)
                         .aria_label("Track actions")
                         .flex()
                         .flex_none()
@@ -747,95 +1022,127 @@ fn offset(position: usize, steps: i32, count: usize) -> Option<usize> {
     Some(usize::try_from(moved.max(0)).ok()?.min(last))
 }
 
-fn header_row(actions: Actions) -> impl IntoElement {
-    let header = |label: &'static str| {
-        div()
-            .id(label)
-            .role(gpui::Role::ColumnHeader)
-            .aria_label(label)
-            .flex()
-            .items_center()
-            .h_full()
-            .whitespace_nowrap()
-            .child(label)
-    };
+/// The box a column's cells sit in, the same in the header and every row, so they line up.
+fn column_box(column: Column) -> gpui::Div {
+    let cell = div().flex().items_center().min_w_0().whitespace_nowrap();
+    let shared = |cell: gpui::Div, share: f32| cell.flex_basis(px(0.0)).flex_grow(share);
+    let fixed = |cell: gpui::Div, width: Pixels| cell.flex_none().w(width).px(px(8.0));
+    match column {
+        Column::Title => shared(cell, TITLE_SHARE).pr(theme::GUTTER),
+        Column::Artist => shared(cell, ARTIST_SHARE).px(px(8.0)),
+        Column::Genre => shared(cell, GENRE_SHARE).px(px(8.0)),
+        Column::Bpm => fixed(cell, BPM_WIDTH).justify_end(),
+        Column::Key => fixed(cell, KEY_WIDTH),
+        Column::Energy => fixed(cell, ENERGY_WIDTH).justify_end(),
+        Column::Time => fixed(cell, TIME_WIDTH).justify_end(),
+        Column::Source => fixed(cell, SOURCE_WIDTH),
+    }
+}
+
+/// A quick filter that is on or off, in the compact style of the effects strip.
+fn filter_chip(id: &'static str, label: &'static str, on: bool) -> gpui::Stateful<gpui::Div> {
     div()
-        .id("library-column-headers")
-        .role(gpui::Role::Row)
-        .aria_row_index(1)
+        .id(id)
+        .accessible_toggle(label, on)
         .flex()
         .flex_none()
         .items_center()
-        .h(px(30.0))
+        .gap(px(6.0))
+        .h(FILTER_HEIGHT)
+        .px(px(10.0))
+        .rounded(theme::CONTROL_RADIUS)
+        .border_1()
         .text_size(theme::SMALL_TEXT_SIZE)
-        .text_color(theme::MUTED)
-        .font_weight(gpui::FontWeight::MEDIUM)
-        .child(
-            header("Title")
-                .flex_basis(px(0.0))
-                .flex_grow(TITLE_SHARE)
-                .min_w_0()
-                .pl(px(22.0))
-                .pr(theme::GUTTER),
-        )
-        .child(
-            header("Artist")
-                .flex_basis(px(0.0))
-                .flex_grow(ARTIST_SHARE)
-                .min_w_0()
-                .px(px(8.0)),
-        )
-        .child(
-            header("BPM")
-                .w(BPM_WIDTH)
-                .flex_none()
-                .px(px(8.0))
-                .justify_end(),
-        )
-        .child(header("Key").w(KEY_WIDTH).flex_none().px(px(8.0)))
-        .child(
-            header("Energy")
-                .w(ENERGY_WIDTH)
-                .flex_none()
-                .px(px(8.0))
-                .justify_end(),
-        )
-        .child(
-            header("Time")
-                .w(TIME_WIDTH)
-                .flex_none()
-                .px(px(8.0))
-                .justify_end(),
-        )
-        .child(header("Source").w(SOURCE_WIDTH).flex_none().px(px(8.0)))
-        .when(actions != Actions::None, |row| {
-            row.child(
-                header(if actions == Actions::Load {
-                    "Load"
-                } else {
-                    "Actions"
-                })
-                .w(LOAD_WIDTH)
-                .flex_none()
-                .pr(theme::GUTTER)
-                .justify_end(),
-            )
+        .cursor_pointer()
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .map(|chip| {
+            if on {
+                chip.border_color(theme::LINE)
+                    .bg(theme::RAISED)
+                    .text_color(theme::TEXT)
+                    .font_weight(gpui::FontWeight::MEDIUM)
+            } else {
+                chip.border_color(theme::LINE)
+                    .text_color(theme::MUTED)
+                    .hover(|chip| chip.text_color(theme::TEXT).bg(theme::PANEL))
+            }
         })
+        .child(label)
 }
 
-fn text_cell(text: SharedString) -> gpui::Div {
-    div().truncate().child(text)
-}
-
-fn number_cell(text: SharedString, width: Pixels) -> gpui::Div {
+/// One end of the BPM range with its arrows, as the effects strip steps a beat length.
+fn bpm_stepper(end: RangeEnd, bpm: u16, cx: &mut Context<'_, Browser>) -> impl IntoElement + use<> {
+    let arrow = |glyph: &'static str, direction: Direction| {
+        let index = match (end, direction) {
+            (RangeEnd::Lowest, Direction::Down) => 0_usize,
+            (RangeEnd::Lowest, Direction::Up) => 1,
+            (RangeEnd::Highest, Direction::Down) => 2,
+            (RangeEnd::Highest, Direction::Up) => 3,
+        };
+        div()
+            .id(("bpm-step", index))
+            .accessible_button(match (end, direction) {
+                (RangeEnd::Lowest, Direction::Down) => "Decrease minimum BPM",
+                (RangeEnd::Lowest, Direction::Up) => "Increase minimum BPM",
+                (RangeEnd::Highest, Direction::Down) => "Decrease maximum BPM",
+                (RangeEnd::Highest, Direction::Up) => "Increase maximum BPM",
+            })
+            .flex()
+            .items_center()
+            .justify_center()
+            .w(px(18.0))
+            .h(px(22.0))
+            .rounded(px(5.0))
+            .text_color(theme::MUTED)
+            .cursor_pointer()
+            .hover(|arrow| arrow.bg(theme::RAISED).text_color(theme::TEXT))
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                this.step_bpm_range(end, direction, cx);
+            }))
+            .child(glyph)
+    };
     div()
         .flex()
-        .flex_none()
-        .w(width)
-        .px(px(8.0))
-        .font_family(MONO_FAMILY)
-        .text_size(theme::SMALL_TEXT_SIZE)
-        .child(text)
+        .items_center()
+        .child(arrow("\u{2039}", Direction::Down))
+        .child(
+            div()
+                .min_w(px(28.0))
+                .flex()
+                .justify_center()
+                .font_family(MONO_FAMILY)
+                .text_size(theme::SMALL_TEXT_SIZE)
+                .child(bpm.to_string()),
+        )
+        .child(arrow("\u{203a}", Direction::Up))
+}
+
+/// The cross at the end of a filter that is on.
+fn clear_button(
+    id: &'static str,
+    on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+) -> impl IntoElement {
+    div()
+        .id(id)
+        .accessible_button("Clear BPM filter")
+        .flex()
+        .items_center()
+        .justify_center()
+        .size(px(22.0))
+        .rounded(px(5.0))
+        .text_color(theme::MUTED)
+        .cursor_pointer()
+        .hover(|button| button.bg(theme::RAISED).text_color(theme::TEXT))
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_click(on_click)
+        .tooltip(tooltip("Show every tempo"))
+        .child(
+            svg()
+                .path(CLOSE_ICON_PATH)
+                .size(px(12.0))
+                .text_color(theme::MUTED),
+        )
 }
 
 fn load_button(
