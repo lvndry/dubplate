@@ -2,7 +2,7 @@ use crate::beat::BeatLength;
 use crate::context::BlockTiming;
 use crate::dsp::smoothing::Smoothed;
 use crate::effect::EffectKind;
-use crate::unit::{Controls, Frame, Kernel, MixLaw, Unit, implement_effect, knob};
+use crate::unit::{Controls, Frame, Kernel, MixLaw, Unit, engaged, implement_effect, knob};
 
 const ATTACK_SECONDS: f32 = 0.000_8;
 const RELEASE_SECONDS: f32 = 0.003;
@@ -11,6 +11,9 @@ const MIN_LENGTH: f32 = 0.05;
 const CONTROL_SMOOTHING_SECONDS: f32 = 0.01;
 const DEFAULT_LENGTH: f32 = 0.5;
 const DEFAULT_DEPTH: f32 = 1.0;
+const FULL_CUT_DEPTH: f32 = 1.0 / 3.0;
+const WIDEST_DUTY: f32 = 0.75;
+const NARROWEST_DUTY: f32 = 1.0 / 3.0;
 
 /// A trance gate that chops the music in time with the beat grid.
 ///
@@ -18,7 +21,9 @@ const DEFAULT_DEPTH: f32 = 1.0;
 /// gate opens for the first part of each step, set by the length, with edges just soft enough
 /// not to click. A sixteen-step pattern can mute chosen steps.
 ///
-/// The depth knob sets how far the closed steps fall, from untouched to silent.
+/// The depth knob is the balance and the duty of the cut, as on a DJ mixer: the closed steps
+/// fall to silence over the first third of its travel, and the open part of each step shrinks
+/// from three quarters to a third across its whole travel, so the chop tightens as it turns.
 pub struct Gate {
     unit: Unit<GateKernel>,
 }
@@ -64,7 +69,8 @@ impl Controls for Gate {
     }
 
     fn apply_depth(&mut self, depth: f32) {
-        self.set_gate_depth(depth);
+        self.set_gate_depth(engaged(depth, FULL_CUT_DEPTH));
+        self.set_length(WIDEST_DUTY + (NARROWEST_DUTY - WIDEST_DUTY) * depth);
     }
 
     fn apply_beat(&mut self, beat: BeatLength) {

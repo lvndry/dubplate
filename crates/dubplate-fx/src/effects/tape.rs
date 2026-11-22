@@ -7,21 +7,24 @@ use crate::dsp::shaping::saturate;
 const REPEAT_LOW_PASS_HZ: f32 = 6_500.0;
 const REPEAT_HIGH_PASS_HZ: f32 = 90.0;
 const LOUDNESS_KEPT_PER_PASS: f32 = 0.9;
-const TRAIL_LEVEL: f32 = 0.7;
+const SHORTEST_FEEDBACK: f32 = 0.5;
+const LONGEST_FEEDBACK: f32 = 0.8;
 
-/// Where the depth knob of the echo and the ping-pong delay starts: a trail that is clearly
-/// heard but sits under the music.
-pub(crate) const DEFAULT_DEPTH: f32 = 0.6;
+/// Where the depth knob of the echo and the ping-pong delay starts: the echo as loud as the
+/// music, on top of it.
+pub(crate) const DEFAULT_DEPTH: f32 = 0.5;
 
-/// The mix the depth knob of the echo and the ping-pong delay sets: up to the middle of the
-/// knob, where the trail plays at its full level and the music still plays at its own.
+/// The mix the depth knob of the echo and the ping-pong delay sets: the knob is the balance of
+/// the original and the echo, as on a DJ mixer. At a quarter the first repeat plays 12 dB under
+/// the music, in the middle both play at full level, and at the end only the echo plays.
 pub(crate) const fn mix_for_depth(depth: f32) -> f32 {
-    0.5 * depth
+    depth
 }
 
-/// The feedback the depth knob of the echo and the ping-pong delay sets, from 0.35 to 0.85.
+/// The feedback the depth knob of the echo and the ping-pong delay sets, from 0.5 to 0.8: the
+/// further the knob, the longer the trail.
 pub(crate) const fn feedback_for_depth(depth: f32) -> f32 {
-    0.35 + 0.5 * depth
+    SHORTEST_FEEDBACK + (LONGEST_FEEDBACK - SHORTEST_FEEDBACK) * depth
 }
 
 /// Ages each echo repeat like tape: a little darker, a little thinner, gently saturated.
@@ -76,11 +79,10 @@ pub(crate) fn read_taps(line: &DelayLine, taps: &DelayTaps) -> f32 {
 
 /// The feedback and output level of a trail of repeats.
 ///
-/// The output is scaled by the feedback so a trail sounds about as loud at any feedback: more
-/// feedback makes it last longer, not louder. The scaling matches the trail's power, not its
-/// peak, and the Headroom stage is the peak safety net. The tape tone takes a little off every
-/// pass, so even full feedback leaves a finite trail to scale by. At full mix the trail plays
-/// about 3 dB under the music that feeds it. The feedback itself is governed so the repeats
+/// The first repeat plays at the level of the music that went in. The output takes back half of
+/// what a long trail piles up, in power, so more feedback makes the trail last longer and swell
+/// a little, without booming. The tape tone takes a little off every pass, so even full
+/// feedback leaves a finite trail to scale by. The feedback itself is governed so the repeats
 /// never build up past the music that went in.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct TrailLevel {
@@ -129,7 +131,7 @@ impl TrailLevel {
             feedback: feedback * self.governor.next(input_magnitude, trail_magnitude),
             // The knob's feedback, not the governed one: the buildup to compensate depends on the
             // intended loop gain.
-            output: TRAIL_LEVEL * loop_loudness_gain(feedback * LOUDNESS_KEPT_PER_PASS),
+            output: loop_loudness_gain(feedback * LOUDNESS_KEPT_PER_PASS).sqrt(),
         }
     }
 }
