@@ -40,10 +40,14 @@ pub const TEXT: Rgba = hex(0xEEEFF1);
 pub const MUTED: Rgba = hex(0x8A8F98);
 /// The playhead across both zoomed waveforms.
 pub const PLAYHEAD: Rgba = hex(0xFFFFFF);
-/// Beat lines on the zoomed waveforms.
-pub const BEAT_LINE: Rgba = white_alpha(0.05);
-/// Downbeat lines on the zoomed waveforms.
-pub const DOWNBEAT_LINE: Rgba = white_alpha(0.1);
+/// Beat lines over the zoomed waveforms.
+pub const BEAT_LINE: Rgba = white_alpha(0.16);
+/// Downbeat lines over the zoomed waveforms, bright enough to judge a bar against its kick.
+pub const DOWNBEAT_LINE: Rgba = white_alpha(0.55);
+/// Bar lines on a whole-track overview.
+pub const BAR_LINE: Rgba = white_alpha(0.05);
+/// Phrase lines on a whole-track overview, every eight bars.
+pub const PHRASE_LINE: Rgba = white_alpha(0.1);
 /// How much of its colour the part of a waveform already played keeps.
 pub const PLAYED_OPACITY: f32 = 0.32;
 /// The low band of a 3-band waveform.

@@ -216,13 +216,15 @@ pub(super) fn paint_lane(
     window: &mut Window,
 ) {
     let width = f32::from(bounds.size.width);
-    let height = f32::from(bounds.size.height);
     let zoom = zoomed.map_or(Zoom::DEFAULT, ZoomedWaveform::zoom);
     let view = LaneView {
         width,
         playhead_seconds,
         zoom,
     };
+    if let Some(zoomed) = zoomed {
+        paint_waveform(bounds, zoomed, &view, window);
+    }
     if let Some(beats) = beats {
         for mark in beats.within(view.seconds_on_screen()) {
             let colour = if mark.downbeat {
@@ -237,9 +239,17 @@ pub(super) fn paint_lane(
             window.paint_quad(fill(line, colour));
         }
     }
-    let Some(zoomed) = zoomed else {
-        return;
-    };
+}
+
+/// The waveform's columns, the part already played dimmed.
+fn paint_waveform(
+    bounds: Bounds<Pixels>,
+    zoomed: &ZoomedWaveform,
+    view: &LaneView,
+    window: &mut Window,
+) {
+    let width = f32::from(bounds.size.width);
+    let height = f32::from(bounds.size.height);
     let unplayed = BandColours::at_opacity(1.0);
     let played = BandColours::at_opacity(theme::PLAYED_OPACITY);
     let centre_x = width / 2.0;
