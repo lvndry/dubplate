@@ -2,7 +2,7 @@
 //! a fader or knob that no longer matches what it controls, after sync, Smart Fader or a move
 //! on the other surface, shows where it waits until the DJ moves it through.
 
-use dubplate_engine::{DeckId, EffectUnitId};
+use dubplate_engine::DeckId;
 
 use super::DubplateApp;
 use crate::controls::{Control, MixerPositions, tempo_slider_at};
@@ -52,13 +52,6 @@ impl DubplateApp {
                 .or(on_screen)
                 .filter(|waiting| (waiting - thumb).abs() > SHOWN_GAP),
         }
-    }
-
-    /// Where the BEAT FX LEVEL/DEPTH knob sits while it waits to reach `unit`'s level.
-    pub(super) fn depth_waiting(&self, unit: EffectUnitId, depth: f32) -> Option<f32> {
-        self.hardware
-            .as_ref()
-            .and_then(|hardware| hardware.dispatcher.depth_waiting(unit, depth))
     }
 
     /// The faders and knobs as the screen shows them, which the controller's pick-up compares

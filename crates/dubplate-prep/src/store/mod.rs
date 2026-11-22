@@ -6,11 +6,14 @@
 //! any path that is inside rekordbox's; migrations are tracked by `user_version`
 //! and an existing file is backed up before any migration runs on it.
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior};
 use thiserror::Error;
+
+use crate::grid::{GridCorrection, TrackGrid};
 
 mod history;
 mod types;
@@ -19,7 +22,7 @@ pub use history::{Play, PlayDeck, PlayId, RecordedPlay};
 pub use types::{CueSource, EqIntent, Seam, SeamStatus, Set, SetEntry, SetId, SetList};
 
 /// The highest schema version `MIGRATIONS` can bring a database to.
-const SCHEMA_VERSION: u32 = 3;
+const SCHEMA_VERSION: u32 = 4;
 
 /// One migration per schema version, index = target version - 1.
 const MIGRATIONS: &[&str] = &[
@@ -86,7 +89,23 @@ ALTER TABLE set_entry ADD COLUMN downbeat_shift INTEGER NOT NULL DEFAULT 0;
 PRAGMA user_version = 2;
 "#,
     r#"
-CREATE TABLE play_history_v3 (
+CREATE TABLE track_grid (
+    track_path TEXT PRIMARY KEY,
+    offset_ms INTEGER NOT NULL DEFAULT 0,
+    downbeat_shift INTEGER NOT NULL DEFAULT 0,
+    confirmed INTEGER NOT NULL DEFAULT 0
+);
+
+INSERT OR REPLACE INTO track_grid (track_path, offset_ms, downbeat_shift, confirmed)
+    SELECT entry.track_path, entry.grid_offset_ms, entry.downbeat_shift, entry.grid_confirmed
+    FROM set_entry AS entry JOIN sets ON sets.id = entry.set_id
+    WHERE entry.grid_offset_ms != 0 OR entry.downbeat_shift != 0 OR entry.grid_confirmed != 0
+    ORDER BY sets.updated_at;
+
+PRAGMA user_version = 3;
+"#,
+    r#"
+CREATE TABLE play_history_v4 (
     id INTEGER PRIMARY KEY,
     set_id INTEGER REFERENCES sets(id) ON DELETE SET NULL,
     track_path TEXT NOT NULL,
@@ -98,7 +117,7 @@ CREATE TABLE play_history_v3 (
     deck TEXT NOT NULL
 );
 
-INSERT INTO play_history_v3 (set_id, track_path, rekordbox_id, started_at, deck)
+INSERT INTO play_history_v4 (set_id, track_path, rekordbox_id, started_at, deck)
 SELECT
     CASE WHEN off_plan OR set_id NOT IN (SELECT id FROM sets) THEN NULL ELSE set_id END,
     track_path,
@@ -109,10 +128,10 @@ FROM play_history
 ORDER BY played_at;
 
 DROP TABLE play_history;
-ALTER TABLE play_history_v3 RENAME TO play_history;
+ALTER TABLE play_history_v4 RENAME TO play_history;
 CREATE INDEX play_history_started_at ON play_history (started_at);
 
-PRAGMA user_version = 3;
+PRAGMA user_version = 4;
 "#,
 ];
 
@@ -334,11 +353,14 @@ impl SetStore {
         let target_minutes = u32::try_from(target_minutes).unwrap_or(0);
 
         let mut entries_statement = self.connection.prepare(
-            "SELECT track_path, rekordbox_id, mix_in_ms, mix_out_ms, cue_source, grid_confirmed,
-                energy_override, vocal_in_ms, vocal_out_ms, note, is_backup, grid_offset_ms,
-                downbeat_shift
-             FROM set_entry WHERE set_id = ?1
-             ORDER BY is_backup, position",
+            "SELECT entry.track_path, entry.rekordbox_id, entry.mix_in_ms, entry.mix_out_ms,
+                entry.cue_source, COALESCE(grid.confirmed, 0), entry.energy_override,
+                entry.vocal_in_ms, entry.vocal_out_ms, entry.note, entry.is_backup,
+                COALESCE(grid.offset_ms, 0), COALESCE(grid.downbeat_shift, 0)
+             FROM set_entry AS entry
+             LEFT JOIN track_grid AS grid ON grid.track_path = entry.track_path
+             WHERE entry.set_id = ?1
+             ORDER BY entry.is_backup, entry.position",
         )?;
         let entries = entries_statement
             .query_map((set.as_i64(),), entry_from_row)?
@@ -390,6 +412,7 @@ impl SetStore {
                 .enumerate()
             {
                 insert_entry_row(&mut transaction, set.id, list, position, entry)?;
+                upsert_track_grid(&mut transaction, &entry.track_path, TrackGrid::of(entry))?;
             }
         }
         for seam in &set.seams {
@@ -409,7 +432,8 @@ impl SetStore {
     }
 
     /// Inserts an entry into the list's order at `position`, shifting every
-    /// later position of that list up by one.
+    /// later position of that list up by one. An entry that carries a grid fix
+    /// keeps it for its track; one without leaves the track's fix as it was.
     pub fn insert_entry(
         &mut self,
         set: SetId,
@@ -421,6 +445,10 @@ impl SetStore {
         touch_set(&mut transaction, set)?;
         shift_entry_positions(&mut transaction, set, list, position, usize::MAX, 1)?;
         insert_entry_row(&mut transaction, set, list, position, &entry)?;
+        let grid = TrackGrid::of(&entry);
+        if grid != TrackGrid::default() {
+            upsert_track_grid(&mut transaction, &entry.track_path, grid)?;
+        }
         transaction.commit()?;
         Ok(())
     }
@@ -518,6 +546,39 @@ impl SetStore {
                 entry.downbeat_shift,
             ),
         )?;
+        upsert_track_grid(&mut transaction, &entry.track_path, TrackGrid::of(&entry))?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    /// Every track's grid fix, by its file: the one place a track's grid correction and its
+    /// confirmation are kept, whatever set or deck changed them.
+    pub fn track_grids(&self) -> Result<HashMap<PathBuf, TrackGrid>, StoreError> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT track_path, offset_ms, downbeat_shift, confirmed FROM track_grid")?;
+        let grids = statement
+            .query_map([], |row| {
+                let confirmed: i64 = row.get(3)?;
+                Ok((
+                    PathBuf::from(row.get::<_, String>(0)?),
+                    TrackGrid {
+                        correction: GridCorrection {
+                            offset_ms: row.get(1)?,
+                            downbeat_shift: row.get(2)?,
+                        },
+                        confirmed: confirmed != 0,
+                    },
+                ))
+            })?
+            .collect::<Result<HashMap<_, _>, _>>()?;
+        Ok(grids)
+    }
+
+    /// Keeps `grid` as the grid fix of the track whose file is `path`.
+    pub fn set_track_grid(&mut self, path: &Path, grid: TrackGrid) -> Result<(), StoreError> {
+        let mut transaction = self.transaction()?;
+        upsert_track_grid(&mut transaction, path, grid)?;
         transaction.commit()?;
         Ok(())
     }
@@ -651,6 +712,29 @@ fn shift_entry_positions(
         "UPDATE set_entry SET position = -position - 1
          WHERE set_id = ?1 AND is_backup = ?2 AND position < 0",
         (set.as_i64(), list.is_backup()),
+    )?;
+    Ok(())
+}
+
+/// Writes a track's grid fix within the caller's transaction.
+fn upsert_track_grid(
+    transaction: &mut Transaction<'_>,
+    path: &Path,
+    grid: TrackGrid,
+) -> Result<(), StoreError> {
+    transaction.execute(
+        "INSERT INTO track_grid (track_path, offset_ms, downbeat_shift, confirmed)
+         VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT (track_path) DO UPDATE SET
+             offset_ms = excluded.offset_ms,
+             downbeat_shift = excluded.downbeat_shift,
+             confirmed = excluded.confirmed",
+        (
+            &path.to_string_lossy(),
+            grid.correction.offset_ms,
+            grid.correction.downbeat_shift,
+            grid.confirmed,
+        ),
     )?;
     Ok(())
 }

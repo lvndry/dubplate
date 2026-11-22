@@ -13,6 +13,7 @@ mod analysis;
 mod analysis_cache;
 mod analysis_queue;
 mod cue_proposal;
+mod downbeat;
 mod editor;
 mod energy;
 mod export;
@@ -39,7 +40,7 @@ pub use export::{
     REKORDBOX_IMPORT_STEPS, RekordboxCollection, SetExport, default_export_folder,
     export_file_name, file_track, folder_track, rekordbox_xml, tempo_markers,
 };
-pub use grid::{BEATS_PER_BAR, GridCorrection};
+pub use grid::{BEATS_PER_BAR, GridCorrection, GridEdit, TrackGrid};
 pub use ready::{ReadyProblem, ReadyReport, Severity, TrackReadiness, ready_report};
 pub use session::{SetCompletion, SetJob, SetSession, SetSessionError};
 pub use store::{

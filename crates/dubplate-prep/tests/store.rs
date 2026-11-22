@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, UNIX_EPOCH};
 
 use dubplate_prep::{
-    CueSource, EqIntent, Play, PlayDeck, Seam, SeamStatus, Set, SetEntry, SetId, SetList, SetStore,
-    StoreError,
+    CueSource, EqIntent, GridCorrection, Play, PlayDeck, Seam, SeamStatus, Set, SetEntry, SetId,
+    SetList, SetStore, StoreError, TrackGrid,
 };
 use rusqlite::Connection;
 use tempfile::TempDir;
@@ -129,7 +129,7 @@ fn refuses_a_database_newer_than_this_build() {
         result,
         Err(StoreError::NewerSchema {
             found: 99,
-            known: 3
+            known: 4
         })
     ));
 }
@@ -655,14 +655,17 @@ fn an_empty_version_two_history_upgrades_and_keeps_a_backup() {
 }
 
 #[test]
-fn a_failed_migration_leaves_the_file_as_it_was() {
+fn a_failed_migration_rolls_back_alone() {
     let root = tempfile::tempdir().unwrap();
     let directory_holder = TempDir::new_in(root.path()).unwrap();
     let database_path = directory_holder.path().join("dubplate.db");
-    version_two_file(&database_path, "");
+    version_two_file(
+        &database_path,
+        "INSERT INTO play_history VALUES (1, '/a.mp3', NULL, 1767225600000, 'A', 0);",
+    );
     Connection::open(&database_path)
         .unwrap()
-        .execute_batch("CREATE TABLE play_history_v3 (id INTEGER);")
+        .execute_batch("CREATE TABLE play_history_v4 (id INTEGER);")
         .unwrap();
 
     assert!(SetStore::open(&database_path).is_err());
@@ -670,8 +673,11 @@ fn a_failed_migration_leaves_the_file_as_it_was() {
     let user_version: i64 = connection
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .unwrap();
-    assert_eq!(user_version, 2);
-    assert_eq!(row_count(&database_path, "play_history"), 0);
+    assert_eq!(user_version, 3, "the migration before it stays applied");
+    let off_plan: i64 = connection
+        .query_row("SELECT off_plan FROM play_history", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(off_plan, 0, "the old play history is untouched");
 }
 
 #[test]
@@ -687,4 +693,47 @@ fn updating_the_length_of_an_unknown_play_says_so() {
         store.set_play_length(recorded, Duration::from_secs(90)),
         Err(StoreError::PlayNotFound(id)) if id == recorded
     ));
+}
+
+#[test]
+fn a_track_keeps_one_grid_across_sets_and_decks() {
+    let root = tempfile::tempdir().unwrap();
+    let (_directory_holder, _database_path, mut store) = open_store(root.path());
+    let first_set = store.create_set("Friday", 60).unwrap();
+    let second_set = store.create_set("Saturday", 60).unwrap();
+    store
+        .insert_entry(first_set, SetList::Main, 0, entry("/a.mp3", false))
+        .unwrap();
+    let moved = TrackGrid {
+        correction: GridCorrection {
+            offset_ms: 10,
+            downbeat_shift: 3,
+        },
+        confirmed: true,
+    };
+    store.set_track_grid(Path::new("/a.mp3"), moved).unwrap();
+    store
+        .insert_entry(second_set, SetList::Main, 0, entry("/a.mp3", false))
+        .unwrap();
+    for set in [first_set, second_set] {
+        let kept = store.load_set(set).unwrap().entries[0].clone();
+        assert_eq!(
+            TrackGrid::of(&kept),
+            moved,
+            "a new entry never resets the grid"
+        );
+    }
+    let mut renudged = store.load_set(second_set).unwrap().entries[0].clone();
+    renudged.grid_offset_ms = -5;
+    store
+        .update_entry(second_set, SetList::Main, 0, renudged)
+        .unwrap();
+    let first = store.load_set(first_set).unwrap().entries[0].clone();
+    assert_eq!(first.grid_offset_ms, -5);
+    assert_eq!(
+        store.track_grids().unwrap()[Path::new("/a.mp3")]
+            .correction
+            .offset_ms,
+        -5
+    );
 }
