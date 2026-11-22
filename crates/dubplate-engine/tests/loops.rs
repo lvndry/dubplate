@@ -44,7 +44,7 @@ fn phase(controller: &Controller) -> f64 {
 }
 
 #[test]
-fn a_beat_loop_starts_on_the_beat_just_passed_and_goes_round_without_a_click() {
+fn a_beat_loop_starts_on_the_nearest_beat_and_goes_round_without_a_click() {
     let (mut controller, mut renderer) = deck_on_grid();
     controller.seek(DeckId::A, 10.3).unwrap();
     controller.play(DeckId::A).unwrap();
@@ -54,10 +54,10 @@ fn a_beat_loop_starts_on_the_beat_just_passed_and_goes_round_without_a_click() {
     let state = controller.loop_state(DeckId::A);
     assert!(state.active);
     assert_eq!(state.length, Some(BeatLength::FOUR));
-    assert_close(state.start_seconds.unwrap(), 10.0, 1e-9);
-    assert_close(state.end_seconds.unwrap(), 12.0, 1e-9);
+    assert_close(state.start_seconds.unwrap(), 10.5, 1e-9);
+    assert_close(state.end_seconds.unwrap(), 12.5, 1e-9);
     let now = position(&controller);
-    assert!((10.0..12.0).contains(&now), "position {now}");
+    assert!((10.0..12.5).contains(&now), "position {now}");
     let natural_step = 0.5 * std::f32::consts::TAU * 440.0 / SAMPLE_RATE as f32;
     assert!(
         largest_step(&output) < natural_step * 1.5,
