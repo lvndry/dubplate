@@ -12,8 +12,8 @@ use crate::collection::clock;
 use crate::commands::{Command, LoopAction, PadPress, Press};
 use crate::fonts::MONO_FAMILY;
 use crate::pads::{
-    BEAT_LOOP_LENGTHS, PAD_COUNT, beat_jump_beats, beats_label, mode_buttons, mode_is_playable,
-    mode_label,
+    BEAT_LOOP_LENGTHS, PAD_COUNT, beat_jump_beats, beats_label, key_pad_semitones, mode_buttons,
+    mode_is_playable, mode_label, pad_fx, semitones_label,
 };
 use crate::theme;
 
@@ -281,11 +281,35 @@ fn faces(app: &DubplateApp, deck: DeckId) -> Vec<PadFace> {
                     playable: true,
                 }
             }
-            PadMode::PadFx1
-            | PadMode::PadFx2
-            | PadMode::Sampler
-            | PadMode::Keyboard
-            | PadMode::KeyShift => PadFace {
+            PadMode::PadFx1 | PadMode::PadFx2 => {
+                let held = app.held_pads[deck.index()].is_some_and(|held| held.pad == pad);
+                let (title, detail) = pad_fx(mode, pad, false)
+                    .map(|fx| fx.label())
+                    .unwrap_or_default();
+                PadFace {
+                    title: title.into(),
+                    detail: detail.into(),
+                    dot: held.then(|| theme::deck_colour(deck)),
+                    lit: held,
+                    playable: true,
+                }
+            }
+            PadMode::Keyboard | PadMode::KeyShift => {
+                let semitones = key_pad_semitones(pad, app.key_pad_offsets[deck.index()]);
+                let on = semitones.is_some_and(|semitones| semitones == app.key_shift(deck));
+                PadFace {
+                    title: semitones.map(semitones_label).unwrap_or_default().into(),
+                    detail: if mode == PadMode::Keyboard {
+                        format!("cue {}", app.keyboard_cues[deck.index()].letter()).into()
+                    } else {
+                        SharedString::default()
+                    },
+                    dot: on.then(|| theme::deck_colour(deck)),
+                    lit: on,
+                    playable: semitones.is_some(),
+                }
+            }
+            PadMode::Sampler => PadFace {
                 title: (pad + 1).to_string().into(),
                 detail: if pad == 0 && !mode_is_playable(mode) {
                     "coming soon"

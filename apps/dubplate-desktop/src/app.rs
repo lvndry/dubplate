@@ -65,7 +65,7 @@ use crate::hardware::{
 use crate::library::LibrarySources;
 use crate::loading::{LoadRefusal, LoadSource, check_deck_free, check_file};
 use crate::meter::PeakMeter;
-use crate::pads::next_mode;
+use crate::pads::{PadFx, next_mode};
 use crate::prep::{Catalogue, GridCorrection, TrackCheck, TrackDetail};
 use crate::recording::Recording;
 use crate::set::SetEditor;
@@ -75,6 +75,7 @@ use crate::theme;
 use crate::transport::{self, CueDown, is_at_cue, other_deck};
 use crate::waveform::Zoom;
 use audition::Audition;
+use pads::HeldPad;
 use prepare::PrepareFocus;
 
 /// Frames per device buffer: about 5 ms at 48 kHz.
@@ -171,6 +172,9 @@ pub struct DubplateApp {
     mode: Mode,
     pad_modes: [PadMode; DECK_COUNT],
     beat_jump_scales: [i32; DECK_COUNT],
+    held_pads: [Option<HeldPad>; DECK_COUNT],
+    key_pad_offsets: [i32; DECK_COUNT],
+    keyboard_cues: [HotCuePad; DECK_COUNT],
     set_editor: Option<SetEditor>,
     set_selection: Option<usize>,
     prepare_focus: PrepareFocus,
@@ -307,6 +311,9 @@ impl DubplateApp {
             mode: Mode::Perform,
             pad_modes: [PadMode::HotCue; DECK_COUNT],
             beat_jump_scales: [0; DECK_COUNT],
+            held_pads: [None; DECK_COUNT],
+            key_pad_offsets: [0; DECK_COUNT],
+            keyboard_cues: [HotCuePad::ALL[0]; DECK_COUNT],
             set_editor,
             set_selection: None,
             prepare_focus: PrepareFocus::Library,
@@ -534,6 +541,13 @@ impl DubplateApp {
         let visuals = TrackVisuals::new(&mut prepared);
         engine.controller.load_track(deck, prepared.audio)?;
         engine.controller.set_beat_grid(deck, prepared.beat_grid)?;
+        engine.controller.set_key_shift(deck, 0.0)?;
+        if let Some(held) = self.held_pads[deck.index()].take() {
+            match held.fx {
+                PadFx::Roll(_) => engine.controller.release_roll(deck)?,
+                PadFx::Effect(_) => engine.controller.release_pad_effect(deck)?,
+            }
+        }
         Ok(visuals)
     }
 
@@ -565,10 +579,11 @@ impl DubplateApp {
                 }
             }
             Command::Pad(press) => self.press_pad(press, cx),
-            Command::SetPadMode(deck, mode) => self.pad_modes[deck.index()] = mode,
+            Command::SetPadMode(deck, mode) => self.set_pad_mode(deck, mode, cx),
             Command::CyclePadMode(deck) => {
-                self.pad_modes[deck.index()] = next_mode(self.pad_modes[deck.index()]);
+                self.set_pad_mode(deck, next_mode(self.pad_modes[deck.index()]), cx);
             }
+            Command::ToggleSlip(deck) => self.toggle_slip(deck, cx),
             Command::Loop(deck, action) => self.loop_button(deck, action, cx),
             Command::ToggleHeadphoneCue(deck) => {
                 let cued = self

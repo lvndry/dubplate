@@ -6,17 +6,27 @@ use dubplate_midi::PadMode;
 use dubplate_rekordbox::HotCuePad;
 use gpui::Context;
 
-use super::DubplateApp;
+use super::{DubplateApp, NoticePlace};
 use crate::commands::{LoopAction, PadPress, Press};
 use crate::deck::pad_position;
 use crate::pads::{
-    AUTO_BEAT_LOOP, BEAT_JUMP_SCALE_RANGE, BEAT_LOOP_LENGTHS, PAD_COUNT, beat_jump_beats,
+    AUTO_BEAT_LOOP, BEAT_JUMP_SCALE_RANGE, BEAT_LOOP_LENGTHS, KEY_PADS_DOWN_PAD, KEY_PADS_UP_PAD,
+    PAD_COUNT, PadFx, beat_jump_beats, clamp_key_pad_offset, key_pad_semitones, pad_fx,
 };
 
 /// SHIFT with this beat jump pad makes the jumps shorter.
 const SHORTER_JUMPS_PAD: usize = 6;
 /// SHIFT with this beat jump pad makes the jumps longer.
 const LONGER_JUMPS_PAD: usize = 7;
+
+/// A Pad FX pad being held, or latched from the keys or the screen.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct HeldPad {
+    /// The pad, 0 for pad 1.
+    pub pad: usize,
+    /// What it plays.
+    pub fx: PadFx,
+}
 
 /// What a deck's loop buttons and pads show.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -37,12 +47,20 @@ impl DubplateApp {
     pub(super) fn press_pad(&mut self, press: PadPress, cx: &mut Context<'_, Self>) {
         let deck = press.deck;
         if let Some(mode) = press.mode {
-            self.pad_modes[deck.index()] = mode;
+            self.set_pad_mode(deck, mode, cx);
         }
-        if !matches!(press.press, Press::Down | Press::Tap) || self.deck(deck).visuals().is_none() {
+        if self.deck(deck).visuals().is_none() {
             return;
         }
-        match self.pad_modes[deck.index()] {
+        let mode = self.pad_modes[deck.index()];
+        if matches!(mode, PadMode::PadFx1 | PadMode::PadFx2) {
+            self.press_pad_fx(press, mode, cx);
+            return;
+        }
+        if !matches!(press.press, Press::Down | Press::Tap) {
+            return;
+        }
+        match mode {
             PadMode::HotCue => {
                 let Some(pad) = HotCuePad::ALL.get(press.pad).copied() else {
                     return;
@@ -50,9 +68,28 @@ impl DubplateApp {
                 if press.shift {
                     self.edit_hot_cues(deck, |hot_cues| hot_cues.delete(pad));
                 } else {
+                    self.keyboard_cues[deck.index()] = pad;
                     self.press_hot_cue(deck, pad, cx);
                 }
             }
+            PadMode::Keyboard | PadMode::KeyShift if press.shift => {
+                let offset = &mut self.key_pad_offsets[deck.index()];
+                match press.pad {
+                    KEY_PADS_UP_PAD => *offset = clamp_key_pad_offset(*offset + 1),
+                    KEY_PADS_DOWN_PAD => *offset = clamp_key_pad_offset(*offset - 1),
+                    _ => {}
+                }
+            }
+            PadMode::KeyShift => {
+                if let Some(semitones) =
+                    key_pad_semitones(press.pad, self.key_pad_offsets[deck.index()])
+                {
+                    self.engine_command(cx, |controller| {
+                        controller.set_key_shift(deck, semitones as f32)
+                    });
+                }
+            }
+            PadMode::Keyboard => self.play_keyboard_pad(deck, press.pad, cx),
             PadMode::BeatJump if press.shift => {
                 let scale = &mut self.beat_jump_scales[deck.index()];
                 match press.pad {
@@ -82,13 +119,95 @@ impl DubplateApp {
                     }
                 });
             }
-            PadMode::BeatLoop
-            | PadMode::PadFx1
-            | PadMode::PadFx2
-            | PadMode::Sampler
-            | PadMode::Keyboard
-            | PadMode::KeyShift => {}
+            PadMode::BeatLoop | PadMode::PadFx1 | PadMode::PadFx2 | PadMode::Sampler => {}
         }
+    }
+
+    /// Puts a deck's pads in `mode`, letting go of a pad effect held in the mode it leaves.
+    pub(super) fn set_pad_mode(&mut self, deck: DeckId, mode: PadMode, cx: &mut Context<'_, Self>) {
+        if self.pad_modes[deck.index()] != mode {
+            self.release_held_pad(deck, cx);
+        }
+        self.pad_modes[deck.index()] = mode;
+    }
+
+    /// A Pad FX pad: the controller holds it while pressed; a tap from the keys or the screen
+    /// latches it on until the same pad is tapped again. Another pad takes over from the one
+    /// held.
+    fn press_pad_fx(&mut self, press: PadPress, mode: PadMode, cx: &mut Context<'_, Self>) {
+        let deck = press.deck;
+        let held_here = self.held_pads[deck.index()].is_some_and(|held| held.pad == press.pad);
+        match press.press {
+            Press::Up if held_here => self.release_held_pad(deck, cx),
+            Press::Tap if held_here => self.release_held_pad(deck, cx),
+            Press::Up => {}
+            Press::Down | Press::Tap => {
+                let Some(fx) = pad_fx(mode, press.pad, press.shift) else {
+                    return;
+                };
+                self.release_held_pad(deck, cx);
+                self.engine_command(cx, |controller| match fx {
+                    PadFx::Roll(length) => controller.beat_roll(deck, length),
+                    PadFx::Effect(effect) => controller.hold_pad_effect(deck, effect),
+                });
+                self.held_pads[deck.index()] = Some(HeldPad { pad: press.pad, fx });
+            }
+        }
+    }
+
+    /// Lets go of the pad effect or roll held on a deck.
+    pub(super) fn release_held_pad(&mut self, deck: DeckId, cx: &mut Context<'_, Self>) {
+        if let Some(held) = self.held_pads[deck.index()].take() {
+            self.engine_command(cx, |controller| match held.fx {
+                PadFx::Roll(_) => controller.release_roll(deck),
+                PadFx::Effect(_) => controller.release_pad_effect(deck),
+            });
+        }
+    }
+
+    /// A Keyboard pad: the deck plays from its keyboard hot cue, the last one pressed, at the
+    /// pad's pitch.
+    fn play_keyboard_pad(&mut self, deck: DeckId, pad: usize, cx: &mut Context<'_, Self>) {
+        let Some(semitones) = key_pad_semitones(pad, self.key_pad_offsets[deck.index()]) else {
+            return;
+        };
+        let cue = self.keyboard_cues[deck.index()];
+        let Some(seconds) = self.deck(deck).hot_cues.get(cue) else {
+            self.show_notice(
+                NoticePlace::Deck(deck),
+                format!(
+                    "The keyboard plays from hot cue {}: set it in Hot cue mode first.",
+                    cue.letter()
+                ),
+                cx,
+            );
+            return;
+        };
+        self.decks[deck.index()].cue_preview = false;
+        self.engine_command(cx, |controller| {
+            controller.set_key_shift(deck, semitones as f32)?;
+            controller.hot_cue(deck, seconds)
+        });
+    }
+
+    /// A deck's key shift in semitones, when the engine runs.
+    pub(super) fn key_shift(&self, deck: DeckId) -> i32 {
+        self.engine
+            .as_ref()
+            .map_or(0, |engine| engine.controller.key_shift(deck).round() as i32)
+    }
+
+    /// Turns SLIP on or off for a deck.
+    pub(super) fn toggle_slip(&mut self, deck: DeckId, cx: &mut Context<'_, Self>) {
+        let enabled = !self.slip(deck);
+        self.engine_command(cx, |controller| controller.set_slip(deck, enabled));
+    }
+
+    /// Whether SLIP is on for a deck.
+    pub(super) fn slip(&self, deck: DeckId) -> bool {
+        self.engine
+            .as_ref()
+            .is_ok_and(|engine| engine.controller.slip_state(deck).enabled)
     }
 
     /// A loop button, as on rekordbox: 4 BEAT/EXIT starts a four-beat loop or leaves the one
@@ -148,11 +267,21 @@ impl DubplateApp {
                         *lit = active_length != Some(length) || blink;
                     }
                 }
-                PadMode::PadFx1
-                | PadMode::PadFx2
-                | PadMode::Sampler
-                | PadMode::Keyboard
-                | PadMode::KeyShift => {}
+                PadMode::PadFx1 | PadMode::PadFx2 => {
+                    let held = self.held_pads[deck.index()].map(|held| held.pad);
+                    for (pad, lit) in pads.iter_mut().enumerate() {
+                        *lit = held != Some(pad) || blink;
+                    }
+                }
+                PadMode::Keyboard | PadMode::KeyShift => {
+                    let offset = self.key_pad_offsets[deck.index()];
+                    let shift = self.key_shift(deck);
+                    for (pad, lit) in pads.iter_mut().enumerate() {
+                        let semitones = key_pad_semitones(pad, offset);
+                        *lit = semitones.is_some() && (semitones != Some(shift) || blink);
+                    }
+                }
+                PadMode::Sampler => {}
             }
         }
         PadLights {

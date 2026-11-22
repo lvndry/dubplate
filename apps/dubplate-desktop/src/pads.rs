@@ -1,7 +1,8 @@
 //! What the eight performance pads of a deck do in each pad mode, as rekordbox lays them out on
-//! the DDJ-FLX4: hot cues, beat jumps and beat loops, and the modes that wait for the engine.
+//! the DDJ-FLX4: hot cues, beat jumps, beat loops, pad effects and rolls, the keyboard and key
+//! shift, and the sampler that waits for the engine.
 
-use dubplate_engine::BeatLength;
+use dubplate_engine::{BeatLength, EffectKind, PadEffect};
 use dubplate_midi::PadMode;
 
 /// Pads on a deck.
@@ -55,13 +56,152 @@ pub fn mode_label(mode: PadMode) -> &'static str {
     }
 }
 
-/// Whether Dubplate plays the pads of this mode yet. The others light their button and wait
-/// for the engine's pad effects, sampler and key shifting.
+/// Whether Dubplate plays the pads of this mode yet. The sampler lights its button and waits.
 pub fn mode_is_playable(mode: PadMode) -> bool {
-    matches!(
-        mode,
-        PadMode::HotCue | PadMode::BeatJump | PadMode::BeatLoop
-    )
+    !matches!(mode, PadMode::Sampler)
+}
+
+/// What a Pad FX pad plays while it is held.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum PadFx {
+    /// A loop roll of this length: the beat just passed repeats while the track plays on
+    /// underneath.
+    Roll(BeatLength),
+    /// A beat effect on the deck.
+    Effect(PadEffect),
+}
+
+impl PadFx {
+    /// Its name and beat length, as its pad shows them.
+    pub fn label(self) -> (&'static str, String) {
+        match self {
+            PadFx::Roll(length) => ("Roll", length.to_string()),
+            PadFx::Effect(effect) => (effect_name(effect.kind), effect.beat.to_string()),
+        }
+    }
+}
+
+/// Depth for the echoes and reverbs, which sit under the track.
+const WASH_DEPTH: f32 = 0.6;
+/// Depth for the other effects, which take the track over.
+const FULL_DEPTH: f32 = 0.85;
+
+const fn effect(kind: EffectKind, beat: BeatLength) -> PadFx {
+    let depth = match kind {
+        EffectKind::Echo | EffectKind::PingPong | EffectKind::Reverb => WASH_DEPTH,
+        _ => FULL_DEPTH,
+    };
+    PadFx::Effect(PadEffect { kind, beat, depth })
+}
+
+/// The 32 pad effects of the FLX4's PAD FX1 and PAD FX2 modes, each with and without SHIFT,
+/// pad 1 first: rolls and echoes to build, filters and modulations to colour, brakes and
+/// backspins to end on.
+const PAD_FX_BANKS: [[PadFx; PAD_COUNT]; 4] = [
+    [
+        PadFx::Roll(BeatLength::QUARTER),
+        PadFx::Roll(BeatLength::HALF),
+        PadFx::Roll(BeatLength::ONE),
+        PadFx::Roll(BeatLength::TWO),
+        effect(EffectKind::Echo, BeatLength::HALF),
+        effect(EffectKind::Echo, BeatLength::THREE_QUARTERS),
+        effect(EffectKind::Reverb, BeatLength::ONE),
+        effect(EffectKind::Brake, BeatLength::ONE),
+    ],
+    [
+        PadFx::Roll(BeatLength::SIXTEENTH),
+        PadFx::Roll(BeatLength::EIGHTH),
+        effect(EffectKind::Gate, BeatLength::QUARTER),
+        effect(EffectKind::Gate, BeatLength::EIGHTH),
+        effect(EffectKind::PingPong, BeatLength::HALF),
+        effect(EffectKind::Echo, BeatLength::ONE),
+        effect(EffectKind::Crusher, BeatLength::ONE),
+        effect(EffectKind::Backspin, BeatLength::ONE),
+    ],
+    [
+        effect(EffectKind::SweepFilter, BeatLength::FOUR),
+        effect(EffectKind::HighPass, BeatLength::ONE),
+        effect(EffectKind::LowPass, BeatLength::ONE),
+        effect(EffectKind::BandPass, BeatLength::ONE),
+        effect(EffectKind::Flanger, BeatLength::FOUR),
+        effect(EffectKind::Phaser, BeatLength::FOUR),
+        effect(EffectKind::Gate, BeatLength::HALF),
+        effect(EffectKind::Crusher, BeatLength::HALF),
+    ],
+    [
+        PadFx::Roll(BeatLength::FOUR),
+        PadFx::Roll(BeatLength::EIGHT),
+        effect(EffectKind::Echo, BeatLength::QUARTER),
+        effect(EffectKind::PingPong, BeatLength::THREE_QUARTERS),
+        effect(EffectKind::Reverb, BeatLength::TWO),
+        effect(EffectKind::SweepFilter, BeatLength::EIGHT),
+        effect(EffectKind::Brake, BeatLength::TWO),
+        effect(EffectKind::Backspin, BeatLength::TWO),
+    ],
+];
+
+/// What pad `pad` plays in a Pad FX mode, with or without SHIFT.
+pub fn pad_fx(mode: PadMode, pad: usize, shift: bool) -> Option<PadFx> {
+    let bank = match (mode, shift) {
+        (PadMode::PadFx1, false) => 0,
+        (PadMode::PadFx1, true) => 1,
+        (PadMode::PadFx2, false) => 2,
+        (PadMode::PadFx2, true) => 3,
+        _ => return None,
+    };
+    PAD_FX_BANKS[bank].get(pad).copied()
+}
+
+/// An effect's short name on a pad.
+fn effect_name(kind: EffectKind) -> &'static str {
+    match kind {
+        EffectKind::Echo => "Echo",
+        EffectKind::PingPong => "Ping pong",
+        EffectKind::Reverb => "Reverb",
+        EffectKind::LowPass => "Low pass",
+        EffectKind::HighPass => "High pass",
+        EffectKind::BandPass => "Band pass",
+        EffectKind::SweepFilter => "Sweep",
+        EffectKind::Flanger => "Flanger",
+        EffectKind::Phaser => "Phaser",
+        EffectKind::Gate => "Gate",
+        EffectKind::Crusher => "Crusher",
+        EffectKind::Brake => "Brake",
+        EffectKind::Backspin => "Backspin",
+    }
+}
+
+/// The semitones of the Keyboard and Key Shift pads before SHIFT moves them, pad 1 first: +4 to
+/// +7 on the top row and ±0 to +3 below, as rekordbox lays them out.
+const KEY_PAD_SEMITONES: [i32; PAD_COUNT] = [4, 5, 6, 7, 0, 1, 2, 3];
+/// The furthest a key moves, either way.
+pub const MAX_KEY_SHIFT: i32 = 12;
+/// SHIFT with this Keyboard or Key Shift pad moves every pad up a semitone.
+pub const KEY_PADS_UP_PAD: usize = 6;
+/// SHIFT with this Keyboard or Key Shift pad moves every pad down a semitone.
+pub const KEY_PADS_DOWN_PAD: usize = 7;
+
+/// The semitones Keyboard or Key Shift pad `pad` gives once SHIFT has moved the pads by
+/// `offset`, or `None` past the range.
+pub fn key_pad_semitones(pad: usize, offset: i32) -> Option<i32> {
+    let semitones = KEY_PAD_SEMITONES.get(pad)? + offset;
+    (-MAX_KEY_SHIFT..=MAX_KEY_SHIFT)
+        .contains(&semitones)
+        .then_some(semitones)
+}
+
+/// How far SHIFT may move the key pads, so that some pad always stays in range.
+pub fn clamp_key_pad_offset(offset: i32) -> i32 {
+    offset.clamp(-MAX_KEY_SHIFT, MAX_KEY_SHIFT - 3)
+}
+
+/// A shift in semitones as a pad shows it: `±0`, `+3`, `−2`.
+pub fn semitones_label(semitones: i32) -> String {
+    match semitones {
+        0 => "\u{b1}0".to_owned(),
+        positive if positive > 0 => format!("+{positive}"),
+        negative => format!("\u{2212}{}", -negative),
+    }
 }
 
 /// The mode after `mode` in the order of the mode buttons, going round.
@@ -133,6 +273,40 @@ mod tests {
         assert_eq!(next_mode(PadMode::KeyShift), PadMode::HotCue);
         assert_eq!(next_mode(PadMode::HotCue), PadMode::Keyboard);
         assert!(mode_is_playable(PadMode::BeatLoop));
+        assert!(mode_is_playable(PadMode::PadFx2));
         assert!(!mode_is_playable(PadMode::Sampler));
+    }
+
+    #[test]
+    fn every_pad_fx_pad_plays_something_and_rolls_build_from_short_to_long() {
+        for mode in [PadMode::PadFx1, PadMode::PadFx2] {
+            for shift in [false, true] {
+                for pad in 0..PAD_COUNT {
+                    assert!(pad_fx(mode, pad, shift).is_some(), "{mode:?} {shift} {pad}");
+                }
+            }
+        }
+        assert_eq!(
+            pad_fx(PadMode::PadFx1, 0, false),
+            Some(PadFx::Roll(BeatLength::QUARTER))
+        );
+        assert_eq!(pad_fx(PadMode::HotCue, 0, false), None);
+        assert_eq!(pad_fx(PadMode::PadFx1, 8, false), None);
+        let (name, beats) = pad_fx(PadMode::PadFx1, 4, false).unwrap().label();
+        assert_eq!((name, beats.as_str()), ("Echo", "1/2"));
+    }
+
+    #[test]
+    fn key_pads_follow_rekordbox_and_shift_moves_them_within_an_octave() {
+        assert_eq!(key_pad_semitones(0, 0), Some(4));
+        assert_eq!(key_pad_semitones(4, 0), Some(0));
+        assert_eq!(key_pad_semitones(7, 0), Some(3));
+        assert_eq!(key_pad_semitones(4, -12), Some(-12));
+        assert_eq!(key_pad_semitones(3, 9), None, "+16 is past the range");
+        assert_eq!(clamp_key_pad_offset(40), 9);
+        assert_eq!(clamp_key_pad_offset(-40), -12);
+        assert_eq!(semitones_label(0), "\u{b1}0");
+        assert_eq!(semitones_label(-2), "\u{2212}2");
+        assert_eq!(semitones_label(5), "+5");
     }
 }

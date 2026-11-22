@@ -73,6 +73,8 @@ fn carry_over(source: &Controller, target: &mut Controller) -> Result<(), Engine
             target.seek(deck, state.position_seconds)?;
         }
         target.set_key_lock(deck, source.key_lock(deck))?;
+        target.set_key_shift(deck, source.key_shift(deck))?;
+        target.set_slip(deck, source.slip_state(deck).enabled)?;
         let tempo = source.tempo_state(deck);
         target.set_tempo_range(deck, tempo.tempo_range)?;
         target.set_sync(deck, tempo.sync)?;
