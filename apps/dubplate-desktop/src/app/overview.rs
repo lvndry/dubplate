@@ -10,6 +10,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use dubplate_engine::DeckId;
+use dubplate_rekordbox::TrackCues;
 use gpui::prelude::*;
 use gpui::{
     Bounds, Context, FontWeight, MouseButton, MouseDownEvent, MouseMoveEvent, PathBuilder, Pixels,
@@ -19,7 +20,7 @@ use gpui::{
 use super::{DeckFrame, DubplateApp};
 use crate::collection::{CollectionTrack, clock};
 use crate::controls::{Orientation, fraction_at};
-use crate::deck::{HotCues, OverviewBars, deck_letter, pad_position};
+use crate::deck::{OverviewBars, deck_letter};
 use crate::fonts::MONO_FAMILY;
 use crate::phrases::{PhraseSpan, Section, phrase_at};
 use crate::theme;
@@ -51,7 +52,7 @@ pub(super) struct OverviewContent {
     bars: Option<Rc<RefCell<OverviewBars>>>,
     track: Arc<CollectionTrack>,
     phrases: Arc<[PhraseSpan]>,
-    hot_cues: HotCues,
+    cues: Arc<TrackCues>,
     mix_in: Option<f64>,
     mix_out: Option<f64>,
     duration: f64,
@@ -67,7 +68,7 @@ impl PartialEq for OverviewContent {
         same_bars
             && Arc::ptr_eq(&self.track, &other.track)
             && Arc::ptr_eq(&self.phrases, &other.phrases)
-            && self.hot_cues == other.hot_cues
+            && Arc::ptr_eq(&self.cues, &other.cues)
             && self.mix_in == other.mix_in
             && self.mix_out == other.mix_out
             && self.duration == other.duration
@@ -104,13 +105,13 @@ impl Render for DeckOverview {
             return div().size_full();
         };
         let letters: Vec<(f32, char, Rgba)> = content
-            .hot_cues
-            .iter()
-            .map(|(pad, seconds)| {
+            .cues
+            .hot_cues()
+            .map(|(pad, cue)| {
                 (
-                    (seconds / content.duration).clamp(0.0, 1.0) as f32,
+                    (cue.start_seconds() / content.duration).clamp(0.0, 1.0) as f32,
                     pad.letter(),
-                    theme::HOT_CUE_TINTS[pad_position(pad)],
+                    theme::HOT_CUE_TINTS[pad.index()],
                 )
             })
             .collect();
@@ -219,9 +220,9 @@ fn paint_content(bounds: Bounds<Pixels>, content: &OverviewContent, window: &mut
         area.band_span(ending_from, area.width - ending_from),
         theme::ENDING_TINT,
     ));
-    for &(start, end) in &content.track.saved_loops {
-        let left = area.x_of(start);
-        let width = (area.x_of(end) - left).max(1.0);
+    for (start_ms, end_ms) in content.cues.loops() {
+        let left = area.x_of(seconds(start_ms));
+        let width = (area.x_of(seconds(end_ms)) - left).max(1.0);
         window.paint_quad(fill(
             area.band_span(left, width),
             theme::faded(theme::SAVED_LOOP, 0.14),
@@ -253,8 +254,16 @@ fn paint_content(bounds: Bounds<Pixels>, content: &OverviewContent, window: &mut
             paint_triangle(&area, x, area.bands_top, colour, window);
         }
     }
-    for &seconds in &content.track.memory_cues {
-        paint_triangle(&area, area.x_of(seconds), 1.0, theme::MEMORY_CUE, window);
+    for cue in content.cues.memory_cues() {
+        if cue.loop_end_ms.is_none() {
+            paint_triangle(
+                &area,
+                area.x_of(cue.start_seconds()),
+                1.0,
+                theme::MEMORY_CUE,
+                window,
+            );
+        }
     }
     let strip_top = area.bands_bottom + 1.0;
     for phrase in content.phrases.iter() {
@@ -265,6 +274,10 @@ fn paint_content(bounds: Bounds<Pixels>, content: &OverviewContent, window: &mut
             section_colour(phrase.section),
         ));
     }
+}
+
+fn seconds(milliseconds: u32) -> f64 {
+    f64::from(milliseconds) / 1000.0
 }
 
 /// A small triangle pointing down at `x`, its top edge at `top`.
@@ -424,7 +437,7 @@ pub(super) fn render(
                     bars: visuals.overview.clone(),
                     track: Arc::clone(track),
                     phrases: Arc::clone(&visuals.phrases),
-                    hot_cues: side.hot_cues,
+                    cues: Arc::clone(&side.cues),
                     mix_in,
                     mix_out,
                     duration,
@@ -595,7 +608,7 @@ mod tests {
             bars: None,
             track: Arc::new(CollectionTrack::from_file(std::path::Path::new("a.mp3"))),
             phrases: Arc::default(),
-            hot_cues: HotCues::default(),
+            cues: Arc::default(),
             mix_in: None,
             mix_out: None,
             duration: 300.0,

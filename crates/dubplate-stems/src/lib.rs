@@ -27,7 +27,7 @@ mod status;
 mod worker;
 
 pub use dubplate_engine::Stem;
-pub use files::{STEMS_SAMPLE_RATE, StemFiles, StemLoadError};
+pub use files::{SEAM_EDGE_SECONDS, STEMS_SAMPLE_RATE, StemFiles, StemLoadError, VocalPresence};
 pub use launcher::{CurrentExecutable, DEFAULT_WORKER_THREADS, WorkerLauncher, WorkerThreads};
 pub use location::{CacheLimit, DEFAULT_CACHE_LIMIT, StemsLocation, WEIGHTS_URL};
 pub use queue::{SeparationPriority, SeparationQueue};

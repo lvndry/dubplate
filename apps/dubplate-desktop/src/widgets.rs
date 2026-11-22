@@ -1,7 +1,7 @@
 //! Small controls shared by the views, drawn the Graphite way.
 
 use crate::controls::Control;
-use dubplate_engine::{DeckId, EqBand};
+use dubplate_engine::{DeckId, EqBand, Stem};
 use gpui::prelude::*;
 use gpui::{
     AnyView, App, Context, Div, ElementId, MouseButton, SharedString, Stateful, Window, div, px,
@@ -131,6 +131,14 @@ pub fn control_label(control: Control) -> &'static str {
         Control::HeadphoneMix => "Headphone cue/master mix",
         Control::HeadphoneLevel => "Headphone level",
         Control::SamplerVolume => "Sampler volume",
+        Control::StemLevel(DeckId::A, Stem::Drums) => "Deck A drums level",
+        Control::StemLevel(DeckId::B, Stem::Drums) => "Deck B drums level",
+        Control::StemLevel(DeckId::A, Stem::Bass) => "Deck A bass level",
+        Control::StemLevel(DeckId::B, Stem::Bass) => "Deck B bass level",
+        Control::StemLevel(DeckId::A, Stem::Melody) => "Deck A melody level",
+        Control::StemLevel(DeckId::B, Stem::Melody) => "Deck B melody level",
+        Control::StemLevel(DeckId::A, Stem::Vocals) => "Deck A vocals level",
+        Control::StemLevel(DeckId::B, Stem::Vocals) => "Deck B vocals level",
     }
 }
 
