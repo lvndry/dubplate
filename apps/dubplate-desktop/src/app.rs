@@ -9,6 +9,7 @@ mod deck_panel;
 mod drop_target;
 mod effects_strip;
 mod export;
+mod filter_reference;
 mod header;
 mod help;
 mod knob;
@@ -68,6 +69,7 @@ use crate::hardware::{
     DeckLights, Hardware, Lights, LinkEvent, Surface, controller_deck, meter_level,
 };
 use crate::library::LibrarySources;
+use crate::library_view::SortSetting;
 use crate::loading::{LoadRefusal, LoadSource, check_deck_free, check_file};
 use crate::meter::PeakMeter;
 use crate::pads::{PadFx, next_mode};
@@ -241,6 +243,12 @@ impl DubplateApp {
                 BrowserEvent::ImportRekordbox => this.set_rekordbox_import(true, cx),
                 BrowserEvent::RelinkAll => this.start_relink(None, cx),
                 BrowserEvent::Relink(track) => this.start_relink(Some(track), cx),
+                BrowserEvent::Sorted { screen, sort } => {
+                    this.settings
+                        .library_sort
+                        .set(screen, sort.map(SortSetting::of));
+                    this.save_settings(cx);
+                }
             });
         let effect_search = cx.new(|cx| InputState::new(window, cx).placeholder("Find an effect"));
         let quit_subscription = cx.on_app_quit(|this: &mut Self, _| {
@@ -379,6 +387,7 @@ impl DubplateApp {
         };
         app.restore_effect_units(cx);
         app.restore_sampler(cx);
+        app.restore_library_sorts(cx);
         app.start_library(cx);
         if let Some(problem) = problems.into_iter().next() {
             app.show_notice(NoticePlace::Window, problem, cx);
@@ -569,6 +578,7 @@ impl DubplateApp {
                 Err(error) => (DeckContent::Failed(error_chain(&error)), None),
             };
         self.decks[deck.index()].content = content;
+        self.refresh_filter_reference(cx);
         self.decks[deck.index()].grid_source = grid_source;
         self.give_deck_analysed_grid(deck, cx);
         self.update_lights();
@@ -706,9 +716,8 @@ impl DubplateApp {
             },
             Command::SwitchMode(mode) => {
                 self.mode = mode;
-                self.browser.update(cx, |browser, cx| {
-                    browser.show_load_buttons(mode == Mode::Perform, cx)
-                });
+                self.browser
+                    .update(cx, |browser, cx| browser.show_screen(mode, cx));
             }
             Command::EditSet(edit) => self.edit_set(edit, cx),
             Command::SwitchPrepareFocus(direction) => {
@@ -770,6 +779,7 @@ impl DubplateApp {
                 }
             }
         }
+        self.refresh_filter_reference(cx);
         self.update_lights();
         self.settle_lights(cx);
         cx.notify();

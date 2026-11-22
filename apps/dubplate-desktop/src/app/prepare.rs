@@ -223,6 +223,7 @@ impl DubplateApp {
         self.set_selection = Some(position);
         self.prepare_focus = PrepareFocus::Set;
         self.next_cursor = 0;
+        self.refresh_filter_reference(cx);
         self.ensure_track_detail(cx);
         cx.notify();
     }
@@ -353,6 +354,7 @@ impl DubplateApp {
         });
         self.check_set_tracks(cx);
         self.reveal_set_selection();
+        self.refresh_filter_reference(cx);
         self.ensure_track_detail(cx);
         self.request_set_analysis(cx);
         cx.notify();

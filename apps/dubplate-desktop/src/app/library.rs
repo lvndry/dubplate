@@ -13,6 +13,7 @@ use gpui::{Context, PathPromptOptions};
 use super::{DubplateApp, NoticePlace, error_chain};
 use crate::browser::LibraryStatus;
 use crate::collection::{Collection, RekordboxLibrary, folder_name};
+use crate::commands::Mode;
 use crate::library::{RekordboxSource, ScanRequest};
 use crate::prep;
 use crate::relink::missing_tracks;
@@ -22,6 +23,17 @@ use crate::settings::Settings;
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(200);
 
 impl DubplateApp {
+    /// Sorts each screen's tracks as the DJ left them.
+    pub(super) fn restore_library_sorts(&mut self, cx: &mut Context<'_, Self>) {
+        let saved = self.settings.library_sort.clone();
+        self.browser.update(cx, |browser, cx| {
+            for screen in [Mode::Prepare, Mode::Perform] {
+                let sort = saved.of(screen).and_then(|setting| setting.sort());
+                browser.restore_sort(screen, sort, cx);
+            }
+        });
+    }
+
     /// Opens the library the DJ chose: the last scans from the cache at once, then rekordbox and
     /// a rescan of every folder in the background to pick up what changed.
     pub(super) fn start_library(&mut self, cx: &mut Context<'_, Self>) {
