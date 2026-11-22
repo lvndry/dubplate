@@ -7,7 +7,9 @@ use rtrb::{Consumer, Producer, RingBuffer};
 use crate::channel::ChannelSettings;
 use crate::deck::DeckId;
 use crate::decode::decode_file;
-use crate::effects::{EffectChange, EffectSettings, EffectTarget, EffectUnitId, EffectUnitState};
+use crate::effects::{
+    EffectChange, EffectSettings, EffectTarget, EffectUnitId, EffectUnitState, ReleaseFx,
+};
 use crate::error::{EngineError, check_range};
 use crate::grid::BeatGrid;
 use crate::headphones::HeadphoneSettings;
@@ -1066,6 +1068,24 @@ impl Controller {
         enabled: bool,
     ) -> Result<(), EngineError> {
         self.change_effect(unit, EffectChange::Enabled(enabled))
+    }
+
+    /// Chooses the Release FX a unit plays while it is held: an echo out, a back spin or a vinyl
+    /// brake. A release already held keeps playing the one it started with.
+    pub fn set_release_fx(
+        &mut self,
+        unit: EffectUnitId,
+        release: ReleaseFx,
+    ) -> Result<(), EngineError> {
+        self.change_effect(unit, EffectChange::ChooseRelease(release))
+    }
+
+    /// Holds or lets go of a unit's Release FX, like SHIFT + BEAT FX ON on rekordbox: holding
+    /// it switches the beat effect off and plays the release on the unit's target, which cuts
+    /// the music out with an echo, a back spin or a brake; letting go brings the music back and
+    /// leaves the beat effect off.
+    pub fn hold_release_fx(&mut self, unit: EffectUnitId, held: bool) -> Result<(), EngineError> {
+        self.change_effect(unit, EffectChange::Release(held))
     }
 
     /// The effect on button: switches a unit on when it is off and off when it is on.

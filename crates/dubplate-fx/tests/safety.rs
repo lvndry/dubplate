@@ -60,7 +60,7 @@ fn at_maximum(kind: EffectKind) -> Box<dyn Effect> {
             phaser.set_feedback(0.9);
             Box::new(phaser)
         }
-        EffectKind::Gate => Box::new(Gate::new()),
+        EffectKind::Trans => Box::new(Gate::new()),
         EffectKind::Crusher => {
             let mut crusher = Crusher::new();
             crusher.set_bits(1.0);
@@ -69,6 +69,11 @@ fn at_maximum(kind: EffectKind) -> Box<dyn Effect> {
         }
         EffectKind::Brake => Box::new(Brake::new(&config)),
         EffectKind::Backspin => Box::new(Backspin::new(&config)),
+        other => {
+            let mut effect = create(other, &config);
+            effect.set_depth(1.0);
+            effect
+        }
     };
     effect.set_mix(1.0);
     if effect.beat().is_some() {
@@ -185,7 +190,15 @@ fn turning_knobs_and_switching_never_clicks() {
     let smooth_effects = EffectKind::ALL.into_iter().filter(|kind| {
         !matches!(
             kind,
-            EffectKind::Gate | EffectKind::Crusher | EffectKind::Brake | EffectKind::Backspin
+            EffectKind::Trans
+                | EffectKind::Crusher
+                | EffectKind::CrushEcho
+                | EffectKind::Brake
+                | EffectKind::Backspin
+                | EffectKind::VinylBrake
+                | EffectKind::Noise
+                | EffectKind::MobiusSaw
+                | EffectKind::MobiusTriangle
         )
     });
     for kind in smooth_effects {

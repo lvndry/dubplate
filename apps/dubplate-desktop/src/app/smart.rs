@@ -19,6 +19,7 @@ pub(super) fn preset_label(preset: SmartCfx) -> &'static str {
         SmartCfx::Chop => "Chop",
         SmartCfx::Jet => "Jet",
         SmartCfx::Phase => "Phase",
+        SmartCfx::Pitch => "Pitch",
     }
 }
 

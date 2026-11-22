@@ -23,6 +23,9 @@ pub(crate) enum MixLaw {
     /// taper, so the first quarter stays gentle: 12 dB under the music a quarter of the way,
     /// at full level half way. The master limiter keeps the sum from clipping.
     Blend,
+    /// The music always plays at full level and the effect is laid over it at the mix: for
+    /// effects that add a sound of their own, such as a tone or noise.
+    Layer,
 }
 
 impl MixLaw {
@@ -34,6 +37,7 @@ impl MixLaw {
                 let rise = (2.0 * mix).min(1.0);
                 ((2.0 - 2.0 * mix).min(1.0), rise * rise)
             }
+            Self::Layer => (1.0, mix),
         }
     }
 }
@@ -54,6 +58,11 @@ pub(crate) trait Kernel: Send {
 
     /// Clears every internal state.
     fn reset(&mut self);
+
+    /// Moves every smoothed control straight to its target without touching the audio the
+    /// effect holds. Constructors call it, so a new effect starts at its settings without
+    /// writing through buffers that are already silent.
+    fn settle(&mut self) {}
 
     /// Called each time the effect is switched on.
     fn switched_on(&mut self) {}
@@ -127,6 +136,13 @@ impl<K: Kernel> Unit<K> {
 
     pub(crate) fn needs_input_when_off(&self) -> bool {
         K::LISTENS_WHEN_OFF
+    }
+
+    /// Moves the mix and every smoothed control of the effect straight to its target, for a
+    /// newly built effect.
+    pub(crate) fn settle(&mut self) {
+        self.kernel.settle();
+        self.mix.snap_to_target();
     }
 
     pub(crate) fn reset(&mut self) {
@@ -239,8 +255,14 @@ pub(crate) trait Controls {
 
 /// Implements [`Effect`] for a type with a `unit` field and [`Controls`].
 macro_rules! implement_effect {
+    (impl<$generic:ident: $bound:path> $effect:ty) => {
+        $crate::unit::implement_effect!(@body [$generic: $bound] $effect);
+    };
     ($effect:ty) => {
-        impl $crate::effect::Effect for $effect {
+        $crate::unit::implement_effect!(@body [] $effect);
+    };
+    (@body [$($generic:ident: $bound:path)?] $effect:ty) => {
+        impl$(<$generic: $bound>)? $crate::effect::Effect for $effect {
             fn kind(&self) -> $crate::effect::EffectKind {
                 $crate::unit::Controls::effect_kind(self)
             }

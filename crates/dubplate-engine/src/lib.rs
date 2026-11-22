@@ -63,7 +63,7 @@ pub use dubplate_fx::{
     BeatLength, EffectKind, EqBand, HIGH_CROSSOVER_HZ, LIMITER_CEILING, LOW_CROSSOVER_HZ,
     ParameterSpec, ParameterValue, SignedBeats,
 };
-pub use effects::{EffectTarget, EffectUnitId, EffectUnitState};
+pub use effects::{EffectTarget, EffectUnitId, EffectUnitState, ReleaseFx};
 pub use error::EngineError;
 pub use grid::{BeatGrid, GridBeat};
 pub use headphones::HeadphoneSettings;

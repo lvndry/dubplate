@@ -134,6 +134,10 @@ pub enum EffectEdit {
     Depth(f32),
     /// Switch the unit on or off.
     Toggle,
+    /// Hold (`true`) or let go of the unit's Release FX, as SHIFT + BEAT FX ON does.
+    Release(bool),
+    /// Choose the next Release FX: echo, back spin, vinyl brake.
+    NextRelease,
 }
 
 /// What a stems control does on a deck.

@@ -1,3 +1,5 @@
+pub(crate) mod shimmer;
+
 use std::f32::consts::{FRAC_1_SQRT_2, TAU};
 
 use crate::config::EffectConfig;
@@ -9,7 +11,7 @@ use crate::dsp::loudness::loop_loudness_gain;
 use crate::dsp::shaping::flush_denormal;
 use crate::dsp::smoothing::Smoothed;
 use crate::effect::EffectKind;
-use crate::effects::tape::read_taps;
+use crate::effects::delays::tape::read_taps;
 use crate::parameter::ParameterValue;
 use crate::unit::{Controls, Frame, Kernel, MixLaw, Unit, implement_effect, knob};
 
@@ -44,7 +46,8 @@ const DEFAULT_DAMPING: f32 = 0.45;
 const DEFAULT_PRE_DELAY_SECONDS: f32 = 0.015;
 const DEFAULT_LOW_CUT_HZ: f32 = 200.0;
 const DEFAULT_MIX: f32 = 0.5;
-const DEFAULT_SIZE_PERCENT: i16 = 50;
+/// The size a new reverb starts at.
+pub(crate) const DEFAULT_SIZE_PERCENT: i16 = 50;
 const SMALLEST_SIZE: f32 = 0.2;
 const DECAY_AT_NO_SIZE_SECONDS: f32 = 0.8;
 
@@ -71,7 +74,7 @@ impl Reverb {
             size_percent: DEFAULT_SIZE_PERCENT,
         };
         reverb.apply_parameter(ParameterValue::Percent(DEFAULT_SIZE_PERCENT));
-        reverb.unit.reset();
+        reverb.unit.settle();
         reverb
     }
 
@@ -90,7 +93,7 @@ impl Reverb {
     pub fn set_size(&mut self, size: f32) {
         let scale = &mut self.unit.kernel.size_scale;
         let size = knob(size, 0.0, 1.0, DEFAULT_SIZE);
-        scale.set_target(MIN_SIZE_SCALE + (MAX_SIZE_SCALE - MIN_SIZE_SCALE) * size);
+        scale.set_target(size_scale(size));
     }
 
     /// Sets how quickly high frequencies die away, from 0 (bright) to 1 (dark).
@@ -132,9 +135,7 @@ impl Controls for Reverb {
     fn apply_parameter(&mut self, value: ParameterValue) {
         if let ParameterValue::Percent(percent) = value {
             self.size_percent = percent.clamp(0, 100);
-            let size = f32::from(self.size_percent) / 100.0;
-            self.set_size(SMALLEST_SIZE + (1.0 - SMALLEST_SIZE) * size);
-            self.set_decay_seconds(DECAY_AT_NO_SIZE_SECONDS * 10.0_f32.powf(size));
+            self.unit.kernel.set_space(self.size_percent);
         }
     }
 
@@ -182,7 +183,17 @@ pub(crate) struct ReverbKernel {
 }
 
 impl ReverbKernel {
-    fn new(config: &EffectConfig) -> Self {
+    /// Sets the size of the space and the decay that goes with it, from 0% (a small room,
+    /// 0.8 s) to 100% (a long hall, 8 s).
+    pub(crate) fn set_space(&mut self, size_percent: i16) {
+        let size = f32::from(size_percent.clamp(0, 100)) / 100.0;
+        self.size_scale
+            .set_target(size_scale(SMALLEST_SIZE + (1.0 - SMALLEST_SIZE) * size));
+        self.decay_seconds
+            .set_target(DECAY_AT_NO_SIZE_SECONDS * 10.0_f32.powf(size));
+    }
+
+    pub(crate) fn new(config: &EffectConfig) -> Self {
         let longest_line = LINE_MILLISECONDS[LINE_COUNT - 1] * MAX_SIZE_SCALE
             + MODULATION_MILLISECONDS * MAX_SIZE_SCALE;
         let line_capacity = config.samples_for(longest_line / 1000.0) + 4;
@@ -215,10 +226,7 @@ impl ReverbKernel {
             output_gain: OUTPUT_GAIN,
             decay_seconds: Smoothed::new(DEFAULT_DECAY_SECONDS, TONE_SMOOTHING_SECONDS),
             damping: Smoothed::new(DEFAULT_DAMPING, TONE_SMOOTHING_SECONDS),
-            size_scale: Smoothed::new(
-                MIN_SIZE_SCALE + (MAX_SIZE_SCALE - MIN_SIZE_SCALE) * DEFAULT_SIZE,
-                SIZE_SMOOTHING_SECONDS,
-            ),
+            size_scale: Smoothed::new(size_scale(DEFAULT_SIZE), SIZE_SMOOTHING_SECONDS),
             control_countdown: 0,
             sample_rate: 0.0,
         }
@@ -251,6 +259,11 @@ impl ReverbKernel {
             self.sample_rate,
         );
     }
+}
+
+/// How much the lines stretch for a size from 0 to 1.
+fn size_scale(size: f32) -> f32 {
+    MIN_SIZE_SCALE + (MAX_SIZE_SCALE - MIN_SIZE_SCALE) * size
 }
 
 /// The gain per pass that makes a line of `line_samples` fall by 60 dB in `decay_samples`.
@@ -347,6 +360,17 @@ impl Kernel for ReverbKernel {
         }
 
         [output[0] * self.output_gain, output[1] * self.output_gain]
+    }
+
+    fn settle(&mut self) {
+        for smoothed in [
+            &mut self.decay_seconds,
+            &mut self.damping,
+            &mut self.size_scale,
+            &mut self.low_cut_octaves,
+        ] {
+            smoothed.snap_to_target();
+        }
     }
 
     fn reset(&mut self) {

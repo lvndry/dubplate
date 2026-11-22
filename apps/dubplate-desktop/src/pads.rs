@@ -90,7 +90,18 @@ const FULL_DEPTH: f32 = 0.85;
 
 const fn effect(kind: EffectKind, parameter: Option<ParameterValue>) -> PadFx {
     let depth = match kind {
-        EffectKind::Echo | EffectKind::PingPong | EffectKind::Reverb => WASH_DEPTH,
+        EffectKind::Delay
+        | EffectKind::Echo
+        | EffectKind::Spiral
+        | EffectKind::Reverb
+        | EffectKind::UpEcho
+        | EffectKind::DownEcho
+        | EffectKind::PingPong
+        | EffectKind::HpfEcho
+        | EffectKind::LpfEcho
+        | EffectKind::BpfEcho
+        | EffectKind::CrushEcho
+        | EffectKind::ReverbUp => WASH_DEPTH,
         _ => FULL_DEPTH,
     };
     PadFx::Effect(PadEffect {
@@ -120,37 +131,37 @@ const PAD_FX_BANKS: [[PadFx; PAD_COUNT]; 4] = [
         effect(EffectKind::Echo, beats(BeatLength::HALF)),
         effect(EffectKind::Echo, beats(BeatLength::THREE_QUARTERS)),
         effect(EffectKind::Reverb, percent(50)),
-        effect(EffectKind::Brake, beats(BeatLength::ONE)),
+        effect(EffectKind::VinylBrake, beats(BeatLength::ONE)),
     ],
     [
         PadFx::Roll(BeatLength::SIXTEENTH),
         PadFx::Roll(BeatLength::EIGHTH),
-        effect(EffectKind::Gate, beats(BeatLength::QUARTER)),
-        effect(EffectKind::Gate, beats(BeatLength::EIGHTH)),
+        effect(EffectKind::Trans, beats(BeatLength::QUARTER)),
+        effect(EffectKind::Trans, beats(BeatLength::EIGHTH)),
         effect(EffectKind::PingPong, beats(BeatLength::HALF)),
-        effect(EffectKind::Echo, beats(BeatLength::ONE)),
-        effect(EffectKind::Crusher, None),
+        effect(EffectKind::Spiral, beats(BeatLength::HALF)),
+        effect(EffectKind::CrushEcho, beats(BeatLength::HALF)),
         effect(EffectKind::Backspin, beats(BeatLength::ONE)),
     ],
     [
         effect(EffectKind::Filter, beats(BeatLength::FOUR)),
-        effect(EffectKind::HighPass, percent(50)),
-        effect(EffectKind::LowPass, percent(50)),
-        effect(EffectKind::BandPass, percent(50)),
+        effect(EffectKind::HpfEcho, beats(BeatLength::HALF)),
+        effect(EffectKind::LpfEcho, beats(BeatLength::HALF)),
+        effect(EffectKind::BpfEcho, beats(BeatLength::HALF)),
         effect(EffectKind::Flanger, beats(BeatLength::FOUR)),
         effect(EffectKind::Phaser, beats(BeatLength::FOUR)),
-        effect(EffectKind::Gate, beats(BeatLength::HALF)),
-        effect(EffectKind::Crusher, None),
+        effect(EffectKind::Pitch, Some(ParameterValue::Semitones(12))),
+        effect(EffectKind::Robot, percent(0)),
     ],
     [
         PadFx::Roll(BeatLength::FOUR),
         PadFx::Roll(BeatLength::EIGHT),
-        effect(EffectKind::Echo, beats(BeatLength::QUARTER)),
-        effect(EffectKind::PingPong, beats(BeatLength::THREE_QUARTERS)),
-        effect(EffectKind::Reverb, percent(80)),
-        effect(EffectKind::Filter, beats(BeatLength::EIGHT)),
+        effect(EffectKind::UpEcho, beats(BeatLength::HALF)),
+        effect(EffectKind::DownEcho, beats(BeatLength::HALF)),
+        effect(EffectKind::ReverbUp, percent(80)),
+        effect(EffectKind::Noise, beats(BeatLength::HALF)),
         effect(EffectKind::Brake, beats(BeatLength::TWO)),
-        effect(EffectKind::Backspin, beats(BeatLength::TWO)),
+        effect(EffectKind::Stretch, beats(BeatLength::ONE)),
     ],
 ];
 
