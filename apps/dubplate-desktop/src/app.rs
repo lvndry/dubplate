@@ -71,7 +71,9 @@ use gpui::{
 use crate::analysis::{AnalysisPriority, TrackAnalyser, TrackAnalyses};
 use crate::browser::{Browser, BrowserEvent, LibraryStatus};
 use crate::collection::{Collection, CollectionTrack, TrackIndex};
-use crate::commands::{AutoCueChoice, Command, Direction, EffectEdit, JogMotion, Mode, Press};
+use crate::commands::{
+    AutoCueChoice, CfxScope, Command, Direction, EffectEdit, JogMotion, Mode, Press,
+};
 use crate::controls::{
     CROSSFADER_STEP, Control, MixerPositions, Orientation, Slider, fraction_at, master_gain_at,
     nudged_tempo_slider, tempo_fader, trim_gain_at,
@@ -263,6 +265,8 @@ pub struct DubplateApp {
     play_watches: [PlayWatch<SessionRecord>; DECK_COUNT],
     time_zone: jiff::tz::TimeZone,
     smart_cfx_menu: bool,
+    /// The Sound Color FX picker, when it is open, and the channels it sets.
+    cfx_menu: Option<CfxScope>,
     effect_menu: Option<EffectMenu>,
     fx_select_presses: u64,
     refocus_window: bool,
@@ -526,6 +530,7 @@ impl DubplateApp {
             play_watches: Default::default(),
             time_zone: jiff::tz::TimeZone::system(),
             smart_cfx_menu: false,
+            cfx_menu: None,
             effect_menu: None,
             fx_select_presses: 0,
             refocus_window: false,
@@ -1043,6 +1048,17 @@ impl DubplateApp {
                 self.choose_smart_cfx(next, cx);
             }
             Command::ChooseSmartCfx(preset) => self.choose_smart_cfx(preset, cx),
+            Command::ToggleCfxMenu => {
+                self.cfx_menu = match self.cfx_menu {
+                    Some(_) => None,
+                    None => Some(CfxScope::default()),
+                };
+            }
+            Command::SetCfxScope(scope) => self.cfx_menu = Some(scope),
+            Command::ChooseCfxColour(colour) => {
+                let scope = self.cfx_menu.take().unwrap_or_default();
+                self.choose_cfx_colour(scope.decks(), colour, cx);
+            }
             Command::ToggleSmartFader => self.toggle_smart_fader(cx),
             Command::ToggleMasterCue => {
                 let cued = self
