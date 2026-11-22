@@ -23,7 +23,7 @@ Statuses are as audited on 22 November 2026, on `main` with a second Dubplate ru
 
 ## At every window size
 
-**V1 Nothing breaks when the window is small.** Must: at the smallest window (1100 × 700) every control a DJ needs while playing stays visible and usable, and text shortens to words, not fragments. Status: **Done** for the decks, the header and the lanes: the tempo slider wraps under the buttons, titles end in "…", the header shows status dots with tooltips, and the lanes get lower in a short window. The effect strip puts a unit that does not fit on a second row instead of cutting it.
+**V1 Nothing breaks when the window is small.** Must: at the smallest window (1100 × 700) every control a DJ needs while playing stays visible and usable, and text shortens to words, not fragments. Status: **Done** for the decks, the header and the lanes: the tempo slider wraps under the buttons, titles end in "…", the library table drops its Genre, Stems and Source columns so every header stays a whole word, the header shows status dots with tooltips, and the lanes get lower in a short window. The effect strip puts a unit that does not fit on a second row instead of cutting it.
 
 **V2 Readouts never jitter.** Must: numbers use tabular figures and fixed widths so a changing value never moves its neighbours. Status: **Done** for the deck readouts and the browser, which use the monospaced face.
 

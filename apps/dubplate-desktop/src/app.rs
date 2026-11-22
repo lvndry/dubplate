@@ -133,7 +133,7 @@ const PINCH_STEP: f32 = 0.25;
 /// What the window says when the audio drops out often.
 const GLITCH_NOTICE: &str = "Audio is glitching. A larger buffer in Settings > Audio can help.";
 /// Below this width the header shows the controller and the sound card as dots.
-const NARROW_WINDOW_WIDTH: Pixels = px(1320.0);
+pub(crate) const NARROW_WINDOW_WIDTH: Pixels = px(1320.0);
 /// Below this height the lanes are lower.
 const SHORT_WINDOW_HEIGHT: Pixels = px(820.0);
 /// How often the controller lights follow the decks while nothing else updates them, for the
