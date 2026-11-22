@@ -2,12 +2,12 @@
 //! clicks and shortcuts into engine commands, and redraws at the screen's frame rate while
 //! anything moves.
 
+mod analysis;
 mod audio;
 mod audition;
 mod deck_panel;
 mod drop_target;
 mod effects_strip;
-mod energy;
 mod export;
 mod header;
 mod help;
@@ -50,6 +50,7 @@ use gpui::{
     SharedString, StyleRefinement, Subscription, Task, Window, div, px,
 };
 
+use crate::analysis::{AnalysisPriority, TrackAnalyser, TrackAnalyses};
 use crate::browser::{Browser, BrowserEvent, LibraryStatus};
 use crate::collection::{Collection, CollectionTrack};
 use crate::commands::{Command, EffectEdit, JogMotion, Mode, Press};
@@ -58,10 +59,9 @@ use crate::controls::{
     nudged_tempo_slider, tempo_fader, trim_gain_at,
 };
 use crate::deck::{
-    Deck, DeckContent, HotCues, LoadError, PreparedTrack, TrackVisuals, prepare_track,
+    Deck, DeckContent, GridSource, HotCues, LoadError, PreparedTrack, TrackVisuals, prepare_track,
 };
 use crate::effects::{EffectUnitSetting, search, step_beat, step_effect};
-use crate::energy::{EnergyAnalyser, EnergyRatings};
 use crate::fonts::UI_FAMILY;
 use crate::frame_stats::FrameStats;
 use crate::hardware::{
@@ -200,8 +200,8 @@ pub struct DubplateApp {
     relink_review: Option<RelinkReview>,
     audition: Option<Audition>,
     audition_generation: u64,
-    energy: EnergyRatings,
-    energy_collecting: bool,
+    analyses: TrackAnalyses,
+    analysis_collecting: bool,
     recording: Option<Recording>,
     recording_skip_reported: bool,
     smart_cfx_menu: bool,
@@ -351,10 +351,10 @@ impl DubplateApp {
             relink_review: None,
             audition: None,
             audition_generation: 0,
-            energy: EnergyRatings::new(
-                analysis_queue.map(|queue| Box::new(queue) as Box<dyn EnergyAnalyser>),
+            analyses: TrackAnalyses::new(
+                analysis_queue.map(|queue| Box::new(queue) as Box<dyn TrackAnalyser>),
             ),
-            energy_collecting: false,
+            analysis_collecting: false,
             recording: None,
             recording_skip_reported: false,
             smart_cfx_menu: false,
@@ -482,6 +482,10 @@ impl DubplateApp {
             .collection()
             .and_then(|collection| collection.share_directory().map(Path::to_path_buf));
         let correction = self.grid_correction(&track);
+        let analysis = track.track.file_path.as_deref().and_then(|path| {
+            self.request_analysis([path], AnalysisPriority::Set, cx);
+            self.analyses.get(path).cloned()
+        });
         cx.spawn(async move |this, cx| {
             let prepared = cx
                 .background_executor()
@@ -491,6 +495,7 @@ impl DubplateApp {
                         share_directory.as_deref(),
                         Zoom::DEFAULT,
                         correction,
+                        analysis.as_deref(),
                     )
                 })
                 .await;
@@ -544,14 +549,21 @@ impl DubplateApp {
         if !self.deck(deck).is_current_load(generation) {
             return;
         }
-        let content = match prepared.and_then(|prepared| self.put_on_deck(deck, prepared)) {
-            Ok(visuals) => {
-                self.signal_controllers(Feedback::TrackLoaded(controller_deck(deck)));
-                DeckContent::Loaded(visuals)
-            }
-            Err(error) => DeckContent::Failed(error_chain(&error)),
-        };
+        let grid_source = prepared
+            .as_ref()
+            .ok()
+            .and_then(|prepared| prepared.grid_source);
+        let (content, grid_source) =
+            match prepared.and_then(|prepared| self.put_on_deck(deck, prepared)) {
+                Ok(visuals) => {
+                    self.signal_controllers(Feedback::TrackLoaded(controller_deck(deck)));
+                    (DeckContent::Loaded(visuals), grid_source)
+                }
+                Err(error) => (DeckContent::Failed(error_chain(&error)), None),
+            };
         self.decks[deck.index()].content = content;
+        self.decks[deck.index()].grid_source = grid_source;
+        self.give_deck_analysed_grid(deck, cx);
         self.update_lights();
         cx.notify();
     }
@@ -1073,17 +1085,14 @@ impl DubplateApp {
         cx.notify();
     }
 
-    /// A tap on a deck's beat. Enough taps give a track without a beat grid its tempo and its
-    /// beats, so sync and the effects follow it. A track with rekordbox's grid keeps it.
+    /// A tap on a deck's beat. Enough taps give a track without rekordbox's beat grid its tempo
+    /// and its beats, so sync and the effects follow it, in place of any grid Dubplate's
+    /// analysis gave it. A track with rekordbox's grid keeps it.
     fn tap_tempo(&mut self, deck: DeckId, cx: &mut Context<'_, Self>) {
         if self.deck(deck).visuals().is_none() {
             return;
         }
-        let has_grid = self
-            .engine
-            .as_ref()
-            .is_ok_and(|engine| engine.controller.beat_grid(deck).is_some());
-        if has_grid && !self.deck(deck).tapped_grid {
+        if self.deck(deck).grid_source == Some(GridSource::Rekordbox) {
             self.show_notice(
                 NoticePlace::Deck(deck),
                 "This track keeps rekordbox's beat grid; tap tempo is for tracks without one.",
@@ -1102,7 +1111,13 @@ impl DubplateApp {
                 return;
             }
         };
-        self.decks[deck.index()].tapped_grid = true;
+        let deck_state = &mut self.decks[deck.index()];
+        if deck_state.grid_source == Some(GridSource::Analysis)
+            && let DeckContent::Loaded(visuals) = &mut deck_state.content
+        {
+            visuals.beats = Arc::default();
+        }
+        deck_state.grid_source = Some(GridSource::Tapped);
         self.engine_command(cx, |controller| controller.set_beat_grid(deck, Some(grid)));
     }
 

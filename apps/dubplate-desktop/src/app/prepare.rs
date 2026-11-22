@@ -8,8 +8,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use dubplate_prep::{
-    EnergyDirection, GridCorrection, PrepTrack, ReadyProblem, ReadyReport, SetEntry, SetTrack,
-    SetWarning, StoreError, WarningPosition, set_warnings, suggest_next,
+    AudioAnalysis, EnergyDirection, GridCorrection, PrepTrack, ReadyProblem, ReadyReport, SetEntry,
+    SetTrack, SetWarning, StoreError, WarningPosition, set_warnings, suggest_next,
 };
 use gpui::{App, Context};
 
@@ -255,7 +255,7 @@ impl DubplateApp {
             Some(_) => {
                 self.show_notice(
                     NoticePlace::Window,
-                    "No cues to propose: rekordbox has no beat grid for this track.",
+                    "No cues to propose: this track has no beat grid yet.",
                     cx,
                 );
                 Ok(())
@@ -289,18 +289,18 @@ impl DubplateApp {
         });
         self.check_set_tracks(cx);
         self.ensure_track_detail(cx);
-        self.request_set_energy(cx);
+        self.request_set_analysis(cx);
         cx.notify();
     }
 
     /// Reads the file and analysis of every set track and backup not checked yet, off the
     /// interface thread.
-    fn check_set_tracks(&mut self, cx: &mut Context<'_, Self>) {
+    pub(super) fn check_set_tracks(&mut self, cx: &mut Context<'_, Self>) {
         let (Some(collection), Some(editor)) = (self.collection().cloned(), &self.set_editor)
         else {
             return;
         };
-        let unchecked: Vec<(PathBuf, GridCorrection)> = editor
+        let unchecked: Vec<(PathBuf, GridCorrection, Option<Arc<AudioAnalysis>>)> = editor
             .set()
             .entries
             .iter()
@@ -308,13 +308,19 @@ impl DubplateApp {
                 !self.track_checks.contains_key(&entry.track_path)
                     && !self.checks_pending.contains(&entry.track_path)
             })
-            .map(|entry| (entry.track_path.clone(), GridCorrection::of(entry)))
+            .map(|entry| {
+                (
+                    entry.track_path.clone(),
+                    GridCorrection::of(entry),
+                    self.analyses.get(&entry.track_path).cloned(),
+                )
+            })
             .collect();
         if unchecked.is_empty() {
             return;
         }
         self.checks_pending
-            .extend(unchecked.iter().map(|(path, _)| path.clone()));
+            .extend(unchecked.iter().map(|(path, _, _)| path.clone()));
         let generation = self.check_generation;
         cx.spawn(async move |this, cx| {
             let checks = cx
@@ -322,12 +328,13 @@ impl DubplateApp {
                 .spawn(async move {
                     unchecked
                         .into_iter()
-                        .map(|(path, correction)| {
+                        .map(|(path, correction, analysis)| {
                             let check = match collection.find_path(&path) {
                                 Some(index) => check_track(
                                     collection.track(index),
                                     collection.share_directory(),
                                     correction,
+                                    analysis.as_deref(),
                                 ),
                                 None => TrackCheck::not_in_library(&path),
                             };
