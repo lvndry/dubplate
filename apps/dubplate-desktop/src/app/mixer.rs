@@ -1,5 +1,5 @@
 //! The mixer between the decks: the master level and meter, each channel's trim, EQ and filter
-//! knobs, a meter and a fader per channel, and the crossfader.
+//! knobs, a meter and a fader per channel, the crossfader, and the headphone section.
 
 use dubplate_engine::{DeckId, EqBand};
 use gpui::prelude::*;
@@ -7,6 +7,7 @@ use gpui::{Context, FontWeight, Pixels, div, px};
 
 use super::slider::{self, CROSSFADER_THUMB, FADER_THUMB, SMALL_THUMB};
 use super::{DubplateApp, knob};
+use crate::commands::Command;
 use crate::controls::{Control, Slider};
 use crate::deck::deck_letter;
 use crate::fonts::MONO_FAMILY;
@@ -22,6 +23,7 @@ const HEADER_SEGMENT_GAP: Pixels = px(1.5);
 const KNOB_SIZE: Pixels = px(18.0);
 const KNOB_GAP: Pixels = px(5.0);
 const KNOB_ROWS: usize = 5;
+const HEADPHONE_KNOB_SIZE: Pixels = px(16.0);
 
 /// A knob of a channel strip: its name, and the control it turns on a deck.
 type StripKnob = (&'static str, fn(DeckId) -> Control);
@@ -92,6 +94,105 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
                 .child(slider::render(app, Slider::Crossfader, CROSSFADER_THUMB, None, cx).flex_1())
                 .child(deck_label(DeckId::B)),
         )
+        .child(headphones(app, cx))
+}
+
+/// The headphone section: each channel's CUE on its side, and between them the MIXING knob,
+/// MASTER CUE and the LEVEL knob.
+fn headphones(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoElement {
+    let settings = app.headphones();
+    let cued = |deck| settings.is_some_and(|settings| settings.is_cued(deck));
+    let master_cued = settings.is_some_and(|settings| settings.master_cue);
+    div()
+        .flex()
+        .items_center()
+        .justify_between()
+        .child(cue_button(
+            ("headphone-cue", 0),
+            "Cue",
+            cued(DeckId::A),
+            theme::deck_colour(DeckId::A),
+            Command::ToggleHeadphoneCue(DeckId::A),
+            cx,
+        ))
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(4.0))
+                .child(knob::render(
+                    app,
+                    Control::HeadphoneMix,
+                    HEADPHONE_KNOB_SIZE,
+                    theme::TEXT,
+                    cx,
+                ))
+                .child(label("Mix"))
+                .child(cue_button(
+                    ("master-cue", 0),
+                    "M",
+                    master_cued,
+                    theme::TEXT,
+                    Command::ToggleMasterCue,
+                    cx,
+                ))
+                .child(knob::render(
+                    app,
+                    Control::HeadphoneLevel,
+                    HEADPHONE_KNOB_SIZE,
+                    theme::TEXT,
+                    cx,
+                ))
+                .child(label("Lvl")),
+        )
+        .child(cue_button(
+            ("headphone-cue", 1),
+            "Cue",
+            cued(DeckId::B),
+            theme::deck_colour(DeckId::B),
+            Command::ToggleHeadphoneCue(DeckId::B),
+            cx,
+        ))
+}
+
+/// A small headphone button, outlined in `colour` while on.
+fn cue_button(
+    id: (&'static str, usize),
+    text: &'static str,
+    on: bool,
+    colour: gpui::Rgba,
+    command: Command,
+    cx: &mut Context<'_, DubplateApp>,
+) -> impl IntoElement + use<> {
+    div()
+        .id(id)
+        .flex()
+        .items_center()
+        .justify_center()
+        .h(px(20.0))
+        .px(px(6.0))
+        .rounded(px(5.0))
+        .border_1()
+        .text_size(theme::TINY_TEXT_SIZE)
+        .cursor_pointer()
+        .map(|button| {
+            if on {
+                button
+                    .border_color(colour)
+                    .bg(theme::faded(colour, 0.18))
+                    .text_color(theme::TEXT)
+            } else {
+                button
+                    .border_color(theme::LINE)
+                    .text_color(theme::MUTED)
+                    .hover(|button| button.text_color(theme::TEXT))
+            }
+        })
+        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_click(cx.listener(move |this, _: &gpui::ClickEvent, window, cx| {
+            this.perform(command, window, cx);
+        }))
+        .child(text)
 }
 
 /// A channel's trim, EQ and filter knobs, top to bottom.
