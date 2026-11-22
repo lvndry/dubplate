@@ -611,13 +611,13 @@ rekordbox does not print its full Beat FX list; these names come from the plan p
 | Feature | What it does | Where in rekordbox | Tier | Dubplate | Priority |
 | --- | --- | --- | --- | --- | --- |
 | CFX FILTER | Low-pass to the left, high-pass to the right, resonance as the parameter. | FLX4 CFX | Free (FLX4) | Done | P0 |
-| CFX selection | Pick the Sound Color FX the CFX knobs play (USER mode, 9 types), or a different one per channel (Multi). | Effect panel CFX | Free | Missing: the knob is always the filter | P1 |
-| DUB ECHO | Echo on mids to the left, highs to the right. | Sound Color FX | Free | Partial: Smart CFX Dub Echo preset only | P1 |
-| SPACE | Reverb on mids and lows or mids and highs. | Sound Color FX | Free | Partial: Smart CFX Space preset only | P1 |
-| SWEEP | Notch one way, band-pass the other. | Sound Color FX | Free | Missing | P2 |
-| NOISE | Filtered white noise for builds. | Sound Color FX | Free | Missing | P2 |
-| CRUSH | Crush, or crush then high-pass. | Sound Color FX | Free | Partial: Smart CFX Crush preset only | P2 |
-| PITCH | Pitch down or up. | Sound Color FX | Free | Missing | P3 |
+| CFX selection | Pick the Sound Color FX the CFX knobs play (USER mode, 9 types), or a different one per channel (Multi). | Effect panel CFX | Free | Done: Filter and 9 colours, for both channels or each | P1 |
+| DUB ECHO | Echo on mids to the left, highs to the right. | Sound Color FX | Free | Done: as a Sound Color FX on either channel, or a Smart CFX preset | P1 |
+| SPACE | Reverb on mids and lows or mids and highs. | Sound Color FX | Free | Done: as a Sound Color FX on either channel, or a Smart CFX preset | P1 |
+| SWEEP | Notch one way, band-pass the other. | Sound Color FX | Free | Done: a tightening gate to the left, band-pass to the right | P2 |
+| NOISE | Filtered white noise for builds. | Sound Color FX | Free | Done | P2 |
+| CRUSH | Crush, or crush then high-pass. | Sound Color FX | Free | Done: as a Sound Color FX on either channel, or a Smart CFX preset | P2 |
+| PITCH | Pitch down or up. | Sound Color FX | Free | Done | P3 |
 | Release FX | Applies ECHO, BACK SPIN or VINYL BRAKE while cutting the running Beat FX; SHIFT + BEAT FX ON on the FLX4. | Effect panel, FLX4 | Free (FLX4) | Missing | P1 |
 | Release FX on CFX | Release FX also turns off Sound Color FX. | Preferences > Controller > Effect | Free | Missing | P3 |
 | Merge FX | One knob builds with effects and samples, then releases into a drop sample (4 presets). | MFX panel | Core (FLX4 unlocks) | Missing | P3 |
@@ -784,7 +784,7 @@ Every control in Pioneer's "DDJ-FLX4 Hardware Diagram for rekordbox", with and w
 | HEADPHONE CUE (MASTER) | Master in headphones | FLX4 hardware diagram | Free (FLX4) | Done | P0 |
 | TRIM | Trim | FLX4 hardware diagram | Free (FLX4) | Done | P0 |
 | EQ HI, MID, LOW | EQ | FLX4 hardware diagram | Free (FLX4) | Done | P0 |
-| CFX | Sound Color FX or Smart CFX | FLX4 hardware diagram | Free (FLX4) | Partial: filter and Smart CFX; no other Sound Color FX | P1 |
+| CFX | Sound Color FX or Smart CFX | FLX4 hardware diagram | Free (FLX4) | Done: filter, Sound Color FX per channel, or Smart CFX | P1 |
 | HEADPHONE CUE (channel) | Channel cue; with SHIFT: Tap BPM | FLX4 hardware diagram | Free (FLX4) | Done | P0 |
 | Channel fader | Volume or Smart Fader; with SHIFT: Channel fader start | FLX4 hardware diagram | Free (FLX4) | Partial: no fader start | P2 |
 | Crossfader | Crossfader or Smart Fader; with SHIFT: Crossfader start | FLX4 hardware diagram | Free (FLX4) | Partial: no crossfader start | P2 |
