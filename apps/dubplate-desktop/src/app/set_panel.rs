@@ -15,7 +15,7 @@ use super::DubplateApp;
 use super::prepare::{NextSuggestions, PrepareFocus, SetRow};
 use crate::audition::AUDITION_LENGTH;
 use crate::browser::DraggedTrack;
-use crate::energy::{HIGHEST_ENERGY, LOWEST_ENERGY, set_curve, target_energy};
+use crate::energy::{EnergyRange, HIGHEST_ENERGY, LOWEST_ENERGY, set_curve, target_energy};
 use crate::fonts::MONO_FAMILY;
 use crate::prep::SeamSummary;
 use crate::set::running_time;
@@ -170,13 +170,16 @@ fn summary(app: &DubplateApp, rows: &[SetRow]) -> impl IntoElement {
                 )),
         )
         .when(!rows.is_empty(), |summary| {
-            summary.child(energy_curve(rows, target))
+            let range = EnergyRange::of_library(
+                app.catalogue.tracks.iter().filter_map(|track| track.energy),
+            );
+            summary.child(energy_curve(rows, target, range))
         })
 }
 
 /// The set's energy track by track as steps, over the target it should follow, across the
 /// target length or the set's when it runs over.
-fn energy_curve(rows: &[SetRow], target: Duration) -> impl IntoElement + use<> {
+fn energy_curve(rows: &[SetRow], target: Duration, range: EnergyRange) -> impl IntoElement + use<> {
     let tracks: Vec<(Option<Duration>, Option<f32>)> = rows
         .iter()
         .map(|row| {
@@ -221,7 +224,7 @@ fn energy_curve(rows: &[SetRow], target: Duration) -> impl IntoElement + use<> {
                     let mut target_line = PathBuilder::stroke(px(1.0));
                     for segment in 0..=TARGET_SEGMENTS {
                         let fraction = segment as f32 / TARGET_SEGMENTS as f32;
-                        let position = at(fraction, target_energy(fraction));
+                        let position = at(fraction, target_energy(fraction, range));
                         if segment == 0 {
                             target_line.move_to(position);
                         } else {

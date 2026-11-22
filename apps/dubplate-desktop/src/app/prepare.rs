@@ -16,7 +16,7 @@ use gpui::{App, Context};
 use super::{DubplateApp, NoticePlace};
 use crate::collection::{TrackIndex, TrackOrigin};
 use crate::commands::{Direction, SetEdit};
-use crate::energy::{direction_toward_target, set_curve};
+use crate::energy::{EnergyRange, direction_toward_target, set_curve};
 use crate::loading::LoadSource;
 use crate::prep::{
     GridCorrection, SeamSummary, TrackCheck, accept_proposal, check_track, nearest_bar_ms,
@@ -466,7 +466,13 @@ impl DubplateApp {
         let reference_end = set_curve(&lengths, editor.target())
             .get(position)
             .map_or(1.0, |step| step.end);
-        let direction = direction_toward_target(reference.energy, reference_end);
+        let range = EnergyRange::of_library(
+            self.catalogue
+                .tracks
+                .iter()
+                .filter_map(|track| track.energy),
+        );
+        let direction = direction_toward_target(reference.energy, reference_end, range);
         let tracks = suggest_next(
             reference,
             &self.catalogue.tracks,
