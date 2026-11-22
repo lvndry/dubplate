@@ -217,6 +217,9 @@ impl Dispatcher {
             (Button::BeatFxOn, Layer::Normal) if pressed => {
                 Some(Command::Effect(surface.focused_effect?, EffectEdit::Toggle))
             }
+            (Button::SmartCfx, Layer::Normal) if pressed => Some(Command::ToggleSmartCfx),
+            (Button::SmartCfx, Layer::Shift) if pressed => Some(Command::NextSmartCfx),
+            (Button::SmartFader, Layer::Normal) if pressed => Some(Command::ToggleSmartFader),
             (Button::PadMode { deck, mode }, _) if pressed => {
                 Some(Command::SetPadMode(deck_id(deck), mode))
             }
@@ -680,6 +683,11 @@ mod tests {
                 lever(Deck::B, true),
                 press(Button::BeatFxOn),
                 release(Button::BeatFxOn),
+                press(Button::SmartCfx),
+                release(Button::SmartCfx),
+                shift_press(Button::SmartCfx),
+                press(Button::SmartFader),
+                shift_press(Button::SmartFader),
             ],
         );
         assert_eq!(
@@ -694,6 +702,9 @@ mod tests {
                 Command::Effect(unit, EffectEdit::Target(EffectTarget::Master)),
                 Command::Effect(unit, EffectEdit::Target(EffectTarget::Deck(DeckId::B))),
                 Command::Effect(unit, EffectEdit::Toggle),
+                Command::ToggleSmartCfx,
+                Command::NextSmartCfx,
+                Command::ToggleSmartFader,
             ]
         );
     }

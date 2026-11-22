@@ -1,11 +1,13 @@
 //! The mixer between the decks: the master level and meter, each channel's trim, EQ and filter
 //! knobs, a meter and a fader per channel, the crossfader, and the headphone section.
 
+use dubplate_engine::SmartCfx;
 use dubplate_engine::{DeckId, EqBand};
 use gpui::prelude::*;
-use gpui::{Context, FontWeight, Pixels, div, px};
+use gpui::{ClickEvent, Context, FontWeight, MouseButton, Pixels, SharedString, deferred, div, px};
 
 use super::slider::{self, CROSSFADER_THUMB, FADER_THUMB, SMALL_THUMB};
+use super::smart::preset_label;
 use super::{DubplateApp, knob};
 use crate::commands::Command;
 use crate::controls::{Control, Slider};
@@ -91,10 +93,132 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
                 .items_center()
                 .gap(px(8.0))
                 .child(deck_label(DeckId::A))
-                .child(slider::render(app, Slider::Crossfader, CROSSFADER_THUMB, None, cx).flex_1())
+                .child(
+                    slider::render(
+                        app,
+                        Slider::Crossfader,
+                        CROSSFADER_THUMB,
+                        app.smart_fader_on().then_some((0.0, theme::TEXT)),
+                        cx,
+                    )
+                    .flex_1(),
+                )
                 .child(deck_label(DeckId::B)),
         )
+        .child(smart_buttons(app, cx))
         .child(headphones(app, cx))
+}
+
+/// SMART CFX with its preset, which opens the picker, and SMART FADER, which also lights the
+/// crossfader's track while it is on.
+fn smart_buttons(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoElement {
+    let preset = app.smart_cfx_preset();
+    div()
+        .relative()
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap(px(4.0))
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(4.0))
+                .child(
+                    div()
+                        .text_size(theme::TINY_TEXT_SIZE)
+                        .text_color(theme::MUTED)
+                        .child("Smart"),
+                )
+                .child(cue_button(
+                    ("smart-cfx", 0),
+                    "CFX",
+                    app.smart_cfx_on(),
+                    theme::TEXT,
+                    Command::ToggleSmartCfx,
+                    cx,
+                ))
+                .child(
+                    div()
+                        .id("smart-cfx-preset")
+                        .flex()
+                        .items_center()
+                        .h(px(20.0))
+                        .px(px(6.0))
+                        .rounded(px(5.0))
+                        .text_size(theme::TINY_TEXT_SIZE)
+                        .text_color(theme::MUTED)
+                        .cursor_pointer()
+                        .hover(|button| button.bg(theme::RAISED).text_color(theme::TEXT))
+                        .when(app.smart_cfx_menu, |button| {
+                            button.bg(theme::RAISED).text_color(theme::TEXT)
+                        })
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                            this.toggle_smart_cfx_menu(cx);
+                        }))
+                        .child(format!("{} \u{25be}", preset_label(preset))),
+                ),
+        )
+        .child(cue_button(
+            ("smart-fader", 0),
+            "Fader",
+            app.smart_fader_on(),
+            theme::TEXT,
+            Command::ToggleSmartFader,
+            cx,
+        ))
+        .when(app.smart_cfx_menu, |row| {
+            row.child(smart_cfx_menu(preset, cx))
+        })
+}
+
+/// The Smart CFX presets, the current one marked.
+fn smart_cfx_menu(current: SmartCfx, cx: &mut Context<'_, DubplateApp>) -> impl IntoElement {
+    deferred(
+        div()
+            .id("smart-cfx-menu")
+            .absolute()
+            .left_0()
+            .bottom(px(24.0))
+            .w(px(140.0))
+            .p(px(4.0))
+            .flex()
+            .flex_col()
+            .gap(px(1.0))
+            .rounded(px(8.0))
+            .border_1()
+            .border_color(theme::LINE)
+            .bg(theme::PANEL)
+            .shadow_lg()
+            .occlude()
+            .on_mouse_down_out(cx.listener(|this, _, _, cx| this.close_smart_cfx_menu(cx)))
+            .children(SmartCfx::ALL.into_iter().map(|preset| {
+                let chosen = preset == current;
+                div()
+                    .id(SharedString::from(format!("smart-cfx-{preset}")))
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .h(px(26.0))
+                    .px(px(8.0))
+                    .rounded(px(5.0))
+                    .text_size(theme::SMALL_TEXT_SIZE)
+                    .cursor_pointer()
+                    .when(chosen, |item| {
+                        item.bg(theme::RAISED).font_weight(FontWeight::MEDIUM)
+                    })
+                    .hover(|item| item.bg(theme::RAISED))
+                    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                        this.perform(Command::ChooseSmartCfx(preset), window, cx);
+                        this.close_smart_cfx_menu(cx);
+                    }))
+                    .child(preset_label(preset))
+                    .when(chosen, |item| {
+                        item.child(div().text_color(theme::MUTED).child("\u{2713}"))
+                    })
+            })),
+    )
 }
 
 /// The headphone section: each channel's CUE on its side, and between them the MIXING knob,
@@ -188,8 +312,8 @@ fn cue_button(
                     .hover(|button| button.text_color(theme::TEXT))
             }
         })
-        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .on_click(cx.listener(move |this, _: &gpui::ClickEvent, window, cx| {
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
             this.perform(command, window, cx);
         }))
         .child(text)

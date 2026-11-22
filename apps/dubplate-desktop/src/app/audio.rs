@@ -96,6 +96,10 @@ fn carry_over(source: &Controller, target: &mut Controller) -> Result<(), Engine
         target.set_effect_depth(unit, state.depth)?;
         target.set_effect_enabled(unit, state.enabled)?;
     }
+    for deck in DeckId::ALL {
+        target.set_smart_cfx(deck, source.smart_cfx(deck))?;
+    }
+    target.set_smart_fader(source.smart_fader())?;
     target.set_quantize(source.quantize())
 }
 
