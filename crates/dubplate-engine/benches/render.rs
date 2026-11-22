@@ -1,18 +1,24 @@
 //! What the audio thread spends on one 256-frame block, the work a sound card at 48 kHz asks
-//! for every 5.3 ms.
+//! for every 5.3 ms, in CPU time of the rendering thread.
 //!
 //! Each scenario plays two synthetic tracks from memory, so the numbers never depend on the
 //! disk or on a decoder. The decks are sent back near the start of their tracks, outside the
 //! measured time, before they reach the end, so every measured block is a block of music.
 
 use std::hint::black_box;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use criterion::{Criterion, criterion_group, criterion_main};
+
 use dubplate_engine::{
     BeatGrid, Controller, DeckId, EffectKind, EffectTarget, EffectUnitId, EqBand, Renderer, Track,
     offline_engine,
 };
+
+#[path = "support/cpu_time.rs"]
+mod cpu_time;
+
+use cpu_time::ThreadCpuTime;
 
 const OUTPUT_RATE: u32 = 48_000;
 const BLOCK_FRAMES: usize = 256;
@@ -128,11 +134,11 @@ impl Session {
                 self.rewind();
             }
             let chunk = remaining.min(self.blocks_until_rewind);
-            let started = Instant::now();
+            let started = ThreadCpuTime::now();
             for _ in 0..chunk {
                 self.renderer.render(black_box(&mut self.output), 2);
             }
-            elapsed += started.elapsed();
+            elapsed += ThreadCpuTime::now() - started;
             remaining -= chunk;
             self.blocks_until_rewind -= chunk;
         }
@@ -165,7 +171,7 @@ fn configure_full_mix(controller: &mut Controller) -> Result<(), dubplate_engine
     Ok(())
 }
 
-fn render_block(criterion: &mut Criterion) {
+fn render_block(criterion: &mut Criterion<ThreadCpuTime>) {
     let mut group = criterion.benchmark_group("render_256_frames");
     let scenarios = [
         ("idle", Scenario::Idle),
@@ -181,5 +187,9 @@ fn render_block(criterion: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, render_block);
+criterion_group! {
+    name = benches;
+    config = cpu_time::criterion();
+    targets = render_block
+}
 criterion_main!(benches);
