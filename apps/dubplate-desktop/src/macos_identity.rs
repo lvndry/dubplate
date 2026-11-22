@@ -68,10 +68,7 @@ pub fn show_about_panel() {
     let Some(main_thread) = MainThreadMarker::new() else {
         return;
     };
-    let application = NSApplication::sharedApplication(main_thread);
-    // SAFETY: a nil sender is what the menu item would pass, and the call runs on the main
-    // thread as AppKit requires.
-    unsafe { application.orderFrontStandardAboutPanel(None) };
+    NSApplication::sharedApplication(main_thread).orderFrontStandardAboutPanel(None);
 }
 
 /// Brings the Dubplate running as `process_id` to the front, for a second launch that quits.
