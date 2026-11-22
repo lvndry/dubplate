@@ -226,6 +226,12 @@ impl Platter {
         }
     }
 
+    /// Lets the record run at the motor's speed at once, without the inertia left by a hand that
+    /// just let go, for a slip landing back on the shadow playhead.
+    pub(crate) fn drop_carry(&mut self) {
+        self.carry = 0.0;
+    }
+
     /// Bends the tempo by `bend`, a share of the tempo, until set back to 0, like holding a
     /// pitch bend button. The bend glides in and out.
     pub(crate) fn set_held_bend(&mut self, bend: f64) {

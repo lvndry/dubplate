@@ -13,7 +13,7 @@ use common::{SAMPLE_RATE, constant_track, wait_until_decoded, write_wav};
 use dubplate_engine::cpal::{OutputCallbackInfo, OutputStreamTimestamp, StreamInstant};
 use dubplate_engine::{
     AudioProcessor, BeatGrid, BeatLength, Controller, DeckId, EffectKind, EffectTarget,
-    EffectUnitId, EngineError, EqBand, GridBeat, MasterTempo, ProcessContext, Renderer,
+    EffectUnitId, EngineError, EqBand, GridBeat, MasterTempo, PadEffect, ProcessContext, Renderer,
     StereoBlock, SyncMode, TempoRange, offline_engine,
 };
 
@@ -186,7 +186,25 @@ fn run_session(
     controller.set_sync(DeckId::A, SyncMode::Beat)?;
     render_armed(renderer, &mut output[..9600], 2);
 
-    let steps: [Step; 50] = [
+    let steps: [Step; 59] = [
+        |controller| controller.set_slip(DeckId::A, true),
+        |controller| controller.beat_roll(DeckId::A, BeatLength::QUARTER),
+        |controller| controller.beat_roll(DeckId::A, BeatLength::EIGHTH),
+        |controller| controller.release_roll(DeckId::A),
+        |controller| {
+            controller.hold_pad_effect(
+                DeckId::B,
+                PadEffect {
+                    kind: EffectKind::Brake,
+                    beat: BeatLength::HALF,
+                    depth: 1.0,
+                },
+            )
+        },
+        |controller| controller.release_pad_effect(DeckId::B),
+        |controller| controller.set_key_shift(DeckId::A, 3.0),
+        |controller| controller.set_key_shift(DeckId::B, -2.0),
+        |controller| controller.set_key_shift(DeckId::A, 0.0),
         |controller| controller.set_key_lock(DeckId::B, false),
         |controller| controller.set_key_lock(DeckId::B, true),
         |controller| controller.set_headphone_cue(DeckId::A, true),

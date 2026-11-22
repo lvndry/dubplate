@@ -34,8 +34,8 @@ pub(crate) struct KeyLockBlock<'track> {
 /// Key lock, the master tempo of a CDJ: the deck changes tempo without changing pitch.
 ///
 /// A Signalsmith Stretch time-stretcher plays the track at the deck's speed while keeping its
-/// pitch. Its preset that spreads each spectral frame's work over the frame interval keeps
-/// every block's cost close to the average, so no audio callback runs long. It needs to hear the music ahead of the time it plays, so a feeder reads the track
+/// pitch. Its default preset overlaps its spectral frames four times, which keeps a key
+/// shifted pitch true to a fraction of a cent. It needs to hear the music ahead of the time it plays, so a feeder reads the track
 /// ahead of the playhead by the stretcher's latency, going round loops as the playhead will;
 /// the stretched sound then lines up with the playhead frame for frame. After a jump the
 /// stretcher is primed at the new place at once; until its sound is whole, the deck plays the
@@ -57,13 +57,14 @@ pub(crate) struct KeyLock {
     mix: Ramp,
     frames_ready: usize,
     hold_frames: usize,
+    transpose_semitones: f32,
 }
 
 impl KeyLock {
     /// Builds the stretcher for `output_rate`. This allocates, so it runs before the renderer
     /// reaches the audio thread.
     pub(crate) fn new(output_rate: u32, declick_frames: u32) -> Self {
-        let mut stretch = Stretch::preset_cheaper(CHANNELS as u32, output_rate);
+        let mut stretch = Stretch::preset_default(CHANNELS as u32, output_rate);
         let input_latency = stretch.input_latency();
         let output_latency = stretch.output_latency();
         let priming_frames = input_latency * 2 + output_latency;
@@ -91,6 +92,16 @@ impl KeyLock {
             mix: Ramp::new(0.0, mix_frames),
             frames_ready: 0,
             hold_frames: 0,
+            transpose_semitones: 0.0,
+        }
+    }
+
+    /// Shifts the stretched sound's pitch by `semitones`, for key shift, or to follow the tempo
+    /// when key lock is off.
+    pub(crate) fn set_transpose(&mut self, semitones: f32) {
+        if semitones != self.transpose_semitones {
+            self.transpose_semitones = semitones;
+            self.stretch.set_transpose_factor_semitones(semitones, None);
         }
     }
 

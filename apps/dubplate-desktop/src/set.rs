@@ -18,6 +18,8 @@ const FIRST_SET_MINUTES: u32 = 120;
 const DEFAULT_OVERLAP_BARS: u32 = 16;
 /// How many edits undo goes back.
 const UNDO_DEPTH: usize = 200;
+/// Beats in a bar, the range a downbeat shift goes round.
+const BEATS_PER_BAR: i32 = 4;
 
 /// A track to put in a set: its file and, when it comes from rekordbox, its id there.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -174,15 +176,65 @@ impl SetEditor {
         mix_in_ms: Option<u32>,
         mix_out_ms: Option<u32>,
     ) -> Result<(), StoreError> {
+        self.update(position, |entry| {
+            entry.mix_in_ms = mix_in_ms;
+            entry.mix_out_ms = mix_out_ms;
+            entry.cue_source = Some(CueSource::Euphoria);
+        })
+    }
+
+    /// Sets the mix-in of the track at `position` by hand.
+    pub fn set_mix_in(&mut self, position: usize, mix_in_ms: u32) -> Result<(), StoreError> {
+        self.update(position, |entry| {
+            entry.mix_in_ms = Some(mix_in_ms);
+            entry.cue_source = Some(CueSource::Manual);
+        })
+    }
+
+    /// Sets the mix-out of the track at `position` by hand.
+    pub fn set_mix_out(&mut self, position: usize, mix_out_ms: u32) -> Result<(), StoreError> {
+        self.update(position, |entry| {
+            entry.mix_out_ms = Some(mix_out_ms);
+            entry.cue_source = Some(CueSource::Manual);
+        })
+    }
+
+    /// Marks the grid of the track at `position` as checked by ear, or no longer.
+    pub fn toggle_grid_confirmed(&mut self, position: usize) -> Result<(), StoreError> {
+        self.update(position, |entry| {
+            entry.grid_confirmed = !entry.grid_confirmed
+        })
+    }
+
+    /// Moves the grid of the track at `position` by `milliseconds`, later when positive. A
+    /// moved grid needs confirming again.
+    pub fn nudge_grid(&mut self, position: usize, milliseconds: i32) -> Result<(), StoreError> {
+        self.update(position, |entry| {
+            entry.grid_offset_ms = entry.grid_offset_ms.saturating_add(milliseconds);
+            entry.grid_confirmed = false;
+        })
+    }
+
+    /// Moves the bars of the track at `position` by `beats`, so the downbeat lands where the
+    /// music's bar starts. A moved grid needs confirming again.
+    pub fn shift_downbeat(&mut self, position: usize, beats: i32) -> Result<(), StoreError> {
+        self.update(position, |entry| {
+            entry.downbeat_shift = (entry.downbeat_shift + beats).rem_euclid(BEATS_PER_BAR);
+            entry.grid_confirmed = false;
+        })
+    }
+
+    /// Changes the track at `position` with `change`, saving only when something changed.
+    fn update(
+        &mut self,
+        position: usize,
+        change: impl FnOnce(&mut SetEntry),
+    ) -> Result<(), StoreError> {
         let Some(current) = self.tracks().get(position).map(|entry| (*entry).clone()) else {
             return Ok(());
         };
-        let updated = SetEntry {
-            mix_in_ms,
-            mix_out_ms,
-            cue_source: Some(CueSource::Euphoria),
-            ..current.clone()
-        };
+        let mut updated = current.clone();
+        change(&mut updated);
         if updated != current {
             self.edit(|store, id| store.update_entry(id, SetList::Main, position, updated))?;
         }
@@ -391,6 +443,35 @@ mod tests {
             .collect();
         assert_eq!(backups, [PathBuf::from("/Music/y.mp3")]);
         assert_eq!(reopened.target(), Duration::from_secs(2 * 60 * 60));
+    }
+
+    #[test]
+    fn grid_fixes_and_hand_set_cues_are_kept_and_a_moved_grid_needs_confirming() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut editor = editor(&directory);
+        editor.add(track("a")).unwrap();
+        editor.toggle_grid_confirmed(0).unwrap();
+        assert!(editor.tracks()[0].grid_confirmed);
+        editor.nudge_grid(0, -5).unwrap();
+        editor.nudge_grid(0, -5).unwrap();
+        editor.shift_downbeat(0, -1).unwrap();
+        editor.set_mix_in(0, 16_000).unwrap();
+        editor.set_mix_out(0, 330_000).unwrap();
+        let entry = editor.tracks()[0].clone();
+        assert!(!entry.grid_confirmed);
+        assert_eq!(entry.grid_offset_ms, -10);
+        assert_eq!(
+            entry.downbeat_shift, 3,
+            "one beat back is three beats on in a bar"
+        );
+        assert_eq!(
+            (entry.mix_in_ms, entry.mix_out_ms),
+            (Some(16_000), Some(330_000))
+        );
+        assert_eq!(entry.cue_source, Some(CueSource::Manual));
+        drop(editor);
+        let reopened = SetEditor::open(&directory.path().join("sets.sqlite")).unwrap();
+        assert_eq!(reopened.tracks()[0].grid_offset_ms, -10);
     }
 
     #[test]

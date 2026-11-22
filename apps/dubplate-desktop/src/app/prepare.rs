@@ -17,7 +17,10 @@ use super::{DubplateApp, NoticePlace};
 use crate::collection::{TrackIndex, TrackOrigin};
 use crate::commands::{Direction, SetEdit};
 use crate::loading::LoadSource;
-use crate::prep::{SeamSummary, TrackCheck, accept_proposal, check_track, readiness};
+use crate::prep::{
+    GridCorrection, SeamSummary, TrackCheck, accept_proposal, check_track, nearest_bar_ms,
+    readiness,
+};
 use crate::set::{SetEditor, SetTrackRef};
 
 /// How many tracks the Next panel suggests.
@@ -71,6 +74,13 @@ impl DubplateApp {
         let result = apply_edit(editor, edit, selected, &mut self.set_selection);
         let result = match (edit, result) {
             (SetEdit::AcceptProposedCues, Ok(())) => self.accept_proposed_cues(cx),
+            (SetEdit::MixInAtPlayhead | SetEdit::MixOutAtPlayhead, Ok(())) => {
+                self.set_cue_at_playhead(edit == SetEdit::MixInAtPlayhead, cx)
+            }
+            (SetEdit::NudgeGrid(_) | SetEdit::ShiftDownbeat(_), Ok(())) => {
+                self.forget_track_checks();
+                Ok(())
+            }
             (_, result) => result,
         };
         if let Err(error) = result {
@@ -148,6 +158,7 @@ impl DubplateApp {
     pub(super) fn select_set_track(&mut self, position: usize, cx: &mut Context<'_, Self>) {
         self.set_selection = Some(position);
         self.prepare_focus = PrepareFocus::Set;
+        self.ensure_track_detail(cx);
         cx.notify();
     }
 
@@ -177,6 +188,38 @@ impl DubplateApp {
             path: entry.track.file_path.clone()?,
             rekordbox_id: (entry.origin == TrackOrigin::Rekordbox).then(|| entry.track.id.clone()),
         })
+    }
+
+    /// Puts the selected set track's mix-in or mix-out on the bar nearest the track check's
+    /// playhead, on the DJ's corrected grid.
+    fn set_cue_at_playhead(
+        &mut self,
+        mix_in: bool,
+        cx: &mut Context<'_, Self>,
+    ) -> Result<(), StoreError> {
+        let Some(position) = self.set_selection else {
+            return Ok(());
+        };
+        let Some((entry, detail)) = self.selected_detail() else {
+            self.show_notice(
+                NoticePlace::Window,
+                "The track check is still reading this track.",
+                cx,
+            );
+            return Ok(());
+        };
+        let seconds = self.check_playhead(&entry.track_path);
+        let bar = detail
+            .grid
+            .as_ref()
+            .map(|grid| GridCorrection::of(&entry).apply(grid))
+            .and_then(|grid| nearest_bar_ms(&grid, seconds));
+        let milliseconds = bar.unwrap_or_else(|| (seconds * 1000.0).round().max(0.0) as u32);
+        match self.set_editor.as_mut() {
+            Some(editor) if mix_in => editor.set_mix_in(position, milliseconds),
+            Some(editor) => editor.set_mix_out(position, milliseconds),
+            None => Ok(()),
+        }
     }
 
     fn accept_proposed_cues(&mut self, cx: &mut Context<'_, Self>) -> Result<(), StoreError> {
@@ -233,6 +276,7 @@ impl DubplateApp {
             browser.set_marked(Arc::clone(&in_set), cx)
         });
         self.check_set_tracks(cx);
+        self.ensure_track_detail(cx);
         cx.notify();
     }
 
@@ -243,19 +287,21 @@ impl DubplateApp {
         else {
             return;
         };
-        let unchecked: Vec<PathBuf> = editor
+        let unchecked: Vec<(PathBuf, GridCorrection)> = editor
             .set()
             .entries
             .iter()
-            .map(|entry| entry.track_path.clone())
-            .filter(|path| {
-                !self.track_checks.contains_key(path) && !self.checks_pending.contains(path)
+            .filter(|entry| {
+                !self.track_checks.contains_key(&entry.track_path)
+                    && !self.checks_pending.contains(&entry.track_path)
             })
+            .map(|entry| (entry.track_path.clone(), GridCorrection::of(entry)))
             .collect();
         if unchecked.is_empty() {
             return;
         }
-        self.checks_pending.extend(unchecked.iter().cloned());
+        self.checks_pending
+            .extend(unchecked.iter().map(|(path, _)| path.clone()));
         let generation = self.check_generation;
         cx.spawn(async move |this, cx| {
             let checks = cx
@@ -263,11 +309,12 @@ impl DubplateApp {
                 .spawn(async move {
                     unchecked
                         .into_iter()
-                        .map(|path| {
+                        .map(|(path, correction)| {
                             let check = match collection.find_path(&path) {
                                 Some(index) => check_track(
                                     collection.track(index),
                                     collection.share_directory(),
+                                    correction,
                                 ),
                                 None => TrackCheck::not_in_library(&path),
                             };
@@ -500,7 +547,22 @@ fn apply_edit(
                     .map(|position| position.min(count - 1));
             }
         }
-        SetEdit::AcceptProposedCues => {}
+        SetEdit::ConfirmGrid => {
+            if let Some(position) = *selection {
+                editor.toggle_grid_confirmed(position)?;
+            }
+        }
+        SetEdit::NudgeGrid(milliseconds) => {
+            if let Some(position) = *selection {
+                editor.nudge_grid(position, milliseconds)?;
+            }
+        }
+        SetEdit::ShiftDownbeat(beats) => {
+            if let Some(position) = *selection {
+                editor.shift_downbeat(position, beats)?;
+            }
+        }
+        SetEdit::AcceptProposedCues | SetEdit::MixInAtPlayhead | SetEdit::MixOutAtPlayhead => {}
     }
     Ok(())
 }
