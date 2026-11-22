@@ -14,6 +14,7 @@ use dubplate_rekordbox::analysis::BeatGrid;
 use dubplate_rekordbox::{HotCuePad, TrackAnalysis};
 
 use crate::collection::{CollectionTrack, TrackOrigin};
+use crate::cue_marks::{MarkerPulse, SeenMarks};
 use crate::phrases::{PhraseSpan, phrase_spans};
 use crate::playhead::PlayheadClock;
 use crate::prep::chosen_grid;
@@ -329,6 +330,10 @@ pub struct Deck {
     pub grid_source: Option<GridSource>,
     /// Where the pointer is over the deck's overview, from 0.0 to 1.0.
     pub overview_hover: Option<f32>,
+    /// The deck's cues as last drawn, to notice one being set.
+    pub seen_marks: Option<SeenMarks>,
+    /// The cue just set, pulsing where it landed.
+    pub marker_pulse: Option<MarkerPulse>,
     load_generation: u64,
     committed_generation: u64,
     pending: Option<(Arc<CollectionTrack>, HotCues)>,
@@ -378,6 +383,11 @@ impl Deck {
         if self.track.is_none() {
             self.content = DeckContent::Failed(problem);
         }
+    }
+
+    /// The number of the latest load asked for.
+    pub fn load_generation(&self) -> u64 {
+        self.load_generation
     }
 
     /// Whether a load result with `generation` is the latest one asked for.

@@ -9,8 +9,8 @@ use std::time::Instant;
 use dubplate_engine::{BeatLength, DeckId};
 use gpui::prelude::*;
 use gpui::{
-    Bounds, Context, FontWeight, Pixels, Point, Rgba, SharedString, Window, canvas, div, fill,
-    point, px, relative, size,
+    Bounds, Context, FontWeight, PathBuilder, Pixels, Point, Rgba, SharedString, Window, canvas,
+    div, fill, point, px, relative, size,
 };
 
 use super::drop_target::accept_drops;
@@ -46,6 +46,10 @@ pub(super) struct LaneMarks {
     pub slip_shadow: Option<f64>,
     /// The deck's colour.
     pub colour: Rgba,
+    /// The CUE button's point, in seconds.
+    pub cue_point: Option<f64>,
+    /// A cue just set, in seconds, and how strongly it still pulses.
+    pub pulse: Option<(f64, f32)>,
 }
 
 /// The loop length as its label reads, such as `4` or `1/2`, without allocating for the
@@ -115,6 +119,14 @@ fn lane(
             .and_then(|state| LaneLoop::of(&state, playhead_seconds)),
         slip_shadow: app.slip_shadow(deck),
         colour: theme::deck_colour(deck),
+        cue_point: app
+            .deck(deck)
+            .visuals()
+            .map(|_| frame.state.cue_point_seconds),
+        pulse: app
+            .deck(deck)
+            .marker_pulse
+            .and_then(|pulse| Some((pulse.seconds, pulse.strength(Instant::now())?))),
     };
     let stats = app.frame_stats.clone();
     let notice = app.deck_notice(deck).map(|notice| notice.to_string());
@@ -319,6 +331,12 @@ pub(super) fn paint_lane(
         if let Some(lane_loop) = marks.lane_loop {
             paint_loop_edges(bounds, &view, lane_loop, marks.colour, window);
         }
+        if let Some(cue_point) = marks.cue_point {
+            paint_cue_point(bounds, view.x_of(cue_point), window);
+        }
+        if let Some((seconds, strength)) = marks.pulse {
+            paint_pulse(bounds, view.x_of(seconds), strength, window);
+        }
         if let Some(shadow) = marks.slip_shadow {
             let line = Bounds::new(
                 bounds.origin + point(px(view.x_of(shadow).floor()), px(0.0)),
@@ -330,6 +348,34 @@ pub(super) fn paint_lane(
             ));
         }
     }
+}
+
+/// The CUE button's point: a line with a small orange triangle standing on the lane's bottom.
+pub(super) fn paint_cue_point(bounds: Bounds<Pixels>, x: f32, window: &mut Window) {
+    let height = f32::from(bounds.size.height);
+    let line = Bounds::new(
+        bounds.origin + point(px(x.floor()), px(0.0)),
+        size(px(1.0), bounds.size.height),
+    );
+    window.paint_quad(fill(line, theme::faded(theme::CUE_POINT, 0.55)));
+    let mut triangle = PathBuilder::fill();
+    triangle.move_to(bounds.origin + point(px(x - 5.0), px(height)));
+    triangle.line_to(bounds.origin + point(px(x + 5.0), px(height)));
+    triangle.line_to(bounds.origin + point(px(x), px(height - 7.0)));
+    triangle.close();
+    if let Ok(path) = triangle.build() {
+        window.paint_path(path, theme::CUE_POINT);
+    }
+}
+
+/// A glow where a cue was just set, fading with `strength` from 1.0 to 0.0.
+pub(super) fn paint_pulse(bounds: Bounds<Pixels>, x: f32, strength: f32, window: &mut Window) {
+    let half_width = 3.0 + 6.0 * (1.0 - strength);
+    let glow = Bounds::new(
+        bounds.origin + point(px(x - half_width), px(0.0)),
+        size(px(half_width * 2.0), bounds.size.height),
+    );
+    window.paint_quad(fill(glow, theme::faded(theme::TEXT, 0.45 * strength)));
 }
 
 /// The tint behind an active loop or one waiting for LOOP OUT, under the waveform.

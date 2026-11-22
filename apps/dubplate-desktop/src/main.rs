@@ -9,6 +9,7 @@ mod browser;
 mod collection;
 mod commands;
 mod controls;
+mod cue_marks;
 mod deck;
 mod effects;
 mod energy;

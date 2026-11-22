@@ -7,6 +7,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::time::Instant;
 
 use dubplate_engine::DeckId;
 use gpui::prelude::*;
@@ -286,6 +287,8 @@ fn paint_band_bars(area: &OverviewArea, bars: &[BandLevels], window: &mut Window
 #[derive(Debug, Clone, Copy)]
 struct OverviewMotion {
     progress: Option<f32>,
+    cue_point: Option<f64>,
+    pulse: Option<(f64, f32)>,
     hover: Option<f32>,
     lane_loop: Option<LaneLoop>,
     duration: f64,
@@ -316,6 +319,25 @@ fn paint_motion(bounds: Bounds<Pixels>, motion: OverviewMotion, window: &mut Win
         window.paint_quad(fill(
             area.rect(played - 1.0, 0.0, 2.0, f32::from(bounds.size.height)),
             theme::PLAYHEAD,
+        ));
+    }
+    if let Some(cue_point) = motion.cue_point {
+        let x = area.x_of(cue_point);
+        let origin = area.bounds.origin;
+        let mut triangle = PathBuilder::fill();
+        triangle.move_to(origin + point(px(x - 4.0), px(area.bands_bottom)));
+        triangle.line_to(origin + point(px(x + 4.0), px(area.bands_bottom)));
+        triangle.line_to(origin + point(px(x), px(area.bands_bottom - 6.0)));
+        triangle.close();
+        if let Ok(path) = triangle.build() {
+            window.paint_path(path, theme::CUE_POINT);
+        }
+    }
+    if let Some((seconds, strength)) = motion.pulse {
+        let half_width = 2.0 + 5.0 * (1.0 - strength);
+        window.paint_quad(fill(
+            area.band_span(area.x_of(seconds) - half_width, half_width * 2.0),
+            theme::faded(theme::TEXT, 0.5 * strength),
         ));
     }
     if let Some(hover) = motion.hover {
@@ -376,6 +398,10 @@ pub(super) fn render(
         duration.map(|duration| (frame.playhead_seconds / duration).clamp(0.0, 1.0) as f32);
     let motion = OverviewMotion {
         progress,
+        cue_point: visuals.map(|_| frame.state.cue_point_seconds),
+        pulse: side
+            .marker_pulse
+            .and_then(|pulse| Some((pulse.seconds, pulse.strength(Instant::now())?))),
         hover: side.overview_hover,
         lane_loop: app
             .loop_state(deck)

@@ -83,6 +83,8 @@ pub const CUE_FLAG: Rgba = hex(0xEEEFF1);
 /// Behind the help overlay.
 pub const SCRIM: Rgba = with_alpha(0x000000, 0.55);
 
+/// The CUE button's point on the lanes and the overview, orange as on CDJs.
+pub const CUE_POINT: Rgba = hex(0xF59A4B);
 /// Memory cues on the deck overview, red as on CDJs.
 pub const MEMORY_CUE: Rgba = ALERT;
 /// The set's mix-in cue on the deck overview.
