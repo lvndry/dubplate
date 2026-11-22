@@ -131,10 +131,6 @@ pub enum LoopAction {
     Out,
     /// 4 BEAT/EXIT: a four-beat loop, or leave the loop that is on.
     FourBeatOrExit,
-    /// Halve the loop that is on.
-    Halve,
-    /// Double the loop that is on.
-    Double,
 }
 
 /// What turning a jog wheel does to the track.
@@ -236,6 +232,14 @@ pub enum Command {
     ToggleSlip(DeckId),
     /// A loop button.
     Loop(DeckId, LoopAction),
+    /// CUE/LOOP CALL ◀ ([`Direction::Down`]) or ▶: halve or double the loop that is on, else
+    /// call the memory cue before or after the playhead, pausing on it as its cue point.
+    CueLoopCall(DeckId, Direction),
+    /// MEMORY, as SHIFT + CUE/LOOP CALL ▶: keep the cue point, or the loop that is on, as a
+    /// memory cue of the track.
+    StoreMemoryCue(DeckId),
+    /// DELETE, as SHIFT + CUE/LOOP CALL ◀: delete the memory cue at the cue point.
+    DeleteMemoryCue(DeckId),
     /// A channel's headphone CUE button: hear the channel in the headphones, before its fader.
     ToggleHeadphoneCue(DeckId),
     /// MASTER CUE: hear the master in the headphones too.

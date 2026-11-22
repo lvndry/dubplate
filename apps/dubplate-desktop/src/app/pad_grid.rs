@@ -458,6 +458,20 @@ fn pads(
         }))
 }
 
+/// What a hot cue pad says under its letter: the cue's name, else where it is, marked as a
+/// loop for a hot loop.
+fn hot_cue_detail(cue: &HotCue) -> String {
+    let place = if cue.name.is_empty() {
+        clock(cue.start_seconds())
+    } else {
+        cue.name.clone()
+    };
+    match cue.loop_end_ms {
+        Some(_) => format!("\u{21bb} {place}"),
+        None => place,
+    }
+}
+
 /// What each pad shows in the deck's pad mode.
 fn faces(app: &DubplateApp, deck: DeckId) -> Vec<PadFace> {
     let side = app.deck(deck);
@@ -504,9 +518,7 @@ fn faces(app: &DubplateApp, deck: DeckId) -> Vec<PadFace> {
             },
             PadMode::HotCue => {
                 let letter = HotCuePad::ALL.get(pad).copied();
-                let cue = letter
-                    .and_then(|letter| side.cues.hot_cue(letter))
-                    .map(HotCue::start_seconds);
+                let cue = letter.and_then(|letter| Some((letter, side.cues.hot_cue(letter)?)));
                 PadFace {
                     title: letter
                         .map(|letter| letter.letter().to_string())
@@ -514,10 +526,12 @@ fn faces(app: &DubplateApp, deck: DeckId) -> Vec<PadFace> {
                         .into(),
                     detail: match (cue, shifted) {
                         (Some(_), true) => "delete".to_owned(),
-                        (cue, _) => cue.map(clock).unwrap_or_default(),
+                        (cue, _) => cue
+                            .map(|(_, cue)| hot_cue_detail(cue))
+                            .unwrap_or_default(),
                     }
                     .into(),
-                    dot: cue.map(|_| theme::HOT_CUE_TINTS[pad % theme::HOT_CUE_TINTS.len()]),
+                    dot: cue.map(|(letter, cue)| theme::hot_cue_colour(letter, cue)),
                     lit: cue.is_some(),
                     playable: cue.is_some() || !shifted,
                 }
@@ -610,4 +624,20 @@ fn faces(app: &DubplateApp, deck: DeckId) -> Vec<PadFace> {
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_hot_cue_pad_shows_its_name_or_its_time_and_marks_a_loop() {
+        assert_eq!(hot_cue_detail(&HotCue::at(83_400)), "1:23");
+        let named_loop = HotCue {
+            name: "Drop roll".to_owned(),
+            loop_end_ms: Some(85_400),
+            ..HotCue::at(83_400)
+        };
+        assert_eq!(hot_cue_detail(&named_loop), "\u{21bb} Drop roll");
+    }
 }

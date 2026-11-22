@@ -60,6 +60,15 @@ pub(crate) struct DeckRender {
     pub(crate) starved: bool,
 }
 
+/// Which beat a beat loop that is not already on starts from.
+#[derive(Debug, Clone, Copy)]
+enum LoopSnap {
+    /// The beat nearest to what the DJ hears, as a beat loop on a CDJ.
+    Nearest,
+    /// The beat just passed, so a loop roll repeats what was just heard.
+    Previous,
+}
+
 /// The audio-thread side of a deck.
 pub(crate) struct Deck {
     voice: Voice,
@@ -93,6 +102,7 @@ pub(crate) struct Deck {
     pub(crate) inserts: [Option<Box<dyn AudioProcessor>>; INSERT_SLOTS],
     pub(crate) block: StereoBlock,
     output_rate: f64,
+    output_lag_frames: f64,
 }
 
 impl Deck {
@@ -129,6 +139,7 @@ impl Deck {
             inserts: std::array::from_fn(|_| None),
             block: StereoBlock::with_capacity(max_block_frames),
             output_rate: f64::from(output_rate.max(1)),
+            output_lag_frames: 0.0,
         }
     }
 
@@ -365,10 +376,42 @@ impl Deck {
         self.quantize && self.beat_grid.is_some()
     }
 
+    /// How many output frames the sound card and the mixer still hold of what the deck has
+    /// rendered: the delay between the playhead and what the DJ hears.
+    pub(crate) fn set_output_lag(&mut self, frames: f64) {
+        self.output_lag_frames = frames.max(0.0);
+    }
+
+    /// The frame of the track the DJ hears now, which is behind the playhead by the output lag.
+    fn heard_position(&self) -> f64 {
+        if !self.playing {
+            return self.voice.position;
+        }
+        self.clamp_position(self.voice.position - self.output_lag_frames * self.platter.last_step())
+    }
+
     /// The nearest beat to `frame` with quantize on and a grid, otherwise `frame` itself.
     fn snap_to_beat(&self, frame: f64) -> f64 {
+        self.snap_to_grain(frame, 1.0)
+    }
+
+    /// The last multiple of `grain` beats at or before `frame` with quantize on and a grid,
+    /// otherwise `frame` itself.
+    fn previous_grain(&self, frame: f64, grain: f64) -> f64 {
         if self.quantizes() {
-            self.clamp_position(self.frame_at_beat(self.beat_at_frame(frame).round()))
+            let beat = (self.beat_at_frame(frame) / grain).floor() * grain;
+            self.clamp_position(self.frame_at_beat(beat))
+        } else {
+            frame
+        }
+    }
+
+    /// The nearest multiple of `grain` beats to `frame` with quantize on and a grid, otherwise
+    /// `frame` itself.
+    fn snap_to_grain(&self, frame: f64, grain: f64) -> f64 {
+        if self.quantizes() {
+            let beat = (self.beat_at_frame(frame) / grain).round() * grain;
+            self.clamp_position(self.frame_at_beat(beat))
         } else {
             frame
         }
@@ -399,6 +442,37 @@ impl Deck {
         }
     }
 
+    /// A hot loop: the loop from `start_seconds` to `end_seconds` goes on and the deck goes to
+    /// its start as a hot cue does, in rhythm while playing and playing from it when stopped.
+    pub(crate) fn hot_loop(
+        &mut self,
+        start_seconds: f64,
+        end_seconds: f64,
+        retire: &mut RetireQueue,
+    ) {
+        let rate = self.source_rate();
+        let region = LoopRegion {
+            start: self.clamp_position(start_seconds * rate),
+            end: self.clamp_position(end_seconds * rate),
+            active: true,
+            length: None,
+        };
+        if region.length_frames() <= 0.0 {
+            self.hot_cue(start_seconds, retire);
+            return;
+        }
+        self.start_slipping_loop();
+        self.looping.pending_start = None;
+        self.looping.region = Some(region);
+        if self.playing {
+            let target = region.fold(self.in_phase(region.start));
+            self.jump_to_frame(target, retire);
+        } else {
+            self.jump_to_frame(region.start, retire);
+            self.play();
+        }
+    }
+
     /// Jumps by `beats` beats, forwards or backwards, keeping the place in the beat. A loop
     /// that is on moves with the playhead.
     pub(crate) fn beat_jump(&mut self, beats: f64, retire: &mut RetireQueue) {
@@ -417,7 +491,7 @@ impl Deck {
 
     /// Sets the loop in point where the deck is, on the nearest beat with quantize.
     pub(crate) fn loop_in(&mut self) {
-        self.looping.pending_start = Some(self.snap_to_beat(self.voice.position));
+        self.looping.pending_start = Some(self.snap_to_beat(self.heard_position()));
     }
 
     /// Sets the loop out point where the deck is, on the nearest beat with quantize, and turns
@@ -432,7 +506,7 @@ impl Deck {
             (None, Some(region)) => region.start,
             (None, None) => return,
         };
-        let mut end = self.snap_to_beat(self.voice.position);
+        let mut end = self.snap_to_beat(self.heard_position());
         if end <= start {
             end = self.frame_at_beat(self.beat_at_frame(start) + 1.0);
         }
@@ -447,22 +521,24 @@ impl Deck {
         );
     }
 
-    /// A beat loop of `length` from the beat the deck just passed with quantize, or from where
-    /// it is without. With a loop on, changes its length from its start instead.
+    /// A beat loop of `length` from the beat nearest to what the DJ hears with quantize, which
+    /// may be just ahead of the playhead, or from exactly there without. With a loop on, changes its length from its start instead.
     pub(crate) fn beat_loop(&mut self, length: BeatLength, retire: &mut RetireQueue) {
         self.start_slipping_loop();
-        self.start_beat_loop(length, retire);
+        self.start_beat_loop(length, LoopSnap::Nearest, retire);
     }
 
-    fn start_beat_loop(&mut self, length: BeatLength, retire: &mut RetireQueue) {
+    fn start_beat_loop(&mut self, length: BeatLength, snap: LoopSnap, retire: &mut RetireQueue) {
         let start = match self.looping.active_loop() {
             Some(region) => region.start,
-            None if self.quantizes() => {
+            None => {
                 let grain = length.beats().min(1.0);
-                let beat = self.beat_at_frame(self.voice.position);
-                self.frame_at_beat((beat / grain).floor() * grain)
+                let heard = self.heard_position();
+                match snap {
+                    LoopSnap::Nearest => self.snap_to_grain(heard, grain),
+                    LoopSnap::Previous => self.previous_grain(heard, grain),
+                }
             }
-            None => self.voice.position,
         };
         let end = self.frame_at_beat(self.beat_at_frame(start) + length.beats());
         self.set_loop(
@@ -568,7 +644,7 @@ impl Deck {
                     self.roll = Some(self.looping.region.take());
                     self.slip.begin(self.voice.position);
                 }
-                self.start_beat_loop(length, retire);
+                self.start_beat_loop(length, LoopSnap::Previous, retire);
             }
             None => {
                 if let Some(previous) = self.roll.take() {
