@@ -26,6 +26,7 @@ mod set_panel;
 mod slider;
 mod smart;
 mod track_check;
+mod waveforms;
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
@@ -546,6 +547,9 @@ impl DubplateApp {
         let content = match prepared.and_then(|prepared| self.put_on_deck(deck, prepared)) {
             Ok(visuals) => {
                 self.signal_controllers(Feedback::TrackLoaded(controller_deck(deck)));
+                if visuals.zoomed.is_none() {
+                    self.draw_waveform_from_audio(deck, generation, cx);
+                }
                 DeckContent::Loaded(visuals)
             }
             Err(error) => DeckContent::Failed(error_chain(&error)),

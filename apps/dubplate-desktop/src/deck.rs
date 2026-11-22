@@ -55,6 +55,12 @@ impl TrackVisuals {
             analysis_problem: prepared.analysis_problem.take(),
         }
     }
+
+    /// Draws `zoomed` and `overview`, worked out after the track was loaded.
+    pub fn show_waveforms(&mut self, zoomed: ZoomedWaveform, overview: Option<OverviewWaveform>) {
+        self.zoomed = Some(Arc::new(zoomed));
+        self.overview = overview.map(|waveform| Rc::new(RefCell::new(OverviewBars::new(waveform))));
+    }
 }
 
 /// An overview waveform with its bars for one bar count, worked out again only when the count
