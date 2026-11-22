@@ -1,7 +1,8 @@
 use dubplate_fx::{Effect, EqBand, Isolator, SweepFilter};
 
 use crate::curves::eq_gain;
-use crate::processor::StereoBlock;
+use crate::processor::{ProcessContext, StereoBlock};
+use crate::smart_cfx::{SmartCfx, SmartCfxRack};
 
 /// The centre of a mixer knob, where an EQ band is at unity and the filter is flat.
 pub(crate) const KNOB_CENTRE: f32 = 0.5;
@@ -43,6 +44,7 @@ impl Default for ChannelSettings {
 pub(crate) struct ChannelStrip {
     isolator: Isolator,
     filter: SweepFilter,
+    smart_cfx: SmartCfxRack,
     filter_context: dubplate_fx::ProcessContext,
 }
 
@@ -57,6 +59,7 @@ impl ChannelStrip {
         Self {
             isolator: Isolator::new(sample_rate as f32),
             filter,
+            smart_cfx: SmartCfxRack::new(sample_rate),
             filter_context: dubplate_fx::ProcessContext::new(sample_rate as f32, 0.0, 0.0),
         }
     }
@@ -71,15 +74,24 @@ impl ChannelStrip {
 
     pub(crate) fn set_filter(&mut self, position: f32) {
         self.filter.set_position(position * 2.0 - 1.0);
+        self.smart_cfx.set_knob(position);
+    }
+
+    pub(crate) fn set_smart_cfx(&mut self, preset: Option<SmartCfx>) {
+        self.smart_cfx.select(preset);
     }
 
     pub(crate) fn set_filter_resonance(&mut self, resonance: f32) {
         self.filter.set_resonance(resonance);
     }
 
-    pub(crate) fn process(&mut self, block: &mut StereoBlock) {
+    /// Runs the EQ, then the filter with any Smart CFX effect around it.
+    pub(crate) fn process(&mut self, block: &mut StereoBlock, context: &ProcessContext) {
         let (left, right) = block.channels_mut();
         self.isolator.process(left, right);
+        self.smart_cfx.process(block, context, true);
+        let (left, right) = block.channels_mut();
         self.filter.process(left, right, &self.filter_context);
+        self.smart_cfx.process(block, context, false);
     }
 }

@@ -163,6 +163,8 @@ pub enum Command {
     TapTempo(DeckId),
     /// Hear the seam after the selected set track in the headphones, or stop hearing it.
     AuditionSeam,
+    /// Start recording the mix to a file, or stop and close it.
+    ToggleRecording,
     /// Load the track selected in the browser.
     LoadSelected(DeckId),
     /// Load the track playing on the other deck at the same place, as pressing LOAD twice does.

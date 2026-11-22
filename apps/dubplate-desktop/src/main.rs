@@ -21,6 +21,7 @@ mod meter;
 mod pads;
 mod playhead;
 mod prep;
+mod recording;
 mod search;
 mod set;
 mod settings;
