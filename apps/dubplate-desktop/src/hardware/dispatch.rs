@@ -174,6 +174,13 @@ impl Dispatcher {
             (Button::Cue(deck), Layer::Shift) if pressed => {
                 Some(Command::JumpToStart(deck_id(deck)))
             }
+            (Button::Sync(deck), Layer::Normal) if pressed => {
+                Some(Command::ToggleSync(deck_id(deck)))
+            }
+            (Button::Sync(deck), Layer::Shift) if pressed => {
+                Some(Command::CycleTempoRange(deck_id(deck)))
+            }
+            (Button::SyncHold(deck), _) if pressed => Some(Command::MakeTempoMaster(deck_id(deck))),
             (Button::Load(deck), Layer::Normal) if pressed => Some(self.load(deck_id(deck), now)),
             (Button::BrowsePush, _) if pressed => Some(Command::SwitchBrowserPane),
             (Button::JogTouch(deck), _) => Some(Command::JogTouch(deck_id(deck), pressed)),
@@ -539,7 +546,7 @@ mod tests {
         let mut dispatcher = Dispatcher::default();
         let mut surface = Surface::default();
         surface.playing[0] = true;
-        surface.positions.tempos[0] = 1.04;
+        surface.positions.tempo_sliders[0] = 0.75;
         let tempo = Continuous::Tempo(Deck::A);
         let commands = run(
             &mut dispatcher,
@@ -561,7 +568,7 @@ mod tests {
     fn a_stopped_decks_tempo_follows_the_slider_at_once() {
         let mut dispatcher = Dispatcher::default();
         let mut surface = Surface::default();
-        surface.positions.tempos[1] = 1.04;
+        surface.positions.tempo_sliders[1] = 0.75;
         let commands = run(
             &mut dispatcher,
             &surface,
@@ -710,6 +717,29 @@ mod tests {
     }
 
     #[test]
+    fn beat_sync_toggles_holds_for_master_and_with_shift_steps_the_tempo_range() {
+        let mut dispatcher = Dispatcher::default();
+        let commands = run(
+            &mut dispatcher,
+            &Surface::default(),
+            &[
+                press(Button::Sync(Deck::A)),
+                release(Button::Sync(Deck::A)),
+                press(Button::SyncHold(Deck::B)),
+                shift_press(Button::Sync(Deck::B)),
+            ],
+        );
+        assert_eq!(
+            commands,
+            [
+                Command::ToggleSync(DeckId::A),
+                Command::MakeTempoMaster(DeckId::B),
+                Command::CycleTempoRange(DeckId::B),
+            ]
+        );
+    }
+
+    #[test]
     fn controls_without_a_feature_yet_do_nothing() {
         let mut dispatcher = Dispatcher::default();
         let surface = Surface::default();
@@ -718,7 +748,6 @@ mod tests {
             &surface,
             &[
                 moved(Continuous::MicLevel, 0.5),
-                press(Button::Sync(Deck::A)),
                 shift_press(Button::Load(Deck::A)),
             ],
         );

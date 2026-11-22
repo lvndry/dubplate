@@ -3,7 +3,7 @@
 
 use std::rc::Rc;
 
-use dubplate_engine::DeckId;
+use dubplate_engine::{DeckId, SyncMode};
 use gpui::prelude::*;
 use gpui::{
     ClickEvent, Context, FontWeight, MouseButton, MouseDownEvent, Pixels, SharedString, canvas,
@@ -16,7 +16,7 @@ use super::{DeckFrame, DubplateApp, HitAreas, pad_grid};
 use crate::assets::{PAUSE_ICON_PATH, PLAY_ICON_PATH};
 use crate::collection::{CollectionTrack, TrackOrigin, clock};
 use crate::commands::{Command, Press};
-use crate::controls::{Orientation, Slider, fraction_at, tempo_fraction};
+use crate::controls::{Orientation, Slider, fraction_at, tempo_range_label};
 use crate::deck::deck_letter;
 use crate::deck::{DeckContent, pad_position};
 use crate::fonts::MONO_FAMILY;
@@ -269,6 +269,7 @@ fn transport(
 ) -> impl IntoElement {
     let playing = frame.state.playing;
     let colour = theme::deck_colour(deck);
+    let tempo = app.tempo_state(deck);
     div()
         .flex()
         .items_center()
@@ -305,6 +306,22 @@ fn transport(
                         .text_color(if playing { theme::ON_DECK } else { theme::TEXT }),
                 ),
         )
+        .child(toggle(
+            ("sync", deck.index()),
+            "Sync",
+            tempo.is_some_and(|state| state.sync != SyncMode::Off),
+            colour,
+            Command::ToggleSync(deck),
+            cx,
+        ))
+        .child(toggle(
+            ("master", deck.index()),
+            "Master",
+            tempo.is_some_and(|state| state.is_master),
+            colour,
+            Command::MakeTempoMaster(deck),
+            cx,
+        ))
         .child(
             div()
                 .flex()
@@ -323,7 +340,7 @@ fn transport(
                         app,
                         Slider::Tempo(deck),
                         SMALL_THUMB,
-                        Some((tempo_fraction(1.0), colour)),
+                        Some((0.5, colour)),
                         cx,
                     )
                     .flex_1(),
@@ -336,9 +353,38 @@ fn transport(
                         .font_family(MONO_FAMILY)
                         .text_size(theme::SMALL_TEXT_SIZE)
                         .text_color(theme::MUTED)
-                        .child("\u{b1}8%"),
+                        .child(tempo_range_label(app.tempo_range(deck))),
                 ),
         )
+}
+
+/// A transport button that stays lit in the deck's colour while its setting is on, such as
+/// Sync and Master.
+fn toggle(
+    id: (&'static str, usize),
+    label: &'static str,
+    on: bool,
+    colour: gpui::Rgba,
+    command: Command,
+    cx: &mut Context<'_, DubplateApp>,
+) -> impl IntoElement + use<> {
+    button(id)
+        .px(px(10.0))
+        .border_1()
+        .map(|toggle| {
+            if on {
+                toggle.border_color(colour).text_color(theme::TEXT)
+            } else {
+                toggle
+                    .border_color(theme::LINE)
+                    .text_color(theme::MUTED)
+                    .hover(|toggle| toggle.text_color(theme::TEXT))
+            }
+        })
+        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+            this.perform(command, window, cx);
+        }))
+        .child(label)
 }
 
 fn button(id: (&'static str, usize)) -> gpui::Stateful<gpui::Div> {
