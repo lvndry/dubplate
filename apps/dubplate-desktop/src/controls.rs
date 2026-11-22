@@ -36,6 +36,8 @@ pub enum Control {
     HeadphoneMix,
     /// The headphone LEVEL knob.
     HeadphoneLevel,
+    /// The sampler's volume.
+    SamplerVolume,
 }
 
 impl Control {
@@ -50,6 +52,7 @@ impl Control {
             | Control::Filter(_)
             | Control::HeadphoneMix
             | Control::HeadphoneLevel => 0.5,
+            Control::SamplerVolume => DEFAULT_SAMPLER_VOLUME,
         }
     }
 }
@@ -174,6 +177,9 @@ pub fn trim_gain_at(fraction: f32) -> f32 {
     decibels_to_gain(decibels)
 }
 
+/// Where the sampler's volume starts, a little under its loudest so a sample sits in the mix.
+pub const DEFAULT_SAMPLER_VOLUME: f32 = 0.8;
+
 /// Where the mixer and tempo controls are. The interface keeps them, rather than reading them
 /// back from the engine, so quick key presses each count before the engine has caught up.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -197,6 +203,8 @@ pub struct MixerPositions {
     pub headphone_mix: f32,
     /// The headphone LEVEL knob.
     pub headphone_level: f32,
+    /// The sampler's volume, on the channel fader's curve.
+    pub sampler_volume: f32,
 }
 
 impl MixerPositions {
@@ -212,6 +220,7 @@ impl MixerPositions {
             Control::Filter(deck) => self.filters[deck.index()],
             Control::HeadphoneMix => self.headphone_mix,
             Control::HeadphoneLevel => self.headphone_level,
+            Control::SamplerVolume => self.sampler_volume,
         }
     }
 }
@@ -228,6 +237,7 @@ impl Default for MixerPositions {
             filters: [0.5, 0.5],
             headphone_mix: 0.5,
             headphone_level: 0.5,
+            sampler_volume: DEFAULT_SAMPLER_VOLUME,
         }
     }
 }
