@@ -6,7 +6,8 @@ use rtrb::{Consumer, Producer};
 
 use crate::curves::{Ramp, channel_fader_gain, crossfader_gains};
 use crate::deck::{Deck, DeckId};
-use crate::effects::{EffectChange, EffectRack, EffectTarget, EffectUnitId};
+use crate::denormals::FlushDenormals;
+use crate::effects::{Bus, EffectChange, EffectRack, EffectUnitId};
 use crate::grid::BeatGrid;
 use crate::headphones::Headphones;
 use crate::jog::JogInput;
@@ -336,8 +337,10 @@ impl Renderer {
     /// Fills `output`, interleaved with `channel_count` channels, with the next frames of the
     /// mix. The master goes to the first two channels and, with four or more channels, the
     /// headphones to the third and fourth; any further channels are silent and a mono output
-    /// gets the sum of both sides at half level.
+    /// gets the sum of both sides at half level. Denormal numbers are flushed to zero while it
+    /// renders.
     pub fn render(&mut self, output: &mut [f32], channel_count: usize) {
+        let _denormals = FlushDenormals::new();
         let callback = self.begin_callback();
         let starved = self.render_frames(output, channel_count);
         self.end_callback(callback, output.len() / channel_count.max(1), starved);
@@ -418,7 +421,7 @@ impl Renderer {
             self.headphones.listen(deck_id, &deck.block);
             deck.apply_channel_gain();
             self.effects
-                .process(EffectTarget::Deck(deck_id), &mut deck.block, context);
+                .process(Bus::Deck(deck_id), &mut deck.block, context);
             let peak = deck.mix_into(&mut self.master_block);
             raise_peak(&self.shared.decks[deck_id.index()].peak, peak);
         }
@@ -438,11 +441,8 @@ impl Renderer {
         for processor in self.master_inserts.iter_mut().flatten() {
             processor.process(&mut self.master_block, &master_context);
         }
-        self.effects.process(
-            EffectTarget::Master,
-            &mut self.master_block,
-            &master_context,
-        );
+        self.effects
+            .process(Bus::Master, &mut self.master_block, &master_context);
         starved |= self.render_preview(frame_count);
         self.headphones
             .finish(&self.master_block, &self.preview.block);

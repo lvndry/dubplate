@@ -420,6 +420,7 @@ fn status_line(controller: &Controller, selected: Option<DeckId>) -> String {
             let state = controller.effect_unit(unit);
             let target = match state.target {
                 EffectTarget::Deck(deck) => format!("{deck:?}"),
+                EffectTarget::BothDecks => "both decks".to_owned(),
                 EffectTarget::Master => "master".to_owned(),
             };
             format!(

@@ -6,20 +6,19 @@ use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use dubplate_prep::{GridCorrection, SetEntry};
+use dubplate_prep::{GridCorrection, SetEntry, TrackGrid};
 use gpui::prelude::*;
 use gpui::{
     ClickEvent, Context, FontWeight, MouseButton, MouseDownEvent, Pixels, SharedString, canvas,
     div, fill, point, px, size,
 };
 
-use super::{DubplateApp, HitAreas, lanes};
+use super::{DubplateApp, HitAreas, grid_controls, lanes};
 use crate::collection::clock;
 use crate::commands::{Command, SetEdit};
 use crate::controls::{Orientation, fraction_at};
 use crate::fonts::MONO_FAMILY;
 use crate::prep::{TrackDetail, track_detail};
-use crate::shortcuts::GRID_NUDGE_MS;
 use crate::theme;
 use crate::waveform::BeatMarks;
 use crate::widgets::{InteractiveControl, adjusted_value};
@@ -45,9 +44,8 @@ const PHRASE_LABEL_GAP: f32 = 3.0;
 const FIRST_OVERVIEW_WIDTH: f32 = 1100.0;
 /// Bars in a phrase, how often the overview draws a stronger bar line.
 const BARS_PER_PHRASE: usize = 8;
-/// Room for the grid button in both its states, so the controls beside it stay put when it
-/// changes.
-const CONFIRM_WIDTH: Pixels = px(136.0);
+/// Tells the track check's grid controls apart from the decks' grid bars.
+const CHECK_SCOPE: usize = usize::MAX;
 /// Room for a mix cue time up to `59:59`, so setting a cue never moves the controls.
 const CUE_TIME_WIDTH: Pixels = px(40.0);
 
@@ -190,7 +188,7 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
         .and_then(|track| track.track.length_seconds)
         .map_or(0.0, f64::from);
     strip
-        .child(controls(app, &entry, correction, cx))
+        .child(controls(app, &entry, cx))
         .child(lane(&detail, &marks, playhead, &entry))
         .child(overview(
             app,
@@ -206,7 +204,6 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
 fn controls(
     app: &DubplateApp,
     entry: &SetEntry,
-    correction: GridCorrection,
     cx: &mut Context<'_, DubplateApp>,
 ) -> impl IntoElement + use<> {
     let title = app
@@ -238,83 +235,12 @@ fn controls(
                 .font_weight(FontWeight::MEDIUM)
                 .child(title),
         )
-        .child(small_label("Grid"))
-        .child(key_button(
-            "grid-earlier",
-            "\u{2039}",
-            SetEdit::NudgeGrid(-GRID_NUDGE_MS),
+        .child(grid_controls::render(
+            CHECK_SCOPE,
+            TrackGrid::of(entry),
+            |edit| Command::EditSet(SetEdit::Grid(edit)),
             cx,
         ))
-        .child(
-            div()
-                .w(px(54.0))
-                .flex()
-                .justify_center()
-                .font_family(MONO_FAMILY)
-                .text_size(theme::SMALL_TEXT_SIZE)
-                .child(format!("{:+} ms", correction.offset_ms)),
-        )
-        .child(key_button(
-            "grid-later",
-            "\u{203a}",
-            SetEdit::NudgeGrid(GRID_NUDGE_MS),
-            cx,
-        ))
-        .child(small_label("Bar"))
-        .child(key_button(
-            "downbeat-earlier",
-            "\u{2039}",
-            SetEdit::ShiftDownbeat(-1),
-            cx,
-        ))
-        .child(
-            div()
-                .w(px(28.0))
-                .flex()
-                .justify_center()
-                .font_family(MONO_FAMILY)
-                .text_size(theme::SMALL_TEXT_SIZE)
-                .child(format!("+{}", correction.downbeat_shift)),
-        )
-        .child(key_button(
-            "downbeat-later",
-            "\u{203a}",
-            SetEdit::ShiftDownbeat(1),
-            cx,
-        ))
-        .child(
-            div()
-                .id("confirm-grid")
-                .accessible_button("Confirm beat grid")
-                .flex()
-                .items_center()
-                .justify_center()
-                .w(CONFIRM_WIDTH)
-                .h(px(24.0))
-                .px(px(8.0))
-                .rounded(px(5.0))
-                .border_1()
-                .text_size(theme::SMALL_TEXT_SIZE)
-                .cursor_pointer()
-                .map(|button| {
-                    if entry.grid_confirmed {
-                        button.border_color(theme::OK).text_color(theme::OK)
-                    } else {
-                        button
-                            .border_color(theme::ATTENTION)
-                            .text_color(theme::ATTENTION)
-                    }
-                })
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-                    this.perform(Command::EditSet(SetEdit::ConfirmGrid), window, cx);
-                }))
-                .child(if entry.grid_confirmed {
-                    "Grid confirmed \u{b7} G"
-                } else {
-                    "Confirm grid \u{b7} G"
-                }),
-        )
         .child(key_button("mix-in", "In", SetEdit::MixInAtPlayhead, cx))
         .child(
             div()
@@ -335,13 +261,6 @@ fn controls(
                 .text_size(theme::SMALL_TEXT_SIZE)
                 .child(cue(entry.mix_out_ms)),
         )
-}
-
-fn small_label(text: &'static str) -> impl IntoElement {
-    div()
-        .text_size(theme::TINY_TEXT_SIZE)
-        .text_color(theme::MUTED)
-        .child(text)
 }
 
 fn key_button(
@@ -403,6 +322,7 @@ fn lane(
                         Some(&marks),
                         playhead,
                         1.0,
+                        None,
                         window,
                     );
                     let zoom = zoomed
@@ -445,9 +365,7 @@ fn overview(
 ) -> impl IntoElement + use<> {
     let bars: Vec<f32> = grid
         .map(|grid| {
-            grid.beats
-                .iter()
-                .filter(|beat| beat.beat_in_bar == 1)
+            grid.downbeats()
                 .map(|beat| beat.time_ms as f32 / 1000.0)
                 .collect()
         })
@@ -549,9 +467,9 @@ fn overview(
                     let x_of = |seconds: f32| seconds / duration_f32 * width;
                     if let Some(overview) = &overview {
                         let count = (width / OVERVIEW_BAR_SPACING).floor().max(0.0) as usize;
-                        for (index, level) in overview.bars(count).iter().enumerate() {
+                        for (index, levels) in overview.bars(count).iter().enumerate() {
                             let left = index as f32 * OVERVIEW_BAR_SPACING;
-                            let bar_height = (level * (height - 6.0)).max(1.0);
+                            let bar_height = (levels.loudest() * (height - 6.0)).max(1.0);
                             let bar = gpui::Bounds::new(
                                 bounds.origin + point(px(left), px((height - bar_height) / 2.0)),
                                 size(px(OVERVIEW_BAR_WIDTH), px(bar_height)),

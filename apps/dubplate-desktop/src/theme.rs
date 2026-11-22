@@ -83,6 +83,35 @@ pub const CUE_FLAG: Rgba = hex(0xEEEFF1);
 /// Behind the help overlay.
 pub const SCRIM: Rgba = with_alpha(0x000000, 0.55);
 
+/// The CUE button's point on the lanes and the overview, orange as on CDJs.
+pub const CUE_POINT: Rgba = hex(0xF59A4B);
+/// Memory cues on the deck overview, red as on CDJs.
+pub const MEMORY_CUE: Rgba = ALERT;
+/// The set's mix-in cue on the deck overview.
+pub const MIX_IN_MARK: Rgba = OK;
+/// The set's mix-out cue on the deck overview.
+pub const MIX_OUT_MARK: Rgba = hex(0xC7B1F5);
+/// Saved loops on the deck overview.
+pub const SAVED_LOOP: Rgba = hex(0xF2D48A);
+/// The minute ticks along the deck overview.
+pub const MINUTE_TICK: Rgba = white_alpha(0.28);
+/// Over the last 30 seconds of the deck overview.
+pub const ENDING_TINT: Rgba = with_alpha(0xF2C46D, 0.14);
+/// Over the part of the deck overview already played.
+pub const PLAYED_SHADE: Rgba = with_alpha(0x0B0C0E, 0.62);
+/// The phrase strip's sections: intro, build, drop, breakdown, outro and unnamed.
+pub const PHRASE_INTRO: Rgba = hex(0x5E6B8C);
+/// See [`PHRASE_INTRO`].
+pub const PHRASE_BUILD: Rgba = hex(0x6E86E8);
+/// See [`PHRASE_INTRO`].
+pub const PHRASE_DROP: Rgba = hex(0xD7AE6E);
+/// See [`PHRASE_INTRO`].
+pub const PHRASE_BREAKDOWN: Rgba = hex(0x8FD3C8);
+/// See [`PHRASE_INTRO`].
+pub const PHRASE_OUTRO: Rgba = hex(0x8A8F98);
+/// See [`PHRASE_INTRO`].
+pub const PHRASE_OTHER: Rgba = white_alpha(0.2);
+
 /// The colours of the hot cue pads A to H.
 pub const HOT_CUE_TINTS: [Rgba; 8] = [
     hex(0xF5B78E),

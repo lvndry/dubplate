@@ -242,6 +242,7 @@ pub fn target_letter(target: EffectTarget) -> &'static str {
     match target {
         EffectTarget::Deck(DeckId::A) => "A",
         EffectTarget::Deck(DeckId::B) => "B",
+        EffectTarget::BothDecks => "AB",
         EffectTarget::Master => "M",
     }
 }
