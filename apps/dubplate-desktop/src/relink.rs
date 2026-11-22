@@ -4,10 +4,9 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use dubplate_library::{MissingTrack, Relocation};
+use dubplate_library::{MissingTrack, Relink, Relocation};
 
 use crate::collection::{Collection, TrackIndex, TrackOrigin};
-use crate::settings::RelinkSetting;
 
 /// A rekordbox track whose file is not where it should be.
 #[derive(Debug, Clone, PartialEq)]
@@ -16,14 +15,6 @@ pub struct Missing {
     pub track: TrackIndex,
     /// What the relocation search needs, by the path rekordbox gave.
     pub file: MissingTrack,
-}
-
-/// The relinks as a map from the path rekordbox gave to the file's new place.
-pub fn relink_map(relinks: &[RelinkSetting]) -> HashMap<PathBuf, PathBuf> {
-    relinks
-        .iter()
-        .map(|relink| (relink.from.clone(), relink.to.clone()))
-        .collect()
 }
 
 /// The rekordbox tracks of `collection` whose file is not on disk, each by the path rekordbox
@@ -57,8 +48,8 @@ pub fn missing_tracks(
 }
 
 /// `relinks` with `accepted` added, each replacing an earlier relink of the same file.
-pub fn with_relocations(relinks: &[RelinkSetting], accepted: &[Relocation]) -> Vec<RelinkSetting> {
-    let mut updated: Vec<RelinkSetting> = relinks
+pub fn with_relocations(relinks: &[Relink], accepted: &[Relocation]) -> Vec<Relink> {
+    let mut updated: Vec<Relink> = relinks
         .iter()
         .filter(|relink| {
             !accepted
@@ -67,7 +58,7 @@ pub fn with_relocations(relinks: &[RelinkSetting], accepted: &[Relocation]) -> V
         })
         .cloned()
         .collect();
-    updated.extend(accepted.iter().map(|relocation| RelinkSetting {
+    updated.extend(accepted.iter().map(|relocation| Relink {
         from: relocation.missing.clone(),
         to: relocation.found.clone(),
     }));
@@ -76,7 +67,7 @@ pub fn with_relocations(relinks: &[RelinkSetting], accepted: &[Relocation]) -> V
 
 #[cfg(test)]
 mod tests {
-    use dubplate_library::RelocationConfidence;
+    use dubplate_library::{LibrarySettings, RelocationConfidence};
     use dubplate_rekordbox::Track;
 
     use super::*;
@@ -134,8 +125,8 @@ mod tests {
         );
     }
 
-    fn relink(from: &str, to: &str) -> RelinkSetting {
-        RelinkSetting {
+    fn relink(from: &str, to: &str) -> Relink {
+        Relink {
             from: PathBuf::from(from),
             to: PathBuf::from(to),
         }
@@ -160,7 +151,11 @@ mod tests {
                 relink("/old/a.mp3", "/two/a.mp3")
             ]
         );
-        let map = relink_map(&updated);
+        let map = LibrarySettings {
+            relinks: updated,
+            ..LibrarySettings::default()
+        }
+        .relink_map();
         assert_eq!(
             map.get(&PathBuf::from("/old/a.mp3")),
             Some(&PathBuf::from("/two/a.mp3"))

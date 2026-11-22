@@ -8,6 +8,7 @@ use dubplate_rekordbox::{DatabaseKey, Library, Playlist, PlaylistKind, Track, de
 
 mod analysis;
 mod midi;
+mod set;
 
 #[derive(Parser)]
 #[command(
@@ -28,6 +29,9 @@ enum Command {
     /// Work with MIDI controllers.
     #[command(subcommand)]
     Midi(midi::MidiCommand),
+    /// Work with the sets prepared in Dubplate, and export them to rekordbox.
+    #[command(subcommand)]
+    Set(set::SetCommand),
 }
 
 #[derive(Subcommand)]
@@ -71,10 +75,11 @@ fn main() -> Result<()> {
             json,
         }) => analysis(&master_db_or_default(library)?, &track, json),
         Command::Midi(command) => midi::run(command),
+        Command::Set(command) => set::run(command),
     }
 }
 
-fn master_db_or_default(library: Option<PathBuf>) -> Result<PathBuf> {
+pub(crate) fn master_db_or_default(library: Option<PathBuf>) -> Result<PathBuf> {
     match library {
         Some(path) => Ok(path),
         None => Ok(default_master_db()?),

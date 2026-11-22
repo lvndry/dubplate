@@ -8,6 +8,7 @@ mod deck_panel;
 mod drop_target;
 mod effects_strip;
 mod energy;
+mod export;
 mod header;
 mod help;
 mod knob;
@@ -39,7 +40,7 @@ use dubplate_engine::{
     TempoRange, TempoState,
 };
 use dubplate_midi::{Feedback, PadMode};
-use dubplate_prep::EnergyQueue;
+use dubplate_prep::{EnergyQueue, GridCorrection};
 use dubplate_rekordbox::HotCuePad;
 use gpui::component::input::{InputEvent, InputState};
 use gpui::prelude::*;
@@ -69,7 +70,7 @@ use crate::library::LibrarySources;
 use crate::loading::{LoadRefusal, LoadSource, check_deck_free, check_file};
 use crate::meter::PeakMeter;
 use crate::pads::{PadFx, next_mode};
-use crate::prep::{Catalogue, GridCorrection, TrackCheck, TrackDetail};
+use crate::prep::{Catalogue, TrackCheck, TrackDetail};
 use crate::recording::Recording;
 use crate::relink::Missing;
 use crate::set::SetEditor;
@@ -87,6 +88,8 @@ use relink::RelinkReview;
 const BUFFER_FRAMES: u32 = 256;
 /// How long a notice stays on screen.
 const NOTICE_DURATION: Duration = Duration::from_secs(6);
+/// How wide a notice grows before its text wraps.
+const NOTICE_MAX_WIDTH: Pixels = px(560.0);
 /// How often the controller lights follow the decks while nothing else updates them, for the
 /// blinking lights and the level meters.
 const LIGHTS_INTERVAL: Duration = Duration::from_millis(30);
@@ -301,8 +304,10 @@ impl DubplateApp {
             .and_then(|path| EnergyQueue::start(path).map_err(|error| error.to_string()))
             .map_err(|problem| problems.push(format!("Energy cannot be rated: {problem}")))
             .ok();
-        let sources =
-            LibrarySources::new(settings.music_folders.clone(), settings.import_rekordbox);
+        let sources = LibrarySources::new(
+            settings.library.music_folders.clone(),
+            settings.library.import_rekordbox,
+        );
         let mut app = Self {
             engine,
             library: LibraryStatus::Reading,
@@ -692,6 +697,7 @@ impl DubplateApp {
                 };
             }
             Command::LoadSet => self.load_set(cx),
+            Command::ExportSet => self.export_set(cx),
             Command::Browse(steps) => self
                 .browser
                 .update(cx, |browser, cx| browser.browse(steps, cx)),
@@ -737,6 +743,8 @@ impl DubplateApp {
                 } else if self.help_open || self.library_open {
                     self.help_open = false;
                     self.library_open = false;
+                } else if self.notice.is_some() {
+                    self.notice = None;
                 } else if self.browser.read(cx).search_has_focus(window, cx) {
                     self.browser
                         .update(cx, |browser, cx| browser.focus_table(window, cx));
@@ -918,6 +926,17 @@ impl DubplateApp {
         text: impl Into<SharedString>,
         cx: &mut Context<'_, Self>,
     ) {
+        self.show_notice_for(place, text, NOTICE_DURATION, cx);
+    }
+
+    /// Shows a notice for `duration`, or until Escape closes it.
+    fn show_notice_for(
+        &mut self,
+        place: NoticePlace,
+        text: impl Into<SharedString>,
+        duration: Duration,
+        cx: &mut Context<'_, Self>,
+    ) {
         self.notice_count += 1;
         let id = self.notice_count;
         self.notice = Some(Notice {
@@ -927,7 +946,7 @@ impl DubplateApp {
         });
         cx.notify();
         cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(NOTICE_DURATION).await;
+            cx.background_executor().timer(duration).await;
             this.update(cx, |this, cx| {
                 if this.notice.as_ref().is_some_and(|notice| notice.id == id) {
                     this.notice = None;
@@ -1616,6 +1635,7 @@ fn notice_toast(text: SharedString) -> impl IntoElement {
         .justify_center()
         .child(
             div()
+                .max_w(NOTICE_MAX_WIDTH)
                 .px(px(12.0))
                 .py(px(8.0))
                 .rounded(px(8.0))

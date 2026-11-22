@@ -6,12 +6,16 @@
 //!
 //! [`Library::analysis`] reads a track's beat grid, cues, phrases and waveforms from the
 //! analysis files rekordbox keeps in its `share` directory. Those files are only read.
+//!
+//! [`xml`] writes a library in rekordbox's XML format, the way to hand rekordbox tracks,
+//! grids, cues and playlists without touching its own files.
 
 pub mod analysis;
 mod error;
 mod library;
 mod location;
 mod model;
+pub mod xml;
 
 pub use analysis::TrackAnalysis;
 pub use error::Error;

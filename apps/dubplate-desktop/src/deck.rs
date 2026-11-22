@@ -8,11 +8,11 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use dubplate_engine::DeckId;
+use dubplate_prep::GridCorrection;
 use dubplate_rekordbox::{HotCuePad, TrackAnalysis};
 
 use crate::collection::{CollectionTrack, TrackOrigin};
 use crate::playhead::PlayheadClock;
-use crate::prep::GridCorrection;
 use crate::tap_tempo::TapTempo;
 use crate::waveform::{BeatMarks, OverviewWaveform, Zoom, ZoomedWaveform};
 

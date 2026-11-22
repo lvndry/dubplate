@@ -101,13 +101,17 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
             let last = this.set_track_count().checked_sub(1);
             this.insert_into_set(dragged.track, last, cx);
         }))
-        .child(summary(app, &rows))
+        .child(summary(app, &rows, cx))
         .child(list)
         .child(backups(app))
         .child(next_panel(next, cx))
 }
 
-fn summary(app: &DubplateApp, rows: &[SetRow]) -> impl IntoElement {
+fn summary(
+    app: &DubplateApp,
+    rows: &[SetRow],
+    cx: &mut Context<'_, DubplateApp>,
+) -> impl IntoElement + use<> {
     let (name, target) = app
         .set_editor
         .as_ref()
@@ -160,14 +164,18 @@ fn summary(app: &DubplateApp, rows: &[SetRow]) -> impl IntoElement {
         )
         .child(
             div()
+                .flex()
+                .items_center()
+                .gap(px(8.0))
                 .text_size(theme::SMALL_TEXT_SIZE)
                 .text_color(theme::MUTED)
-                .child(format!(
+                .child(div().flex_1().min_w_0().truncate().child(format!(
                     "{} track{} \u{b7} {range} \u{b7} {ready} of {} ready",
                     rows.len(),
                     if rows.len() == 1 { "" } else { "s" },
                     rows.len()
-                )),
+                )))
+                .when(!rows.is_empty(), |line| line.child(export_button(cx))),
         )
         .when(!rows.is_empty(), |summary| {
             let range = EnergyRange::of_library(
@@ -175,6 +183,19 @@ fn summary(app: &DubplateApp, rows: &[SetRow]) -> impl IntoElement {
             );
             summary.child(energy_curve(rows, target, range))
         })
+}
+
+/// Saves the set as rekordbox XML, as Command-E does.
+fn export_button(cx: &mut Context<'_, DubplateApp>) -> impl IntoElement + use<> {
+    div()
+        .id("export-set")
+        .flex_none()
+        .px(px(6.0))
+        .rounded(theme::SMALL_RADIUS)
+        .cursor_pointer()
+        .hover(|button| button.bg(theme::RAISED).text_color(theme::TEXT))
+        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.export_set(cx)))
+        .child("Export to rekordbox\u{2026}")
 }
 
 /// The set's energy track by track as steps, over the target it should follow, across the
