@@ -211,7 +211,7 @@ Statuses are as audited on 22 November 2026, on `main` with a second Dubplate ru
 
 **BR5 Preview in the headphones.** Status: **Missing** ([inventory 11](feature-inventory.md#top-40-gaps)).
 
-**BR6 History.** Status: **Missing** ([inventory 9](feature-inventory.md#top-40-gaps)).
+**BR6 History.** See: under History in the browser's sidebar, this session's plays newest first (start time, deck, title, artist) and earlier sessions by day; a track counts after 60 seconds of track time on one load, once per load, as in rekordbox's History. Export TXT and CSV tracklists with times into the mix. Status: **In progress** (play history pull request). rekordbox's own histories: **Missing.**
 
 ## The app
 

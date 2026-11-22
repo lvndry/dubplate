@@ -53,7 +53,7 @@ Ranked by what stops the owner from playing a club night with Dubplate alone, th
 6. **FLX4 Beat FX fixes (in progress).** CH SELECT 1&2 puts the effect on both decks, LEVEL/DEPTH follows the knob from its first report, FX SELECT shows its choice.
 7. **Auto Gain.** Read the gain rekordbox stores for its tracks (djmdMixerParam), measure loudness for folder tracks, and set the trim on load, with a switch in Settings.
 8. **Auto cue on load.** Every track loads cued at its first beat (or first audio above -36 to -78 dB, or the nearest memory or hot cue), never at 0:00 in silence.
-9. **History and tracklists.** Record each play of a minute or more with start time, duration and deck in the play history table that already exists, show a history per session, and export it as TXT, CSV or M3U with timestamps, also beside each recording.
+9. **History and tracklists (in progress).** Record each play of a minute or more with start time, duration and deck in the play history table that already exists, show a history per session, and export it as TXT, CSV or M3U with timestamps, also beside each recording.
 10. **rekordbox's hot cue colours, names and loops (done).** Use the stored colour (16-colour palette) and comment on the pads, lanes and overview, and start the loop when a hot loop is called.
 11. **Browser preview.** P or a click on a preview waveform plays a track in the headphones from that point without loading a deck, with its own volume.
 12. **Waveform zoom.** SHIFT + BROWSE turn and on-screen buttons zoom the lanes from about 4 to 32 seconds across, with a reset.
@@ -174,10 +174,10 @@ Ranked by what stops the owner from playing a club night with Dubplate alone, th
 | Match all or any | One AND or one OR across all rules; no nesting. | Condition editor | Free | Missing | P2 |
 | Nested AND/OR and "in playlist" rules | Grouped logic such as (Afro House or Amapiano) and BPM 112 to 124; asked for since 2015. | Not in rekordbox | n/a | Missing | P2 |
 | Collaborative playlist | Share a playlist with up to 5 people, edits sync. | Playlists > Collaborative Playlist | Professional | Missing | P3 |
-| Histories | Each session's played tracks (1 minute or more) as HISTORY yyyy-mm-dd in year and month folders. | Media Browser > Histories | Free | Missing: rekordbox's histories (djmdHistory) are not read, and the set store's play history table is never written | P1 |
+| Histories | Each session's played tracks (1 minute or more) as HISTORY yyyy-mm-dd in year and month folders. | Media Browser > Histories | Free | Partial: History in the browser lists this session's plays (a minute of track time, once per load) and earlier sessions by day; rekordbox's own histories (djmdHistory) are not read | P1 |
 | History to playlist | Copy a history into a playlist. | Context menu | Free | Missing | P2 |
-| History with times | Start time and duration for each play, for tracklists (Traktor and Serato have it; rekordbox does not). | Not in rekordbox | n/a | Missing | P1 |
-| Tracklist export | Text or CSV tracklist of a session with timestamps for Mixcloud and YouTube; one of the most requested gaps. | Not in rekordbox | n/a | Missing | P1 |
+| History with times | Start time and duration for each play, for tracklists (Traktor and Serato have it; rekordbox does not). | Not in rekordbox | n/a | Done (start time, track time played and deck per play) | P1 |
+| Tracklist export | Text or CSV tracklist of a session with timestamps for Mixcloud and YouTube; one of the most requested gaps. | Not in rekordbox | n/a | Done (TXT and CSV from any page of the history) | P1 |
 | Histories from CDJs | Imports the play history from a USB used on CDJs, named by date; option to delete it from the stick. | Preferences > DJ System > Device > History | Free | Missing | P2 |
 | Tag List | A 100-track scratch list, also browsable from linked CDJs; auto-remove when loaded. | Palette [TAG] | Free | Partial: B keeps a track as a set backup | P2 |
 | Request Catalog | Up to 200 tracks the audience can request through the CoBeat web app. | Palette [REQ] | Cloud | Missing | P3 |
@@ -819,8 +819,8 @@ Features rekordbox lacks, or does worse, that DJs cite when comparing apps. The 
 | Effect chains | Traktor Group mode: 3 effects in a chain per unit, 4 units. | Traktor | n/a | Missing | P2 |
 | Mixer FX menu | Traktor: pick 4 of 8 one-knob channel effects. | Traktor | n/a | Partial: Smart CFX presets | P2 |
 | Ozone-style master limiter | Traktor: a maximiser with a gain-reduction meter. | Traktor | n/a | Done (look-ahead limiter; no meter on screen) | P2 |
-| Timestamped history | Traktor and Serato: start time, duration and deck per played track. | Traktor, Serato | n/a | Missing | P1 |
-| History export as CSV, M3U or TXT | Serato history export for tracklists. | Serato | n/a | Missing | P1 |
+| Timestamped history | Traktor and Serato: start time, duration and deck per played track. | Traktor, Serato | n/a | Done | P1 |
+| History export as CSV, M3U or TXT | Serato history export for tracklists. | Serato | n/a | Partial: CSV and TXT; no M3U | P1 |
 | Practice mode | Serato: two decks with the mouse and keyboard, no hardware. | Serato (rekordbox Performance mode needs a plan or hardware) | n/a | Done (keyboard and mouse decks without a controller) | P2 |
 | Saved loops, 8 per track | Serato Loops tab, written to the file. | Serato | n/a | Missing | P1 |
 | Cue names and colours written to file tags | Serato: cues survive moving apps. | Serato | n/a | Missing | P3 |
@@ -855,7 +855,7 @@ Requests from the Pioneer DJ forums, Digital DJ Tips and other apps' communities
 | --- | --- | --- | --- | --- | --- |
 | No subscription paywall | Every rekordbox paid feature free; the strongest complaint in press and reviews. | Plans | n/a | Done (free, GPL) | P0 |
 | Stem quality and saving | Stems as good as Serato and VirtualDJ, kept between sessions and exportable. | STEMS | Free | Partial | P1 |
-| Tracklist export with timestamps | History with times, for Mixcloud and YouTube; split or marked recordings. | Histories | Free | Missing | P1 |
+| Tracklist export with timestamps | History with times, for Mixcloud and YouTube; split or marked recordings. | Histories | Free | Partial: TXT and CSV tracklists with times into the mix; nothing beside recordings yet | P1 |
 | Import from Serato and Traktor with cues | Move a collection with cues, loops and grids. | Not in rekordbox | n/a | Missing | P2 |
 | Open interchange format | One format for grids, cues, loops, keys and playlists; AlphaTheta's answer is OneLibrary. | OneLibrary | Free | Partial: reads rekordbox's database and ANLZ, writes rekordbox XML | P1 |
 | Nested AND/OR smart playlists | Grouped rules and an "in playlist" condition. | Intelligent playlists | Free | Missing | P2 |

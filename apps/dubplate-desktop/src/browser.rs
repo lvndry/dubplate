@@ -23,6 +23,7 @@ use crate::collection::{Collection, CollectionTrack, CrateIndex, CrateKind, Trac
 use crate::commands::{Direction, Mode};
 use crate::deck::deck_letter;
 use crate::fonts::MONO_FAMILY;
+use crate::history::{HistoryPage, HistoryShelf};
 use crate::library_match::{LibraryMatches, TrackMatch};
 use crate::library_view::{
     BpmRange, Column, FilterReference, LibraryView, RangeEnd, Sort, SortDirection,
@@ -32,6 +33,7 @@ use crate::search::{SearchQuery, filter_tracks};
 use crate::search_filter::{SuggestionContext, TrackFacts, complete, suggestions};
 use crate::stems::{StemStatuses, stems_cell};
 use crate::theme;
+use crate::tracklist::TracklistFormat;
 use crate::widgets::{Emphasis, InteractiveControl, button, tooltip};
 
 const ROW_HEIGHT: Pixels = px(32.0);
@@ -55,6 +57,9 @@ const GENRE_SHARE: f32 = 2.0;
 const FILTER_BAR_HEIGHT: Pixels = px(40.0);
 const FILTER_HEIGHT: Pixels = px(28.0);
 const LOAD_WIDTH: Pixels = px(84.0);
+const HISTORY_TIME_WIDTH: Pixels = px(72.0);
+const HISTORY_DECK_WIDTH: Pixels = px(56.0);
+const SIDEBAR_ROW_HEIGHT: Pixels = px(28.0);
 /// What the source column says of a track whose file is not where rekordbox says it is.
 const MISSING_SOURCE: &str = "File missing";
 const ROW_GROUP: &str = "track-row";
@@ -90,6 +95,13 @@ pub enum BrowserEvent {
     RelinkAll,
     /// Find the moved file of one missing track.
     Relink(TrackIndex),
+    /// Save a page of the history as a tracklist.
+    ExportHistory {
+        /// The page.
+        page: HistoryPage,
+        /// The file's format.
+        format: TracklistFormat,
+    },
     /// Separate a track into stems, ahead of every other track waiting.
     SeparateStems(TrackIndex),
     /// Stop separating a track, or forget it if it waits.
@@ -155,6 +167,8 @@ pub struct Browser {
     missing: Arc<HashSet<TrackIndex>>,
     relinking: bool,
     analyses: HashMap<PathBuf, Result<Arc<AudioAnalysis>, String>>,
+    history: Arc<HistoryShelf>,
+    history_page: Option<HistoryPage>,
     matches: Arc<LibraryMatches>,
     stems: StemStatuses,
     search_input: Entity<InputState>,
@@ -199,6 +213,8 @@ impl Browser {
             missing: Arc::default(),
             relinking: false,
             analyses: HashMap::new(),
+            history: Arc::default(),
+            history_page: None,
             matches: Arc::default(),
             stems: StemStatuses::default(),
             search_input,
@@ -240,6 +256,24 @@ impl Browser {
     /// Marks the tracks that are in the set being prepared.
     pub fn set_marked(&mut self, in_set: Arc<HashSet<TrackIndex>>, cx: &mut Context<'_, Self>) {
         self.in_set = in_set;
+        cx.notify();
+    }
+
+    /// Shows the play history as it now stands.
+    pub fn set_history(&mut self, history: Arc<HistoryShelf>, cx: &mut Context<'_, Self>) {
+        if self
+            .history_page
+            .is_some_and(|page| history.page(page).is_none())
+        {
+            self.history_page = Some(HistoryPage::ThisSession);
+        }
+        self.history = history;
+        cx.notify();
+    }
+
+    /// Shows a page of the history in place of the tracks.
+    fn open_history(&mut self, page: HistoryPage, cx: &mut Context<'_, Self>) {
+        self.history_page = Some(page);
         cx.notify();
     }
 
@@ -470,9 +504,9 @@ impl Browser {
         }
     }
 
-    /// The selected track.
+    /// The selected track, while the tracks are shown.
     pub fn selected(&self) -> Option<TrackIndex> {
-        self.selected
+        self.selected.filter(|_| self.history_page.is_none())
     }
 
     /// Puts the cursor in the search field.
@@ -526,6 +560,9 @@ impl Browser {
     }
 
     fn move_track_cursor(&mut self, steps: i32, cx: &mut Context<'_, Self>) {
+        if self.history_page.is_some() {
+            return;
+        }
         let current = self
             .selected
             .and_then(|track| self.rows.iter().position(|row| *row == track));
@@ -539,16 +576,42 @@ impl Browser {
         }
     }
 
+    /// Moves through the sidebar: the crates, then the pages of the history.
     fn move_crate_cursor(&mut self, steps: i32, cx: &mut Context<'_, Self>) {
         let LibraryStatus::Ready(collection) = &self.library else {
             return;
         };
-        let count = collection.indexed_crates().count();
-        let next = offset(self.crate_index.position(), steps, count)
-            .and_then(|next| collection.indexed_crates().nth(next))
-            .map(|(crate_index, _)| crate_index);
-        if let Some(crate_index) = next {
-            self.choose_crate(crate_index, cx);
+        let crate_count = collection.indexed_crates().count();
+        let current = match self.history_page {
+            Some(page) => {
+                crate_count
+                    + self
+                        .history
+                        .pages
+                        .iter()
+                        .position(|view| view.page == page)
+                        .unwrap_or(0)
+            }
+            None => self.crate_index.position(),
+        };
+        let Some(next) = offset(current, steps, crate_count + self.history.pages.len()) else {
+            return;
+        };
+        match next.checked_sub(crate_count) {
+            Some(page_position) => {
+                if let Some(view) = self.history.pages.get(page_position) {
+                    self.open_history(view.page, cx);
+                }
+            }
+            None => {
+                let chosen = collection
+                    .indexed_crates()
+                    .nth(next)
+                    .map(|(crate_index, _)| crate_index);
+                if let Some(crate_index) = chosen {
+                    self.choose_crate(crate_index, cx);
+                }
+            }
         }
     }
 
@@ -637,6 +700,7 @@ impl Browser {
 
     fn choose_crate(&mut self, crate_index: CrateIndex, cx: &mut Context<'_, Self>) {
         self.crate_index = crate_index;
+        self.history_page = None;
         self.refilter(cx);
         self.scroll.scroll_to_item(0, ScrollStrategy::Top);
     }
@@ -675,6 +739,7 @@ impl Browser {
         collection: &Collection,
         cx: &mut Context<'_, Self>,
     ) -> impl IntoElement {
+        let crates_have_cursor = self.pane == BrowserPane::Crates;
         div()
             .id("crates")
             .flex()
@@ -689,7 +754,7 @@ impl Browser {
             .bg(theme::BACKGROUND)
             .overflow_y_scroll()
             .children(collection.indexed_crates().map(|(crate_index, entry)| {
-                let chosen = crate_index == self.crate_index;
+                let chosen = self.history_page.is_none() && crate_index == self.crate_index;
                 let count: SharedString = match entry.kind {
                     CrateKind::Folder => "".into(),
                     CrateKind::Smart => "smart".into(),
@@ -697,42 +762,192 @@ impl Browser {
                         entry.tracks.len().to_string().into()
                     }
                 };
-                div()
-                    .id(("crate", crate_index.position()))
-                    .accessible_toggle(entry.name.clone(), chosen)
-                    .flex()
-                    .flex_none()
-                    .items_center()
-                    .justify_between()
-                    .h(px(28.0))
-                    .pl(px(8.0) + px(12.0) * entry.depth as f32)
-                    .pr(px(8.0))
-                    .rounded(theme::SMALL_RADIUS)
-                    .cursor_pointer()
-                    .text_color(if chosen { theme::TEXT } else { theme::MUTED })
-                    .when(chosen, |row| {
-                        row.bg(theme::RAISED).font_weight(gpui::FontWeight::MEDIUM)
-                    })
-                    .hover(|row| row.text_color(theme::TEXT))
-                    .border_1()
-                    .border_color(if chosen && self.pane == BrowserPane::Crates {
-                        theme::MUTED
-                    } else {
-                        theme::faded(theme::MUTED, 0.0)
-                    })
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.pane = BrowserPane::Crates;
-                        this.choose_crate(crate_index, cx);
-                    }))
-                    .child(div().truncate().child(entry.name.clone()))
-                    .child(
-                        div()
-                            .font_family(MONO_FAMILY)
-                            .text_size(theme::TINY_TEXT_SIZE)
-                            .text_color(theme::MUTED)
-                            .child(count),
-                    )
+                sidebar_row(
+                    ("crate", crate_index.position()),
+                    entry.name.clone(),
+                    count,
+                    entry.depth,
+                    chosen,
+                    chosen && crates_have_cursor,
+                )
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    this.pane = BrowserPane::Crates;
+                    this.choose_crate(crate_index, cx);
+                }))
             }))
+            .children(
+                self.history
+                    .pages
+                    .iter()
+                    .enumerate()
+                    .map(|(position, view)| {
+                        let page = view.page;
+                        let chosen = self.history_page == Some(page);
+                        let (name, depth): (SharedString, usize) = match page {
+                            HistoryPage::ThisSession => ("History".into(), 0),
+                            HistoryPage::Day(_) => (view.label.clone(), 1),
+                        };
+                        sidebar_row(
+                            ("history-page", position),
+                            name,
+                            view.rows.len().to_string().into(),
+                            depth,
+                            chosen,
+                            chosen && crates_have_cursor,
+                        )
+                        .when(page == HistoryPage::ThisSession, |row| row.mt(px(12.0)))
+                        .on_click(cx.listener(
+                            move |this, _: &ClickEvent, _, cx| {
+                                this.pane = BrowserPane::Crates;
+                                this.open_history(page, cx);
+                            },
+                        ))
+                    }),
+            )
+    }
+
+    /// A page of the history: when each track started, on which deck, and what it was, the
+    /// latest first, with the tracklist exports above.
+    fn render_history(&self, page: HistoryPage, cx: &mut Context<'_, Self>) -> impl IntoElement {
+        let view = self.history.page(page);
+        let rows = view.map_or(&[][..], |view| view.rows.as_slice());
+        let title: SharedString = match (page, view) {
+            (HistoryPage::ThisSession, _) => "History, this session".into(),
+            (HistoryPage::Day(_), Some(view)) => format!("History, {}", view.label).into(),
+            (HistoryPage::Day(day), None) => format!("History, {day}").into(),
+        };
+        let count = rows.len();
+        let bar = div()
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap(px(8.0))
+            .h(FILTER_BAR_HEIGHT)
+            .px(theme::GUTTER)
+            .border_b_1()
+            .border_color(theme::LINE)
+            .child(div().font_weight(gpui::FontWeight::MEDIUM).child(title))
+            .child(
+                div()
+                    .font_family(MONO_FAMILY)
+                    .text_size(theme::TINY_TEXT_SIZE)
+                    .text_color(theme::MUTED)
+                    .child(format!(
+                        "{count} track{}",
+                        if count == 1 { "" } else { "s" }
+                    )),
+            )
+            .child(div().flex_1())
+            .when(count > 0, |bar| {
+                bar.children(TracklistFormat::ALL.map(|format| {
+                    button(
+                        ("history-export", format as usize),
+                        format!("Export {}", format.label()),
+                        Emphasis::Secondary,
+                    )
+                    .tooltip(tooltip(match format {
+                        TracklistFormat::Text => {
+                            "Save these tracks as a text tracklist, each with its time into the mix"
+                        }
+                        TracklistFormat::Csv => {
+                            "Save these tracks as a spreadsheet: start, deck, artist, title and \
+                             how long each played"
+                        }
+                    }))
+                    .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {
+                        cx.emit(BrowserEvent::ExportHistory { page, format });
+                    }))
+                }))
+            });
+        let header = div()
+            .flex()
+            .flex_none()
+            .items_center()
+            .h(px(30.0))
+            .text_size(theme::SMALL_TEXT_SIZE)
+            .text_color(theme::MUTED)
+            .font_weight(gpui::FontWeight::MEDIUM)
+            .child(history_cell(HistoryColumn::Time).child("Time"))
+            .child(history_cell(HistoryColumn::Deck).child("Deck"))
+            .child(history_cell(HistoryColumn::Title).child("Title"))
+            .child(history_cell(HistoryColumn::Artist).child("Artist"));
+        let body = if rows.is_empty() {
+            div()
+                .px(theme::GUTTER)
+                .py(px(12.0))
+                .text_color(theme::MUTED)
+                .child("A track shows here once a deck has played it for a minute.")
+                .into_any_element()
+        } else {
+            div()
+                .id("history-rows")
+                .flex()
+                .flex_col()
+                .flex_1()
+                .min_h_0()
+                .overflow_y_scroll()
+                .children(rows.iter().enumerate().map(|(position, row)| {
+                    let deck_colour = row.deck.map_or(theme::MUTED, theme::deck_colour);
+                    div()
+                        .id(("history-row", position))
+                        .role(gpui::Role::Row)
+                        .aria_row_index(position + 2)
+                        .aria_label(format!(
+                            "{}, deck {}, {} by {}",
+                            row.time, row.deck_letter, row.title, row.artist
+                        ))
+                        .flex()
+                        .flex_none()
+                        .items_center()
+                        .h(ROW_HEIGHT)
+                        .border_t_1()
+                        .border_color(theme::ROW_LINE)
+                        .child(
+                            history_cell(HistoryColumn::Time)
+                                .font_family(MONO_FAMILY)
+                                .text_size(theme::SMALL_TEXT_SIZE)
+                                .text_color(theme::MUTED)
+                                .child(row.time.clone()),
+                        )
+                        .child(
+                            history_cell(HistoryColumn::Deck)
+                                .font_family(MONO_FAMILY)
+                                .text_size(theme::TINY_TEXT_SIZE)
+                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                .text_color(deck_colour)
+                                .child(row.deck_letter.clone()),
+                        )
+                        .child(
+                            history_cell(HistoryColumn::Title).child(
+                                div()
+                                    .truncate()
+                                    .min_w_0()
+                                    .font_weight(gpui::FontWeight::MEDIUM)
+                                    .child(row.title.clone()),
+                            ),
+                        )
+                        .child(
+                            history_cell(HistoryColumn::Artist)
+                                .text_color(theme::MUTED)
+                                .child(div().truncate().min_w_0().child(row.artist.clone())),
+                        )
+                }))
+                .into_any_element()
+        };
+        div()
+            .id("history-table")
+            .role(gpui::Role::Grid)
+            .aria_row_count(count + 1)
+            .aria_label("Play history")
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_w_0()
+            .h_full()
+            .bg(theme::BACKGROUND)
+            .child(bar)
+            .child(header)
+            .child(body)
     }
 
     fn render_table(
@@ -1328,6 +1543,72 @@ fn column_box(column: Column) -> gpui::Div {
     }
 }
 
+/// A column of the history table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HistoryColumn {
+    Time,
+    Deck,
+    Title,
+    Artist,
+}
+
+/// The box a history column's cells sit in, the same in the header and every row.
+fn history_cell(column: HistoryColumn) -> gpui::Div {
+    let cell = div().flex().items_center().min_w_0().whitespace_nowrap();
+    match column {
+        HistoryColumn::Time => cell.flex_none().w(HISTORY_TIME_WIDTH).pl(theme::GUTTER),
+        HistoryColumn::Deck => cell.flex_none().w(HISTORY_DECK_WIDTH).px(px(8.0)),
+        HistoryColumn::Title => cell.flex_basis(px(0.0)).flex_grow(TITLE_SHARE).px(px(8.0)),
+        HistoryColumn::Artist => cell
+            .flex_basis(px(0.0))
+            .flex_grow(ARTIST_SHARE)
+            .pl(px(8.0))
+            .pr(theme::GUTTER),
+    }
+}
+
+/// An entry of the sidebar: a crate, or a page of the history.
+fn sidebar_row(
+    id: impl Into<gpui::ElementId>,
+    name: SharedString,
+    count: SharedString,
+    depth: usize,
+    chosen: bool,
+    has_cursor: bool,
+) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(id)
+        .accessible_toggle(name.clone(), chosen)
+        .flex()
+        .flex_none()
+        .items_center()
+        .justify_between()
+        .h(SIDEBAR_ROW_HEIGHT)
+        .pl(px(8.0) + px(12.0) * depth as f32)
+        .pr(px(8.0))
+        .rounded(theme::SMALL_RADIUS)
+        .cursor_pointer()
+        .text_color(if chosen { theme::TEXT } else { theme::MUTED })
+        .when(chosen, |row| {
+            row.bg(theme::RAISED).font_weight(gpui::FontWeight::MEDIUM)
+        })
+        .hover(|row| row.text_color(theme::TEXT))
+        .border_1()
+        .border_color(if has_cursor {
+            theme::MUTED
+        } else {
+            theme::faded(theme::MUTED, 0.0)
+        })
+        .child(div().truncate().child(name))
+        .child(
+            div()
+                .font_family(MONO_FAMILY)
+                .text_size(theme::TINY_TEXT_SIZE)
+                .text_color(theme::MUTED)
+                .child(count),
+        )
+}
+
 /// A quick filter that is on or off, in the compact style of the effects strip.
 fn filter_chip(id: &'static str, label: &'static str, on: bool) -> gpui::Stateful<gpui::Div> {
     div()
@@ -1576,9 +1857,13 @@ impl Render for Browser {
         let body = div().flex().size_full().min_h_0().bg(theme::BACKGROUND);
         let searching = self.search_has_focus(window, cx);
         match self.library.clone() {
-            LibraryStatus::Ready(collection) => body
-                .child(self.render_sidebar(&collection, cx))
-                .child(self.render_table(collection, searching, cx)),
+            LibraryStatus::Ready(collection) => {
+                let body = body.child(self.render_sidebar(&collection, cx));
+                match self.history_page {
+                    Some(page) => body.child(self.render_history(page, cx)),
+                    None => body.child(self.render_table(collection, searching, cx)),
+                }
+            }
             LibraryStatus::Reading => {
                 body.child(message_panel("Opening your library\u{2026}".into(), None))
             }
