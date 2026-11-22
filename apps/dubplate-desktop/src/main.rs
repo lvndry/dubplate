@@ -11,6 +11,7 @@ mod commands;
 mod controls;
 mod cue_marks;
 mod deck;
+mod devices;
 mod effects;
 mod energy;
 mod folder_picker;
@@ -35,6 +36,7 @@ mod settings;
 mod shortcuts;
 mod single_instance;
 mod stems;
+mod space;
 mod tap_tempo;
 mod theme;
 mod transport;
@@ -52,6 +54,7 @@ use gpui::{
 
 use crate::app::DubplateApp;
 use crate::assets::AppAssets;
+use crate::devices::DeviceAccess;
 use crate::settings::Settings;
 use crate::single_instance::{InstanceError, InstanceLock};
 
@@ -69,16 +72,26 @@ fn main() -> ExitCode {
     if let Some(exit) = dubplate_stems::run_worker_if_requested() {
         return exit;
     }
-    let _instance_lock = claim_instance();
+    let devices = DeviceAccess::from_environment();
+    if devices.is_offline() {
+        eprintln!(
+            "Offline devices: Dubplate plays to a silent output and opens no controller. Its settings and lock live under HOME."
+        );
+    }
+    let _instance_lock = claim_instance(&devices);
     #[cfg(target_os = "macos")]
     macos_identity::set_app_name(APP_NAME);
     gpui::application()
         .with_assets(AppAssets)
-        .run(|cx: &mut App| {
+        .run(move |cx: &mut App| {
             gpui::init(cx);
             #[cfg(target_os = "macos")]
             {
-                macos_identity::show_dock_icon();
+                if devices.is_offline() {
+                    macos_identity::stay_in_background();
+                } else {
+                    macos_identity::show_dock_icon();
+                }
                 macos_identity::stay_responsive();
             }
             if let Err(error) = fonts::register(cx) {
@@ -90,7 +103,7 @@ fn main() -> ExitCode {
             cx.on_action(|_: &Quit, cx| cx.quit());
             cx.set_menus([Menu::new(APP_NAME).items([MenuItem::action("Quit Dubplate", Quit)])]);
             cx.on_window_closed(|cx, _| cx.quit()).detach();
-            if let Err(error) = open_window(cx) {
+            if let Err(error) = open_window(devices.clone(), cx) {
                 eprintln!("error: {error:#}");
                 cx.quit();
             }
@@ -100,8 +113,15 @@ fn main() -> ExitCode {
 
 /// Makes this the one running Dubplate, or brings the running one to the front and quits. When
 /// the lock cannot be taken at all, Dubplate starts anyway: the DJ needs the decks more than the
-/// guard.
-fn claim_instance() -> Option<InstanceLock> {
+/// guard. A copy with offline devices leaves the running one where it is.
+#[cfg_attr(
+    not(target_os = "macos"),
+    expect(
+        unused_variables,
+        reason = "only macOS brings the running copy to the front"
+    )
+)]
+fn claim_instance(devices: &DeviceAccess) -> Option<InstanceLock> {
     let path = match Settings::instance_lock_path() {
         Ok(path) => path,
         Err(error) => {
@@ -119,6 +139,7 @@ fn claim_instance() -> Option<InstanceLock> {
             if let InstanceError::AlreadyRunning {
                 process_id: Some(process_id),
             } = error
+                && !devices.is_offline()
             {
                 macos_identity::bring_to_front(process_id);
             }
@@ -131,7 +152,7 @@ fn claim_instance() -> Option<InstanceLock> {
     }
 }
 
-fn open_window(cx: &mut App) -> anyhow::Result<()> {
+fn open_window(devices: DeviceAccess, cx: &mut App) -> anyhow::Result<()> {
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
             None,
@@ -148,11 +169,15 @@ fn open_window(cx: &mut App) -> anyhow::Result<()> {
         inactive_frame_interval: None,
         low_power_frame_interval: None,
         app_id: Some("dubplate".into()),
+        focus: !devices.is_offline(),
         ..WindowOptions::default()
     };
+    let offline = devices.is_offline();
     gpui::open_window(options, cx, |window, cx| {
-        cx.new(|cx| DubplateApp::new(window, cx))
+        cx.new(|cx| DubplateApp::new(devices, window, cx))
     })?;
-    cx.activate(true);
+    if !offline {
+        cx.activate(true);
+    }
     Ok(())
 }

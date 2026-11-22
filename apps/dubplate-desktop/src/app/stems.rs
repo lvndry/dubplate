@@ -7,12 +7,13 @@ use std::time::Duration;
 
 use dubplate_engine::{DeckId, Stem, StemLevel, StemSettings, channel_fader_gain};
 use dubplate_stems::{SeparationPriority, StemFiles, StemsStatus};
+use dubplate_midi::PadMode;
 use gpui::Context;
 
 use super::DubplateApp;
 use super::notice::NoticePlace;
 use crate::collection::TrackIndex;
-use crate::commands::StemAction;
+use crate::commands::{StemAction, is_groove};
 
 /// How often the separation queue's reports are taken.
 const COLLECT_INTERVAL: Duration = Duration::from_millis(400);
@@ -225,6 +226,24 @@ impl DubplateApp {
             .ok()
             .and_then(|engine| engine.controller.track(deck))
             .is_some_and(dubplate_engine::Track::has_stems)
+    }
+
+    /// What SHIFT + the pads light in BEAT LOOP mode once the deck plays stems: the stems
+    /// heard on pads 1 to 4, and the one-touch mix in play on pads 5 to 8.
+    pub(super) fn stem_pad_lights(&self, deck: DeckId) -> Option<[bool; 8]> {
+        if self.pad_modes[deck.index()] != PadMode::BeatLoop || !self.deck_has_stems(deck) {
+            return None;
+        }
+        let settings = self.deck_stems(deck);
+        Some(std::array::from_fn(|pad| {
+            stem_pad_action(pad).is_some_and(|action| match action {
+                StemAction::Toggle(stem) => settings.is_heard(stem),
+                StemAction::Acapella => settings.is_solo(Stem::Vocals),
+                StemAction::Instrumental => settings.is_without(Stem::Vocals),
+                StemAction::Groove => is_groove(settings),
+                StemAction::AllStems => Stem::ALL.into_iter().all(|stem| settings.is_heard(stem)),
+            })
+        }))
     }
 
     /// The stem settings of `deck`.

@@ -19,6 +19,9 @@ pub struct DeckLights {
     pub pad_mode: PadMode,
     /// The pads lit in that mode, pad 1 first.
     pub pads: [bool; PAD_COUNT],
+    /// The pads lit while SHIFT is held, when SHIFT + the pads does something else in that
+    /// mode, such as the stems in BEAT LOOP mode; `None` lights the same pads on both layers.
+    pub shift_pads: Option<[bool; PAD_COUNT]>,
     /// The channel level meter.
     pub level: U7,
     /// BEAT SYNC.
@@ -40,6 +43,7 @@ impl Default for DeckLights {
             cue: false,
             pad_mode: PadMode::HotCue,
             pads: [false; PAD_COUNT],
+            shift_pads: None,
             level: U7::MIN,
             sync: false,
             headphone_cue: false,
@@ -83,14 +87,21 @@ impl Lights {
             light(Button::HeadphoneCue(deck), lights.headphone_cue);
             for mode in PAD_MODES {
                 light(Button::PadMode { deck, mode }, mode == lights.pad_mode);
-                for (pad_position, lit) in lights.pads.iter().enumerate() {
+                for pad_position in 0..PAD_COUNT {
                     let Some(pad) = pad_index(pad_position) else {
                         continue;
                     };
-                    light(
-                        Button::Pad { deck, mode, pad },
-                        *lit && mode == lights.pad_mode,
-                    );
+                    for layer in LAYERS {
+                        let pads = match layer {
+                            Layer::Shift => lights.shift_pads.as_ref().unwrap_or(&lights.pads),
+                            Layer::Normal => &lights.pads,
+                        };
+                        show(Feedback::Light {
+                            button: Button::Pad { deck, mode, pad },
+                            layer,
+                            on: pads[pad_position] && mode == lights.pad_mode,
+                        });
+                    }
                 }
             }
             show(Feedback::LevelMeter {
@@ -208,6 +219,47 @@ mod tests {
     use std::convert::Infallible;
 
     use super::*;
+
+    #[test]
+    fn shift_lights_its_own_pads_when_shift_and_the_pads_do_something_else() {
+        let mut lights = Lights::default();
+        lights.decks[0].pad_mode = PadMode::BeatLoop;
+        lights.decks[0].pads = [true, false, false, false, false, false, false, false];
+        lights.decks[0].shift_pads = Some([false, true, true, true, false, false, false, true]);
+        let mut pad_lights = Vec::new();
+        lights.for_each_feedback(|feedback| {
+            if let Feedback::Light {
+                button:
+                    Button::Pad {
+                        deck: Deck::A,
+                        mode: PadMode::BeatLoop,
+                        pad,
+                    },
+                layer,
+                on,
+            } = feedback
+            {
+                pad_lights.push((pad, layer, on));
+            }
+        });
+        let lit = |layer| -> Vec<bool> {
+            (0..PAD_COUNT)
+                .map(|position| {
+                    pad_lights.iter().any(|(pad, light_layer, on)| {
+                        Some(*pad) == pad_index(position) && *light_layer == layer && *on
+                    })
+                })
+                .collect()
+        };
+        assert_eq!(
+            lit(Layer::Normal),
+            [true, false, false, false, false, false, false, false]
+        );
+        assert_eq!(
+            lit(Layer::Shift),
+            [false, true, true, true, false, false, false, true]
+        );
+    }
 
     fn flx4() -> Mapping {
         Mapping::built_in_for_port("DDJ-FLX4")
