@@ -4,7 +4,7 @@ use crate::context::BlockTiming;
 use crate::dsp::filters::{Svf, SvfCoefficients, SvfOutput};
 use crate::dsp::smoothing::Smoothed;
 use crate::effect::EffectKind;
-use crate::unit::{Controls, Frame, Kernel, MixLaw, Unit, implement_effect, knob};
+use crate::unit::{Controls, Frame, Kernel, MixLaw, Unit, engaged, implement_effect, knob};
 
 const MIN_CUTOFF_HZ: f32 = 20.0;
 const MAX_CUTOFF_HZ: f32 = 20_000.0;
@@ -16,6 +16,9 @@ const FIRST_STAGE_QUALITY: f32 = 0.541_196_1;
 const SECOND_STAGE_QUALITY: f32 = 1.306_563;
 const DEFAULT_CUTOFF_HZ: f32 = 1_000.0;
 const DEFAULT_RESONANCE: f32 = 0.25;
+const DEPTH_RESONANCE: f32 = 0.3;
+const LOW_PASS_SWEEP_CURVE: f32 = 0.7;
+const BAND_PASS_FULL_MIX_DEPTH: f32 = 0.5;
 
 /// What a [`Filter`] lets through.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -43,8 +46,11 @@ pub enum FilterSlope {
 /// without clicks, and a high resonance sings without blowing up. Changing the mode crossfades
 /// between the two shapes.
 ///
-/// The depth knob sweeps the cutoff: a low-pass closes from 20 kHz down to 40 Hz, a high-pass
-/// opens from 20 Hz up to 12 kHz, a band-pass moves its band from 100 Hz to 8 kHz.
+/// The depth knob sweeps the cutoff and raises the resonance: a low-pass closes from 20 kHz
+/// down to 40 Hz, a high-pass opens from 20 Hz up to 12 kHz, a band-pass moves its band from
+/// 100 Hz to 8 kHz. A low-pass moves fastest at the start of the knob, reaching 1.9 kHz a
+/// quarter of the way; a high-pass is at 100 Hz there, thinning the bass. A band-pass, which
+/// leaves only its band, blends in over the first half of the knob.
 pub struct Filter {
     unit: Unit<FilterKernel>,
 }
@@ -111,8 +117,18 @@ impl Controls for Filter {
             FilterMode::HighPass => (20.0, 12_000.0),
             FilterMode::BandPass => (100.0, 8_000.0),
         };
-        let octaves = open_hz.log2() + (closed_hz.log2() - open_hz.log2()) * depth;
+        let travel = match self.unit.kernel.mode {
+            FilterMode::LowPass => depth.powf(LOW_PASS_SWEEP_CURVE),
+            FilterMode::HighPass | FilterMode::BandPass => depth,
+        };
+        let octaves = open_hz.log2() + (closed_hz.log2() - open_hz.log2()) * travel;
         self.set_cutoff_hz(octaves.exp2());
+        let mix = match self.unit.kernel.mode {
+            FilterMode::LowPass | FilterMode::HighPass => 1.0,
+            FilterMode::BandPass => engaged(depth, BAND_PASS_FULL_MIX_DEPTH),
+        };
+        self.unit.set_mix(mix);
+        self.set_resonance(DEFAULT_RESONANCE + DEPTH_RESONANCE * depth);
     }
 }
 

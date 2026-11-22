@@ -7,7 +7,7 @@ use crate::dsp::lfo::SyncedPhase;
 use crate::dsp::shaping::saturate;
 use crate::dsp::smoothing::Smoothed;
 use crate::effect::EffectKind;
-use crate::unit::{Controls, Frame, Kernel, MixLaw, Unit, implement_effect, knob};
+use crate::unit::{Controls, Frame, Kernel, MixLaw, Unit, engaged, implement_effect, knob};
 
 const STAGE_COUNT: usize = 6;
 const LOWEST_HZ: f32 = 160.0;
@@ -16,6 +16,9 @@ const STEREO_OFFSET: f64 = 0.25;
 const MAX_FEEDBACK: f32 = 0.9;
 const FEEDBACK_SMOOTHING_SECONDS: f32 = 0.02;
 const DEFAULT_FEEDBACK: f32 = 0.5;
+const LOWEST_DEPTH_FEEDBACK: f32 = 0.3;
+const HIGHEST_DEPTH_FEEDBACK: f32 = 0.85;
+const FULL_MIX_DEPTH: f32 = 0.5;
 
 /// A six-stage phaser whose sweep is locked to the beat grid.
 ///
@@ -23,7 +26,8 @@ const DEFAULT_FEEDBACK: f32 = 0.5;
 /// with the bar. Its three notches move exponentially between 160 Hz and 4.8 kHz, and the
 /// right channel runs a quarter cycle apart.
 ///
-/// The depth knob blends the phaser in and raises its feedback from 0.2 to 0.8.
+/// The depth knob blends the phaser in over its first half and raises its feedback from 0.3 to
+/// 0.85 across its whole travel.
 pub struct Phaser {
     unit: Unit<PhaserKernel>,
 }
@@ -57,8 +61,10 @@ impl Controls for Phaser {
     }
 
     fn apply_depth(&mut self, depth: f32) {
-        self.unit.set_mix(depth);
-        self.set_feedback(0.2 + 0.6 * depth);
+        self.unit.set_mix(engaged(depth, FULL_MIX_DEPTH));
+        self.set_feedback(
+            LOWEST_DEPTH_FEEDBACK + (HIGHEST_DEPTH_FEEDBACK - LOWEST_DEPTH_FEEDBACK) * depth,
+        );
     }
 
     fn apply_beat(&mut self, beat: BeatLength) {

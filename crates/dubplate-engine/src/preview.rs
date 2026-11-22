@@ -4,7 +4,7 @@ use crate::keylock::{KeyLock, KeyLockBlock};
 use crate::mixer::RetireQueue;
 use crate::processor::StereoBlock;
 use crate::track::{Track, TrackBuffer};
-use crate::voice::Voice;
+use crate::voice::{UNITY_STEM_GAINS, Voice};
 
 /// The longest a preview plays before it stops itself, in seconds.
 pub const MAX_PREVIEW_SECONDS: f64 = 30.0;
@@ -217,6 +217,7 @@ impl PreviewBus {
                     frames: active,
                     unit_step,
                     active_loop: None,
+                    stems: false,
                 },
                 retire,
                 starved,
@@ -233,14 +234,20 @@ impl PreviewBus {
                         index,
                         &preview_voice.voice,
                         step,
+                        &UNITY_STEM_GAINS,
                         starved,
                     )
                 } else if gain > 0.0 {
-                    preview_voice.voice.read_playhead(step, starved)
+                    preview_voice
+                        .voice
+                        .read_playhead(step, &UNITY_STEM_GAINS, starved)
                 } else {
                     (0.0, 0.0)
                 };
-                let (tail_left, tail_right) = preview_voice.voice.next_tails(retire, starved);
+                let (tail_left, tail_right) =
+                    preview_voice
+                        .voice
+                        .next_tails(&UNITY_STEM_GAINS, retire, starved);
                 *left += playhead_left * gain + tail_left;
                 *right += playhead_right * gain + tail_right;
                 if running && !preview_voice.finished {
