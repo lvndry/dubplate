@@ -11,6 +11,7 @@ use cpal::{
 
 use crate::MAX_BLOCK_FRAMES;
 use crate::controller::{Controller, offline_engine};
+use crate::denormals::FlushDenormals;
 use crate::error::EngineError;
 use crate::mixer::Renderer;
 
@@ -343,6 +344,7 @@ impl DeviceCallback {
     where
         T: SizedSample + FromSample<f32>,
     {
+        let _denormals = FlushDenormals::new();
         let timestamp = info.timestamp();
         self.renderer.observe_device_timing(
             Duration::from_nanos(u64::try_from(timestamp.callback.as_nanos()).unwrap_or(u64::MAX)),
