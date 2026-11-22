@@ -158,8 +158,8 @@ pub(super) fn render(
         .cursor_pointer()
         .on_mouse_down(
             MouseButton::Left,
-            cx.listener(move |this, event: &MouseDownEvent, _, cx| {
-                this.begin_drag(slider, event.position, event.click_count, cx);
+            cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                this.begin_drag(slider, event.position, event.click_count, window, cx);
                 cx.stop_propagation();
             }),
         )

@@ -175,6 +175,7 @@ impl DubplateApp {
                     return;
                 };
                 let invalidated = invalidated_check_paths(session.set(), &completion.set);
+                let before = session.snapshot();
                 let applied = session.apply(&completion);
                 if applied {
                     this.set_selection = selected_path
@@ -197,6 +198,9 @@ impl DubplateApp {
                             this.track_checks.remove(path);
                         }
                     }
+                }
+                if applied {
+                    this.follow_set_grids(&before, &completion.set, cx);
                 }
                 match completion.outcome {
                     Ok(value) => {
@@ -236,6 +240,13 @@ impl DubplateApp {
             }
             edit => edit,
         };
+        if let SetEdit::Grid(grid_edit) = edit
+            && self.mode == Mode::Perform
+            && let Some(deck) = self.grid_bar
+        {
+            self.edit_deck_grid(deck, grid_edit, cx);
+            return;
+        }
         if let SetEdit::InsertSuggestion(rank) = edit {
             self.insert_suggestion_ranked(rank, cx);
             return;
@@ -959,19 +970,9 @@ fn apply_edit(
                     .map(|position| position.min(count - 1));
             }
         }
-        SetEdit::ConfirmGrid => {
+        SetEdit::Grid(grid_edit) => {
             if let Some(position) = selection {
-                editor.toggle_grid_confirmed(position)?;
-            }
-        }
-        SetEdit::NudgeGrid(milliseconds) => {
-            if let Some(position) = selection {
-                editor.nudge_grid(position, milliseconds)?;
-            }
-        }
-        SetEdit::ShiftDownbeat(beats) => {
-            if let Some(position) = selection {
-                editor.shift_downbeat(position, beats)?;
+                editor.edit_grid(position, grid_edit)?;
             }
         }
         SetEdit::AcceptProposedCues
@@ -1015,7 +1016,7 @@ fn file_title(path: &Path) -> String {
 mod tests {
     use std::sync::mpsc;
 
-    use dubplate_prep::SetSession;
+    use dubplate_prep::{GridEdit, SetSession};
 
     use super::*;
 
@@ -1081,7 +1082,7 @@ mod tests {
         apply_edit(&mut editor, SetEdit::Remove, None, Some(&track("a").path)).unwrap();
         apply_edit(
             &mut editor,
-            SetEdit::ConfirmGrid,
+            SetEdit::Grid(GridEdit::ToggleConfirmed),
             None,
             Some(&track("a").path),
         )
@@ -1098,7 +1099,7 @@ mod tests {
         let before = editor.set().clone();
         editor.move_track(0, 1).unwrap();
         assert!(invalidated_check_paths(&before, editor.set()).is_empty());
-        editor.nudge_grid(0, 5).unwrap();
+        editor.edit_grid(0, GridEdit::Nudge(5)).unwrap();
         let nudged = editor.set().clone();
         assert!(!invalidated_check_paths(&before, &nudged).is_empty());
         editor.undo().unwrap();
@@ -1106,15 +1107,19 @@ mod tests {
     }
 
     #[test]
-    fn readding_a_file_invalidates_checks_from_its_previous_entry() {
+    fn readding_a_file_brings_back_its_grid_and_invalidates_its_old_checks() {
         let directory = tempfile::tempdir().unwrap();
         let mut editor = SetEditor::open(&directory.path().join("sets.sqlite")).unwrap();
         editor.add(track("a")).unwrap();
-        editor.nudge_grid(0, 5).unwrap();
+        editor.edit_grid(0, GridEdit::Nudge(5)).unwrap();
         editor.remove(0).unwrap();
         let without = editor.set().clone();
         editor.add(track("a")).unwrap();
-        assert_eq!(editor.tracks()[0].grid_offset_ms, 0);
+        assert_eq!(
+            editor.tracks()[0].grid_offset_ms,
+            5,
+            "the grid is kept per file"
+        );
         assert!(invalidated_check_paths(&without, editor.set()).contains(&track("a").path));
     }
 
