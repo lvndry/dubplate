@@ -209,7 +209,7 @@ fn artists<'tag>(values: impl Iterator<Item = &'tag str>) -> Option<String> {
     (!names.is_empty()).then(|| names.join(", "))
 }
 
-fn is_hidden(path: &Path) -> bool {
+pub(crate) fn is_hidden(path: &Path) -> bool {
     path.file_name()
         .and_then(|name| name.to_str())
         .is_some_and(|name| name.starts_with('.'))
@@ -229,7 +229,10 @@ fn milliseconds_since_epoch(time: SystemTime) -> u64 {
 }
 
 /// The track at `path`, reusing what `known` read when the file has not changed.
-fn read_track(path: &Path, known: &HashMap<&Path, &LibraryTrack>) -> Result<LibraryTrack, String> {
+pub(crate) fn read_track(
+    path: &Path,
+    known: &HashMap<&Path, &LibraryTrack>,
+) -> Result<LibraryTrack, String> {
     let path = path.canonicalize().map_err(|error| error.to_string())?;
     let metadata = std::fs::metadata(&path).map_err(|error| error.to_string())?;
     if !metadata.is_file() {

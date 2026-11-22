@@ -137,7 +137,8 @@ impl Library {
         let mut statement = self.connection.prepare(
             "SELECT content.ID, content.Title, artist.Name, album.Name, genre.Name, label.Name,
                     musical_key.ScaleName, content.BPM, content.Length, content.FolderPath,
-                    content.Rating, content.Commnt, content.AnalysisDataPath, content.StockDate
+                    content.FileSize, content.Rating, content.Commnt, content.AnalysisDataPath,
+                    content.StockDate
              FROM djmdContent AS content
              LEFT JOIN djmdArtist AS artist ON artist.ID = content.ArtistID
              LEFT JOIN djmdAlbum AS album ON album.ID = content.AlbumID
@@ -222,7 +223,8 @@ impl Library {
 fn track_from_row(row: &Row<'_>) -> rusqlite::Result<Track> {
     let bpm_hundredths: Option<i64> = row.get(7)?;
     let length: Option<i64> = row.get(8)?;
-    let rating: Option<i64> = row.get(10)?;
+    let file_size: Option<i64> = row.get(10)?;
+    let rating: Option<i64> = row.get(11)?;
     Ok(Track {
         id: row.get(0)?,
         title: row.get(1)?,
@@ -236,10 +238,11 @@ fn track_from_row(row: &Row<'_>) -> rusqlite::Result<Track> {
             .map(|value| value as f64 / 100.0),
         length_seconds: length.and_then(|value| u32::try_from(value).ok()),
         file_path: row.get::<_, Option<String>>(9)?.map(PathBuf::from),
+        file_size: file_size.and_then(|value| u64::try_from(value).ok()),
         rating: rating.and_then(|value| u8::try_from(value).ok()),
-        comment: row.get(11)?,
-        analysis_path: row.get(12)?,
-        date_added: row.get(13)?,
+        comment: row.get(12)?,
+        analysis_path: row.get(13)?,
+        date_added: row.get(14)?,
     })
 }
 

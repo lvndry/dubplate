@@ -28,6 +28,8 @@ fn reads_tracks_with_their_names_key_and_tempo() {
         saltwater.file_path.as_deref(),
         Some(Path::new("/Music/saltwater.flac"))
     );
+    assert_eq!(saltwater.file_size, Some(81_600_000));
+    assert_eq!(tracks[0].file_size, None, "a NULL FileSize is unknown");
     assert_eq!(tracks[0].bpm, Some(125.5));
 }
 
