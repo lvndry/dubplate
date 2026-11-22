@@ -54,6 +54,12 @@ pub trait Effect: Send {
     /// on and return to the live music when switched off.
     fn set_enabled(&mut self, enabled: bool);
 
+    /// Switches the effect off and takes its trail out with the same short fade, so the music
+    /// is left dry at once instead of ringing out, as a pad set to go back to dry does.
+    fn switch_off_dry(&mut self) {
+        self.set_enabled(false);
+    }
+
     /// Whether the effect is switched on.
     fn is_enabled(&self) -> bool;
 
