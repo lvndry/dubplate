@@ -394,7 +394,13 @@ impl Renderer {
         frame_count: usize,
     ) {
         let stats = &self.shared.stats;
-        stats.record_output_latency(playback_time.saturating_sub(callback_time));
+        let output_latency = playback_time.saturating_sub(callback_time);
+        stats.record_output_latency(output_latency);
+        let lag_frames = output_latency.as_secs_f64() * f64::from(self.sample_rate)
+            + f64::from(stats.mixer_latency_frames.load(Ordering::Relaxed));
+        for deck in &mut self.decks {
+            deck.set_output_lag(lag_frames);
+        }
         if self
             .gap_detector
             .observe(callback_time, frame_count, self.sample_rate)

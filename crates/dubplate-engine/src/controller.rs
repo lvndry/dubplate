@@ -875,7 +875,7 @@ impl Controller {
 
     /// Switches quantize for both decks, on by default. With quantize and a beat grid, the cue
     /// button, loop in and loop out set their points on the nearest beat, beat loops start on
-    /// the beat just passed, and hot cues and reloop jump in rhythm.
+    /// the beat nearest to what is heard, and hot cues and reloop jump in rhythm.
     pub fn set_quantize(&mut self, enabled: bool) -> Result<(), EngineError> {
         self.send(Command::SetQuantize(enabled))?;
         self.quantize = enabled;
@@ -915,8 +915,9 @@ impl Controller {
     }
 
     /// A beat loop of `length`, from a sixteenth of a beat to thirty-two beats. It starts on
-    /// the beat just passed with quantize, so the music never jumps; with a loop already on,
-    /// it changes that loop's length from its start.
+    /// the beat nearest to what is heard with quantize, which may be just ahead of the
+    /// playhead, and exactly where it was pressed without; with a loop already on, it changes
+    /// that loop's length from its start.
     pub fn beat_loop(&mut self, deck: DeckId, length: BeatLength) -> Result<(), EngineError> {
         self.send(Command::BeatLoop { deck, length })
     }
