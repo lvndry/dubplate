@@ -76,6 +76,8 @@ pub struct Settings {
     pub screen: Option<String>,
     /// The master and headphone levels.
     pub levels: LevelsSetting,
+    /// Where a track is cued when it loads.
+    pub auto_cue: AutoCueSetting,
     /// The fader curves and the crossfader assign switches.
     pub mixer: MixerSetting,
     /// How the library's tracks are sorted on each screen.
@@ -83,6 +85,25 @@ pub struct Settings {
     /// Whether a track loaded on a deck starts with key lock on, as rekordbox's Master Tempo
     /// default: the deck's Key lock button still changes it for the track on the deck.
     pub key_lock_on_new_tracks: bool,
+}
+
+/// Where a track is cued when it loads, as rekordbox's Preferences > Controller > Deck.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AutoCueSetting {
+    /// Load Setting: cue at the track's earliest memory or hot cue when it has one.
+    pub saved_cues_first: bool,
+    /// Auto Cue: otherwise cue at the first sound, on the beat it starts with.
+    pub first_sound: bool,
+}
+
+impl Default for AutoCueSetting {
+    fn default() -> Self {
+        Self {
+            saved_cues_first: true,
+            first_sound: true,
+        }
+    }
 }
 
 /// The mixer's curves and switches as the DJ left them, by name: `blend`, `constant` or
@@ -300,6 +321,7 @@ impl Default for Settings {
             pad_fx: PadFxSetting::default(),
             screen: None,
             levels: LevelsSetting::default(),
+            auto_cue: AutoCueSetting::default(),
             mixer: MixerSetting::default(),
             library_sort: LibrarySortSetting::default(),
             key_lock_on_new_tracks: true,
@@ -451,6 +473,10 @@ mod tests {
                 master: 0.4,
                 headphones: 0.3,
                 headphone_mix: 0.7,
+            },
+            auto_cue: AutoCueSetting {
+                saved_cues_first: false,
+                first_sound: true,
             },
             mixer: MixerSetting::of(
                 &Crossfader {

@@ -5,6 +5,7 @@
 mod analysis;
 mod audio;
 mod audition;
+mod cueing;
 mod cues;
 mod deck_grid;
 mod deck_panel;
@@ -70,7 +71,7 @@ use gpui::{
 use crate::analysis::{AnalysisPriority, TrackAnalyser, TrackAnalyses};
 use crate::browser::{Browser, BrowserEvent, LibraryStatus};
 use crate::collection::{Collection, CollectionTrack, TrackIndex};
-use crate::commands::{Command, EffectEdit, JogMotion, Mode, Press};
+use crate::commands::{AutoCueChoice, Command, EffectEdit, JogMotion, Mode, Press};
 use crate::controls::{
     CROSSFADER_STEP, Control, MixerPositions, Orientation, Slider, fraction_at, master_gain_at,
     nudged_tempo_slider, tempo_fader, trim_gain_at,
@@ -822,11 +823,16 @@ impl DubplateApp {
                 })
                 .await;
             this.update(cx, |this, cx| {
-                let loaded = this.finish_load(deck, generation, prepared, cx);
-                if let Some(seconds) = cue
-                    && loaded
-                {
-                    this.jump(deck, seconds, cx);
+                let audio = prepared
+                    .as_ref()
+                    .ok()
+                    .map(|prepared| prepared.audio.clone());
+                if !this.finish_load(deck, generation, prepared, cx) {
+                    return;
+                }
+                match cue {
+                    Some(seconds) => this.jump(deck, seconds, cx),
+                    None => this.auto_cue(deck, generation, audio, cx),
                 }
             })
             .ok();
@@ -1118,6 +1124,17 @@ impl DubplateApp {
             Command::ToggleHelp => {
                 self.help_open = !self.help_open;
                 self.library_open = false;
+            }
+            Command::ToggleAutoCue(choice) => {
+                let setting = &mut self.settings.auto_cue;
+                match choice {
+                    AutoCueChoice::SavedCuesFirst => {
+                        setting.saved_cues_first = !setting.saved_cues_first;
+                    }
+                    AutoCueChoice::FirstSound => setting.first_sound = !setting.first_sound,
+                }
+                self.save_settings(cx);
+                cx.notify();
             }
             Command::ImportRekordbox => self.set_rekordbox_import(true, cx),
             Command::RelinkMissingFiles => self.start_relink(None, cx),

@@ -14,7 +14,7 @@ use gpui::{
 use super::DubplateApp;
 use super::faders::{channel_fader_curve_label, crossfader_curve_label};
 use crate::collection::folder_name;
-use crate::commands::{Command, PadFxEdit};
+use crate::commands::{AutoCueChoice, Command, PadFxEdit};
 use crate::library::RekordboxSource;
 use crate::pad_fx::PadFxLayer;
 use crate::theme;
@@ -109,6 +109,22 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
                 .child(rekordbox_row(app, cx))
                 .child(section_title("Decks"))
                 .child(key_lock_row(app, cx))
+                .child(setting_switch(
+                    "auto-cue-saved",
+                    "Cue at the first memory or hot cue",
+                    "A track with saved cues loads at the earliest one.",
+                    app.settings.auto_cue.saved_cues_first,
+                    Command::ToggleAutoCue(AutoCueChoice::SavedCuesFirst),
+                    cx,
+                ))
+                .child(setting_switch(
+                    "auto-cue-sound",
+                    "Cue at the first sound",
+                    "Otherwise a track loads at its first sound, on the beat it starts with, not at 0:00.",
+                    app.settings.auto_cue.first_sound,
+                    Command::ToggleAutoCue(AutoCueChoice::FirstSound),
+                    cx,
+                ))
                 .child(section_title("Sound card"))
                 .children(output_rows)
                 .child(section_title("Mixer"))
@@ -357,6 +373,58 @@ fn paint_curve(bounds: Bounds<Pixels>, picture: CurvePicture, colour: Rgba, wind
             ));
         }
     }
+}
+
+/// A setting that is on or off: its name and what it does, and a switch at the end of the row.
+fn setting_switch(
+    id: &'static str,
+    name: &'static str,
+    detail: &'static str,
+    on: bool,
+    command: Command,
+    cx: &mut Context<'_, DubplateApp>,
+) -> impl IntoElement + use<> {
+    div()
+        .id(id)
+        .accessible_toggle(format!("{name}. {detail}"), on)
+        .flex()
+        .items_center()
+        .gap(px(12.0))
+        .py(px(8.0))
+        .border_t_1()
+        .border_color(theme::ROW_LINE)
+        .cursor_pointer()
+        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+            this.perform(command, window, cx);
+        }))
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .flex_1()
+                .min_w_0()
+                .gap(px(2.0))
+                .child(div().child(name))
+                .child(
+                    div()
+                        .text_size(theme::SMALL_TEXT_SIZE)
+                        .text_color(theme::MUTED)
+                        .child(detail),
+                ),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_none()
+                .items_center()
+                .w(px(30.0))
+                .h(px(18.0))
+                .p(px(2.0))
+                .rounded_full()
+                .bg(if on { theme::OK } else { theme::TRACK })
+                .when(on, |track| track.justify_end())
+                .child(div().size(px(14.0)).rounded_full().bg(theme::THUMB)),
+        )
 }
 
 fn section_title(text: &'static str) -> impl IntoElement {
