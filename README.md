@@ -130,6 +130,10 @@ The DDJ-FLX4's pad modes map onto the engine:
 
 While a deck slips, beat sync leaves it alone, because its shadow stays in phase.
 
+## Sampler
+
+Sixteen sampler slots, eight on each side of the DDJ-FLX4's pads, each one-shot or loop, with an optional gate that plays only while the pad is held and a gain of its own. A synced slot with a BPM plays at the tempo master's tempo, half or double when closer, and a synced loop starts in phase with the master's beats, as beat sync would put it. Pressing a playing slot starts it again with a crossfade; loops go round sample-accurately. The sampler has its own bus to the master after the channel faders, with a volume and a CUE button for the headphones.
+
 ## Master limiter
 
 The master and the headphones each end in a look-ahead limiter, so however hard the decks are pushed no sample passes -0.3 dBFS. It sees peaks 1.5 ms ahead and turns down smoothly before they arrive, holds the gain for 20 ms so a bass note is turned down without distortion, and lets go over 120 ms. Music under the ceiling passes untouched, only delayed by the look-ahead. `Meters::master_limiter_gain` shows how far the master was pushed into it, for a LIMIT light.

@@ -18,6 +18,9 @@ pub(crate) struct SharedState {
     pub(crate) master_peak: AtomicU32,
     pub(crate) headphone_peak: AtomicU32,
     pub(crate) master_limiting: AtomicU32,
+    pub(crate) sampler_peak: AtomicU32,
+    pub(crate) sampler_playing: AtomicU32,
+    pub(crate) sampler_loaded: AtomicU32,
     pub(crate) effect_sounding: [AtomicBool; EFFECT_UNIT_COUNT],
     pub(crate) tempo_master: AtomicDeck,
     pub(crate) stats: SharedStats,
@@ -139,6 +142,9 @@ impl SharedState {
             master_peak: AtomicU32::new(0),
             headphone_peak: AtomicU32::new(0),
             master_limiting: AtomicU32::new(0),
+            sampler_peak: AtomicU32::new(0),
+            sampler_playing: AtomicU32::new(0),
+            sampler_loaded: AtomicU32::new(0),
             effect_sounding: std::array::from_fn(|_| AtomicBool::new(false)),
             tempo_master: AtomicDeck::default(),
             stats: SharedStats {
@@ -376,6 +382,8 @@ pub struct Meters {
     /// The lowest gain the master limiter applied, where 1.0 means it did nothing. Below 1.0
     /// the master was pushed into the limiter: a LIMIT light.
     pub master_limiter_gain: f32,
+    /// Peak of the sampler bus, after the sampler volume.
+    pub sampler_peak: f32,
 }
 
 #[cfg(test)]

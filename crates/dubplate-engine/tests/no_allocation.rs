@@ -14,7 +14,7 @@ use dubplate_engine::cpal::{OutputCallbackInfo, OutputStreamTimestamp, StreamIns
 use dubplate_engine::{
     AudioProcessor, BeatGrid, BeatLength, Controller, DeckId, EffectKind, EffectTarget,
     EffectUnitId, EngineError, EqBand, GridBeat, MasterTempo, PadEffect, ProcessContext, Renderer,
-    StereoBlock, SyncMode, TempoRange, offline_engine,
+    SampleMode, SampleSettings, StereoBlock, SyncMode, TempoRange, offline_engine,
 };
 
 struct CountingAllocator;
@@ -185,7 +185,28 @@ fn run_session(
     controller.set_sync(DeckId::A, SyncMode::Beat)?;
     render_armed(renderer, &mut output[..9600], 2);
 
-    let steps: [Step; 59] = [
+    let steps: [Step; 65] = [
+        |controller| {
+            let track = controller
+                .track(DeckId::B)
+                .cloned()
+                .ok_or(EngineError::NoOutputDevice)?;
+            controller.load_sample(
+                2,
+                track,
+                SampleSettings {
+                    mode: SampleMode::Loop,
+                    sync: true,
+                    bpm: Some(120.0),
+                    ..SampleSettings::default()
+                },
+            )
+        },
+        |controller| controller.trigger_sample(2),
+        |controller| controller.trigger_sample(2),
+        |controller| controller.set_sampler_cue(true),
+        |controller| controller.stop_sample(2),
+        |controller| controller.eject_sample(2),
         |controller| controller.set_slip(DeckId::A, true),
         |controller| controller.beat_roll(DeckId::A, BeatLength::QUARTER),
         |controller| controller.beat_roll(DeckId::A, BeatLength::EIGHTH),

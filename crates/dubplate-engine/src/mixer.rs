@@ -12,6 +12,7 @@ use crate::headphones::Headphones;
 use crate::jog::JogInput;
 use crate::pad_effects::PadEffect;
 use crate::processor::{AudioProcessor, ProcessContext, StereoBlock};
+use crate::sampler::{SampleSettings, Sampler};
 use crate::state::{GapDetector, SharedState, encode_loop_length, raise_peak};
 use crate::sync::SyncMode;
 use crate::tempo::{DeckLevel, MasterTempo, TempoMaster, TempoRange};
@@ -156,6 +157,20 @@ pub(crate) enum Command {
         deck: DeckId,
         semitones: f32,
     },
+    LoadSample {
+        slot: usize,
+        track: Option<Arc<TrackBuffer>>,
+        settings: SampleSettings,
+    },
+    SetSampleSettings {
+        slot: usize,
+        settings: SampleSettings,
+    },
+    TriggerSample(usize),
+    ReleaseSample(usize),
+    StopSample(usize),
+    SetSamplerVolume(f32),
+    SetSamplerCue(bool),
 }
 
 /// Something the audio thread no longer needs. It goes back to the control side to be dropped,
@@ -209,6 +224,7 @@ pub struct Renderer {
     master_block: StereoBlock,
     master_gain: Ramp,
     headphones: Headphones,
+    sampler: Sampler,
     master_limiter: Limiter,
     headphone_limiter: Limiter,
     crossfader: f32,
@@ -238,6 +254,7 @@ impl Renderer {
             master_block: StereoBlock::with_capacity(MAX_BLOCK_FRAMES),
             master_gain: Ramp::new(1.0, declick_frames),
             headphones: Headphones::new(MAX_BLOCK_FRAMES, declick_frames),
+            sampler: Sampler::new(sample_rate, MAX_BLOCK_FRAMES, declick_frames),
             master_limiter: Limiter::new(sample_rate as f32),
             headphone_limiter: Limiter::new(sample_rate as f32),
             crossfader: 0.5,
@@ -357,6 +374,14 @@ impl Renderer {
             let peak = deck.mix_into(&mut self.master_block);
             raise_peak(&self.shared.decks[deck_id.index()].peak, peak);
         }
+        let sampler_bpm = tempo_master.and_then(|deck| self.decks[deck.index()].bpm());
+        self.sampler
+            .render(frame_count, sampler_bpm, &mut self.retire, &mut starved);
+        if self.sampler.is_cued() {
+            self.headphones.listen_to(&self.sampler.block);
+        }
+        self.master_block.add(&self.sampler.block);
+        raise_peak(&self.shared.sampler_peak, self.sampler.block.peak());
         let master_context = ProcessContext {
             sample_rate: self.sample_rate,
             tempo: 1.0,
@@ -513,6 +538,25 @@ impl Renderer {
             Command::SetKeyLock { deck, enabled } => {
                 self.decks[deck.index()].set_key_lock(enabled);
             }
+            Command::LoadSample {
+                slot,
+                track,
+                settings,
+            } => self.sampler.load(slot, track, settings, &mut self.retire),
+            Command::SetSampleSettings { slot, settings } => {
+                self.sampler.set_settings(slot, settings);
+            }
+            Command::TriggerSample(slot) => {
+                let master = self
+                    .tempo_master
+                    .current()
+                    .and_then(|deck| self.decks[deck.index()].master_beat(deck));
+                self.sampler.trigger(slot, master, &mut self.retire);
+            }
+            Command::ReleaseSample(slot) => self.sampler.release(slot, &mut self.retire),
+            Command::StopSample(slot) => self.sampler.stop(slot, &mut self.retire),
+            Command::SetSamplerVolume(position) => self.sampler.set_volume(position),
+            Command::SetSamplerCue(enabled) => self.sampler.set_cue(enabled),
             Command::SetSlip { deck, enabled } => self.decks[deck.index()].set_slip(enabled),
             Command::BeatRoll { deck, length } => {
                 self.decks[deck.index()].beat_roll(length, &mut self.retire);
@@ -620,6 +664,11 @@ impl Renderer {
             shared.store(sounding, Ordering::Relaxed);
         }
         self.shared.tempo_master.store(self.tempo_master.current());
+        let (playing, loaded) = self.sampler.playing_and_loaded();
+        self.shared
+            .sampler_playing
+            .store(playing, Ordering::Relaxed);
+        self.shared.sampler_loaded.store(loaded, Ordering::Relaxed);
     }
 }
 
