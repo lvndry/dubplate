@@ -164,9 +164,26 @@ impl DubplateApp {
             let incoming_needed = plan.incoming_start_seconds
                 + (length - plan.incoming_offset_seconds).max(0.0) * plan.incoming_tempo
                 + DECODE_MARGIN_SECONDS;
-            while !(decoded_to(&outgoing, outgoing_needed)
-                && decoded_to(&incoming, incoming_needed))
-            {
+            loop {
+                if decoded_to(&outgoing, outgoing_needed)
+                    && decoded_to(&incoming, incoming_needed)
+                {
+                    break;
+                }
+                // A track that failed to decode will never reach `decoded_to`, so end the
+                // audition instead of waiting for it forever.
+                if let DecodeStatus::Failed(problem) = track_failed(&outgoing, &incoming) {
+                    this.update(cx, |this, cx| {
+                        this.end_audition(generation, cx);
+                        this.show_notice(
+                            NoticePlace::Window,
+                            format!("The seam could not be opened: {problem}"),
+                            cx,
+                        );
+                    })
+                    .ok();
+                    return;
+                }
                 cx.background_executor().timer(CHECK_INTERVAL).await;
                 let current = this
                     .update(cx, |this, _| this.is_audition(generation))
@@ -292,12 +309,22 @@ fn seam_preview(outgoing: Track, incoming: Track, plan: AuditionPlan) -> Preview
     }
 }
 
-/// Whether `track` is decoded to `seconds`, or as far as it goes.
+/// Whether `track` is decoded to `seconds`; a track that failed to decode is never ready.
 fn decoded_to(track: &Track, seconds: f64) -> bool {
-    match track.status() {
-        DecodeStatus::Decoding => track.decoded_seconds() >= seconds,
-        DecodeStatus::Complete | DecodeStatus::Failed(_) => true,
+    matches!(
+        track.status(),
+        DecodeStatus::Complete | (DecodeStatus::Decoding if track.decoded_seconds() >= seconds)
+    )
+}
+
+/// The reason the wait above can end only by giving up: a track that failed to decode.
+fn track_failed(outgoing: &Track, incoming: &Track) -> Option<String> {
+    for track in [outgoing, incoming] {
+        if let DecodeStatus::Failed(problem) = track.status() {
+            return Some(problem);
+        }
     }
+    None
 }
 
 #[cfg(test)]

@@ -55,6 +55,8 @@ pub struct Recording {
     stop: Arc<AtomicBool>,
     dropped_frames: Arc<AtomicU64>,
     writer: Option<JoinHandle<Result<Duration, RecordingError>>>,
+    /// The writer still closing the file after a timed-out `finish_within`.
+    detached: Option<JoinHandle<Result<Duration, RecordingError>>>,
 }
 
 impl Recording {
@@ -99,6 +101,7 @@ impl Recording {
             stop,
             dropped_frames,
             writer: Some(handle),
+            detached: None,
         })
     }
 
@@ -132,12 +135,34 @@ impl Recording {
             dropped_frames: self.dropped_frames.load(Ordering::Relaxed),
         })
     }
+
+    /// As `finish`, but for quit: the writer is told to stop, waited on briefly, and when it is
+    /// still closing the file, kept closing it in the background so the app is not held, while
+    /// the file it already wrote is finished as is.
+    pub fn finish_within(mut self, limit: Duration) {
+        self.stop.store(true, Ordering::Release);
+        let Some(writer) = self.writer.take() else {
+            return;
+        };
+        let deadline = Instant::now() + limit;
+        while !writer.is_finished() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        if writer.is_finished() {
+            writer.join().ok();
+        } else {
+            self.detached = Some(writer);
+        }
+    }
 }
 
 impl Drop for Recording {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Release);
         if let Some(writer) = self.writer.take() {
+            writer.join().ok();
+        }
+        if let Some(writer) = self.detached.take() {
             writer.join().ok();
         }
     }

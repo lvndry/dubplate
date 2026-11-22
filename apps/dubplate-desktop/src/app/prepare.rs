@@ -773,12 +773,12 @@ impl DubplateApp {
             .set_selection
             .or_else(|| view.rows.len().checked_sub(1))
             .and_then(|position| Some((position, view.rows.get(position)?.track.clone()?)));
-        if reference.is_some() {
-            view.next = NextSuggestions {
-                pending: true,
-                ..self.prepare_view.next.clone()
-            };
-        }
+        // Ranking runs only when there is a track to rank after; without one nothing
+        // will ever clear the panel, so it does not wait.
+        view.next = NextSuggestions {
+            pending: reference.is_some(),
+            ..self.prepare_view.next.clone()
+        };
         let target = self
             .set_editor
             .as_ref()

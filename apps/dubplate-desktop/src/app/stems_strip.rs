@@ -44,7 +44,7 @@ pub(super) fn render(
                 .gap(px(2.0))
                 .child(toggle(
                     deck,
-                    ("stem", stem.index()),
+                                        ("stem", stem.index(), deck.index()),
                     stem.label(),
                     settings.is_heard(stem),
                     playing_stems,
@@ -63,7 +63,7 @@ pub(super) fn render(
         .child(div().flex_1())
         .child(toggle(
             deck,
-            ("stems-instrumental", 0),
+                        ("stems-instrumental", deck.index()),
             "Inst",
             settings.is_without(Stem::Vocals),
             playing_stems,
@@ -73,7 +73,7 @@ pub(super) fn render(
         ))
         .child(toggle(
             deck,
-            ("stems-acapella", 0),
+                        ("stems-acapella", deck.index()),
             "Acap",
             settings.is_solo(Stem::Vocals),
             playing_stems,
@@ -132,7 +132,7 @@ fn status_label(
 #[allow(clippy::too_many_arguments)]
 fn toggle(
     deck: DeckId,
-    id: (&'static str, usize),
+        id: (&'static str, usize, usize),
     label: &'static str,
     on: bool,
     enabled: bool,
@@ -142,7 +142,7 @@ fn toggle(
 ) -> impl IntoElement + use<> {
     let command = Command::Stems(deck, action);
     div()
-        .id((id.0, deck.index() * 8 + id.1))
+                .id((id.0, id.1, id.2))
         .when(enabled, |button| {
             button.accessible_toggle(
                 format!("Deck {} {label}", crate::deck::deck_letter(deck)),
