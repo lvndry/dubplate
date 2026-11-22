@@ -103,6 +103,8 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
                 ))
                 .child(section_title("rekordbox"))
                 .child(rekordbox_row(app, cx))
+                .child(section_title("Decks"))
+                .child(key_lock_row(app, cx))
                 .child(section_title("Sound card"))
                 .children(output_rows)
                 .child(section_title("Pad FX"))
@@ -349,6 +351,56 @@ fn output_row(
                         .text_color(theme::MUTED)
                         .child(detail),
                 ),
+        )
+}
+
+/// Whether new tracks start with key lock on, as rekordbox's Master Tempo default.
+fn key_lock_row(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoElement + use<> {
+    let on = app.settings.key_lock_on_new_tracks;
+    div()
+        .id("key-lock-settings")
+        .flex()
+        .items_center()
+        .gap(px(12.0))
+        .py(px(8.0))
+        .border_t_1()
+        .border_color(theme::ROW_LINE)
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .flex_1()
+                .min_w_0()
+                .gap(px(2.0))
+                .child(
+                    div()
+                        .font_weight(FontWeight::MEDIUM)
+                        .child("Key lock on new tracks"),
+                )
+                .child(
+                    div()
+                        .text_size(theme::SMALL_TEXT_SIZE)
+                        .text_color(theme::MUTED)
+                        .child(
+                            "Each track you load keeps its pitch when its tempo moves. A deck's \
+                             Key lock button still changes it for the track on that deck.",
+                        ),
+                ),
+        )
+        .child(
+            button(
+                "key-lock-default",
+                if on { "On" } else { "Off" },
+                if on {
+                    Emphasis::Primary
+                } else {
+                    Emphasis::Secondary
+                },
+            )
+            .accessible_toggle("Key lock on new tracks", on)
+            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                this.perform(Command::SetKeyLockOnNewTracks(!on), window, cx);
+            })),
         )
 }
 

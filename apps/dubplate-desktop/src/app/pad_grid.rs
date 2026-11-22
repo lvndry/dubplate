@@ -3,15 +3,16 @@
 
 use dubplate_engine::DeckId;
 use dubplate_midi::PadMode;
-use dubplate_rekordbox::HotCuePad;
+use dubplate_rekordbox::{HotCue, HotCuePad};
 use gpui::prelude::*;
 use gpui::{ClickEvent, Context, FontWeight, MouseButton, Pixels, Rgba, SharedString, div, px};
 
 use super::sampler::{SampleOption, sampler_slot};
+use super::stems::stem_pad_action;
 use super::{DubplateApp, knob};
 use crate::collection::clock;
 use crate::commands::PadFxEdit;
-use crate::commands::{Command, LoopAction, PadPress, Press};
+use crate::commands::{Command, LoopAction, PadPress, Press, StemAction};
 use crate::controls::Control;
 use crate::fonts::MONO_FAMILY;
 use crate::pad_fx::PadFxLayer;
@@ -488,6 +489,14 @@ fn faces(app: &DubplateApp, deck: DeckId) -> Vec<PadFace> {
                 LONGER_JUMPS_PAD => labelled("Longer", "jumps"),
                 _ => unused(),
             },
+            PadMode::BeatLoop if shifted => match stem_pad_action(pad) {
+                Some(StemAction::Toggle(stem)) => labelled(stem.label(), "stem"),
+                Some(StemAction::Acapella) => labelled("Acapella", "stems"),
+                Some(StemAction::Instrumental) => labelled("Instr.", "stems"),
+                Some(StemAction::Groove) => labelled("Groove", "stems"),
+                Some(StemAction::AllStems) => labelled("All", "stems"),
+                None => unused(),
+            },
             PadMode::Keyboard | PadMode::KeyShift if shifted => match pad {
                 KEY_PADS_UP_PAD => labelled("Up", "semitone"),
                 KEY_PADS_DOWN_PAD => labelled("Down", "semitone"),
@@ -495,7 +504,9 @@ fn faces(app: &DubplateApp, deck: DeckId) -> Vec<PadFace> {
             },
             PadMode::HotCue => {
                 let letter = HotCuePad::ALL.get(pad).copied();
-                let cue = letter.and_then(|letter| side.hot_cues.get(letter));
+                let cue = letter
+                    .and_then(|letter| side.cues.hot_cue(letter))
+                    .map(HotCue::start_seconds);
                 PadFace {
                     title: letter
                         .map(|letter| letter.letter().to_string())

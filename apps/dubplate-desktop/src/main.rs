@@ -38,12 +38,15 @@ mod settings;
 mod shortcuts;
 mod single_instance;
 mod space;
+mod stems;
 mod tap_tempo;
 mod theme;
 mod transport;
 mod waveform;
 mod waveform_cache;
 mod widgets;
+
+use std::process::ExitCode;
 
 use gpui::prelude::*;
 use gpui::{
@@ -67,7 +70,10 @@ gpui::actions!(
 
 const APP_NAME: &str = "Dubplate";
 
-fn main() {
+fn main() -> ExitCode {
+    if let Some(exit) = dubplate_stems::run_worker_if_requested() {
+        return exit;
+    }
     let devices = DeviceAccess::from_environment();
     if devices.is_offline() {
         eprintln!(
@@ -104,6 +110,7 @@ fn main() {
                 cx.quit();
             }
         });
+    ExitCode::SUCCESS
 }
 
 /// Makes this the one running Dubplate, or brings the running one to the front and quits. When
