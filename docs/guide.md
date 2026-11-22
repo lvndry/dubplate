@@ -77,7 +77,7 @@ From then on the set is an ordinary rekordbox playlist, ready to export to a USB
 
 ## 4. Mix
 
-Cmd+L loads the set's first two tracks onto deck A and deck B at their mix-in cues; Cmd+2 opens Perform.
+Cmd+L loads the set's first two tracks onto deck A and deck B at their mix-in cues; Cmd+2 opens Perform. A set track whose file is missing is never loaded: its deck keeps what it had, and a notice names the track with a **Relink** button that looks for the file. The same goes for any track loaded from the library.
 
 On the FLX4, everything works as in rekordbox's FLX4 layout:
 

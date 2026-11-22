@@ -45,12 +45,12 @@ use dubplate_rekordbox::HotCuePad;
 use gpui::component::input::{InputEvent, InputState};
 use gpui::prelude::*;
 use gpui::{
-    Bounds, Context, Entity, FocusHandle, MouseButton, MouseMoveEvent, MouseUpEvent, Pixels, Point,
-    SharedString, StyleRefinement, Subscription, Task, Window, div, px,
+    Bounds, ClickEvent, Context, Entity, FocusHandle, MouseButton, MouseMoveEvent, MouseUpEvent,
+    Pixels, Point, SharedString, StyleRefinement, Subscription, Task, Window, div, px,
 };
 
 use crate::browser::{Browser, BrowserEvent, LibraryStatus};
-use crate::collection::{Collection, CollectionTrack};
+use crate::collection::{Collection, CollectionTrack, TrackIndex};
 use crate::commands::{Command, EffectEdit, JogMotion, Mode, Press};
 use crate::controls::{
     CROSSFADER_STEP, Control, MixerPositions, Orientation, Slider, fraction_at, master_gain_at,
@@ -67,7 +67,7 @@ use crate::hardware::{
     DeckLights, Hardware, Lights, LinkEvent, Surface, controller_deck, meter_level,
 };
 use crate::library::LibrarySources;
-use crate::loading::{LoadRefusal, LoadSource, check_deck_free, check_file};
+use crate::loading::{LoadRefusal, LoadSource, check_deck_free, check_file, check_present};
 use crate::meter::PeakMeter;
 use crate::pads::{PadFx, next_mode};
 use crate::prep::{Catalogue, TrackCheck, TrackDetail};
@@ -79,6 +79,7 @@ use crate::shortcuts::{Perform, WINDOW_CONTEXT};
 use crate::theme;
 use crate::transport::{self, CueDown, is_at_cue, other_deck};
 use crate::waveform::Zoom;
+use crate::widgets::{Emphasis, button};
 use audition::Audition;
 use pads::HeldPad;
 use prepare::PrepareFocus;
@@ -119,7 +120,18 @@ struct Notice {
     id: u64,
     place: NoticePlace,
     text: SharedString,
+    action: Option<NoticeAction>,
 }
+
+/// What a notice offers to do about what it says.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NoticeAction {
+    /// Look for the moved files of one missing track, or of every missing track.
+    Relink(Option<TrackIndex>),
+}
+
+/// How long a notice that offers an action stays, long enough to reach for it.
+const ACTION_NOTICE_DURATION: Duration = Duration::from_secs(12);
 
 /// Where the sliders and overviews were last drawn, so a pointer can be turned into a value.
 #[derive(Default)]
@@ -469,8 +481,17 @@ impl DubplateApp {
         cue: Option<f64>,
         cx: &mut Context<'_, Self>,
     ) {
+        let track_index = match &source {
+            LoadSource::Collection(index) => Some(*index),
+            LoadSource::File(_) => None,
+        };
         let (track, generation) = match self.begin_load(deck, source) {
             Ok(started) => started,
+            Err(refusal @ LoadRefusal::FileMissing(_)) => {
+                let tracks: Vec<TrackIndex> = track_index.into_iter().collect();
+                self.report_missing_file(refusal.to_string(), &tracks, cx);
+                return;
+            }
             Err(refusal) => {
                 self.show_notice(NoticePlace::Deck(deck), refusal.to_string(), cx);
                 return;
@@ -513,11 +534,15 @@ impl DubplateApp {
         source: LoadSource,
     ) -> Result<(Arc<CollectionTrack>, u64), LoadRefusal> {
         let track = match source {
-            LoadSource::Collection(index) => Arc::clone(
-                self.collection()
-                    .ok_or(LoadRefusal::LibraryNotReady)?
-                    .track(index),
-            ),
+            LoadSource::Collection(index) => {
+                let track = Arc::clone(
+                    self.collection()
+                        .ok_or(LoadRefusal::LibraryNotReady)?
+                        .track(index),
+                );
+                check_present(&track)?;
+                track
+            }
             LoadSource::File(path) => {
                 check_file(&path)?;
                 Arc::new(CollectionTrack::from_file(&path))
@@ -929,6 +954,54 @@ impl DubplateApp {
         self.show_notice_for(place, text, NOTICE_DURATION, cx);
     }
 
+    /// Shows a notice at the bottom of the window with a button that does `action`.
+    fn show_action_notice(
+        &mut self,
+        text: impl Into<SharedString>,
+        action: NoticeAction,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.show_notice_for(NoticePlace::Window, text, ACTION_NOTICE_DURATION, cx);
+        if let Some(notice) = self.notice.as_mut() {
+            notice.action = Some(action);
+        }
+    }
+
+    /// Carries out what a notice's button offers and closes the notice.
+    fn take_notice_action(&mut self, action: NoticeAction, cx: &mut Context<'_, Self>) {
+        self.notice = None;
+        match action {
+            NoticeAction::Relink(track) => self.start_relink(track, cx),
+        }
+    }
+
+    /// Says that a library track was not loaded because its file is missing, offering to find
+    /// it when it is a rekordbox track whose file moved.
+    fn report_missing_file(
+        &mut self,
+        text: impl Into<SharedString>,
+        tracks: &[TrackIndex],
+        cx: &mut Context<'_, Self>,
+    ) {
+        let relinkable: Vec<TrackIndex> = tracks
+            .iter()
+            .copied()
+            .filter(|track| self.missing.iter().any(|missing| missing.track == *track))
+            .collect();
+        let text = text.into();
+        match relinkable.as_slice() {
+            [] => self.show_notice(
+                NoticePlace::Window,
+                format!(
+                    "{text} Add the folder it is in to the library, or take it out of the set."
+                ),
+                cx,
+            ),
+            [track] => self.show_action_notice(text, NoticeAction::Relink(Some(*track)), cx),
+            _ => self.show_action_notice(text, NoticeAction::Relink(None), cx),
+        }
+    }
+
     /// Shows a notice for `duration`, or until Escape closes it.
     fn show_notice_for(
         &mut self,
@@ -943,6 +1016,7 @@ impl DubplateApp {
             id,
             place,
             text: text.into(),
+            action: None,
         });
         cx.notify();
         cx.spawn(async move |this, cx| {
@@ -1609,7 +1683,7 @@ impl Render for DubplateApp {
                 self.notice
                     .as_ref()
                     .filter(|notice| notice.place == NoticePlace::Window)
-                    .map(|notice| notice_toast(notice.text.clone())),
+                    .map(|notice| notice_toast(notice.text.clone(), notice.action, cx)),
             )
             .when(self.help_open, |root| root.child(help::render(cx)))
             .when_some(self.relink_review.as_ref(), |root, review| {
@@ -1625,7 +1699,11 @@ impl Render for DubplateApp {
     }
 }
 
-fn notice_toast(text: SharedString) -> impl IntoElement {
+fn notice_toast(
+    text: SharedString,
+    action: Option<NoticeAction>,
+    cx: &mut Context<'_, DubplateApp>,
+) -> impl IntoElement + use<> {
     div()
         .absolute()
         .bottom(px(16.0))
@@ -1635,6 +1713,9 @@ fn notice_toast(text: SharedString) -> impl IntoElement {
         .justify_center()
         .child(
             div()
+                .flex()
+                .items_center()
+                .gap(px(12.0))
                 .max_w(NOTICE_MAX_WIDTH)
                 .px(px(12.0))
                 .py(px(8.0))
@@ -1643,6 +1724,14 @@ fn notice_toast(text: SharedString) -> impl IntoElement {
                 .border_color(theme::LINE)
                 .bg(theme::RAISED)
                 .text_color(theme::TEXT)
-                .child(text),
+                .child(div().flex_1().min_w_0().child(text))
+                .children(action.map(|action| {
+                    let label = match action {
+                        NoticeAction::Relink(_) => "Relink",
+                    };
+                    button("notice-action", label, Emphasis::Primary).on_click(cx.listener(
+                        move |this, _: &ClickEvent, _, cx| this.take_notice_action(action, cx),
+                    ))
+                })),
         )
 }

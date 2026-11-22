@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use dubplate_engine::DeckId;
 use dubplate_prep::{
     EnergyDirection, GridCorrection, PrepTrack, ReadyProblem, ReadyReport, SetEntry, SetTrack,
     SetWarning, StoreError, WarningPosition, set_warnings, suggest_next,
@@ -16,8 +17,9 @@ use gpui::{App, Context};
 use super::{DubplateApp, NoticePlace};
 use crate::collection::{TrackIndex, TrackOrigin};
 use crate::commands::{Direction, SetEdit};
+use crate::deck::deck_letter;
 use crate::energy::{EnergyRange, direction_toward_target, set_curve};
-use crate::loading::LoadSource;
+use crate::loading::{LoadSource, check_present};
 use crate::prep::{
     SeamSummary, TrackCheck, accept_proposal, check_track, nearest_bar_ms, readiness,
 };
@@ -505,8 +507,18 @@ impl DubplateApp {
             self.show_notice(NoticePlace::Window, "The set is empty.", cx);
             return;
         }
-        for (deck, entry) in dubplate_engine::DeckId::ALL.into_iter().zip(&entries) {
-            let Some(index) = collection.find_path(&entry.track_path) else {
+        let mut unloaded: Vec<(DeckId, String)> = Vec::new();
+        let mut missing_tracks: Vec<TrackIndex> = Vec::new();
+        for (deck, entry) in DeckId::ALL.into_iter().zip(&entries) {
+            let index = collection.find_path(&entry.track_path);
+            let present = index.is_some_and(|index| check_present(collection.track(index)).is_ok());
+            let Some(index) = index.filter(|_| present) else {
+                let title = index.map_or_else(
+                    || file_title(&entry.track_path),
+                    |index| collection.track(index).row.title.to_string(),
+                );
+                unloaded.push((deck, title));
+                missing_tracks.extend(index);
                 continue;
             };
             let mix_in = entry.mix_in_ms.or_else(|| {
@@ -517,6 +529,9 @@ impl DubplateApp {
             });
             let cue = mix_in.map(|milliseconds| f64::from(milliseconds) / 1000.0);
             self.load_cued(deck, LoadSource::Collection(index), cue, cx);
+        }
+        if let Some(text) = unloaded_notice(&unloaded) {
+            self.report_missing_file(text, &missing_tracks, cx);
         }
     }
 }
@@ -594,6 +609,26 @@ fn apply_edit(
     Ok(())
 }
 
+/// What the DJ is told when set tracks were kept off their decks because their files are
+/// missing, such as "Deck A was not loaded: Uthando's file is missing.", or `None` when every
+/// deck was loaded.
+fn unloaded_notice(unloaded: &[(DeckId, String)]) -> Option<String> {
+    match unloaded {
+        [] => None,
+        [(deck, title)] => Some(format!(
+            "Deck {} was not loaded: {title}'s file is missing.",
+            deck_letter(*deck)
+        )),
+        [(_, first), (_, second)] => Some(format!(
+            "Neither deck was loaded: the files of {first} and {second} are missing."
+        )),
+        more => Some(format!(
+            "{} set tracks were not loaded: their files are missing.",
+            more.len()
+        )),
+    }
+}
+
 /// Whether the proposal could fill a cue the entry lacks.
 fn can_propose(entry: &SetEntry, check: &TrackCheck) -> bool {
     (entry.mix_in_ms.is_none() && check.proposal.mix_in.is_some())
@@ -605,4 +640,26 @@ fn file_title(path: &Path) -> String {
     path.file_stem()
         .map(|stem| stem.to_string_lossy().into_owned())
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_notice_names_each_track_kept_off_its_deck() {
+        assert_eq!(unloaded_notice(&[]), None);
+        assert_eq!(
+            unloaded_notice(&[(DeckId::B, "Amalobolo".to_owned())]).as_deref(),
+            Some("Deck B was not loaded: Amalobolo's file is missing.")
+        );
+        assert_eq!(
+            unloaded_notice(&[
+                (DeckId::A, "Uthando".to_owned()),
+                (DeckId::B, "Amalobolo".to_owned())
+            ])
+            .as_deref(),
+            Some("Neither deck was loaded: the files of Uthando and Amalobolo are missing.")
+        );
+    }
 }
