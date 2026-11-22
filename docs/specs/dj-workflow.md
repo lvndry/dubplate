@@ -119,7 +119,7 @@ Statuses are as audited on 22 November 2026, on `main` with a second Dubplate ru
 
 **W3 Beat grid on the waveforms.** A line per beat, the downbeat stronger, bar numbers. Status: lines **Done**; bar numbers **In progress** with the beat counter.
 
-**W4 Marks on the scrolling waveform.** Cue point, hot cues in colour, memory cues, the loop and its length, the slip shadow. Status: **Done** except memory cues and hot cue colours, **In progress** (cues work).
+**W4 Marks on the scrolling waveform.** Cue point, hot cues in colour, memory cues, the loop and its length, the slip shadow. Status: **Done** except hot cue colours, **In progress** (cues work).
 
 **W5 Folder tracks.** A waveform for every track. Status: **Done.**
 
@@ -139,11 +139,11 @@ Statuses are as audited on 22 November 2026, on `main` with a second Dubplate ru
 
 ## Memory cues
 
-**M1 Show memory cues.** Red triangles on the overview and the lanes. Status: overview **Done**, lanes **In progress.**
+**M1 Show memory cues.** Red triangles on the overview and the lanes. Status: **Done.**
 
-**M2 Store and delete a memory cue.** Status: **In progress.**
+**M2 Store and delete a memory cue.** SHIFT + CUE/LOOP CALL ▶ keeps the cue point (or the loop that is on), up to 10; SHIFT + ◀ deletes the one at the cue point. Status: **Done.**
 
-**M3 Call memory cues.** CUE/LOOP CALL ◀ ▶ when no loop plays. Status: **In progress.**
+**M3 Call memory cues.** CUE/LOOP CALL ◀ ▶ when no loop plays; the deck pauses on the called cue as its cue point. Status: **Done.**
 
 ## Loops
 

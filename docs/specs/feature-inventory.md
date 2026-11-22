@@ -47,7 +47,7 @@ Ranked by what stops the owner from playing a club night with Dubplate alone, th
 
 1. **USB export for CDJs.** Write the Device Library (export.pdb) and OneLibrary (exportLibrary.db) with the ANLZ files (.DAT, .EXT, .2EX: blue, RGB and 3-band waveforms, grid, cues, phrases) for sets and playlists, to FAT32, exFAT or HFS+ sticks, from a Devices pane with progress and eject. Today a set reaches CDJs only through rekordbox.
 2. **Save the cues made in Dubplate (done for XML).** Hot cues A to H, memory cues and loops set live or in prep are kept per track in Dubplate's store, survive a relaunch, and go into the XML export; the USB export waits for item 1.
-3. **Memory cues on the decks.** Draw them as red triangles on the lanes and the overview; CUE/LOOP CALL ◁ ▷ calls the previous or next one when no loop plays; SHIFT + ▷ saves one, SHIFT + ◁ deletes it; up to 10 per track.
+3. **Memory cues on the decks (done).** Draw them as red triangles on the lanes and the overview; CUE/LOOP CALL ◁ ▷ calls the previous or next one when no loop plays; SHIFT + ▷ saves one, SHIFT + ◁ deletes it; up to 10 per track.
 4. **Grid editing on the decks for every track.** Set the downbeat at the playhead, shift 1 ms, type a BPM, x2 and /2, widen and narrow, edit from here, metronome; saved and exported like track check edits.
 5. **Waveform and overview (done).** Cue point mark, loops and the slip shadow on the lanes, a 3-band overview with hot cues, memory cues, mix cues, loops and phrases, and the end-of-track warning.
 6. **FLX4 Beat FX fixes (in progress).** CH SELECT 1&2 puts the effect on both decks, LEVEL/DEPTH follows the knob from its first report, FX SELECT shows its choice.
@@ -358,7 +358,7 @@ These are features of the players. Dubplate prepares for them once it writes USB
 | My Tag and rating on CDJs | Browse and filter by My Tag; rate on the CDJ-3000X. | CDJ browse, INFO | Free | Missing | P1 |
 | Hot cues A to H with colours and names | 8 hot cues; HOT CUE COLOR on shows rekordbox's colour per cue, loops orange; comments shown. | CDJ pads | Free | Missing | P0 |
 | Hot Cue Auto Load | Off, rekordbox SETTING (flagged tracks) or On. | CDJ UTILITY | Free | Missing | P2 |
-| Memory cues and active loops | CUE/LOOP CALL steps through memory cues; active loops engage when reached. | CDJ | Free | Missing | P0 |
+| Memory cues and active loops | CUE/LOOP CALL steps through memory cues; active loops engage when reached. | CDJ | Free | Partial: memory cues and loops are called, saved and deleted; a called loop is not armed yet | P0 |
 | Waveform colour on CDJ | Blue, RGB or 3-band, overview and zoomed; phrase strip on 3000X. | CDJ SHORTCUT > Device settings | Free | Missing | P1 |
 | Beat countdown | Bars and beats to the next memory cue. | CDJ waveform screen | Free | Missing | P1 |
 | Key display on CDJ | Classic or alphanumeric as set in rekordbox; green when related to the master's key. | CDJ, Preferences > DJ System > General | Free | Missing | P2 |
@@ -410,7 +410,7 @@ These are features of the players. Dubplate prepares for them once it writes USB
 | Waveform for unanalysed tracks | Waveform drawn for any track. | Analysis | Free | Done (drawn from the audio, shared with the track check) | P0 |
 | Waveform zoom | Zoom in and out, RST; FLX4 SHIFT + BROWSE turn. | Enlarged waveform, FLX4 | Free (FLX4) | Missing: fixed at about 9 seconds across | P1 |
 | Hot cue marks on the scrolling waveform | Letters and flags at each hot cue. | Enlarged waveform | Free (FLX4) | Done (flags above the lane) | P0 |
-| Memory cue marks on the scrolling waveform | Red triangles at memory cues. | Enlarged waveform | Free (FLX4) | Missing | P0 |
+| Memory cue marks on the scrolling waveform | Red triangles at memory cues. | Enlarged waveform | Free (FLX4) | Done (memory loops in the saved loop colour) | P0 |
 | Cue point mark | Orange marker at the current cue. | Enlarged waveform | Free (FLX4) | Done | P0 |
 | Loop shown on the waveform | The active loop as a tinted band; a saved loop as a span. | Enlarged waveform | Free (FLX4) | Done | P0 |
 | Slip shadow playhead | The background position while slipping. | Enlarged waveform | Free (FLX4) | Done | P1 |
@@ -460,10 +460,10 @@ These are features of the players. Dubplate prepares for them once it writes USB
 | Smart Cue | Pressing a hot cue makes it the new cue point; the CUE button takes its colour (7.2.14). | Preferences > Controller > Deck > HOT CUE | Free | Missing | P2 |
 | Gate Cue | While paused, holding a hot cue plays from it and releasing returns. | Preferences > Controller > Deck > HOT CUE | Free | Missing | P2 |
 | Hot cue call mode | Immediate jump keeping the beat offset, or wait for the next beat. | Preferences > Controller > Others > Mode | Free | Partial: immediate with the beat offset only | P3 |
-| Memory cues | Up to 10 cues and 10 loops per track with colour and comment. | MEMORY CUE pad mode, deck | Free | Partial: read from rekordbox and drawn on the overview; not callable, not savable | P0 |
-| Call memory cues | CUE/LOOP CALL ◁ ▷ steps to the previous or next memory cue or loop. | FLX4 CUE/LOOP CALL | Free (FLX4) | Missing | P0 |
-| Save a memory cue | SHIFT + CUE/LOOP CALL ▷, or MEMORY. | FLX4 | Free (FLX4) | Missing | P1 |
-| Delete a memory cue | SHIFT + CUE/LOOP CALL ◁. | FLX4 | Free (FLX4) | Missing | P2 |
+| Memory cues | Up to 10 cues and 10 loops per track with colour and comment. | MEMORY CUE pad mode, deck | Free | Done: read from rekordbox, drawn on the overview and the lanes, called, saved (up to 10) and deleted, kept per track | P0 |
+| Call memory cues | CUE/LOOP CALL ◁ ▷ steps to the previous or next memory cue or loop. | FLX4 CUE/LOOP CALL | Free (FLX4) | Done (H and J on the keyboard; with a loop on they halve and double it) | P0 |
+| Save a memory cue | SHIFT + CUE/LOOP CALL ▷, or MEMORY. | FLX4 | Free (FLX4) | Done (N; the loop that is on is saved as a memory loop) | P1 |
+| Delete a memory cue | SHIFT + CUE/LOOP CALL ◁. | FLX4 | Free (FLX4) | Done (⌥N) | P2 |
 | Memory cue call lock | Blocks memory cue calls while playing. | Preferences > Controller > Deck | Free | Missing | P3 |
 | Cue and loop list | Every memory cue, hot cue and loop with time, colour and comment, click to jump. | MEMORY CUE pad mode | Free | Missing | P2 |
 | Mix cues on the deck | Not in rekordbox: the set's mix-in and mix-out. | Not in rekordbox | n/a | Done (draws them on the overview) | P1 |

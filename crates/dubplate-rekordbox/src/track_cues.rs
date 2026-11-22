@@ -159,6 +159,13 @@ impl TrackCues {
         &self.memory
     }
 
+    /// The memory cues from `start_ms` to `end_ms`, both included, in time order.
+    pub fn memory_cues_between(&self, start_ms: u32, end_ms: u32) -> &[MemoryCue] {
+        let first = self.memory.partition_point(|cue| cue.start_ms < start_ms);
+        let last = self.memory.partition_point(|cue| cue.start_ms <= end_ms);
+        &self.memory[first..last.max(first)]
+    }
+
     /// Adds a memory cue in its place in time, after any already at the same place.
     pub fn insert_memory_cue(&mut self, cue: MemoryCue) {
         let place = self
@@ -276,6 +283,14 @@ mod tests {
         cues.insert_memory_cue(MemoryCue::at(40_000));
         let starts: Vec<u32> = cues.memory_cues().iter().map(|cue| cue.start_ms).collect();
         assert_eq!(starts, [10_000, 20_000, 30_000, 40_000]);
+        let between: Vec<u32> = cues
+            .memory_cues_between(20_000, 35_000)
+            .iter()
+            .map(|cue| cue.start_ms)
+            .collect();
+        assert_eq!(between, [20_000, 30_000]);
+        assert!(cues.memory_cues_between(41_000, 90_000).is_empty());
+        assert!(cues.memory_cues_between(30_000, 10_000).is_empty());
         cues.remove_memory_cues(|cue| cue.start_ms == 20_000);
         assert_eq!(cues.memory_cues().len(), 3);
     }

@@ -21,6 +21,7 @@ mod lanes;
 mod library;
 mod library_matches;
 mod library_panel;
+mod memory_cues;
 mod mixer;
 mod notice;
 mod overview;
@@ -901,6 +902,9 @@ impl DubplateApp {
             }
             Command::ToggleSlip(deck) => self.toggle_slip(deck, cx),
             Command::Loop(deck, action) => self.loop_button(deck, action, cx),
+            Command::CueLoopCall(deck, direction) => self.cue_loop_call(deck, direction, cx),
+            Command::StoreMemoryCue(deck) => self.store_memory_cue(deck, cx),
+            Command::DeleteMemoryCue(deck) => self.delete_memory_cue(deck, cx),
             Command::ToggleHeadphoneCue(deck) => {
                 let cued = self
                     .headphones()
