@@ -10,6 +10,7 @@ use rusqlite::{OptionalExtension, Transaction};
 
 use super::{SetStore, StoreError, now_unix_millis};
 use crate::identity::TrackIdentity;
+use crate::sql::{execute_cached, query_row_cached};
 
 /// The cues of one track as they are read, before they become its `TrackCues`.
 #[derive(Default)]
@@ -24,11 +25,11 @@ impl SetStore {
     pub fn track_cues(&self) -> Result<HashMap<TrackIdentity, TrackCues>, StoreError> {
         let mut tracks: HashMap<(String, String), ReadCues> = self
             .connection
-            .prepare("SELECT identity_kind, identity FROM track_cues")?
+            .prepare_cached("SELECT identity_kind, identity FROM track_cues")?
             .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
             .map(|key| key.map(|key| (key, ReadCues::default())))
             .collect::<Result<_, _>>()?;
-        let mut statement = self.connection.prepare(
+        let mut statement = self.connection.prepare_cached(
             "SELECT identity_kind, identity, pad, start_ms, loop_end_ms, color_table_index,
                 memory_color, name
              FROM track_cue
@@ -92,7 +93,8 @@ impl SetStore {
     ) -> Result<(), StoreError> {
         let transaction = self.transaction()?;
         let (kind, key) = identity.storage_key();
-        transaction.execute(
+        execute_cached(
+            &transaction,
             "INSERT INTO track_cues (identity_kind, identity, track_path, updated_at)
              VALUES (?1, ?2, ?3, ?4)
              ON CONFLICT (identity_kind, identity) DO UPDATE SET
@@ -105,12 +107,13 @@ impl SetStore {
                 now_unix_millis(),
             ),
         )?;
-        transaction.execute(
+        execute_cached(
+            &transaction,
             "DELETE FROM track_cue WHERE identity_kind = ?1 AND identity = ?2",
             (kind, &key),
         )?;
         {
-            let mut insert = transaction.prepare(
+            let mut insert = transaction.prepare_cached(
                 "INSERT INTO track_cue
                     (identity_kind, identity, pad, start_ms, loop_end_ms, color_table_index,
                      memory_color, name)
@@ -169,24 +172,27 @@ fn move_file_cues(transaction: &Transaction<'_>, from: &Path, to: &Path) -> Resu
     let moved = TrackIdentity::File(from.to_path_buf());
     let (kind, from_key) = moved.storage_key();
     let to_key = to.to_string_lossy();
-    let kept: Option<i64> = transaction
-        .query_row(
-            "SELECT 1 FROM track_cues WHERE identity_kind = ?1 AND identity = ?2",
-            (kind, &from_key),
-            |row| row.get(0),
-        )
-        .optional()?;
+    let kept: Option<i64> = query_row_cached(
+        transaction,
+        "SELECT 1 FROM track_cues WHERE identity_kind = ?1 AND identity = ?2",
+        (kind, &from_key),
+        |row| row.get(0),
+    )
+    .optional()?;
     if kept.is_some() {
-        transaction.execute(
+        execute_cached(
+            transaction,
             "DELETE FROM track_cues WHERE identity_kind = ?1 AND identity = ?2",
             (kind, &to_key),
         )?;
-        transaction.execute(
+        execute_cached(
+            transaction,
             "UPDATE track_cues SET identity = ?3 WHERE identity_kind = ?1 AND identity = ?2",
             (kind, &from_key, &to_key),
         )?;
     }
-    transaction.execute(
+    execute_cached(
+        transaction,
         "UPDATE track_cues SET track_path = ?2 WHERE track_path = ?1",
         (from.to_string_lossy(), &to_key),
     )?;

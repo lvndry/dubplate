@@ -22,6 +22,7 @@ mod identity;
 mod loudness;
 mod ready;
 mod session;
+mod sql;
 mod store;
 mod suggestion;
 mod track;
