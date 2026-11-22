@@ -30,14 +30,15 @@ impl std::fmt::Debug for PreviewTrack {
     }
 }
 
-/// A seam to audition in the headphones before playing it: two tracks overlapping as they
-/// will in the mix.
+/// A track or a seam to hear in the headphones before playing it: one track, or two
+/// overlapping as they will in the mix.
 #[derive(Debug, Clone)]
 pub struct Preview {
-    /// The outgoing track, from its own start position.
+    /// The track, or the outgoing track of a seam, from its own start position.
     pub first: PreviewTrack,
-    /// The incoming track, which comes in `second_offset_seconds` after the preview starts.
-    pub second: PreviewTrack,
+    /// The incoming track of a seam, which comes in `second_offset_seconds` after the preview
+    /// starts; `None` to hear the first track alone.
+    pub second: Option<PreviewTrack>,
     /// When the second track comes in, in seconds after the preview starts.
     pub second_offset_seconds: f64,
     /// Plays both tracks at their tempos without changing their pitch, as key lock does.
@@ -55,7 +56,7 @@ pub struct PreviewState {
 
 /// A preview as the audio thread receives it: tracks and positions in frames.
 pub(crate) struct PreviewPlan {
-    pub(crate) tracks: [PlannedTrack; 2],
+    pub(crate) tracks: [Option<PlannedTrack>; 2],
     pub(crate) second_offset_seconds: f64,
     pub(crate) key_lock: bool,
 }
@@ -74,7 +75,10 @@ impl PreviewPlan {
             tempo: preview_track.tempo,
         };
         Self {
-            tracks: [planned(&preview.first), planned(&preview.second)],
+            tracks: [
+                Some(planned(&preview.first)),
+                preview.second.as_ref().map(planned),
+            ],
             second_offset_seconds: preview.second_offset_seconds,
             key_lock: preview.key_lock,
         }
@@ -152,6 +156,13 @@ impl PreviewBus {
         for ((preview_voice, planned), starts_at_frame) in
             self.voices.iter_mut().zip([first, second]).zip(starts)
         {
+            let Some(planned) = planned else {
+                if let Some(previous) = preview_voice.voice.track.take() {
+                    retire.track(previous);
+                }
+                preview_voice.finished = true;
+                continue;
+            };
             let source_rate = f64::from(planned.track.sample_rate());
             let previous = preview_voice.voice.track.replace(planned.track);
             if let Some(previous) = previous {
