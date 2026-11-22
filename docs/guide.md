@@ -49,6 +49,7 @@ Each set track has a **ready badge**: Ready, or what is missing (Grid unconfirme
 
 - Click a column header to sort by it, again to reverse it, and a third time to go back to the crate's own order. Prepare and Perform each remember their sort.
 - The search field matches titles, artists, genres, comments and the folders a track is filed in, so `amapiano warmup` finds the tracks in your amapiano/warmup folder. The Genre column shows the genre tag, or those folders when the track has none.
+- Type filters in the same field, mixed with words: `bpm:120-124` (or `bpm:120`, `bpm:120+`), `key:8A` (any notation) or `key:fits` (what mixes after the reference track, as Key fits), `genre:amapiano`, `artist:kabza`, `energy:6+` (or `energy:4-6`), `played:no` (not played on a deck this session) and `rated:4+` (rekordbox stars). While the search field has the keyboard, chips under the filter bar suggest them from the track you are mixing from; click one to put it in.
 - **BPM** keeps a tempo range, a few BPM either side of the selected set track (or the playing deck); the arrows move each end.
 - **Key fits** keeps the tracks whose key mixes well after the selected set track in Prepare, or the deck playing in Perform: the same key, one step on the wheel, or the relative key, as the Next suggestions choose.
 

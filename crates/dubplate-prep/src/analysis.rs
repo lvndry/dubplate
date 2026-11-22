@@ -12,12 +12,13 @@ use euphoria_core::tempo_range::TempoRange;
 use euphoria_core::{AudioBuffer, EuphoriaError, Key};
 use thiserror::Error;
 
+use crate::downbeat::settle_grid;
 use crate::energy::{TrackEnergy, rate_track_energy};
 use crate::grid::BEATS_PER_BAR;
 
 /// Raised whenever a change to how Dubplate puts Euphoria's detectors together can change what
 /// an analysis reports, so analyses cached before it are made again.
-const PIPELINE_VERSION: u32 = 1;
+const PIPELINE_VERSION: u32 = 2;
 
 /// The version of everything that decides an analysis: Euphoria's detectors, its energy model
 /// and the way Dubplate combines them. A cached analysis made under another version is stale.
@@ -157,6 +158,9 @@ pub fn analyse_track(path: &Path) -> Result<AudioAnalysis, AnalysisError> {
 /// the track at. Euphoria's own analysis keeps the estimate when the grid fits loosely; the
 /// grid's tempo is the closer of the two there, since it was fitted to the beats. A track
 /// without a grid keeps the estimate.
+///
+/// Dubplate then settles the grid's beats and bars on the kicks (see [`settle_grid`]): Euphoria
+/// often puts a dance track's bars a beat or two off, or its beats on the off-beat.
 pub fn analyse_audio(audio: &AudioBuffer) -> Result<AudioAnalysis, EuphoriaError> {
     let tempo_reading = StratumDetector.read_tempo(audio)?;
     let key = read_key(audio)?.key;
@@ -167,7 +171,8 @@ pub fn analyse_audio(audio: &AudioBuffer) -> Result<AudioAnalysis, EuphoriaError
         tempo_reading.map(|reading| TempoRange::DEFAULT.fold(reading.refined_by(fitted.as_ref())));
     let beat_grid = fitted
         .zip(estimate)
-        .map(|(grid, estimate)| AnalysedGrid::counted_near(&grid, f64::from(estimate)));
+        .map(|(grid, estimate)| AnalysedGrid::counted_near(&grid, f64::from(estimate)))
+        .map(|grid| settle_grid(audio, grid));
     let bpm = beat_grid.map(|grid| grid.bpm as f32).or(estimate);
     Ok(AudioAnalysis {
         duration_seconds: audio.duration_seconds(),
