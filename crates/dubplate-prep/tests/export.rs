@@ -529,3 +529,53 @@ fn a_set_name_becomes_a_file_name() {
     assert_eq!(export_file_name(" .hidden"), "hidden.xml");
     assert_eq!(export_file_name("  "), "Set.xml");
 }
+
+#[test]
+fn a_set_track_follows_its_file_by_rekordbox_id_and_the_relinks() {
+    let rekordbox_tracks = vec![rekordbox_track("7", "/Old Place/Moved.m4a")];
+    let relinks = HashMap::from([(
+        PathBuf::from("/Old Place/Moved.m4a"),
+        PathBuf::from("/New Place/Moved.m4a"),
+    )]);
+    let library = ExportLibrary::new(
+        Some(RekordboxCollection {
+            tracks: &rekordbox_tracks,
+            cues: &[],
+            share_directory: Path::new("/PIONEER"),
+        }),
+        &[],
+        &relinks,
+    );
+    let set = Set {
+        id: SetId(1),
+        name: "Saturday".to_owned(),
+        target_minutes: 60,
+        created_at: 0,
+        updated_at: 0,
+        entries: vec![
+            SetEntry {
+                track_path: PathBuf::from("/Older Place/Moved.m4a"),
+                rekordbox_id: Some("7".to_owned()),
+                ..SetEntry::default()
+            },
+            SetEntry {
+                track_path: PathBuf::from("/Crate/Stays.mp3"),
+                ..SetEntry::default()
+            },
+        ],
+        seams: Vec::new(),
+    };
+    assert_eq!(
+        library.current_path(&set.entries[0]),
+        PathBuf::from("/New Place/Moved.m4a"),
+        "the rekordbox id finds the track wherever the set last saw it"
+    );
+    assert_eq!(
+        library.moved_files(&set),
+        HashMap::from([(
+            PathBuf::from("/Older Place/Moved.m4a"),
+            PathBuf::from("/New Place/Moved.m4a"),
+        )]),
+        "a file that has not moved is left alone"
+    );
+}
