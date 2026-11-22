@@ -478,6 +478,7 @@ pub fn help_sections() -> Vec<HelpSection> {
                 ),
                 line(&["cmd-l"], "Load the set's first two tracks on the decks"),
                 line(&["cmd-e"], "Export the set to rekordbox"),
+                line(&["cmd-shift-e"], "Export the set to a USB stick for CDJs"),
             ],
         },
         HelpSection {
