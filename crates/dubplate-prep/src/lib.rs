@@ -13,10 +13,12 @@ mod analysis;
 mod analysis_cache;
 mod analysis_queue;
 mod cue_proposal;
+mod editor;
 mod energy;
 mod export;
 mod grid;
 mod ready;
+mod session;
 mod store;
 mod suggestion;
 mod track;
@@ -28,6 +30,7 @@ pub use analysis::{
 pub use analysis_cache::{AnalysisCache, AnalysisCacheError};
 pub use analysis_queue::{AnalysisQueue, AnalysisResult, Priority};
 pub use cue_proposal::{ProposalSource, ProposedCue, ProposedCues, propose_mix_cues};
+pub use editor::{SetEditor, SetTrackRef};
 pub use energy::{EnergyWindow, TrackEnergy};
 pub use euphoria_core::harmony::EnergyDirection;
 pub use euphoria_core::key::Key;
@@ -38,9 +41,10 @@ pub use export::{
 };
 pub use grid::{BEATS_PER_BAR, GridCorrection};
 pub use ready::{ReadyProblem, ReadyReport, Severity, TrackReadiness, ready_report};
+pub use session::{SetCompletion, SetJob, SetSession, SetSessionError};
 pub use store::{
     CueSource, EqIntent, Seam, SeamStatus, Set, SetEntry, SetId, SetList, SetStore, StoreError,
 };
-pub use suggestion::{Suggestion, suggest_next};
+pub use suggestion::{KeyFit, Suggestion, suggest_next};
 pub use track::PrepTrack;
 pub use warnings::{SetTrack, SetWarning, WarningKind, WarningPosition, set_warnings};

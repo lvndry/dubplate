@@ -125,6 +125,40 @@ impl Track {
         }
     }
 
+    /// Copies the decoded frames from `first_frame` on into `frames`, as `[left, right]`, and
+    /// returns how many it copied: fewer than `frames` holds near the end of what is decoded.
+    /// Reading a whole track this way costs a fraction of reading it frame by frame.
+    pub fn read_frames(&self, first_frame: usize, frames: &mut [[f32; 2]]) -> usize {
+        let readable = self
+            .inner
+            .total_frames()
+            .unwrap_or_else(|| self.decoded_frames());
+        let wanted = frames.len().min(readable.saturating_sub(first_frame));
+        let mut copied = 0;
+        while copied < wanted {
+            let index = first_frame + copied;
+            let Some(chunk) = self
+                .inner
+                .chunks
+                .get(index >> CHUNK_FRAMES_LOG2)
+                .and_then(OnceLock::get)
+            else {
+                break;
+            };
+            let offset = index & CHUNK_FRAME_MASK;
+            let run = (CHUNK_FRAMES - offset).min(wanted - copied);
+            let samples = chunk[offset * 2..(offset + run) * 2].as_chunks::<2>().0;
+            for (frame, [left, right]) in frames[copied..copied + run].iter_mut().zip(samples) {
+                *frame = [
+                    f32::from_bits(left.load(Ordering::Relaxed)),
+                    f32::from_bits(right.load(Ordering::Relaxed)),
+                ];
+            }
+            copied += run;
+        }
+        copied
+    }
+
     /// Where decoding stands.
     pub fn status(&self) -> DecodeStatus {
         match self.inner.status.load(Ordering::Acquire) {
@@ -163,6 +197,51 @@ impl TrackBuffer {
             UNKNOWN_LENGTH => None,
             frames => Some(frames),
         }
+    }
+
+    /// Visits decoded frames in a small window, leaving positions outside the track as zero.
+    /// Publication is acquired once and each chunk is looked up once, so FIR interpolation
+    /// does not repeat those checks for every tap. Returns whether any requested audio is
+    /// not decoded yet. `visit` receives the offset within the requested window.
+    #[inline]
+    pub(crate) fn visit_frames<const N: usize>(
+        &self,
+        first: i64,
+        mut visit: impl FnMut(usize, f32, f32),
+    ) -> bool {
+        let total = self.total_frames();
+        let available = total.unwrap_or_else(|| self.decoded_frames.load(Ordering::Acquire));
+        let requested_end = first.saturating_add(N as i64);
+        let mut missing = total.is_none() && requested_end > available as i64;
+        let mut index = first.max(0) as usize;
+        let end = requested_end.max(0).min(available as i64) as usize;
+        while index < end {
+            let offset = index & CHUNK_FRAME_MASK;
+            let count = (CHUNK_FRAMES - offset).min(end - index);
+            if let Some(chunk) = self
+                .chunks
+                .get(index >> CHUNK_FRAMES_LOG2)
+                .and_then(OnceLock::get)
+            {
+                let window_offset = (index as i64 - first) as usize;
+                for (within_chunk, frame) in chunk[offset * 2..(offset + count) * 2]
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .enumerate()
+                {
+                    visit(
+                        window_offset + within_chunk,
+                        f32::from_bits(frame[0].load(Ordering::Relaxed)),
+                        f32::from_bits(frame[1].load(Ordering::Relaxed)),
+                    );
+                }
+            } else {
+                missing = true;
+            }
+            index += count;
+        }
+        missing
     }
 
     /// Reads one frame without waiting. Safe to call on the audio thread.
@@ -302,6 +381,48 @@ mod tests {
     use super::*;
 
     #[test]
+    fn window_reads_match_single_frames_across_edges_chunks_and_publication() {
+        let mut writer = TrackWriter::new(48_000, 2);
+        for index in 0..CHUNK_FRAMES + 8 {
+            assert!(writer.push_frame(index as f32, -(index as f32)));
+        }
+        let track = writer.track();
+        for complete in [false, true] {
+            if complete {
+                writer.finish();
+            }
+            for first in [
+                -80,
+                -1,
+                0,
+                CHUNK_FRAMES as i64 - 32,
+                CHUNK_FRAMES as i64,
+                CHUNK_FRAMES as i64 + 40,
+            ] {
+                let mut frames = [[0.0; 2]; 64];
+                let missing = track
+                    .buffer()
+                    .visit_frames::<64>(first, |offset, left, right| {
+                        frames[offset] = [left, right];
+                    });
+                let mut expected_missing = false;
+                for (offset, actual) in frames.iter().enumerate() {
+                    let expected = match track.buffer().read_frame(first + offset as i64) {
+                        FrameRead::Frame(left, right) => [left, right],
+                        FrameRead::Missing => {
+                            expected_missing = true;
+                            [0.0; 2]
+                        }
+                        FrameRead::Outside => [0.0; 2],
+                    };
+                    assert_eq!(*actual, expected, "position {first}, offset {offset}");
+                }
+                assert_eq!(missing, expected_missing);
+            }
+        }
+    }
+
+    #[test]
     fn frames_become_readable_only_after_publishing() {
         let mut writer = TrackWriter::new(44_100, 2);
         let track = writer.track();
@@ -314,6 +435,32 @@ mod tests {
         writer.finish();
         assert_eq!(track.buffer().read_frame(1), FrameRead::Outside);
         assert_eq!(track.status(), DecodeStatus::Complete);
+    }
+
+    #[test]
+    fn frames_are_read_in_runs_across_chunks_up_to_what_is_decoded() {
+        let frame_count = CHUNK_FRAMES + 10;
+        let samples: Vec<f32> = (0..frame_count)
+            .flat_map(|index| [index as f32, -(index as f32)])
+            .collect();
+        let track = Track::from_interleaved_stereo(&samples, 48_000).unwrap();
+        let first_frame = CHUNK_FRAMES - 5;
+        let mut frames = vec![[0.0; 2]; 100];
+        assert_eq!(track.read_frames(first_frame, &mut frames), 15);
+        for (offset, frame) in frames[..15].iter().enumerate() {
+            let index = (first_frame + offset) as f32;
+            assert_eq!(*frame, [index, -index]);
+        }
+        assert_eq!(track.read_frames(frame_count, &mut frames), 0);
+
+        let mut writer = TrackWriter::new(44_100, 2);
+        let decoding = writer.track();
+        assert!(writer.push_frame(0.5, -0.5));
+        assert!(writer.push_frame(0.25, -0.25));
+        assert_eq!(decoding.read_frames(0, &mut frames), 0);
+        writer.publish();
+        assert_eq!(decoding.read_frames(0, &mut frames), 2);
+        assert_eq!(frames[..2], [[0.5, -0.5], [0.25, -0.25]]);
     }
 
     #[test]
