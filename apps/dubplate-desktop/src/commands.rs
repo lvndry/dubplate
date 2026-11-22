@@ -4,7 +4,7 @@
 
 use dubplate_engine::{
     ChannelFaderCurve, CrossfaderAssign, CrossfaderCurve, DeckId, EffectKind, EffectTarget,
-    EffectUnitId, SmartCfx, Stem, StemSettings,
+    EffectUnitId, SmartCfx, SmartFaderSource, Stem, StemSettings,
 };
 use dubplate_midi::PadMode;
 use dubplate_prep::GridEdit;
@@ -341,6 +341,8 @@ pub enum Command {
     ResetLaneZoom,
     /// Put the crossfader in or out of use: out of use, both channels play as if on THRU.
     ToggleCrossfader,
+    /// Choose what moves Smart Fader's blend, from Settings.
+    SetSmartFaderSource(SmartFaderSource),
     /// Put a deck's channel on side A or B of the crossfader, or THRU, off it.
     SetCrossfaderAssign(DeckId, CrossfaderAssign),
     /// Move a deck's crossfader assign switch to its next position: A, THRU, B.

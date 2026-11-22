@@ -624,7 +624,7 @@ rekordbox does not print its full Beat FX list; these names come from the plan p
 | Smart CFX | One CFX knob drives a preset of several effects (some change loops and key). | FLX4 SMART CFX | Free (FLX4) | Done (six presets: Space, Dub Echo, Crush, Chop, Jet, Phase) | P1 |
 | Smart CFX preset window | SHIFT + SMART CFX opens a preset picker; window position in Preferences. | FLX4, Preferences | Free (FLX4) | Done (picker and SHIFT stepping) | P2 |
 | Smart Fader | The crossfader blends tempo, swaps the low EQ between 1/3 and 2/3 of its travel, and echoes the outgoing deck at the far edge; sync forced on. | FLX4 SMART FADER | Free (FLX4) | Done: tempo blend, bass swap, and the echo at the edge with Echo out on the faders on | P1 |
-| Smart Fader source | Crossfader and channel faders, crossfader only, or channel faders only; recommended curve option. | Preferences > Controller > Mixer | Free (FLX4) | Missing: crossfader only | P2 |
+| Smart Fader source | Crossfader and channel faders, crossfader only, or channel faders only; recommended curve option. | Preferences > Controller > Mixer | Free (FLX4) | Done: Both, Crossfader or Channel faders in Settings > Mixer; no recommended curve option | P2 |
 | Fader echo | An echo tail when a fader closes (Engine DJ), the afro house echo-out move. | Not in rekordbox | n/a | Missing | P1 |
 | Stem echo out | Echo only the vocal or the drums (Serato, VirtualDJ, djay). | STEM FX | Free | Missing | P2 |
 | Crossfader FX | djay: moving the crossfader morphs with echo, filter, riser or stem transitions. | Not in rekordbox | n/a | Missing | P3 |
