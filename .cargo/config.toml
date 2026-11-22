@@ -2,3 +2,9 @@
 # from a Dubplate.app next to its binary.
 [target.'cfg(target_os = "macos")']
 runner = "scripts/run-macos.sh"
+
+[alias]
+# `cargo app` runs the desktop app with the fast profile, and `cargo cli rekordbox inspect …` the
+# command line tool.
+app = "run --profile fast -p dubplate-desktop"
+cli = "run --profile fast -p dubplate --"
