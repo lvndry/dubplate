@@ -45,6 +45,7 @@ mod stems;
 mod stems_strip;
 mod track_check;
 mod track_preview;
+mod usb_export;
 mod waveforms;
 
 use std::cell::{Cell, RefCell};
@@ -331,6 +332,9 @@ impl DubplateApp {
                 BrowserEvent::AddMusicFolders => this.add_music_folders(cx),
                 BrowserEvent::ImportRekordbox => this.set_rekordbox_import(true, cx),
                 BrowserEvent::RelinkAll => this.start_relink(None, cx),
+                BrowserEvent::ExportCrateToUsb(crate_index) => {
+                    this.export_crate_to_usb(crate_index, cx);
+                }
                 BrowserEvent::Relink(track) => this.start_relink(Some(track), cx),
                 BrowserEvent::ExportHistory { page, format } => {
                     this.export_history(page, format, cx);
@@ -579,6 +583,8 @@ impl DubplateApp {
         app.restore_jog_and_quantize(cx);
         app.restore_mixer_switches(cx);
         app.restore_smart_cfx(cx);
+        let fader_echo = app.settings.fader_echo;
+        app.engine_command(cx, |controller| controller.set_fader_echo(fader_echo));
         app.restore_sampler(cx);
         app.restore_library_sorts(cx);
         app.start_library(cx);
@@ -1138,6 +1144,11 @@ impl DubplateApp {
                 self.settings.key_lock_on_new_tracks = on;
                 self.save_settings(cx);
             }
+            Command::SetFaderEcho(on) => {
+                self.settings.fader_echo = on;
+                self.save_settings(cx);
+                self.engine_command(cx, |controller| controller.set_fader_echo(on));
+            }
             Command::Stems(deck, action) => self.apply_stem_action(deck, action, cx),
             Command::ToggleKeyLock(deck) => {
                 let locked = self.key_lock(deck);
@@ -1190,6 +1201,7 @@ impl DubplateApp {
             }
             Command::LoadSet => self.load_set(cx),
             Command::ExportSet => self.export_set(cx),
+            Command::ExportSetToUsb => self.export_set_to_usb(cx),
             Command::Browse(steps) => self
                 .browser
                 .update(cx, |browser, cx| browser.browse(steps, cx)),
