@@ -249,6 +249,8 @@ pub struct DubplateApp {
     set_scroll: ScrollHandle,
     prepare_view: Arc<prepare::PrepareViewModel>,
     prepare_generation: u64,
+    /// When the set's last track became ready, so its energy curve draws in once.
+    set_ready_at: Option<Instant>,
     track_checks: HashMap<PathBuf, TrackCheck>,
     checks_pending: HashSet<PathBuf>,
     check_generation: u64,
@@ -526,6 +528,7 @@ impl DubplateApp {
             set_scroll: ScrollHandle::new(),
             prepare_view: Arc::default(),
             prepare_generation: 0,
+            set_ready_at: None,
             track_checks: HashMap::new(),
             checks_pending: HashSet::new(),
             check_generation: 0,
@@ -2148,7 +2151,10 @@ impl DubplateApp {
                 .hardware
                 .as_ref()
                 .is_some_and(|hardware| hardware.dispatcher.held.any_shown(now))
-            || self.pad_notes.iter().flatten().any(|note| note.shows(now));
+            || self.pad_notes.iter().flatten().any(|note| note.shows(now))
+            || self
+                .set_ready_at
+                .is_some_and(|at| now.duration_since(at) < set_panel::SET_READY_DRAW);
         let moving = pulsing
             || frames.iter().any(|frame| frame.state.playing)
             || self.master_meter.is_moving()

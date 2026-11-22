@@ -253,6 +253,6 @@ Proposed, to agree on before building, in the Graphite look (quiet greys, deck c
 
 1. **Beat pulse in the deck header.** While a deck plays, its letter badge brightens for 80 ms on each beat and a little more on the downbeat. Two synced decks pulse together, a second confirmation of the beatmatch. Off when stopped.
 2. **The master meter breathes.** Segments fall back slowly (a 300 ms release) with a thin peak hold that drops after a second, so the meter moves with the music rather than flickering.
-3. **Set ready.** When the last track of a set becomes Ready, the set's "18 of 20 ready" becomes a quiet green "Set ready", once, with the energy curve drawn in from left to right over half a second.
+3. **Set ready.** When the last track of a set becomes Ready, the set's "18 of 20 ready" becomes a quiet green "Set ready", once, with the energy curve drawn in from left to right over half a second. **Done.**
 4. **A living recording timer.** While recording, the REC dot fades slowly in and out once a second, the time counts in fixed-width figures, and the file's size sits beside it.
 5. **Phase lock.** The moment the phase meter turns green, the centre line of the lanes brightens for a beat. Once, not every beat.
