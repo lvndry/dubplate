@@ -146,7 +146,8 @@ fn processing_and_turning_every_control_never_allocates() {
                 filter.set_slope(FilterSlope::TwentyFourDecibels);
             }
 
-            let extra: [&mut dyn Effect; 4] = [&mut echo, &mut reverb, &mut filter, &mut sweep];
+            sweep.process(&mut left, &mut right, &context);
+            let extra: [&mut dyn Effect; 3] = [&mut echo, &mut reverb, &mut filter];
             for effect in effects.iter_mut().map(|boxed| boxed.as_mut()).chain(extra) {
                 if block_index % 50 == 0 {
                     effect.set_enabled(!effect.is_enabled());

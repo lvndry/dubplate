@@ -1,7 +1,11 @@
 //! Type-to-search over titles, artists, genres, the folders a track is filed in and comments:
-//! every word typed must appear, in any order and case.
+//! every word typed must appear, in any order and case, and every `name:value` filter must
+//! keep the track (see [`crate::search_filter`]).
+
+use dubplate_prep::KeyFit;
 
 use crate::collection::{Collection, CrateIndex, TrackIndex};
+use crate::search_filter::{SearchFilter, TrackFacts, names_a_filter};
 
 /// A track's searchable text, folded to lower case once when the collection loads.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -15,26 +19,44 @@ impl SearchText {
     }
 }
 
-/// What the DJ typed in the search field, split into words.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+/// What the DJ typed in the search field: free words and `name:value` filters.
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct SearchQuery {
     words: Vec<String>,
+    filters: Vec<SearchFilter>,
 }
 
 impl SearchQuery {
-    /// Reads the search field's text.
+    /// Reads the search field's text. A filter still being typed, such as `bpm:`, is left out
+    /// until it reads as one.
     pub fn parse(text: &str) -> Self {
-        Self {
-            words: text.split_whitespace().map(str::to_lowercase).collect(),
+        let mut query = Self::default();
+        for word in text.split_whitespace() {
+            match SearchFilter::parse(word) {
+                Some(filter) => query.filters.push(filter),
+                None if names_a_filter(word) => {}
+                None => query.words.push(word.to_lowercase()),
+            }
         }
+        query
     }
 
     /// True when nothing was typed, so every track matches.
     pub fn is_empty(&self) -> bool {
-        self.words.is_empty()
+        self.words.is_empty() && self.filters.is_empty()
     }
 
-    /// True when every word appears in `text`.
+    /// Whether the query has filters, which read more of each track than its text.
+    pub fn has_filters(&self) -> bool {
+        !self.filters.is_empty()
+    }
+
+    /// Whether every filter keeps `track`, with `fits` the key moves `key:fits` keeps.
+    pub fn filters_keep(&self, track: &TrackFacts<'_>, fits: Option<KeyFit>) -> bool {
+        self.filters.iter().all(|filter| filter.keeps(track, fits))
+    }
+
+    /// True when every free word appears in `text`.
     pub fn matches(&self, text: &SearchText) -> bool {
         self.words.iter().all(|word| text.0.contains(word.as_str()))
     }

@@ -4,8 +4,8 @@ mod common;
 
 use common::{Deck, Stereo, largest_kink, peak, seconds_to_frames, sine};
 use dubplate_fx::{
-    Backspin, BeatLength, Brake, Crusher, Echo, Effect, EffectConfig, EffectKind, Filter,
-    FilterMode, FilterSlope, Flanger, Gate, Phaser, PingPong, Reverb, SweepFilter, create,
+    Backspin, BeatFilter, BeatLength, Brake, Crusher, Echo, Effect, EffectConfig, EffectKind,
+    Filter, FilterMode, FilterSlope, Flanger, Gate, Phaser, PingPong, Reverb, create,
 };
 
 const OUTPUT_CEILING: f32 = 4.0;
@@ -44,11 +44,11 @@ fn at_maximum(kind: EffectKind) -> Box<dyn Effect> {
             filter.set_cutoff_hz(55.0);
             Box::new(filter)
         }
-        EffectKind::SweepFilter => {
-            let mut sweep = SweepFilter::new();
-            sweep.set_resonance(1.0);
-            sweep.set_position(-0.75);
-            Box::new(sweep)
+        EffectKind::Filter => {
+            let mut filter = BeatFilter::new();
+            filter.set_depth(1.0);
+            filter.set_beat(BeatLength::QUARTER);
+            Box::new(filter)
         }
         EffectKind::Flanger => {
             let mut flanger = Flanger::new(&config);
