@@ -35,7 +35,7 @@ fn reads_tracks_with_their_names_key_and_tempo() {
 
 #[test]
 fn reads_the_auto_gain_rekordbox_measured() {
-    let (_directory, library) = common::open_fixture();
+    let (_directory, library) = open_fixture();
     let tracks = library.tracks().unwrap();
     let gain_of = |title: &str| {
         tracks

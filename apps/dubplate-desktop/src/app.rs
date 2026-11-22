@@ -4,8 +4,8 @@
 
 mod analysis;
 mod audio;
-mod auto_gain;
 mod audition;
+mod auto_gain;
 mod deck_grid;
 mod deck_panel;
 mod drop_target;

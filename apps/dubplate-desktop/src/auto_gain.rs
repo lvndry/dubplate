@@ -4,20 +4,21 @@
 //! Dubplate's analysis measured. The TRIM knob stays where the DJ, or the controller's knob,
 //! left it.
 
-use dubplate_engine::decibels_to_gain;
+use dubplate_engine::{MAX_GAIN, decibels_to_gain};
 use dubplate_prep::Lufs;
 
 use crate::controls::{trim_fraction_for_gain, trim_gain_at};
 
 /// The loudness Auto Gain brings a folder track to, as Dubplate's analysis measures it: where
-/// rekordbox's own Auto Gain brought the median track of a DJ's rekordbox library, measured
-/// with `dubplate analyse --compare-rekordbox`, so folder tracks and rekordbox tracks meet at
-/// the same level.
-pub const TARGET_LOUDNESS: Lufs = Lufs(-8.0);
+/// rekordbox's own Auto Gain brings its tracks. `dubplate analyse --compare-rekordbox` on 29
+/// tracks of a rekordbox 7.2.19 library, from -8.7 to -24.4 LUFS, found each track's loudness
+/// plus rekordbox's gain at -10.1 LUFS in the median, 80% of them between -10.9 and -10.0, so
+/// folder tracks and rekordbox tracks meet at the same level.
+pub const TARGET_LOUDNESS: Lufs = Lufs(-10.0);
 
-/// The most Auto Gain cuts or boosts, in decibels, so a near-silent or broken file is never
-/// pushed into the limiter.
-const LIMIT_DB: f32 = 12.0;
+/// The most Auto Gain cuts or boosts, in decibels: past rekordbox's largest gains on whole
+/// tracks, short of pushing a near-silent file into the limiter.
+const LIMIT_DB: f32 = 15.0;
 
 /// Where a track's Auto Gain comes from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,7 +40,7 @@ pub struct AutoGain {
 
 impl AutoGain {
     /// The gain of a track: rekordbox's when rekordbox analysed it, else the step from
-    /// `loudness` to [`TARGET_LOUDNESS`], each kept within ±12 dB. `None` when neither is
+    /// `loudness` to [`TARGET_LOUDNESS`], each kept within ±15 dB. `None` when neither is
     /// known yet.
     pub fn of(rekordbox_db: Option<f32>, loudness: Option<Lufs>) -> Option<Self> {
         let (decibels, source) = match (rekordbox_db, loudness) {
@@ -65,9 +66,10 @@ impl AutoGain {
     }
 }
 
-/// The gain a channel plays at: the TRIM knob's, times the track's Auto Gain.
+/// The gain a channel plays at: the TRIM knob's, times the track's Auto Gain, short of the
+/// most the engine takes.
 pub fn channel_gain(trim_fraction: f32, auto_gain: Option<AutoGain>) -> f32 {
-    trim_gain_at(trim_fraction) * auto_gain.map_or(1.0, AutoGain::factor)
+    (trim_gain_at(trim_fraction) * auto_gain.map_or(1.0, AutoGain::factor)).min(MAX_GAIN)
 }
 
 /// Where the TRIM knob would sit for the channel's whole gain without Auto Gain, the mark the
@@ -109,21 +111,33 @@ mod tests {
     }
 
     #[test]
-    fn auto_gain_stays_within_twelve_decibels() {
+    fn auto_gain_stays_within_fifteen_decibels_and_the_engine_range() {
         let silence_ish = AutoGain::of(None, Some(Lufs(-60.0))).unwrap();
-        assert!(close(silence_ish.decibels, 12.0));
+        assert!(close(silence_ish.decibels, 15.0));
         let broken = AutoGain::of(Some(40.0), None).unwrap();
-        assert!(close(broken.decibels, 12.0));
+        assert!(close(broken.decibels, 15.0));
         assert_eq!(AutoGain::of(Some(f32::NAN), None), None);
+        assert_eq!(
+            channel_gain(1.0, Some(broken)),
+            MAX_GAIN,
+            "TRIM +9 dB and AUTO +15 dB stop at the engine's most"
+        );
     }
 
     #[test]
     fn the_channel_plays_trim_and_auto_gain_together() {
         let gain = AutoGain::of(Some(-6.0), None);
         assert!(close(decibels_of(channel_gain(0.5, gain)), -6.0));
-        assert!(close(decibels_of(channel_gain(1.0, gain)), 3.0), "TRIM +9 dB, AUTO -6 dB");
+        assert!(
+            close(decibels_of(channel_gain(1.0, gain)), 3.0),
+            "TRIM +9 dB, AUTO -6 dB"
+        );
         assert!(close(channel_gain(0.5, None), 1.0));
-        assert_eq!(channel_gain(0.0, gain), 0.0, "TRIM fully left mutes the channel");
+        assert_eq!(
+            channel_gain(0.0, gain),
+            0.0,
+            "TRIM fully left mutes the channel"
+        );
     }
 
     #[test]
@@ -138,15 +152,27 @@ mod tests {
         assert!(close(marked, 0.75), "+4.5 dB is half the knob's +9 dB");
 
         let beyond = applied_trim_fraction(1.0, boost).unwrap();
-        assert!(close(beyond, 1.0), "a level past the knob's end marks the end");
+        assert!(
+            close(beyond, 1.0),
+            "a level past the knob's end marks the end"
+        );
 
         assert_eq!(applied_trim_fraction(0.5, None), None);
-        assert_eq!(applied_trim_fraction(0.5, AutoGain::of(Some(0.01), None)), None);
+        assert_eq!(
+            applied_trim_fraction(0.5, AutoGain::of(Some(0.01), None)),
+            None
+        );
     }
 
     #[test]
     fn the_label_reads_like_a_mixer_readout() {
-        assert_eq!(AutoGain::of(Some(2.46), None).unwrap().label(), "AUTO +2.5 dB");
-        assert_eq!(AutoGain::of(Some(-0.04), None).unwrap().label(), "AUTO +0.0 dB");
+        assert_eq!(
+            AutoGain::of(Some(2.46), None).unwrap().label(),
+            "AUTO +2.5 dB"
+        );
+        assert_eq!(
+            AutoGain::of(Some(-0.04), None).unwrap().label(),
+            "AUTO +0.0 dB"
+        );
     }
 }

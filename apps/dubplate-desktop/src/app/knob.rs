@@ -89,7 +89,9 @@ pub(super) fn render(
                     if let Some(filled) = arc(center, radius, value) {
                         window.paint_path(filled, colour);
                     }
-                    if let Some(mark) = mark_fraction.and_then(|fraction| dot(center, radius, fraction)) {
+                    if let Some(mark) =
+                        mark_fraction.and_then(|fraction| dot(center, radius, fraction))
+                    {
                         window.paint_path(mark, theme::KNOB_MARK);
                     }
                 },
@@ -105,10 +107,11 @@ fn dot(center: Point<Pixels>, radius: f32, fraction: f32) -> Option<gpui::Path<P
     let mut builder = PathBuilder::fill();
     for step in 0..=SEGMENTS {
         let around = std::f32::consts::TAU * step as f32 / SEGMENTS as f32;
-        let edge = at + point(
-            px(MARK_RADIUS * around.cos()),
-            px(MARK_RADIUS * around.sin()),
-        );
+        let edge = at
+            + point(
+                px(MARK_RADIUS * around.cos()),
+                px(MARK_RADIUS * around.sin()),
+            );
         if step == 0 {
             builder.move_to(edge);
         } else {

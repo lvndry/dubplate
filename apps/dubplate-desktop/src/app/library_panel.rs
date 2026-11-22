@@ -365,7 +365,11 @@ fn auto_gain_row(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl I
                 .child(
                     div()
                         .when(on, |name| name.font_weight(FontWeight::MEDIUM))
-                        .child(if on { "Auto Gain: on" } else { "Auto Gain: off" }),
+                        .child(if on {
+                            "Auto Gain: on"
+                        } else {
+                            "Auto Gain: off"
+                        }),
                 )
                 .child(
                     div()

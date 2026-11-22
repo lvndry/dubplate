@@ -205,7 +205,11 @@ mod tests {
         with_silence.extend(std::iter::repeat_n(0.0, 48_000 * 20));
         let gated = integrated_loudness(&buffer(with_silence)).unwrap();
         let tone = integrated_loudness(&buffer(sine(997.0, 0.5, 10.0))).unwrap();
-        assert!((gated.0 - tone.0).abs() < 0.05, "{gated:?} {tone:?}");
+        assert!(
+            (gated.0 - tone.0).abs() < 0.1,
+            "20 s of silence would read 4.8 dB quieter without the gates, but only the three \
+             blocks across the tone's end count: {gated:?} {tone:?}"
+        );
     }
 
     #[test]

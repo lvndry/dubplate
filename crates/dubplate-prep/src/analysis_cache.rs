@@ -21,7 +21,8 @@ use crate::store::is_inside_rekordbox;
 const SCHEMA_VERSION: u32 = 2;
 
 /// One migration per schema version, index = target version - 1.
-const MIGRATIONS: &[&str] = &[r#"
+const MIGRATIONS: &[&str] = &[
+    r#"
 CREATE TABLE analysis (
     track_path TEXT PRIMARY KEY,
     file_size INTEGER NOT NULL,
@@ -39,11 +40,13 @@ CREATE TABLE analysis (
 );
 
 PRAGMA user_version = 1;
-"#, r#"
+"#,
+    r#"
 ALTER TABLE analysis ADD COLUMN loudness_lufs REAL;
 
 PRAGMA user_version = 2;
-"#];
+"#,
+];
 
 /// The columns a cached analysis is read back from, in the order [`analysis_columns_of_row`] reads them.
 const ANALYSIS_COLUMNS: &str = "duration_seconds, bpm, grid_bpm, grid_first_downbeat_seconds, \

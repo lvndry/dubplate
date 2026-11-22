@@ -324,7 +324,10 @@ mod tests {
         assert!(trim_gain_at(0.25) < 1.0);
         for fraction in [0.05, 0.25, 0.5, 0.6, 0.9, 1.0] {
             let back = trim_fraction_for_gain(trim_gain_at(fraction));
-            assert!((back - fraction).abs() < 1e-4, "{fraction} came back as {back}");
+            assert!(
+                (back - fraction).abs() < 1e-4,
+                "{fraction} came back as {back}"
+            );
         }
         assert_eq!(trim_fraction_for_gain(0.0), 0.0);
         assert_eq!(trim_fraction_for_gain(100.0), 1.0);
