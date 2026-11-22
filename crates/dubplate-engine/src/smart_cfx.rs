@@ -14,10 +14,6 @@ const ENTRY_CURVE: f32 = 0.6;
 /// The crusher only bites deep into its range, so its amount rises faster: 0.66 a quarter of
 /// the way.
 const CRUSH_ENTRY_CURVE: f32 = 0.3;
-/// The mix that plays an echo or a reverb at full level on top of the music.
-const ON_TOP: f32 = 0.5;
-/// The mix that plays an effect that reshapes the music, such as a gate, on its own.
-const FULLY_WET: f32 = 1.0;
 /// The size of the Space preset's room.
 const SPACE_SIZE_PERCENT: i16 = 60;
 
@@ -80,21 +76,36 @@ impl SmartCfx {
                 EffectKind::Reverb,
                 Some(ParameterValue::Percent(SPACE_SIZE_PERCENT)),
                 1.0,
-                ON_TOP,
+                PresetMix::OnTop,
             ),
             SmartCfx::DubEcho => recipe(
                 EffectKind::Echo,
                 beats(BeatLength::THREE_QUARTERS),
                 0.8,
-                ON_TOP,
+                PresetMix::OnTop,
             ),
             SmartCfx::Crush => Recipe {
                 entry: CRUSH_ENTRY_CURVE,
-                ..recipe(EffectKind::Crusher, None, 1.0, FULLY_WET)
+                ..recipe(EffectKind::Crusher, None, 1.0, PresetMix::FullyWet)
             },
-            SmartCfx::Chop => recipe(EffectKind::Gate, beats(BeatLength::EIGHTH), 1.0, FULLY_WET),
-            SmartCfx::Jet => recipe(EffectKind::Flanger, beats(BeatLength::FOUR), 1.0, FULLY_WET),
-            SmartCfx::Phase => recipe(EffectKind::Phaser, beats(BeatLength::TWO), 1.0, FULLY_WET),
+            SmartCfx::Chop => recipe(
+                EffectKind::Gate,
+                beats(BeatLength::EIGHTH),
+                1.0,
+                PresetMix::FullyWet,
+            ),
+            SmartCfx::Jet => recipe(
+                EffectKind::Flanger,
+                beats(BeatLength::FOUR),
+                1.0,
+                PresetMix::FullyWet,
+            ),
+            SmartCfx::Phase => recipe(
+                EffectKind::Phaser,
+                beats(BeatLength::TWO),
+                1.0,
+                PresetMix::FullyWet,
+            ),
         }
     }
 
@@ -112,8 +123,29 @@ struct Recipe {
     kind: EffectKind,
     parameter: Option<ParameterValue>,
     depth: f32,
-    mix: f32,
+    mix: PresetMix,
     entry: f32,
+}
+
+/// Where a preset's mix ends at the end of the knob.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PresetMix {
+    /// An echo or a reverb at full level on top of the music.
+    OnTop,
+    /// An effect that reshapes the music, such as a gate, on its own.
+    FullyWet,
+}
+
+impl PresetMix {
+    /// The effect's mix for an `amount` of the knob. An echo or a reverb rises along an audio
+    /// taper, the square of its mix, so it takes the square root of the amount and comes in as
+    /// quickly as the presets that reshape the music.
+    fn at(self, amount: f32) -> f32 {
+        match self {
+            Self::OnTop => 0.5 * amount.sqrt(),
+            Self::FullyWet => amount,
+        }
+    }
 }
 
 impl fmt::Display for SmartCfx {
@@ -175,7 +207,7 @@ impl SmartCfxRack {
                 let recipe = preset.recipe();
                 let amount = travel.powf(recipe.entry);
                 effect.set_depth(amount * recipe.depth);
-                effect.set_mix(amount * recipe.mix);
+                effect.set_mix(recipe.mix.at(amount));
             }
             effect.set_enabled(engaged);
         }
