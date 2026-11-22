@@ -64,7 +64,7 @@ impl DubplateApp {
                 cx.background_executor().timer(DECODE_WAIT).await;
                 let waiting =
                     this.update(cx, |this, _| this.untouched_since_load(deck, generation));
-                if waiting != Ok(true) {
+                if !matches!(waiting, Ok(true)) {
                     return;
                 }
             }

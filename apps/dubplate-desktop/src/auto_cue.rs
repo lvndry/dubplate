@@ -83,7 +83,7 @@ pub fn earliest_saved_cue(
 
 #[cfg(test)]
 mod tests {
-    use dubplate_engine::BeatGrid;
+    use dubplate_rekordbox::analysis::{Beat, BeatGrid};
 
     use super::*;
 
@@ -124,7 +124,15 @@ mod tests {
 
     #[test]
     fn the_cue_lands_on_the_beat_the_sound_starts_with() {
-        let grid = BeatGrid::new(120.0, 0.5).unwrap();
+        let grid = BeatGrid {
+            beats: (0..8_u16)
+                .map(|index| Beat {
+                    beat_in_bar: index % 4 + 1,
+                    tempo_hundredths: 12_000,
+                    time_ms: 500 + u32::from(index) * 500,
+                })
+                .collect(),
+        };
         let beats = BeatMarks::from_grid(&grid);
         assert!((cue_at_first_sound(1.03, Some(&beats)) - 1.0).abs() < 1e-9);
         assert!((cue_at_first_sound(1.25, Some(&beats)) - 1.25).abs() < 1e-9);
