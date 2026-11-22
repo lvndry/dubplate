@@ -323,6 +323,11 @@ fn track_row(
     let duplicate = warnings
         .iter()
         .find(|warning| warning.position == WarningPosition::Track { index: position });
+    let readiness = if row.ready.is_ready() {
+        "Ready".to_owned()
+    } else {
+        row.ready.details().replace('\n', ", ")
+    };
     let dragged = DraggedSetTrack {
         position,
         title: title.clone().into(),
@@ -330,7 +335,7 @@ fn track_row(
     div()
         .id(("set-track", position))
         .accessible_button(format!(
-            "Track {}: {title} by {artist}. {bpm} BPM. Key {key}. Energy {energy}. {badge}",
+            "Track {}: {title} by {artist}. {bpm} BPM. Key {key}. Energy {energy}. {readiness}",
             position + 1
         ))
         .role(gpui::Role::ListItem)
