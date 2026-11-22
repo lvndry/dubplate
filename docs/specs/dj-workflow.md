@@ -119,7 +119,7 @@ Statuses are as audited on 22 November 2026, on `main` with a second Dubplate ru
 
 **W3 Beat grid on the waveforms.** A line per beat, the downbeat stronger, bar numbers. Status: lines **Done**; bar numbers **In progress** with the beat counter.
 
-**W4 Marks on the scrolling waveform.** Cue point, hot cues in colour, memory cues, the loop and its length, the slip shadow. Status: **Done** except hot cue colours, **In progress** (cues work).
+**W4 Marks on the scrolling waveform.** Cue point, hot cues in colour, memory cues, the loop and its length, the slip shadow. Status: **Done.**
 
 **W5 Folder tracks.** A waveform for every track. Status: **Done.**
 
@@ -131,9 +131,9 @@ Statuses are as audited on 22 November 2026, on `main` with a second Dubplate ru
 
 **H3 Delete a hot cue.** SHIFT + pad. Status: **Done.**
 
-**H4 Colours and names.** rekordbox's colours and comments on screen and pads. Status: **In progress.**
+**H4 Colours and names.** rekordbox's colours and comments on screen and pads. Status: **Done** on screen (own colour, else rekordbox's COLORFUL default for the pad); the FLX4's pads only light on or off.
 
-**H5 Hot loops.** Status: **In progress.**
+**H5 Hot loops.** A hot loop's pad starts its loop; an empty pad pressed during a loop keeps it as a hot loop. Status: **Done.**
 
 **H6 Hot cues survive.** Must: a hot cue set in Dubplate is there next time the track loads, after a relaunch, and in the rekordbox XML. Status: **Done** (kept per track in Dubplate's database, in place of rekordbox's cues, and exported).
 
