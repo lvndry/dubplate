@@ -177,6 +177,9 @@ fn open_window(devices: DeviceAccess, cx: &mut App) -> anyhow::Result<()> {
         app_owns_titlebar_drag: true,
         inactive_frame_interval: None,
         low_power_frame_interval: None,
+        // The decks must scroll at the display's rate exactly when the Mac is busiest; a frame
+        // of both lanes paints in about 3 ms, well inside a 120 Hz frame.
+        thermal_frame_interval: None,
         app_id: Some("dubplate".into()),
         focus: !devices.is_offline(),
         ..WindowOptions::default()
