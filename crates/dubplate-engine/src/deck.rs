@@ -977,11 +977,7 @@ impl Deck {
     /// Applies the channel fader and crossfader gain to the deck's block.
     pub(crate) fn apply_channel_gain(&mut self) {
         let (left_channel, right_channel) = self.block.channels_mut();
-        for (left, right) in left_channel.iter_mut().zip(right_channel.iter_mut()) {
-            let gain = self.channel_gain.next_value();
-            *left *= gain;
-            *right *= gain;
-        }
+        self.channel_gain.apply(left_channel, right_channel);
     }
 
     /// Adds the deck's block into the master block and returns its peak.

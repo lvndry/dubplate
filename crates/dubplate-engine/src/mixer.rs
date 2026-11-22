@@ -428,11 +428,7 @@ impl Renderer {
             .process(headphones_left, headphones_right);
         raise_peak(&self.shared.headphone_peak, self.headphones.block.peak());
         let (left_channel, right_channel) = self.master_block.channels_mut();
-        for (left, right) in left_channel.iter_mut().zip(right_channel.iter_mut()) {
-            let gain = self.master_gain.next_value();
-            *left *= gain;
-            *right *= gain;
-        }
+        self.master_gain.apply(left_channel, right_channel);
         self.master_limiter.process(left_channel, right_channel);
         if let Some(recording) = &mut self.recording {
             recording.write(&self.master_block);
