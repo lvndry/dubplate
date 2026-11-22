@@ -258,14 +258,24 @@ mod tests {
     #[test]
     fn hide_played_adds_played_no_and_takes_it_out_again() {
         assert_eq!(toggle_hide_played(""), "played:no");
-        assert_eq!(toggle_hide_played("kabza bpm:112-114"), "kabza bpm:112-114 played:no");
-        assert_eq!(toggle_hide_played("kabza played:no bpm:112"), "kabza bpm:112");
+        assert_eq!(
+            toggle_hide_played("kabza bpm:112-114"),
+            "kabza bpm:112-114 played:no"
+        );
+        assert_eq!(
+            toggle_hide_played("kabza played:no bpm:112"),
+            "kabza bpm:112"
+        );
         assert_eq!(
             toggle_hide_played("played:yes kabza"),
             "kabza played:no",
             "played:yes gives way to played:no"
         );
-        assert_eq!(toggle_hide_played("Played:N"), "", "any spelling of played:no");
+        assert_eq!(
+            toggle_hide_played("Played:N"),
+            "",
+            "any spelling of played:no"
+        );
     }
 
     fn facts() -> TrackFacts<'static> {
