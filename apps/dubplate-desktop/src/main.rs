@@ -45,8 +45,7 @@ mod widgets;
 
 use gpui::prelude::*;
 use gpui::{
-    App, Bounds, KeyBinding, TitlebarOptions, WindowBounds, WindowOptions, point,
-    px, size,
+    App, Bounds, KeyBinding, TitlebarOptions, WindowBounds, WindowOptions, point, px, size,
 };
 
 use crate::app::DubplateApp;

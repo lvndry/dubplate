@@ -83,7 +83,11 @@ pub fn menus(app_name: &'static str, state: MenuState) -> Vec<Menu> {
                 .disabled(!state.missing_files),
         ]),
         Menu::new("Edit").items([
-            MenuItem::os_action("Undo", Perform(Command::EditSet(SetEdit::Undo)), OsAction::Undo),
+            MenuItem::os_action(
+                "Undo",
+                Perform(Command::EditSet(SetEdit::Undo)),
+                OsAction::Undo,
+            ),
             MenuItem::os_action("Redo", Redo, OsAction::Redo),
             MenuItem::separator(),
             MenuItem::os_action("Cut", Cut, OsAction::Cut),
@@ -164,7 +168,10 @@ mod tests {
     fn the_menu_bar_has_what_a_mac_app_has() {
         let menus = menus("Dubplate", state());
         let names: Vec<&str> = menus.iter().map(|menu| menu.name.as_ref()).collect();
-        assert_eq!(names, ["Dubplate", "File", "Edit", "View", "Window", "Help"]);
+        assert_eq!(
+            names,
+            ["Dubplate", "File", "Edit", "View", "Window", "Help"]
+        );
         for (menu, name) in [
             ("Dubplate", "About Dubplate"),
             ("Dubplate", "Settings\u{2026}"),
