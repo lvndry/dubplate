@@ -10,6 +10,7 @@ use dubplate_engine::DeckId;
 use dubplate_prep::{AudioAnalysis, Key};
 use dubplate_stems::StemsStatus;
 use gpui::component::input::{Input, InputEvent, InputState};
+use gpui::component::menu::ContextMenuExt;
 use gpui::prelude::*;
 use gpui::{
     App, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable, MouseButton,
@@ -37,6 +38,7 @@ use crate::search_filter::{
 };
 use crate::stems::{StemStatuses, stems_cell};
 use crate::theme;
+use crate::track_menu::{self, RowFacts, RowPlace};
 use crate::tracklist::TracklistFormat;
 use crate::widgets::{Emphasis, InteractiveControl, button, tooltip};
 
@@ -91,6 +93,8 @@ pub enum BrowserEvent {
     },
     /// Load a track on whichever deck is free.
     LoadOnFreeDeck(TrackIndex),
+    /// The DJ pressed a track row, so the keys act on the library's tracks.
+    TookKeys,
     /// Ask for music folders to add to the library.
     AddMusicFolders,
     /// Make rekordbox's collection part of the library.
@@ -1391,6 +1395,17 @@ impl Browser {
             track,
             title: entry.row.title.clone(),
         };
+        let has_path = entry.track.file_path.is_some();
+        let menu_facts = RowFacts {
+            place: RowPlace::Library,
+            file_present: has_path && !missing,
+            has_path,
+            can_separate: matches!(
+                self.stems_status(entry),
+                StemsStatus::None | StemsStatus::Failed(_)
+            ),
+        };
+        let keys = self.table_focus.clone();
         div()
             .id(("track", position))
             .role(gpui::Role::Row)
@@ -1420,9 +1435,7 @@ impl Browser {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, event: &MouseDownEvent, window, cx| {
-                    window.focus(&this.table_focus, cx);
-                    this.pane = BrowserPane::Tracks;
-                    this.select(Some(track), cx);
+                    this.take_row(track, window, cx);
                     if event.click_count == 2 {
                         cx.emit(BrowserEvent::LoadOnFreeDeck(track));
                     }
@@ -1563,6 +1576,22 @@ impl Browser {
                         }),
                 )
             })
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |this, _: &MouseDownEvent, window, cx| {
+                    this.take_row(track, window, cx);
+                }),
+            )
+            .context_menu(move |menu, _, _| track_menu::build(menu, menu_facts, keys.clone()))
+    }
+
+    /// Selects `track` and gives the table the keys, as pressing its row does, before a click
+    /// or a context menu acts on it.
+    fn take_row(&mut self, track: TrackIndex, window: &mut Window, cx: &mut Context<'_, Self>) {
+        window.focus(&self.table_focus, cx);
+        self.pane = BrowserPane::Tracks;
+        self.select(Some(track), cx);
+        cx.emit(BrowserEvent::TookKeys);
     }
 }
 

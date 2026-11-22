@@ -43,6 +43,7 @@ mod slider;
 mod smart;
 mod stems;
 mod stems_strip;
+mod track_actions;
 mod track_check;
 mod track_preview;
 mod waveforms;
@@ -329,6 +330,10 @@ impl DubplateApp {
                     None => this.show_notice(NoticePlace::Window, "Both decks are playing.", cx),
                 },
                 BrowserEvent::AddMusicFolders => this.add_music_folders(cx),
+                BrowserEvent::TookKeys => {
+                    this.prepare_focus = PrepareFocus::Library;
+                    cx.notify();
+                }
                 BrowserEvent::ImportRekordbox => this.set_rekordbox_import(true, cx),
                 BrowserEvent::RelinkAll => this.start_relink(None, cx),
                 BrowserEvent::Relink(track) => this.start_relink(Some(track), cx),
@@ -1093,10 +1098,14 @@ impl DubplateApp {
             }
             Command::PreviewSelected => self.toggle_track_preview(cx),
             Command::LoadSelected(deck) => {
-                if let Some(track) = self.browser.read(cx).selected() {
+                if let Some(track) = self.selected_track(cx) {
                     self.load(deck, LoadSource::Collection(track), cx);
                 }
             }
+            Command::RevealSelected => self.reveal_selected(cx),
+            Command::CopySelectedPath => self.copy_selected_path(cx),
+            Command::SeparateSelectedStems => self.separate_selected_stems(cx),
+            Command::RelinkSelected => self.relink_selected(cx),
             Command::InstantDouble(deck) => self.instant_double(deck, cx),
             Command::NudgeTempo(deck, direction) => {
                 let slider = nudged_tempo_slider(
