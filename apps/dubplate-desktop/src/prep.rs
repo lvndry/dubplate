@@ -9,6 +9,7 @@ use dubplate_prep::{
     ready_report,
 };
 use dubplate_rekordbox::TrackAnalysis;
+use dubplate_rekordbox::analysis::{Beat, BeatGrid, SongStructure};
 
 use crate::collection::{Collection, CollectionTrack, TrackOrigin};
 
@@ -56,6 +57,118 @@ fn prep_track(entry: &CollectionTrack) -> Option<PrepTrack> {
     })
 }
 
+/// Beats in a bar.
+const BEATS_PER_BAR: i32 = 4;
+
+/// The DJ's fix of rekordbox's beat grid for one track, kept in the set store.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct GridCorrection {
+    /// How far every beat moves, in milliseconds, later when positive.
+    pub offset_ms: i32,
+    /// How many beats the bars move, later when positive.
+    pub downbeat_shift: i32,
+}
+
+impl GridCorrection {
+    /// The correction a set entry keeps.
+    pub fn of(entry: &SetEntry) -> Self {
+        Self {
+            offset_ms: entry.grid_offset_ms,
+            downbeat_shift: entry.downbeat_shift,
+        }
+    }
+
+    /// rekordbox's grid with this correction: every beat moved by the offset, beats that would
+    /// fall before the start left out, and the bars counted from the shifted downbeat.
+    pub fn apply(self, grid: &BeatGrid) -> BeatGrid {
+        let beats = grid
+            .beats
+            .iter()
+            .filter_map(|beat| {
+                let time_ms = i64::from(beat.time_ms) + i64::from(self.offset_ms);
+                let in_bar = (i32::from(beat.beat_in_bar) - 1 - self.downbeat_shift)
+                    .rem_euclid(BEATS_PER_BAR)
+                    + 1;
+                Some(Beat {
+                    time_ms: u32::try_from(time_ms).ok()?,
+                    beat_in_bar: u16::try_from(in_bar).ok()?,
+                    ..*beat
+                })
+            })
+            .collect();
+        BeatGrid { beats }
+    }
+}
+
+/// What a set track's analysis holds for checking it: its grid, its phrases and its
+/// waveforms. Read off the interface thread.
+#[derive(Debug, Clone)]
+pub struct TrackDetail {
+    /// rekordbox's grid, before the DJ's correction.
+    pub grid: Option<BeatGrid>,
+    /// rekordbox's phrases.
+    pub structure: Option<SongStructure>,
+    /// The whole track's waveform.
+    pub overview: Option<crate::waveform::OverviewWaveform>,
+    /// The waveform at the lanes' zoom, for judging the grid against the music.
+    pub zoomed: Option<std::sync::Arc<crate::waveform::ZoomedWaveform>>,
+}
+
+/// Reads a track's analysis for the track check. Disk work: run it off the interface thread.
+pub fn track_detail(entry: &CollectionTrack, share_directory: Option<&Path>) -> TrackDetail {
+    let analysis = read_analysis(entry, share_directory);
+    TrackDetail {
+        grid: analysis
+            .as_ref()
+            .and_then(|analysis| analysis.beat_grid.clone()),
+        structure: analysis
+            .as_ref()
+            .and_then(|analysis| analysis.song_structure.clone()),
+        overview: analysis.as_ref().and_then(|analysis| {
+            crate::waveform::OverviewWaveform::from_waveforms(&analysis.waveforms)
+        }),
+        zoomed: analysis
+            .as_ref()
+            .and_then(|analysis| {
+                crate::waveform::ZoomedWaveform::from_waveforms(
+                    &analysis.waveforms,
+                    crate::waveform::Zoom::DEFAULT,
+                )
+            })
+            .map(std::sync::Arc::new),
+    }
+}
+
+/// rekordbox's analysis of a track from the collection, when it has one.
+fn read_analysis(entry: &CollectionTrack, share_directory: Option<&Path>) -> Option<TrackAnalysis> {
+    match (
+        entry.origin,
+        entry.track.analysis_path.as_deref(),
+        share_directory,
+    ) {
+        (TrackOrigin::Rekordbox, Some(analysis_path), Some(share_directory))
+            if !analysis_path.is_empty() =>
+        {
+            TrackAnalysis::read(share_directory, analysis_path).ok()
+        }
+        _ => None,
+    }
+}
+
+/// The downbeat nearest to `seconds` on `grid`: where I and O put a mix cue.
+pub fn nearest_bar_ms(grid: &BeatGrid, seconds: f64) -> Option<u32> {
+    let target = seconds * 1000.0;
+    grid.beats
+        .iter()
+        .filter(|beat| beat.beat_in_bar == 1)
+        .min_by(|first, second| {
+            (f64::from(first.time_ms) - target)
+                .abs()
+                .total_cmp(&(f64::from(second.time_ms) - target).abs())
+        })
+        .map(|beat| beat.time_ms)
+}
+
 /// What reading a set track's file and analysis found.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TrackCheck {
@@ -83,25 +196,19 @@ impl TrackCheck {
 
 /// Looks at a track's file and rekordbox's analysis of it. Disk work: run it off the interface
 /// thread.
-pub fn check_track(entry: &CollectionTrack, share_directory: Option<&Path>) -> TrackCheck {
+pub fn check_track(
+    entry: &CollectionTrack,
+    share_directory: Option<&Path>,
+    correction: GridCorrection,
+) -> TrackCheck {
     let file_found = entry.track.file_path.as_deref().is_some_and(Path::is_file);
-    let analysis = match (
-        entry.origin,
-        entry.track.analysis_path.as_deref(),
-        share_directory,
-    ) {
-        (TrackOrigin::Rekordbox, Some(analysis_path), Some(share_directory))
-            if !analysis_path.is_empty() =>
-        {
-            TrackAnalysis::read(share_directory, analysis_path).ok()
-        }
-        _ => None,
-    };
+    let analysis = read_analysis(entry, share_directory);
     let grid = analysis
         .as_ref()
         .and_then(|analysis| analysis.beat_grid.as_ref())
-        .filter(|grid| !grid.beats.is_empty());
-    let proposal = match (grid, &analysis) {
+        .filter(|grid| !grid.beats.is_empty())
+        .map(|grid| correction.apply(grid));
+    let proposal = match (&grid, &analysis) {
         (Some(grid), Some(analysis)) => propose_mix_cues(grid, analysis.song_structure.as_ref()),
         _ => ProposedCues {
             mix_in: None,
@@ -115,13 +222,12 @@ pub fn check_track(entry: &CollectionTrack, share_directory: Option<&Path>) -> T
     }
 }
 
-/// Whether a set track is ready to mix. Until the DJ can confirm a grid by ear, a grid
-/// rekordbox analysed counts as confirmed. A track not checked yet is reported by what is known
-/// without the disk.
+/// Whether a set track is ready to mix: its grid confirmed by the DJ, both mix cues, a known
+/// key and its file. A track not checked yet is reported by what is known without the disk.
 pub fn readiness(track: &PrepTrack, check: Option<&TrackCheck>, entry: &SetEntry) -> ReadyReport {
     ready_report(&TrackReadiness {
         file_found: check.is_none_or(|check| check.file_found),
-        grid_confirmed: entry.grid_confirmed || check.is_some_and(|check| check.has_grid),
+        grid_confirmed: entry.grid_confirmed,
         has_mix_in_cue: entry.mix_in_ms.is_some(),
         has_mix_out_cue: entry.mix_out_ms.is_some(),
         key_known: track.key.is_some(),
@@ -244,12 +350,22 @@ mod tests {
         let cues = SetEntry {
             mix_in_ms: Some(1),
             mix_out_ms: Some(2),
+            grid_confirmed: true,
             ..SetEntry::default()
         };
         assert!(readiness(&known, Some(&check), &cues).is_ready());
         assert_eq!(
             readiness(&known, Some(&check), &SetEntry::default()).badge(),
-            "No mix-in cue +1"
+            "Grid unconfirmed +2"
+        );
+        let unconfirmed = SetEntry {
+            grid_confirmed: false,
+            ..cues.clone()
+        };
+        assert_eq!(
+            readiness(&known, Some(&check), &unconfirmed).badge(),
+            "Grid unconfirmed",
+            "a grid rekordbox analysed still waits for the DJ to confirm it"
         );
         let missing = TrackCheck {
             file_found: false,
@@ -261,8 +377,57 @@ mod tests {
         );
         assert_eq!(
             readiness(&track(None, None), None, &cues).badge(),
-            "Grid unconfirmed +1"
+            "Key unknown"
         );
+    }
+
+    fn beat(time_ms: u32, beat_in_bar: u16) -> Beat {
+        Beat {
+            beat_in_bar,
+            tempo_hundredths: 12_000,
+            time_ms,
+        }
+    }
+
+    #[test]
+    fn a_correction_moves_the_beats_and_the_bars() {
+        let grid = BeatGrid {
+            beats: vec![
+                beat(0, 1),
+                beat(500, 2),
+                beat(1000, 3),
+                beat(1500, 4),
+                beat(2000, 1),
+            ],
+        };
+        let later = GridCorrection {
+            offset_ms: 20,
+            downbeat_shift: 1,
+        }
+        .apply(&grid);
+        let shown: Vec<(u32, u16)> = later
+            .beats
+            .iter()
+            .map(|beat| (beat.time_ms, beat.beat_in_bar))
+            .collect();
+        assert_eq!(shown, [(20, 4), (520, 1), (1020, 2), (1520, 3), (2020, 4)]);
+        let earlier = GridCorrection {
+            offset_ms: -10,
+            downbeat_shift: -1,
+        }
+        .apply(&grid);
+        assert_eq!(
+            earlier.beats.len(),
+            4,
+            "a beat moved before the start is left out"
+        );
+        assert_eq!(
+            (earlier.beats[0].time_ms, earlier.beats[0].beat_in_bar),
+            (490, 3)
+        );
+        assert_eq!(nearest_bar_ms(&later, 1.9), Some(520));
+        assert_eq!(nearest_bar_ms(&later, 0.1), Some(520));
+        assert_eq!(nearest_bar_ms(&BeatGrid { beats: Vec::new() }, 1.0), None);
     }
 
     #[test]

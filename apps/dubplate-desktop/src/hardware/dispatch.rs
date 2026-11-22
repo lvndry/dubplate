@@ -187,6 +187,9 @@ impl Dispatcher {
             (Button::HeadphoneCue(deck), Layer::Normal) if pressed => {
                 Some(Command::ToggleHeadphoneCue(deck_id(deck)))
             }
+            (Button::HeadphoneCue(deck), Layer::Shift) if pressed => {
+                Some(Command::TapTempo(deck_id(deck)))
+            }
             (Button::MasterCue, Layer::Normal) if pressed => Some(Command::ToggleMasterCue),
             (Button::BeatFxSelect, layer) if pressed => {
                 let steps = if layer == Layer::Shift { -1 } else { 1 };
@@ -744,7 +747,7 @@ mod tests {
     }
 
     #[test]
-    fn the_headphone_section_cues_channels_and_the_master_and_sets_mix_and_level() {
+    fn the_headphone_section_cues_and_sets_mix_and_level_and_shift_cue_taps_the_tempo() {
         let mut dispatcher = Dispatcher::default();
         let commands = run(
             &mut dispatcher,
@@ -765,6 +768,7 @@ mod tests {
                 Command::ToggleMasterCue,
                 Command::SetControl(Control::HeadphoneMix, 1.0),
                 Command::SetControl(Control::HeadphoneLevel, 0.0),
+                Command::TapTempo(DeckId::A),
             ]
         );
     }

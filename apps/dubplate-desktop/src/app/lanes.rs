@@ -208,7 +208,7 @@ impl BandColours {
     }
 }
 
-fn paint_lane(
+pub(super) fn paint_lane(
     bounds: Bounds<Pixels>,
     zoomed: Option<&ZoomedWaveform>,
     beats: Option<&BeatMarks>,

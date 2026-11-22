@@ -18,6 +18,7 @@ mod pads;
 mod prepare;
 mod set_panel;
 mod slider;
+mod track_check;
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
@@ -60,7 +61,7 @@ use crate::library::LibrarySources;
 use crate::loading::{LoadRefusal, LoadSource, check_deck_free, check_file};
 use crate::meter::PeakMeter;
 use crate::pads::next_mode;
-use crate::prep::{Catalogue, TrackCheck};
+use crate::prep::{Catalogue, GridCorrection, TrackCheck, TrackDetail};
 use crate::set::SetEditor;
 use crate::settings::Settings;
 use crate::shortcuts::{Perform, WINDOW_CONTEXT};
@@ -109,6 +110,7 @@ struct Notice {
 struct HitAreas {
     sliders: [Cell<Option<Bounds<Pixels>>>; Slider::ALL.len()],
     overviews: [Cell<Option<Bounds<Pixels>>>; DECK_COUNT],
+    check_overview: Cell<Option<Bounds<Pixels>>>,
     effect_levels: [Cell<Option<Bounds<Pixels>>>; EFFECT_UNIT_COUNT],
 }
 
@@ -168,6 +170,9 @@ pub struct DubplateApp {
     track_checks: HashMap<PathBuf, TrackCheck>,
     checks_pending: HashSet<PathBuf>,
     check_generation: u64,
+    track_detail: Option<(PathBuf, Arc<TrackDetail>)>,
+    detail_pending: Option<PathBuf>,
+    check_cursor_seconds: f64,
     catalogue: Arc<Catalogue>,
     effect_menu: Option<EffectUnitId>,
     refocus_window: bool,
@@ -286,6 +291,9 @@ impl DubplateApp {
             track_checks: HashMap::new(),
             checks_pending: HashSet::new(),
             check_generation: 0,
+            track_detail: None,
+            detail_pending: None,
+            check_cursor_seconds: 0.0,
             catalogue: Arc::default(),
             effect_menu: None,
             refocus_window: false,
@@ -409,12 +417,18 @@ impl DubplateApp {
         let share_directory = self
             .collection()
             .and_then(|collection| collection.share_directory().map(Path::to_path_buf));
+        let correction = self.grid_correction(&track);
         cx.spawn(async move |this, cx| {
             let prepared = cx
                 .background_executor()
-                .spawn(
-                    async move { prepare_track(&track, share_directory.as_deref(), Zoom::DEFAULT) },
-                )
+                .spawn(async move {
+                    prepare_track(
+                        &track,
+                        share_directory.as_deref(),
+                        Zoom::DEFAULT,
+                        correction,
+                    )
+                })
                 .await;
             this.update(cx, |this, cx| {
                 this.finish_load(deck, generation, prepared, cx);
@@ -532,6 +546,7 @@ impl DubplateApp {
                     .is_some_and(|headphones| headphones.is_cued(deck));
                 self.engine_command(cx, |controller| controller.set_headphone_cue(deck, !cued));
             }
+            Command::TapTempo(deck) => self.tap_tempo(deck, cx),
             Command::ToggleMasterCue => {
                 let cued = self
                     .headphones()
@@ -566,6 +581,10 @@ impl DubplateApp {
             Command::MakeTempoMaster(deck) => self.engine_command(cx, |controller| {
                 controller.set_master_tempo(MasterTempo::Deck(deck))
             }),
+            Command::ToggleKeyLock(deck) => {
+                let locked = self.key_lock(deck);
+                self.engine_command(cx, |controller| controller.set_key_lock(deck, !locked));
+            }
             Command::CycleTempoRange(deck) => {
                 let range = self.tempo_range(deck).next();
                 self.engine_command(cx, |controller| controller.set_tempo_range(deck, range));
@@ -578,6 +597,7 @@ impl DubplateApp {
             Command::MoveSelection(direction) => {
                 if self.mode == Mode::Prepare && self.prepare_focus == PrepareFocus::Set {
                     self.move_set_selection(direction);
+                    self.ensure_track_detail(cx);
                 } else {
                     self.browser
                         .update(cx, |browser, cx| browser.move_selection(direction, cx));
@@ -950,6 +970,52 @@ impl DubplateApp {
         cx.notify();
     }
 
+    /// A tap on a deck's beat. Enough taps give a track without a beat grid its tempo and its
+    /// beats, so sync and the effects follow it. A track with rekordbox's grid keeps it.
+    fn tap_tempo(&mut self, deck: DeckId, cx: &mut Context<'_, Self>) {
+        if self.deck(deck).visuals().is_none() {
+            return;
+        }
+        let has_grid = self
+            .engine
+            .as_ref()
+            .is_ok_and(|engine| engine.controller.beat_grid(deck).is_some());
+        if has_grid && !self.deck(deck).tapped_grid {
+            self.show_notice(
+                NoticePlace::Deck(deck),
+                "This track keeps rekordbox's beat grid; tap tempo is for tracks without one.",
+                cx,
+            );
+            return;
+        }
+        let heard = self.heard_seconds(deck);
+        let Some(tapped) = self.decks[deck.index()].tap_tempo.tap(heard) else {
+            return;
+        };
+        let grid = match dubplate_engine::BeatGrid::new(tapped.bpm, tapped.first_beat_seconds) {
+            Ok(grid) => grid,
+            Err(error) => {
+                self.show_notice(NoticePlace::Deck(deck), error.to_string(), cx);
+                return;
+            }
+        };
+        self.decks[deck.index()].tapped_grid = true;
+        self.engine_command(cx, |controller| controller.set_beat_grid(deck, Some(grid)));
+    }
+
+    /// The DJ's fix of a track's grid, when the track is in the set.
+    fn grid_correction(&self, track: &CollectionTrack) -> GridCorrection {
+        let entry = track.track.file_path.as_deref().and_then(|path| {
+            let editor = self.set_editor.as_ref()?;
+            editor
+                .set()
+                .entries
+                .iter()
+                .find(|entry| entry.track_path == path)
+        });
+        entry.map(GridCorrection::of).unwrap_or_default()
+    }
+
     /// The headphone section, when the engine runs.
     pub(super) fn headphones(&self) -> Option<HeadphoneSettings> {
         self.engine
@@ -964,6 +1030,13 @@ impl DubplateApp {
             .as_ref()
             .ok()
             .map(|engine| engine.controller.tempo_state(deck))
+    }
+
+    /// Whether a deck's key lock is on.
+    pub(super) fn key_lock(&self, deck: DeckId) -> bool {
+        self.engine
+            .as_ref()
+            .is_ok_and(|engine| engine.controller.key_lock(deck))
     }
 
     /// How far a deck's tempo slider reaches.
@@ -1410,7 +1483,7 @@ impl Render for DubplateApp {
                             .clone()
                             .cached(StyleRefinement::default().flex_1().min_h_0().w_full()),
                     ),
-                Mode::Prepare => root.child(
+                Mode::Prepare => root.child(track_check::render(self, cx)).child(
                     div()
                         .flex()
                         .flex_1()
