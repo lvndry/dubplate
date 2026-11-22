@@ -2,7 +2,16 @@ use std::sync::{Arc, OnceLock};
 
 use crate::curves::Ramp;
 use crate::mixer::RetireQueue;
+use crate::stems::{
+    AttachedStems, PART_CHANNELS, PartFrame, STEM_CHANNELS, Stem, all_full, mix_parts,
+};
 use crate::track::{FrameRead, TrackBuffer};
+
+/// The gain of each stem for one output frame, in the order of [`Stem::ALL`].
+pub(crate) type StemGains = [f32; Stem::COUNT];
+
+/// Every stem at its level in the track.
+pub(crate) const UNITY_STEM_GAINS: StemGains = [1.0; Stem::COUNT];
 
 /// Fades that can overlap on one deck, for jumps that come faster than a fade lasts.
 const MAX_TAILS: usize = 8;
@@ -11,6 +20,7 @@ const MAX_TAILS: usize = 8;
 /// so the waveform never steps from one value to another between two samples.
 struct Tail {
     track: Arc<TrackBuffer>,
+    reads_stems: bool,
     position: f64,
     step: f64,
     start_gain: f32,
@@ -31,6 +41,8 @@ impl Tail {
 /// positions it just left.
 pub(crate) struct Voice {
     pub(crate) track: Option<Arc<TrackBuffer>>,
+    /// The voice plays the track's stems, each at its gain, instead of the track.
+    reads_stems: bool,
     /// The playhead, in track frames.
     pub(crate) position: f64,
     pub(crate) transport: Ramp,
@@ -43,6 +55,7 @@ impl Voice {
     pub(crate) fn new(declick_frames: u32) -> Self {
         Self {
             track: None,
+            reads_stems: false,
             position: 0.0,
             transport: Ramp::new(0.0, declick_frames),
             tails: std::array::from_fn(|_| None),
@@ -93,6 +106,7 @@ impl Voice {
             .filter(|frames| *frames > 0);
         let tail = Tail {
             track,
+            reads_stems: self.reads_stems,
             position: self.position,
             step,
             start_gain: gain,
@@ -141,6 +155,31 @@ impl Voice {
         }
     }
 
+    /// Whether the voice plays the track's stems instead of the track.
+    pub(crate) fn reads_stems(&self) -> bool {
+        self.reads_stems
+    }
+
+    /// Switches between the track and its stems with a crossfade at the same position, as a
+    /// jump to where the playhead already is: what was playing fades out as a tail while the
+    /// other fades in.
+    pub(crate) fn set_reads_stems(
+        &mut self,
+        reads_stems: bool,
+        step: f64,
+        retire: &mut RetireQueue,
+    ) {
+        if self.reads_stems == reads_stems {
+            return;
+        }
+        let target = self.transport.target();
+        self.start_tail(step, retire);
+        self.reads_stems = reads_stems;
+        if target > 0.0 {
+            self.transport.set_target(target);
+        }
+    }
+
     /// Mixes the next frame of the playhead at `gain` and of every tail, and moves the tails
     /// on. Sets `starved` when a frame needed was not decoded yet.
     #[inline]
@@ -153,32 +192,83 @@ impl Voice {
         starved: &mut bool,
     ) -> (f32, f32) {
         let (left, right) = if gain > 0.0 {
-            self.read_playhead_with_wrap(step, looped, starved)
+            self.read_playhead_with_wrap(step, looped, &UNITY_STEM_GAINS, starved)
         } else {
             (0.0, 0.0)
         };
-        let (tail_left, tail_right) = self.next_tails(retire, starved);
+        let (tail_left, tail_right) = self.next_tails(&UNITY_STEM_GAINS, retire, starved);
         (left * gain + tail_left, right * gain + tail_right)
     }
 
-    /// The track's frame under the playhead, interpolated.
+    /// Every stem and the track at the next frame of the playhead and of every tail, unmixed,
+    /// and moves the tails on: what key lock stretches when the voice reads stems.
     #[inline]
-    pub(crate) fn read_playhead(&self, step: f64, starved: &mut bool) -> (f32, f32) {
-        self.read_playhead_with_wrap(step, false, starved)
+    pub(crate) fn next_part_frame(
+        &mut self,
+        step: f64,
+        retire: &mut RetireQueue,
+        starved: &mut bool,
+    ) -> PartFrame {
+        let mut frame = match &self.track {
+            Some(track) => self
+                .kernel
+                .read_track_parts(track, self.position, step, starved),
+            None => [0.0; PART_CHANNELS],
+        };
+        for slot in &mut self.tails {
+            let Some(tail) = slot else {
+                continue;
+            };
+            let tail_gain = tail.gain(self.declick_frames);
+            let tail_frame =
+                self.kernel
+                    .read_track_parts(&tail.track, tail.position, tail.step, starved);
+            for (sample, tail_sample) in frame.iter_mut().zip(tail_frame) {
+                *sample += tail_sample * tail_gain;
+            }
+            if tail.advance()
+                && let Some(finished) = slot.take()
+            {
+                retire.track(finished.track);
+            }
+        }
+        frame
     }
 
-    fn read_playhead_with_wrap(&self, step: f64, looped: bool, starved: &mut bool) -> (f32, f32) {
+    /// The frame under the playhead, interpolated: the track's, or its stems mixed at
+    /// `stem_gains` with what they left out.
+    #[inline]
+    pub(crate) fn read_playhead(
+        &self,
+        step: f64,
+        stem_gains: &StemGains,
+        starved: &mut bool,
+    ) -> (f32, f32) {
+        self.read_playhead_with_wrap(step, false, stem_gains, starved)
+    }
+
+    fn read_playhead_with_wrap(
+        &self,
+        step: f64,
+        looped: bool,
+        stem_gains: &StemGains,
+        starved: &mut bool,
+    ) -> (f32, f32) {
         match &self.track {
             Some(track) => {
                 let wrap_frames = looped
                     .then(|| track.total_frames())
                     .flatten()
                     .filter(|frames| *frames > 0);
-                let (left, right, missing) =
-                    self.kernel
-                        .read_wrapped(track, self.position, step, wrap_frames);
-                *starved |= missing;
-                (left, right)
+                self.kernel.read_source(
+                    track,
+                    self.reads_stems,
+                    self.position,
+                    step,
+                    wrap_frames,
+                    stem_gains,
+                    starved,
+                )
             }
             None => (0.0, 0.0),
         }
@@ -188,6 +278,7 @@ impl Voice {
     #[inline]
     pub(crate) fn next_tails(
         &mut self,
+        stem_gains: &StemGains,
         retire: &mut RetireQueue,
         starved: &mut bool,
     ) -> (f32, f32) {
@@ -198,21 +289,34 @@ impl Voice {
                 continue;
             };
             let tail_gain = tail.gain(self.declick_frames);
-            let (left, right, missing) =
-                self.kernel
-                    .read_wrapped(&tail.track, tail.position, tail.step, tail.wrap_frames);
-            *starved |= missing;
+            let (left, right) = self.kernel.read_source(
+                &tail.track,
+                tail.reads_stems,
+                tail.position,
+                tail.step,
+                tail.wrap_frames,
+                stem_gains,
+                starved,
+            );
             left_sum += left * tail_gain;
             right_sum += right * tail_gain;
-            tail.position += tail.step;
-            tail.remaining_frames -= 1;
-            if tail.remaining_frames == 0
+            if tail.advance()
                 && let Some(finished) = slot.take()
             {
                 retire.track(finished.track);
             }
         }
         (left_sum, right_sum)
+    }
+}
+
+impl Tail {
+    /// Moves the tail on by a frame. Returns whether it has faded out.
+    #[inline]
+    fn advance(&mut self) -> bool {
+        self.position += self.step;
+        self.remaining_frames -= 1;
+        self.remaining_frames == 0
     }
 }
 
@@ -247,6 +351,89 @@ impl ResamplingKernel {
     #[cfg(test)]
     fn read(&self, track: &TrackBuffer, position: f64, step: f64) -> (f32, f32, bool) {
         self.read_wrapped(track, position, step, None)
+    }
+
+    /// The frame of `track` at `position`: the track itself, or, when `reads_stems` and the
+    /// track has stems, its stems mixed at `stem_gains` with what they left out. Every gain
+    /// full plays the track itself without reading the stems.
+    #[inline]
+    #[allow(clippy::too_many_arguments)]
+    fn read_source(
+        &self,
+        track: &TrackBuffer,
+        reads_stems: bool,
+        position: f64,
+        step: f64,
+        wrap_frames: Option<usize>,
+        stem_gains: &StemGains,
+        starved: &mut bool,
+    ) -> (f32, f32) {
+        match track.stems() {
+            Some(stems) if reads_stems && !all_full(stem_gains) => {
+                let (frame, missing) = self.read_parts(track, stems, position, step);
+                *starved |= missing;
+                mix_parts(
+                    (frame[STEM_CHANNELS], frame[STEM_CHANNELS + 1]),
+                    &frame[..STEM_CHANNELS],
+                    stem_gains,
+                )
+            }
+            _ => {
+                let (left, right, missing) = self.read_wrapped(track, position, step, wrap_frames);
+                *starved |= missing;
+                (left, right)
+            }
+        }
+    }
+
+    /// Every stem of `track` at `position`, then the track itself; silent stems when it has
+    /// none.
+    #[inline]
+    fn read_track_parts(
+        &self,
+        track: &TrackBuffer,
+        position: f64,
+        step: f64,
+        starved: &mut bool,
+    ) -> PartFrame {
+        let (frame, missing) = match track.stems() {
+            Some(stems) => self.read_parts(track, stems, position, step),
+            None => {
+                let (left, right, missing) = self.read_wrapped(track, position, step, None);
+                let mut frame = [0.0; PART_CHANNELS];
+                frame[STEM_CHANNELS] = left;
+                frame[STEM_CHANNELS + 1] = right;
+                (frame, missing)
+            }
+        };
+        *starved |= missing;
+        frame
+    }
+
+    /// Every stem and the track at `position`, read with one set of tap weights.
+    #[inline]
+    fn read_parts(
+        &self,
+        track: &TrackBuffer,
+        stems: &AttachedStems,
+        position: f64,
+        step: f64,
+    ) -> (PartFrame, bool) {
+        let speed = step.abs();
+        if speed <= 2.0 {
+            return self.normal.read_parts(track, stems, position, step);
+        }
+        if speed >= 3.0 {
+            return self.wide.read_parts(track, stems, position, step);
+        }
+        let (mut frame, missing) = self.normal.read_parts(track, stems, position, step);
+        let (wide, wide_missing) = self.wide.read_parts(track, stems, position, step);
+        let fraction = (speed - 2.0) as f32;
+        let mix = fraction * fraction * (3.0 - 2.0 * fraction);
+        for (sample, wide_sample) in frame.iter_mut().zip(wide) {
+            *sample += (wide_sample - *sample) * mix;
+        }
+        (frame, missing || wide_missing)
     }
 
     fn read_wrapped(
@@ -309,6 +496,70 @@ impl<const TAPS: usize> CoefficientBank<TAPS> {
         Self { coefficients }
     }
 
+    /// The tap weights of a read `fraction` of a frame past a frame, moving `step` frames per
+    /// output frame: the four nearest tables, mixed by phase and cutoff.
+    #[inline]
+    fn weights(&self, fraction: f32, step: f64) -> [f32; TAPS] {
+        let cutoff = (1.0 / (1.0 + 1.1 * (step.abs() - 1.0).max(0.0))) as f32;
+        let phase = fraction * PHASES as f32;
+        let phase_index = (phase as usize).min(PHASES - 1);
+        let phase_mix = phase - phase_index as f32;
+        let cutoff_position = cutoff * CUTOFFS as f32;
+        let cutoff_index = (cutoff_position as usize).min(CUTOFFS - 1);
+        let cutoff_mix = cutoff_position - cutoff_index as f32;
+        let first = cutoff_index * (PHASES + 1) + phase_index;
+        let low_before = &self.coefficients[first];
+        let low_after = &self.coefficients[first + 1];
+        let high_before = &self.coefficients[first + PHASES + 1];
+        let high_after = &self.coefficients[first + PHASES + 2];
+        std::array::from_fn(|index| {
+            let low = low_before[index] + (low_after[index] - low_before[index]) * phase_mix;
+            let high = high_before[index] + (high_after[index] - high_before[index]) * phase_mix;
+            low + (high - low) * cutoff_mix
+        })
+    }
+
+    /// Every stem and the track at `position`, with the weights worked out once for all five.
+    #[inline]
+    fn read_parts(
+        &self,
+        track: &TrackBuffer,
+        stems: &AttachedStems,
+        position: f64,
+        step: f64,
+    ) -> (PartFrame, bool) {
+        let base = position.floor();
+        let fraction = (position - base) as f32;
+        let base_index = base as i64;
+        let mut frame = [0.0; PART_CHANNELS];
+        if step.abs() <= 1.0 && fraction == 0.0 {
+            frame[..STEM_CHANNELS].copy_from_slice(&stems.frame(base_index));
+            let missing = match track.read_frame(base_index) {
+                FrameRead::Frame(left, right) => {
+                    frame[STEM_CHANNELS] = left;
+                    frame[STEM_CHANNELS + 1] = right;
+                    false
+                }
+                FrameRead::Outside => false,
+                FrameRead::Missing => true,
+            };
+            return (frame, missing);
+        }
+        let weights = self.weights(fraction, step);
+        let first_frame = base_index.saturating_add(1 - (TAPS / 2) as i64);
+        let mut left = 0.0;
+        let mut right = 0.0;
+        let missing =
+            track.visit_frames::<TAPS>(first_frame, |index, sample_left, sample_right| {
+                left += sample_left * weights[index];
+                right += sample_right * weights[index];
+            });
+        stems.accumulate(first_frame, &weights, &mut frame[..STEM_CHANNELS]);
+        frame[STEM_CHANNELS] = left;
+        frame[STEM_CHANNELS + 1] = right;
+        (frame, missing)
+    }
+
     fn read(
         &self,
         track: &TrackBuffer,
@@ -328,27 +579,13 @@ impl<const TAPS: usize> CoefficientBank<TAPS> {
                 FrameRead::Missing => (0.0, 0.0, true),
             };
         }
-        let cutoff = (1.0 / (1.0 + 1.1 * (step.abs() - 1.0).max(0.0))) as f32;
-        let phase = fraction * PHASES as f32;
-        let phase_index = (phase as usize).min(PHASES - 1);
-        let phase_mix = phase - phase_index as f32;
-        let cutoff_position = cutoff * CUTOFFS as f32;
-        let cutoff_index = (cutoff_position as usize).min(CUTOFFS - 1);
-        let cutoff_mix = cutoff_position - cutoff_index as f32;
-        let first = cutoff_index * (PHASES + 1) + phase_index;
-        let low_before = &self.coefficients[first];
-        let low_after = &self.coefficients[first + 1];
-        let high_before = &self.coefficients[first + PHASES + 1];
-        let high_after = &self.coefficients[first + PHASES + 2];
+        let weights = self.weights(fraction, step);
         let mut left = 0.0;
         let mut right = 0.0;
         let first_frame = base_index.saturating_add(1 - (TAPS / 2) as i64);
         let mut accumulate = |index: usize, sample_left: f32, sample_right: f32| {
-            let low = low_before[index] + (low_after[index] - low_before[index]) * phase_mix;
-            let high = high_before[index] + (high_after[index] - high_before[index]) * phase_mix;
-            let weight = low + (high - low) * cutoff_mix;
-            left += sample_left * weight;
-            right += sample_right * weight;
+            left += sample_left * weights[index];
+            right += sample_right * weights[index];
         };
         let missing = match wrap_frames.filter(|frames| {
             first_frame < 0 || first_frame.saturating_add(TAPS as i64) > *frames as i64

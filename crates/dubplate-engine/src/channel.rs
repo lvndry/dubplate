@@ -1,4 +1,4 @@
-use dubplate_fx::{Effect, EqBand, Isolator, SweepFilter};
+use dubplate_fx::{EqBand, Isolator, SweepFilter};
 
 use crate::curves::eq_gain;
 use crate::processor::{ProcessContext, StereoBlock};
@@ -56,7 +56,6 @@ impl ChannelStrip {
     pub(crate) fn new(sample_rate: u32) -> Self {
         let mut filter = SweepFilter::new();
         filter.set_resonance(DEFAULT_RESONANCE);
-        filter.set_enabled(true);
         filter.reset();
         Self {
             isolator: Isolator::new(sample_rate as f32),

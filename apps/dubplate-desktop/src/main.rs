@@ -32,6 +32,7 @@ mod prep;
 mod recording;
 mod relink;
 mod search;
+mod search_filter;
 mod set;
 mod settings;
 mod shortcuts;
