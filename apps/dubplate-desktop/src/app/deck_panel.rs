@@ -19,7 +19,7 @@ use crate::deck::deck_letter;
 use crate::fonts::MONO_FAMILY;
 use crate::pads::semitones_label;
 use crate::theme;
-use crate::widgets::InteractiveControl;
+use crate::widgets::{InteractiveControl, tooltip};
 
 const BUTTON_HEIGHT: Pixels = px(34.0);
 
@@ -140,6 +140,24 @@ fn title_row(
                 .gap(px(10.0))
                 .min_w_0()
                 .child(deck_badge(deck))
+                .when(app.space_deck() == deck, |row| {
+                    row.child(
+                        div()
+                            .id(("space-deck", deck.index()))
+                            .flex_none()
+                            .px(px(4.0))
+                            .rounded(px(3.0))
+                            .border_1()
+                            .border_color(theme::LINE)
+                            .font_family(MONO_FAMILY)
+                            .text_size(theme::TINY_TEXT_SIZE)
+                            .text_color(theme::MUTED)
+                            .tooltip(tooltip(
+                                "Space plays or pauses this deck: the one you can hear",
+                            ))
+                            .child("Space"),
+                    )
+                })
                 .child(
                     div()
                         .flex()
