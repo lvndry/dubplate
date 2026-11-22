@@ -36,7 +36,7 @@ impl DubplateApp {
             }),
             EnergyPriority::Set,
         );
-        self.show_energy_waiting(cx);
+        cx.notify();
         self.collect_energy_while_waiting(cx);
     }
 
@@ -49,7 +49,7 @@ impl DubplateApp {
                 .map(|track| (track.track_path.as_path(), track.bpm)),
             EnergyPriority::Library,
         );
-        self.show_energy_waiting(cx);
+        cx.notify();
         self.collect_energy_while_waiting(cx);
     }
 
@@ -98,20 +98,13 @@ impl DubplateApp {
             .into_iter()
             .map(|(path, reading)| (path, reading.map(|reading| reading.rating)))
             .collect();
-        let waiting = self.energy.waiting();
-        let failed = self.energy.failed();
-        self.browser.update(cx, |browser, cx| {
-            browser.add_energies(ratings, cx);
-            browser.show_energy_waiting(waiting, failed, cx);
-        });
+        self.browser
+            .update(cx, |browser, cx| browser.add_energies(ratings, cx));
         cx.notify();
     }
 
-    fn show_energy_waiting(&mut self, cx: &mut Context<'_, Self>) {
-        let waiting = self.energy.waiting();
-        let failed = self.energy.failed();
-        self.browser.update(cx, |browser, cx| {
-            browser.show_energy_waiting(waiting, failed, cx)
-        });
+    /// How many tracks are waiting for their energy, for the header.
+    pub(super) fn energy_waiting(&self) -> usize {
+        self.energy.waiting()
     }
 }
