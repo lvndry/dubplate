@@ -99,7 +99,7 @@ On the FLX4, everything works as in rekordbox's FLX4 layout:
 - The mixer: TRIM, HI/MID/LOW, the filter knobs, channel faders, crossfader, headphone CUE, MIX and LEVEL.
 - The pad modes: Hot Cue, Pad FX 1 and 2 (hold for rolls and effects), Beat Jump, Beat Loop, Sampler, Keyboard, Key Shift; the loop section IN, OUT, 4 BEAT/EXIT.
 - BEAT FX: FX SELECT, BEAT left and right, the CH SELECT lever, LEVEL/DEPTH and ON/OFF.
-- SMART CFX turns both filter knobs into the chosen preset (Space, Dub echo, Crush, Chop, Jet, Phase; SHIFT + SMART CFX steps through them). SMART FADER makes the crossfader glide a shared tempo and swap the bass for you; a LOW knob you turn takes over.
+- SMART CFX turns both filter knobs into the chosen preset (Space, Dub echo, Crush, Chop, Jet, Phase; SHIFT + SMART CFX steps through them). SMART FADER makes the crossfader glide a shared tempo and swap the bass for you; a LOW knob you turn takes over. **Echo out on the faders**, in Settings, is the afro house exit: close a channel fader or the crossfader fast and the outgoing deck echoes on the half beat as it goes, the echoes ringing on after the fader is shut; with Smart Fader on, throwing the crossfader to the edge echoes the outgoing deck the same way.
 
 When Smart Fader or sync has moved a deck's tempo away from where its TEMPO slider sits, the on-screen slider shows the tempo the deck plays, an amber outline where the fader waits, and "Move to take over": move the fader through the playing tempo and it takes over without a jump, as in rekordbox. The BEAT FX LEVEL/DEPTH knob shows an amber mark on the effect's level bar in the same case.
 

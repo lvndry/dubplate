@@ -71,6 +71,9 @@ pub struct Settings {
     /// Whether a track loaded on a deck starts with key lock on, as rekordbox's Master Tempo
     /// default: the deck's Key lock button still changes it for the track on the deck.
     pub key_lock_on_new_tracks: bool,
+    /// Whether a channel fader or crossfader closed fast echoes the outgoing deck as it goes,
+    /// the afro house echo out.
+    pub fader_echo: bool,
 }
 
 /// The output levels as the DJ left them, so Dubplate never opens louder than it closed.
@@ -224,6 +227,7 @@ impl Default for Settings {
             levels: LevelsSetting::default(),
             library_sort: LibrarySortSetting::default(),
             key_lock_on_new_tracks: true,
+            fader_echo: false,
         }
     }
 }
@@ -370,6 +374,7 @@ mod tests {
                 perform: None,
             },
             key_lock_on_new_tracks: false,
+            fader_echo: true,
         };
         settings.save(&path).unwrap();
         assert_eq!(Settings::load(&path).unwrap(), settings);

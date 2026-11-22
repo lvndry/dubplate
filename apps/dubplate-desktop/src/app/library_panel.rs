@@ -104,6 +104,7 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
                 .child(rekordbox_row(app, cx))
                 .child(section_title("Decks"))
                 .child(key_lock_row(app, cx))
+                .child(fader_echo_row(app, cx))
                 .child(section_title("Sound card"))
                 .children(output_rows)
                 .focus_trap("settings-focus-trap", &app.modal_focus),
@@ -377,6 +378,60 @@ fn key_lock_row(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl In
             .accessible_toggle("Key lock on new tracks", on)
             .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                 this.perform(Command::SetKeyLockOnNewTracks(!on), window, cx);
+            })),
+        )
+}
+
+/// Whether a fader closed fast echoes the outgoing deck, the afro house echo out.
+fn fader_echo_row(
+    app: &DubplateApp,
+    cx: &mut Context<'_, DubplateApp>,
+) -> impl IntoElement + use<> {
+    let on = app.settings.fader_echo;
+    div()
+        .id("fader-echo-settings")
+        .flex()
+        .items_center()
+        .gap(px(12.0))
+        .py(px(8.0))
+        .border_t_1()
+        .border_color(theme::ROW_LINE)
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .flex_1()
+                .min_w_0()
+                .gap(px(2.0))
+                .child(
+                    div()
+                        .font_weight(FontWeight::MEDIUM)
+                        .child("Echo out on the faders"),
+                )
+                .child(
+                    div()
+                        .text_size(theme::SMALL_TEXT_SIZE)
+                        .text_color(theme::MUTED)
+                        .child(
+                            "Close a channel fader or the crossfader fast and the outgoing deck \
+                             echoes on the half beat as it goes, ringing on after the fader is \
+                             shut. A fader left part way stops echoing.",
+                        ),
+                ),
+        )
+        .child(
+            button(
+                "fader-echo",
+                if on { "On" } else { "Off" },
+                if on {
+                    Emphasis::Primary
+                } else {
+                    Emphasis::Secondary
+                },
+            )
+            .accessible_toggle("Echo out on the faders", on)
+            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                this.perform(Command::SetFaderEcho(!on), window, cx);
             })),
         )
 }
