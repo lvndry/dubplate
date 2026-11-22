@@ -26,6 +26,7 @@ mod set_panel;
 mod slider;
 mod smart;
 mod track_check;
+mod waveforms;
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
@@ -711,9 +712,13 @@ impl DubplateApp {
             .and_then(|prepared| prepared.grid_source);
         let loaded = match prepared.and_then(|prepared| self.put_on_deck(deck, prepared)) {
             Ok(visuals) => {
+                let needs_waveform = visuals.zoomed.is_none();
                 self.decks[deck.index()].commit_load(generation, visuals, grid_source);
                 self.signal_controllers(Feedback::TrackLoaded(controller_deck(deck)));
                 self.give_deck_analysed_grid(deck, cx);
+                if needs_waveform {
+                    self.draw_waveform_from_audio(deck, generation, cx);
+                }
                 true
             }
             Err(error) => {
@@ -1052,9 +1057,13 @@ impl DubplateApp {
             return;
         }
         let grid_source = self.deck(source).grid_source;
+        let needs_waveform = visuals.zoomed.is_none();
         let side = &mut self.decks[deck.index()];
         let generation = side.begin_load(track, hot_cues);
         side.commit_load(generation, visuals, grid_source);
+        if needs_waveform {
+            self.draw_waveform_from_audio(deck, generation, cx);
+        }
         self.mixer.tempo_sliders[deck.index()] = self.mixer.tempo_sliders[source.index()];
         self.signal_controllers(Feedback::TrackLoaded(controller_deck(deck)));
     }

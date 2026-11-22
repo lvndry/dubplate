@@ -63,9 +63,9 @@ impl DeckGrid {
     }
 }
 
-/// What the lanes say where a track rekordbox never analysed has no waveform, once Dubplate's
-/// analysis has given it a beat grid.
-pub const ANALYSED_GRID_NOTE: &str = "Dubplate's beat grid \u{b7} no waveform outside rekordbox";
+/// What the lanes say while the waveform of a track rekordbox never analysed is drawn from its
+/// audio, once Dubplate's analysis has given it a beat grid.
+pub const ANALYSED_GRID_NOTE: &str = "Dubplate's beat grid \u{b7} drawing the waveform\u{2026}";
 
 /// The waveforms and beat grid of a loaded track. Missing analysis leaves them empty and says
 /// why in `analysis_problem`; the track still plays.
@@ -93,6 +93,12 @@ impl TrackVisuals {
             beats: Arc::new(std::mem::take(&mut prepared.beats)),
             analysis_problem: prepared.analysis_problem.take(),
         }
+    }
+
+    /// Draws `zoomed` and `overview`, worked out after the track was loaded.
+    pub fn show_waveforms(&mut self, zoomed: ZoomedWaveform, overview: Option<OverviewWaveform>) {
+        self.zoomed = Some(Arc::new(zoomed));
+        self.overview = overview.map(|waveform| Rc::new(RefCell::new(OverviewBars::new(waveform))));
     }
 }
 
@@ -157,13 +163,17 @@ pub fn prepare_track(
         .filter(|analysis_path| !analysis_path.is_empty());
     let rekordbox = match (entry.origin, analysis_path, share_directory) {
         (TrackOrigin::File, _, _) => {
-            Err("Not in your rekordbox collection: no beat grid, cues or waveform".to_owned())
+            Err("Not in your rekordbox collection: no beat grid or cues \u{b7} drawing the waveform\u{2026}".to_owned())
         }
-        (TrackOrigin::Folder, _, _) => Err("Not analysed yet: no beat grid or waveform".to_owned()),
+        (TrackOrigin::Folder, _, _) => {
+            Err("Not analysed yet: no beat grid \u{b7} drawing the waveform\u{2026}".to_owned())
+        }
         (TrackOrigin::Rekordbox, Some(analysis_path), Some(share_directory)) => {
             TrackAnalysis::read(share_directory, analysis_path).map_err(|error| error.to_string())
         }
-        (TrackOrigin::Rekordbox, _, _) => Err("rekordbox has not analysed this track".to_owned()),
+        (TrackOrigin::Rekordbox, _, _) => Err(
+            "rekordbox has not analysed this track \u{b7} drawing the waveform\u{2026}".to_owned(),
+        ),
     };
     let rekordbox_problem = rekordbox.as_ref().err().cloned();
     let rekordbox = rekordbox.as_ref().ok();
@@ -294,6 +304,7 @@ pub struct Deck {
     /// Where the deck's beat grid comes from, when it has one.
     pub grid_source: Option<GridSource>,
     load_generation: u64,
+    committed_generation: u64,
     pending: Option<(Arc<CollectionTrack>, HotCues)>,
 }
 
@@ -322,6 +333,7 @@ impl Deck {
         let Some((track, hot_cues)) = self.pending.take() else {
             return false;
         };
+        self.committed_generation = generation;
         self.track = Some(track);
         self.hot_cues = hot_cues;
         self.content = DeckContent::Loaded(visuals);
@@ -345,6 +357,12 @@ impl Deck {
     /// Whether a load result with `generation` is the latest one asked for.
     pub fn is_current_load(&self, generation: u64) -> bool {
         self.load_generation == generation
+    }
+
+    /// Whether a background visual still belongs to the committed track. A pending or
+    /// failed replacement must not cancel work for the track that remains on the deck.
+    pub fn is_loaded_generation(&self, generation: u64) -> bool {
+        self.track.is_some() && self.committed_generation == generation
     }
 
     /// The waveforms and beat grid, once loaded.
@@ -404,7 +422,10 @@ mod tests {
             HotCues::default(),
         );
         assert_eq!(deck.track.as_ref().unwrap().row.title.as_ref(), "old");
+        assert!(deck.is_loaded_generation(first));
+        assert!(!deck.is_current_load(first));
         deck.fail_load(failed, "missing".into());
+        assert!(deck.is_loaded_generation(first));
         assert_eq!(deck.track.as_ref().unwrap().row.title.as_ref(), "old");
         assert_eq!(deck.hot_cues.get(HotCuePad::B), Some(2.0));
         assert_eq!(deck.grid_source, Some(GridSource::Tapped));

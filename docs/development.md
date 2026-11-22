@@ -18,7 +18,7 @@ On macOS, `cargo run` starts it from a `Dubplate.app` next to the binary (see `.
 ./scripts/bundle-macos.sh && open target/release/Dubplate.app
 ```
 
-Pick a crate on the left, type in the search field to find a track by title or artist, then drag it onto a deck, double-click it, click A or B at the end of its row, or press ⇧← or ⇧→ to load it on deck A or B. Audio files dragged from Finder (MP3, M4A, AAC, FLAC, WAV, AIFF, Ogg) load too, without beat grid or cues. The decks show rekordbox's 3-band waveforms, beat grid and hot cues. The first build takes a few minutes.
+Pick a crate on the left, type in the search field to find a track by title or artist, then drag it onto a deck, double-click it, click A or B at the end of its row, or press ⇧← or ⇧→ to load it on deck A or B. Audio files dragged from Finder (MP3, M4A, AAC, FLAC, WAV, AIFF, Ogg) load too, without beat grid or cues. The decks show rekordbox's 3-band waveforms, beat grid and hot cues, and draw a 3-band waveform from the audio for a track rekordbox has none for. The first build takes a few minutes.
 
 | Keys | Deck A | Deck B |
 | --- | --- | --- |
