@@ -97,6 +97,21 @@ On the FLX4, everything works as in rekordbox's FLX4 layout:
 - PLAY, CUE (CDJ style), hot cue pads, TEMPO, BEAT SYNC (hold for tempo master, SHIFT for the tempo range), the jogs (touch to scratch, side to nudge, SHIFT to search).
 - The mixer: TRIM, HI/MID/LOW, the filter knobs, channel faders, crossfader, headphone CUE, MIX and LEVEL.
 - The pad modes: Hot Cue, Pad FX 1 and 2 (hold for rolls and effects), Beat Jump, Beat Loop, Sampler, Keyboard, Key Shift; the loop section IN, OUT, 4 BEAT/EXIT.
+
+SHIFT never turns pages of pads on the FLX4; it gives each pad a second job, as rekordbox's FLX4 layout does. The FLX4 has 8 hot cues per track, A to H, with no banks or pages. While SHIFT is held the pads on screen show their SHIFT job:
+
+| Mode | Pads | SHIFT + pads |
+|---|---|---|
+| Hot Cue (SHIFT + HOT CUE: Keyboard) | Set or call hot cues A to H | Delete the hot cue |
+| Pad FX 1 (SHIFT + PAD FX1: Pad FX 2) | Pad FX 1 to 8 (Pad FX 2: 17 to 24) | Pad FX 9 to 16 (Pad FX 2: 25 to 32) |
+| Beat Jump (SHIFT + BEAT JUMP: Beat Loop) | Jump 1, 2, 4 and 8 beats back and forward | Pads 7 and 8 make the jumps shorter and longer |
+| Sampler (SHIFT + SAMPLER: Key Shift) | Play slots 1 to 8 (deck B: 9 to 16) | Stop the slot, or load the selected track into an empty one |
+| Keyboard, Key Shift | Pitch from ±0 to +7 semitones | Pads 7 and 8 move the range up and down a semitone |
+| Beat Loop | Loops of 1/4 to 32 beats | Nothing |
+
+In the Pad FX modes a row above the pads names the layer showing, **Pads 1-8** or **SHIFT 9-16**, lit in the deck's colour. Click the other one to show and play that layer with the mouse; hold SHIFT on the FLX4 and it switches while you hold it.
+
+**Pad FX editor.** The **Edit** button in that row, or **Edit Pad FX** in Settings, opens the 32 Pad FX pads, as rekordbox's PAD EDITOR shows them: FX1, FX1 + SHIFT, FX2, FX2 + SHIFT, eight pads each. Click a pad and set what it plays (a loop roll or any Beat FX), its beat or parameter, its depth, whether it plays while held or latches on until pressed again, and what letting go does: the echoes and reverb ring out, or the music goes back to dry at once. **Start from** loads one of three sets: **Classic** (rolls from 1/4 to 1/32, echoes, spiral, reverb, gates, filters, vinyl brake and back spin, pitch, noise, echo out), **Afro house** (half and quarter beat rolls, 3/4 echoes and delays, the echo out, filtered echoes, slow sweeps) and **Amapiano** (log drum rolls, dotted echoes, reverb washes, pitch drops, brakes). Changes apply at once and are remembered.
 - BEAT FX: FX SELECT, BEAT left and right, the CH SELECT lever, LEVEL/DEPTH and ON/OFF.
 - SMART CFX turns both filter knobs into the chosen preset (Space, Dub echo, Crush, Chop, Jet, Phase; SHIFT + SMART CFX steps through them). SMART FADER makes the crossfader glide a shared tempo and swap the bass for you; a LOW knob you turn takes over.
 

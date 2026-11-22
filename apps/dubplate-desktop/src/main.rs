@@ -24,6 +24,7 @@ mod loading;
 #[cfg(target_os = "macos")]
 mod macos_identity;
 mod meter;
+mod pad_fx;
 mod pads;
 mod phrases;
 mod playhead;

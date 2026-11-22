@@ -7,6 +7,7 @@ use dubplate_midi::PadMode;
 use dubplate_prep::GridEdit;
 
 use crate::controls::Control;
+use crate::pad_fx::{PadFxLayer, PadFxPreset};
 
 /// Which way a control moves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,6 +38,31 @@ pub enum Press {
     Up,
     /// The button went down and up.
     Tap,
+}
+
+/// A change in the Pad FX editor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PadFxEdit {
+    /// Open the editor on pad 1 of a layer, or close it when it is open.
+    Toggle(PadFxLayer),
+    /// Close the editor.
+    Close,
+    /// Edit pad `1` of layer `0`, pad 0 first.
+    Select(PadFxLayer, usize),
+    /// Step the pad's sound through the list.
+    Sound(i32),
+    /// Step the pad's beat or parameter.
+    Parameter(i32),
+    /// Step the pad's depth by 5%.
+    Depth(i32),
+    /// Switch the pad between held and latched.
+    Trigger,
+    /// Switch what letting go does to the pad's trail.
+    Release,
+    /// Put the pad back as its preset has it.
+    ResetPad,
+    /// Replace all 32 pads with a preset's.
+    Preset(PadFxPreset),
 }
 
 /// The two screens: preparing a set, and playing it.
@@ -236,6 +262,13 @@ pub enum Command {
     ExportSet,
     /// Show or hide the list of shortcuts.
     ToggleHelp,
+    /// A deck's SHIFT on the controller went down (`true`) or up.
+    ShiftHeld(DeckId, bool),
+    /// Show the pads of a deck's Pad FX mode with or without SHIFT on screen, so a click plays
+    /// that layer.
+    TogglePadLayer(DeckId),
+    /// Open, change or close the Pad FX editor.
+    PadFx(PadFxEdit),
     /// Show or hide the library's settings: the music folders and rekordbox.
     ToggleLibrary,
     /// Open the folder picker to add music folders to the library.

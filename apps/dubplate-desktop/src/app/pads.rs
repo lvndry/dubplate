@@ -11,23 +11,24 @@ use super::notice::NoticePlace;
 use super::sampler::sampler_slot;
 use crate::commands::{LoopAction, PadPress, Press};
 use crate::deck::pad_position;
+use crate::pad_fx::{PadFxLayer, PadFxSlot, PadTrigger};
 use crate::pads::{
     AUTO_BEAT_LOOP, BEAT_JUMP_SCALE_RANGE, BEAT_LOOP_LENGTHS, KEY_PADS_DOWN_PAD, KEY_PADS_UP_PAD,
-    PAD_COUNT, PadFx, beat_jump_beats, clamp_key_pad_offset, key_pad_semitones, pad_fx,
+    LONGER_JUMPS_PAD, PAD_COUNT, PadFx, SHORTER_JUMPS_PAD, beat_jump_beats, clamp_key_pad_offset,
+    key_pad_semitones,
 };
 
-/// SHIFT with this beat jump pad makes the jumps shorter.
-const SHORTER_JUMPS_PAD: usize = 6;
-/// SHIFT with this beat jump pad makes the jumps longer.
-const LONGER_JUMPS_PAD: usize = 7;
-
-/// A Pad FX pad being held, or latched from the keys or the screen.
+/// A Pad FX pad being held, or latched.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) struct HeldPad {
     /// The pad, 0 for pad 1.
     pub pad: usize,
+    /// The layer it was pressed in.
+    pub layer: PadFxLayer,
     /// What it plays.
     pub fx: PadFx,
+    /// It stays on until pressed again: a latched pad, or a tap from the keys or the screen.
+    pub latched: bool,
 }
 
 /// What a deck's loop buttons and pads show.
@@ -41,6 +42,49 @@ pub(super) struct PadLights {
     pub loop_out: bool,
     /// 4 BEAT/EXIT.
     pub four_beat: bool,
+}
+
+/// What a press on a Pad FX pad does.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum PadFxAction {
+    /// Nothing changes.
+    Nothing,
+    /// The pad on lets go.
+    Release,
+    /// This pad takes over from any pad on.
+    Start(HeldPad),
+}
+
+/// The controller holds a pad while it is pressed, unless the pad is set to latch; a latched
+/// pad, or a tap from the keys or the screen, stays on until the same pad is pressed again.
+/// Another pad takes over from the one on. Letting go matches the pad by number alone, so
+/// lifting SHIFT first never leaves an effect stuck on.
+fn pad_fx_action(
+    held: Option<HeldPad>,
+    press: PadPress,
+    layer: PadFxLayer,
+    slot: Option<PadFxSlot>,
+) -> PadFxAction {
+    let held = held.filter(|held| held.pad == press.pad);
+    match press.press {
+        Press::Up if held.is_some_and(|held| !held.latched) => PadFxAction::Release,
+        Press::Up => PadFxAction::Nothing,
+        Press::Down | Press::Tap if held.is_some_and(|held| held.layer == layer) => {
+            if press.press == Press::Tap || held.is_some_and(|held| held.latched) {
+                PadFxAction::Release
+            } else {
+                PadFxAction::Nothing
+            }
+        }
+        Press::Down | Press::Tap => slot.map_or(PadFxAction::Nothing, |slot| {
+            PadFxAction::Start(HeldPad {
+                pad: press.pad,
+                layer,
+                fx: slot.play(),
+                latched: press.press == Press::Tap || slot.trigger == PadTrigger::Latch,
+            })
+        }),
+    }
 }
 
 impl DubplateApp {
@@ -137,26 +181,23 @@ impl DubplateApp {
         self.pad_modes[deck.index()] = mode;
     }
 
-    /// A Pad FX pad: the controller holds it while pressed; a tap from the keys or the screen
-    /// latches it on until the same pad is tapped again. Another pad takes over from the one
-    /// held.
+    /// A Pad FX pad, as [`pad_fx_action`] decides.
     fn press_pad_fx(&mut self, press: PadPress, mode: PadMode, cx: &mut Context<'_, Self>) {
         let deck = press.deck;
-        let held_here = self.held_pads[deck.index()].is_some_and(|held| held.pad == press.pad);
-        match press.press {
-            Press::Up if held_here => self.release_held_pad(deck, cx),
-            Press::Tap if held_here => self.release_held_pad(deck, cx),
-            Press::Up => {}
-            Press::Down | Press::Tap => {
-                let Some(fx) = pad_fx(mode, press.pad, press.shift) else {
-                    return;
-                };
+        let Some(layer) = PadFxLayer::of(mode, press.shift) else {
+            return;
+        };
+        let slot = self.pad_fx.slot(layer, press.pad);
+        match pad_fx_action(self.held_pads[deck.index()], press, layer, slot) {
+            PadFxAction::Nothing => {}
+            PadFxAction::Release => self.release_held_pad(deck, cx),
+            PadFxAction::Start(held) => {
                 self.release_held_pad(deck, cx);
-                self.engine_command(cx, |controller| match fx {
+                self.engine_command(cx, |controller| match held.fx {
                     PadFx::Roll(length) => controller.beat_roll(deck, length),
                     PadFx::Effect(effect) => controller.hold_pad_effect(deck, effect),
                 });
-                self.held_pads[deck.index()] = Some(HeldPad { pad: press.pad, fx });
+                self.held_pads[deck.index()] = Some(held);
             }
         }
     }
@@ -291,7 +332,12 @@ impl DubplateApp {
                     }
                 }
                 PadMode::PadFx1 | PadMode::PadFx2 => {
-                    let held = self.held_pads[deck.index()].map(|held| held.pad);
+                    let held = self.held_pads[deck.index()]
+                        .filter(|held| {
+                            PadFxLayer::of(self.pad_modes[deck.index()], held.layer.shifted())
+                                == Some(held.layer)
+                        })
+                        .map(|held| held.pad);
                     for (pad, lit) in pads.iter_mut().enumerate() {
                         *lit = held != Some(pad) || blink;
                     }
@@ -313,5 +359,117 @@ impl DubplateApp {
             loop_out: looping,
             four_beat: looping,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use dubplate_engine::{BeatLength, EffectKind};
+
+    use super::*;
+    use crate::pad_fx::PadFxBanks;
+
+    fn press(pad: usize, press: Press, shift: bool) -> PadPress {
+        PadPress {
+            deck: DeckId::A,
+            pad,
+            mode: Some(PadMode::PadFx1),
+            press,
+            shift,
+        }
+    }
+
+    /// Plays `presses` on PAD FX1 from nothing held, and gives what is held after each.
+    fn play(banks: &PadFxBanks, presses: &[PadPress]) -> Vec<Option<(usize, PadFxLayer)>> {
+        let mut held = None;
+        presses
+            .iter()
+            .map(|press| {
+                let layer = PadFxLayer::of(PadMode::PadFx1, press.shift).unwrap();
+                match pad_fx_action(held, *press, layer, banks.slot(layer, press.pad)) {
+                    PadFxAction::Nothing => {}
+                    PadFxAction::Release => held = None,
+                    PadFxAction::Start(started) => held = Some(started),
+                }
+                held.map(|held: HeldPad| (held.pad, held.layer))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_held_pad_plays_until_let_go_even_when_shift_is_lifted_first() {
+        let banks = PadFxBanks::default();
+        let on_shift = Some((2, PadFxLayer::Fx1Shift));
+        assert_eq!(
+            play(
+                &banks,
+                &[
+                    press(2, Press::Down, true),
+                    press(2, Press::Up, false),
+                    press(0, Press::Down, false),
+                    press(1, Press::Down, false),
+                    press(0, Press::Up, false),
+                ]
+            ),
+            [
+                on_shift,
+                None,
+                Some((0, PadFxLayer::Fx1)),
+                Some((1, PadFxLayer::Fx1)),
+                Some((1, PadFxLayer::Fx1)),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_latched_pad_stays_on_until_pressed_again_and_a_tap_latches_any_pad() {
+        let mut banks = PadFxBanks::default();
+        banks.edit(PadFxLayer::Fx1, 4, PadFxSlot::toggle_trigger);
+        let latched = Some((4, PadFxLayer::Fx1));
+        assert_eq!(
+            play(
+                &banks,
+                &[
+                    press(4, Press::Down, false),
+                    press(4, Press::Up, false),
+                    press(4, Press::Down, false),
+                    press(4, Press::Up, false),
+                    press(5, Press::Tap, false),
+                    press(5, Press::Tap, false),
+                ]
+            ),
+            [
+                latched,
+                latched,
+                None,
+                None,
+                Some((5, PadFxLayer::Fx1)),
+                None,
+            ]
+        );
+    }
+
+    #[test]
+    fn a_pad_plays_what_the_editor_gave_it() {
+        let mut banks = PadFxBanks::default();
+        banks.edit(PadFxLayer::Fx1Shift, 0, |slot| slot.step_parameter(-1));
+        let layer = PadFxLayer::Fx1Shift;
+        let action = pad_fx_action(
+            None,
+            press(0, Press::Down, true),
+            layer,
+            banks.slot(layer, 0),
+        );
+        let PadFxAction::Start(held) = action else {
+            panic!("{action:?}");
+        };
+        let PadFx::Effect(effect) = held.fx else {
+            panic!("{held:?}");
+        };
+        assert_eq!(effect.kind, EffectKind::Trans);
+        assert_eq!(
+            effect.parameter,
+            Some(dubplate_engine::ParameterValue::Beats(BeatLength::EIGHTH))
+        );
     }
 }
