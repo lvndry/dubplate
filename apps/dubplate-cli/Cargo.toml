@@ -13,6 +13,7 @@ dubplate-library = { version = "0.1.0", path = "../../crates/dubplate-library" }
 dubplate-midi = { version = "0.1.0", path = "../../crates/dubplate-midi" }
 dubplate-prep = { version = "0.1.0", path = "../../crates/dubplate-prep" }
 dubplate-rekordbox = { version = "0.1.0", path = "../../crates/dubplate-rekordbox" }
+dubplate-usb = { version = "0.1.0", path = "../../crates/dubplate-usb" }
 jiff = "1.0.2"
 serde_json = "1.0.154"
 
