@@ -208,7 +208,6 @@ fn status(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoElem
                 .flex_shrink(1.0)
                 .min_w_0()
                 .truncate()
-                .font_family(MONO_FAMILY)
                 .text_color(audio_colour)
                 .child(audio_text),
         )
