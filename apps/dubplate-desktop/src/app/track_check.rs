@@ -25,6 +25,8 @@ use crate::waveform::BeatMarks;
 
 const LANE_HEIGHT: Pixels = px(64.0);
 const OVERVIEW_HEIGHT: Pixels = px(26.0);
+const CONTROLS_HEIGHT: Pixels = px(26.0);
+const ROW_GAP: Pixels = px(6.0);
 const OVERVIEW_BAR_SPACING: f32 = 3.0;
 const OVERVIEW_BAR_WIDTH: f32 = 2.0;
 /// The lane above the overview that holds the phrase names, clear of the bars and ticks.
@@ -144,7 +146,7 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
         .flex()
         .flex_col()
         .flex_none()
-        .gap(px(6.0))
+        .gap(ROW_GAP)
         .px(theme::GUTTER)
         .py(px(10.0))
         .border_b_1()
@@ -156,9 +158,12 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
         } else {
             "Select a set track to check its grid and set its mix cues."
         };
+        // The same height as the check itself, so the set list below never jumps while a
+        // track is read.
+        let content_height = CONTROLS_HEIGHT + ROW_GAP * 2.0 + LANE_HEIGHT + OVERVIEW_HEIGHT;
         return strip.child(
             div()
-                .h(LANE_HEIGHT)
+                .h(content_height)
                 .flex()
                 .items_center()
                 .text_color(theme::MUTED)
@@ -215,8 +220,10 @@ fn controls(
     };
     div()
         .flex()
+        .flex_none()
         .items_center()
         .gap(px(8.0))
+        .h(CONTROLS_HEIGHT)
         .child(
             div()
                 .flex_1()
