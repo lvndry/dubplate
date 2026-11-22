@@ -302,6 +302,10 @@ pub struct DubplateApp {
     lane_zoom: Zoom,
     /// How far a pinch on the lanes has gone since it last changed the zoom.
     pinch: f32,
+    /// Whether the two playing decks' beats are locked together, as the phase meter reads.
+    phase_locked: bool,
+    /// When they last locked, so the lanes' centre line brightens once.
+    phase_lock_at: Option<Instant>,
     /// What the menu bar was last built for.
     menu_state: Option<MenuState>,
     /// The window's size at the last frame, for the layout of small windows.
@@ -576,6 +580,8 @@ impl DubplateApp {
             frame_stats: FrameStats::from_environment().map(|stats| Rc::new(RefCell::new(stats))),
             pad_notes: Default::default(),
             lane_zoom,
+            phase_locked: false,
+            phase_lock_at: None,
             pinch: 0.0,
             menu_state: None,
             window_size: window.viewport_size(),
@@ -2143,12 +2149,20 @@ impl DubplateApp {
         for (side, frame) in self.decks.iter_mut().zip(&frames) {
             notice_new_cue(side, frame.state.cue_point_seconds, now);
         }
+        let locked = lanes::phase_locked(self.phase_locked, lanes::phase_now(self, &frames));
+        if locked && !self.phase_locked {
+            self.phase_lock_at = Some(now);
+        }
+        self.phase_locked = locked;
         let pulsing = self.decks.iter().any(|side| side.marker_pulse.is_some())
             || self
                 .hardware
                 .as_ref()
                 .is_some_and(|hardware| hardware.dispatcher.held.any_shown(now))
-            || self.pad_notes.iter().flatten().any(|note| note.shows(now));
+            || self.pad_notes.iter().flatten().any(|note| note.shows(now))
+            || self
+                .phase_lock_at
+                .is_some_and(|at| now.duration_since(at) < lanes::PHASE_LOCK_GLOW);
         let moving = pulsing
             || frames.iter().any(|frame| frame.state.playing)
             || self.master_meter.is_moving()
