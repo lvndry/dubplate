@@ -69,7 +69,7 @@ Ranked by what stops the owner from playing a club night with Dubplate alone, th
 22. **Track filter by rating, colour and My Tag.** AND/OR across My Tags, next to the BPM and key filters, plus hide played.
 23. **Playlists in Dubplate.** Create, rename and delete playlists and folders, add, reorder and remove tracks, export M3U8 or TXT, and include them in the XML and USB exports.
 24. **Key sync and key on the deck.** KEY SYNC, semitone up and down with the key difference, the deck key coloured by its fit to the master, and a Classic or Camelot setting.
-25. **Played tracks.** Colour a row once its track has played for 60 seconds, and offer a hide played filter.
+25. **Played tracks (done).** Colour a row once its track has played for 60 seconds, and offer a hide played filter.
 26. **BPM range for analysis.** A range setting (58-115, 78-155, 88-175 and so on) with a default that keeps 108 to 124 BPM where it is, plus x2 and /2 per track.
 27. **Crossfader curve and assign.** Smooth, constant and sharp cut curves; A, THRU or B per channel.
 28. **Audio settings.** Buffer size with the latency shown, the dropout count on screen, output mapping and a booth output.
@@ -105,7 +105,7 @@ Ranked by what stops the owner from playing a club night with Dubplate alone, th
 | Info window | Side pane with the selected track's tags and artwork, with a reload-tags button. | [View] > Information Window | Free | Missing | P2 |
 | Font size and line spacing | Track list font size, bold, line spacing, keep the selection centred. | Preferences > View > Display Type > Browse | Free | Missing | P2 |
 | Dark and light skin | Dark or Light (outdoor) skin. | Preferences > View > Color > Skin | Free | Partial: dark only | P3 |
-| Played track colouring | Rows change colour after a track has played 1 to 60 s; reset on quit or with RESET. | Preferences > View > Display Type | Free | Missing | P1 |
+| Played track colouring | Rows change colour after a track has played 1 to 60 s; reset on quit or with RESET. | Preferences > View > Display Type | Free | Partial: a dimmed title and a tick after 60 s of track time, for the session; the time is not adjustable and there is no RESET | P1 |
 | Missing file mark | [!] in the status column for a file that cannot be found. | Status column | Free | Done (missing tracks marked, never loaded) | P0 |
 | Outdated analysis mark | [?] when analysis is from an old version; Add New Analysis Data fixes it. | Status column | Free | Partial: a blank BPM/Key/Energy cell means still analysing | P3 |
 | Library protection | Locks track info and lists against accidental edits. | Preferences > Advanced > Browse | Free | Done in effect: rekordbox data is read-only | P3 |
@@ -838,8 +838,8 @@ Features rekordbox lacks, or does worse, that DJs cite when comparing apps. The 
 | Import from other DJ apps | djay External Apps and Engine DJ Import Assistant read rekordbox, Serato and Traktor cues, loops and grids. | djay, Engine DJ | n/a | Partial: reads rekordbox; not Serato or Traktor | P2 |
 | OneLibrary export from another app | djay 5.5 writes AlphaTheta's OneLibrary USB format for CDJ-3000X. | djay | n/a | Missing | P0 |
 | CDJ export from another app | VirtualDJ writes Pioneer USBs with playlists and stems. | VirtualDJ | n/a | Missing | P0 |
-| Match filter | Engine DJ: filters a playlist by BPM range, key and hide-played relative to the playing track. | Engine DJ | n/a | Partial: BPM and key; no hide-played | P1 |
-| Hide played tracks | Engine DJ Match option; rekordbox only colours them. | Engine DJ | n/a | Missing | P1 |
+| Match filter | Engine DJ: filters a playlist by BPM range, key and hide-played relative to the playing track. | Engine DJ | n/a | Done (BPM, Key fits and Hide played) | P1 |
+| Hide played tracks | Engine DJ Match option; rekordbox only colours them. | Engine DJ | n/a | Done | P1 |
 | Fader echo | Engine DJ: echo tail when a fader closes, one-shot option. | Engine DJ | n/a | Missing | P1 |
 | Phase meter | Engine DJ, rekordbox: ahead or behind bar under the track. | Engine DJ, rekordbox | n/a | Missing | P1 |
 | Track ratings on the player | Engine DJ 5.0 and CDJ-3000X rate tracks on the hardware. | Engine DJ | n/a | Missing | P3 |

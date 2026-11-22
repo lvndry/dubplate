@@ -21,6 +21,8 @@ pub const ARROW_UP_PATH: &str = "icons/arrow-up.svg";
 pub const ARROW_DOWN_PATH: &str = "icons/arrow-down.svg";
 /// Path of the cross that clears a filter.
 pub const CLOSE_ICON_PATH: &str = "icons/close.svg";
+/// Path of the tick beside a track played this session.
+pub const PLAYED_ICON_PATH: &str = "icons/check.svg";
 
 const LOGO: &[u8] = include_bytes!("../../../assets/logo/mark.svg");
 
@@ -59,6 +61,7 @@ mod tests {
             ARROW_UP_PATH,
             ARROW_DOWN_PATH,
             CLOSE_ICON_PATH,
+            PLAYED_ICON_PATH,
         ] {
             let image = AppAssets.load(path).unwrap();
             assert!(image.is_some_and(|bytes| !bytes.is_empty()), "{path}");
