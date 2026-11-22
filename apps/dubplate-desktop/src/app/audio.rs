@@ -142,6 +142,14 @@ impl DubplateApp {
         if self.current_output() == Some(name.as_str()) {
             return;
         }
+        if self.is_recording() {
+            self.show_notice(
+                NoticePlace::Window,
+                "Stop the recording to change the sound card.",
+                cx,
+            );
+            return;
+        }
         if DeckId::ALL
             .into_iter()
             .any(|deck| self.deck_state(deck).playing)

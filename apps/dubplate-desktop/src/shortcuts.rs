@@ -68,7 +68,7 @@ const fn pad(keystroke: &'static str, deck: DeckId, pad: usize) -> Shortcut {
 }
 
 /// Every keyboard shortcut.
-pub const SHORTCUTS: [Shortcut; 65] = [
+pub const SHORTCUTS: [Shortcut; 66] = [
     outside_text("space", Command::TogglePlay(DeckId::A)),
     outside_text("shift-space", Command::TogglePlay(DeckId::B)),
     outside_text("c", Command::Cue(DeckId::A, Press::Tap)),
@@ -122,6 +122,7 @@ pub const SHORTCUTS: [Shortcut; 65] = [
     outside_text("cmd-z", Command::EditSet(SetEdit::Undo)),
     outside_text("tab", Command::SwitchPrepareFocus),
     anywhere("cmd-l", Command::LoadSet),
+    anywhere("cmd-shift-r", Command::ToggleRecording),
     outside_text("t", Command::TapTempo(DeckId::A)),
     outside_text("shift-t", Command::TapTempo(DeckId::B)),
     outside_text("k", Command::ToggleKeyLock(DeckId::A)),
@@ -224,6 +225,7 @@ pub fn help_lines() -> Vec<HelpLine> {
         line(&["m", "shift-m"], "Next pad mode, deck A / deck B"),
         line(&["l", "shift-l"], "Four-beat loop or exit, deck A / deck B"),
         line(&["cmd-1", "cmd-2"], "Prepare / Perform"),
+        line(&["cmd-shift-r"], "Record the mix, or stop recording"),
         line(
             &["enter", "cmd-enter"],
             "Add to the set / insert after the selected set track",
