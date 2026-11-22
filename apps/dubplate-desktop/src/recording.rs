@@ -61,7 +61,6 @@ impl Recording {
     /// Starts writing `tap` to a new WAV file in `directory`, named after the time.
     pub fn start(directory: &Path, tap: RecordingTap) -> Result<Self, RecordingError> {
         let now = jiff::tz::TimeZone::system().to_datetime(jiff::Timestamp::now());
-        let path = directory.join(file_name(&now));
         std::fs::create_dir_all(directory).map_err(|source| RecordingError::File {
             path: directory.to_path_buf(),
             source: hound::Error::IoError(source),
@@ -72,10 +71,13 @@ impl Recording {
             bits_per_sample: BITS_PER_SAMPLE,
             sample_format: hound::SampleFormat::Int,
         };
+        let (path, file) = create_recording_file(directory, &now)?;
         let writer =
-            hound::WavWriter::create(&path, spec).map_err(|source| RecordingError::File {
-                path: path.clone(),
-                source,
+            hound::WavWriter::new(std::io::BufWriter::new(file), spec).map_err(|source| {
+                RecordingError::File {
+                    path: path.clone(),
+                    source,
+                }
             })?;
         let stop = Arc::new(AtomicBool::new(false));
         let dropped_frames = Arc::new(AtomicU64::new(0));
@@ -189,6 +191,42 @@ fn file_name(now: &jiff::civil::DateTime) -> String {
     format!("Dubplate {}.wav", now.strftime("%Y-%m-%d %H-%M-%S"))
 }
 
+/// Reserves a new filename atomically, including when two recordings start concurrently.
+fn create_recording_file(
+    directory: &Path,
+    now: &jiff::civil::DateTime,
+) -> Result<(PathBuf, std::fs::File), RecordingError> {
+    let name = file_name(now);
+    let stem = name.strip_suffix(".wav").unwrap_or(&name);
+    let mut suffix = 0_u64;
+    loop {
+        let path = directory.join(if suffix == 0 {
+            name.clone()
+        } else {
+            format!("{stem} ({suffix}).wav")
+        });
+        match std::fs::File::options()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(file) => return Ok((path, file)),
+            Err(source) if source.kind() == std::io::ErrorKind::AlreadyExists => {
+                suffix = suffix.checked_add(1).ok_or(RecordingError::File {
+                    path,
+                    source: hound::Error::IoError(source),
+                })?;
+            }
+            Err(source) => {
+                return Err(RecordingError::File {
+                    path,
+                    source: hound::Error::IoError(source),
+                });
+            }
+        }
+    }
+}
+
 /// Where recordings go: `~/Music/Dubplate Recordings`.
 pub fn recordings_directory() -> Option<PathBuf> {
     Some(dirs::audio_dir()?.join("Dubplate Recordings"))
@@ -263,6 +301,33 @@ mod tests {
         let summary = recording.finish().unwrap();
         assert!(summary.dropped_frames > 0, "{summary:?}");
         assert!(summary.duration <= Duration::from_millis(20), "{summary:?}");
+    }
+
+    #[test]
+    fn recordings_in_the_same_second_never_replace_each_other() {
+        let directory = tempfile::tempdir().unwrap();
+        let now: jiff::civil::DateTime = "2026-11-22T01:23:45".parse().unwrap();
+        let (first, mut file) = create_recording_file(directory.path(), &now).unwrap();
+        std::io::Write::write_all(&mut file, b"previous recording").unwrap();
+        let (second, _) = create_recording_file(directory.path(), &now).unwrap();
+        assert_ne!(first, second);
+        assert_eq!(std::fs::read(first).unwrap(), b"previous recording");
+    }
+
+    #[test]
+    fn concurrent_recordings_reserve_distinct_files() {
+        let directory = tempfile::tempdir().unwrap();
+        let now: jiff::civil::DateTime = "2026-11-22T01:23:45".parse().unwrap();
+        let paths = std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..8)
+                .map(|_| scope.spawn(|| create_recording_file(directory.path(), &now).unwrap().0))
+                .collect();
+            handles
+                .into_iter()
+                .map(|handle| handle.join().unwrap())
+                .collect::<std::collections::HashSet<_>>()
+        });
+        assert_eq!(paths.len(), 8);
     }
 
     #[test]

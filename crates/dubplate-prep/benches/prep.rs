@@ -80,6 +80,10 @@ fn store(criterion: &mut Criterion) {
     group.bench_function("load_set", |bencher| {
         bencher.iter(|| store.load_set(set).expect("load"));
     });
+    let saved = store.load_set(set).expect("load");
+    group.bench_function("replace_set_as_undo_does", |bencher| {
+        bencher.iter(|| store.replace_set(black_box(&saved)).expect("replace"));
+    });
     group.finish();
 }
 

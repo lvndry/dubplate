@@ -8,7 +8,7 @@ use crate::own_files::is_inside_rekordbox;
 use crate::scan::FolderScan;
 
 /// The cache format; a cache of another version is ignored and the folders scanned again.
-const VERSION: u32 = 1;
+const VERSION: u32 = 2;
 
 /// Why the cache could not be read or written.
 #[derive(Debug, thiserror::Error)]

@@ -224,13 +224,14 @@ impl KeyLock {
         &mut self,
         index: usize,
         voice: &Voice,
+        step: f64,
         starved: &mut bool,
     ) -> (f32, f32) {
         let mix = self.mix.next_value();
         let stretched_left = self.output[index * CHANNELS];
         let stretched_right = self.output[index * CHANNELS + 1];
         let (plain_left, plain_right) = if mix < 1.0 {
-            voice.read_playhead(starved)
+            voice.read_playhead(step, starved)
         } else {
             (0.0, 0.0)
         };
@@ -252,7 +253,7 @@ fn read_ahead(
     starved: &mut bool,
 ) {
     for [left, right] in input.as_chunks_mut::<CHANNELS>().0 {
-        (*left, *right) = feeder.next_frame(1.0, retire, starved);
+        (*left, *right) = feeder.next_frame(1.0, unit_step, false, retire, starved);
         let previous = feeder.position;
         feeder.position += unit_step;
         if let Some(wrapped) = active_loop.and_then(|region| region.wrap(previous, feeder.position))

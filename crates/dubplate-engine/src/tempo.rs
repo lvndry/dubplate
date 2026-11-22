@@ -108,6 +108,18 @@ impl Default for TempoFader {
 }
 
 impl TempoFader {
+    pub(crate) fn restored(position: f64, range: TempoRange, waits_for_pickup: bool) -> Self {
+        Self {
+            position,
+            range,
+            in_control: !waits_for_pickup,
+        }
+    }
+
+    pub(crate) fn position(&self) -> f64 {
+        self.position
+    }
+
     /// The tempo the fader asks for, where 1.0 is the track's own tempo.
     pub(crate) fn tempo(&self) -> f64 {
         (1.0 + self.position * self.range.span()).max(0.0)
