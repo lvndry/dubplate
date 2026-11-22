@@ -2,6 +2,7 @@
 //! clicks and shortcuts into engine commands, and redraws at the screen's frame rate while
 //! anything moves.
 
+mod audio;
 mod deck_panel;
 mod drop_target;
 mod effects_strip;
@@ -17,6 +18,7 @@ mod pads;
 mod prepare;
 mod set_panel;
 mod slider;
+mod track_check;
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
@@ -27,7 +29,8 @@ use std::time::{Duration, Instant};
 
 use dubplate_engine::{
     AudioOutput, Controller, DECK_COUNT, DeckId, DeckState, EFFECT_UNIT_COUNT, EffectUnitId,
-    EffectUnitState, EngineError, MasterTempo, OutputConfig, SyncMode, TempoRange, TempoState,
+    EffectUnitState, EngineError, HeadphoneSettings, MasterTempo, OutputDevice, SyncMode,
+    TempoRange, TempoState,
 };
 use dubplate_midi::{Feedback, PadMode};
 use dubplate_rekordbox::HotCuePad;
@@ -58,7 +61,7 @@ use crate::library::LibrarySources;
 use crate::loading::{LoadRefusal, LoadSource, check_deck_free, check_file};
 use crate::meter::PeakMeter;
 use crate::pads::next_mode;
-use crate::prep::{Catalogue, TrackCheck};
+use crate::prep::{Catalogue, GridCorrection, TrackCheck, TrackDetail};
 use crate::set::SetEditor;
 use crate::settings::Settings;
 use crate::shortcuts::{Perform, WINDOW_CONTEXT};
@@ -107,6 +110,7 @@ struct Notice {
 struct HitAreas {
     sliders: [Cell<Option<Bounds<Pixels>>>; Slider::ALL.len()],
     overviews: [Cell<Option<Bounds<Pixels>>>; DECK_COUNT],
+    check_overview: Cell<Option<Bounds<Pixels>>>,
     effect_levels: [Cell<Option<Bounds<Pixels>>>; EFFECT_UNIT_COUNT],
 }
 
@@ -166,11 +170,15 @@ pub struct DubplateApp {
     track_checks: HashMap<PathBuf, TrackCheck>,
     checks_pending: HashSet<PathBuf>,
     check_generation: u64,
+    track_detail: Option<(PathBuf, Arc<TrackDetail>)>,
+    detail_pending: Option<PathBuf>,
+    check_cursor_seconds: f64,
     catalogue: Arc<Catalogue>,
     effect_menu: Option<EffectUnitId>,
     refocus_window: bool,
     effect_search: Entity<InputState>,
     settings_save_pending: bool,
+    output_devices: Vec<OutputDevice>,
     hit_areas: Rc<HitAreas>,
     browser: Entity<Browser>,
     help_open: bool,
@@ -200,7 +208,6 @@ impl DubplateApp {
                 BrowserEvent::ImportRekordbox => this.set_rekordbox_import(true, cx),
             });
         let mixer = MixerPositions::default();
-        let engine = start_engine(&mixer);
         let effect_search = cx.new(|cx| InputState::new(window, cx).placeholder("Find an effect"));
         let search_subscription = cx.subscribe(
             &effect_search,
@@ -235,6 +242,8 @@ impl DubplateApp {
                 })
             })
             .unwrap_or_default();
+        let (engine, audio_problem) = audio::start_engine(&mixer, settings.audio_device.as_deref());
+        problems.extend(audio_problem);
         let hardware = match Hardware::start() {
             Ok((hardware, events)) => {
                 listen_to_controllers(events, window, cx);
@@ -282,11 +291,15 @@ impl DubplateApp {
             track_checks: HashMap::new(),
             checks_pending: HashSet::new(),
             check_generation: 0,
+            track_detail: None,
+            detail_pending: None,
+            check_cursor_seconds: 0.0,
             catalogue: Arc::default(),
             effect_menu: None,
             refocus_window: false,
             effect_search,
             settings_save_pending: false,
+            output_devices: Vec::new(),
             hit_areas: Rc::default(),
             browser,
             help_open: false,
@@ -404,12 +417,18 @@ impl DubplateApp {
         let share_directory = self
             .collection()
             .and_then(|collection| collection.share_directory().map(Path::to_path_buf));
+        let correction = self.grid_correction(&track);
         cx.spawn(async move |this, cx| {
             let prepared = cx
                 .background_executor()
-                .spawn(
-                    async move { prepare_track(&track, share_directory.as_deref(), Zoom::DEFAULT) },
-                )
+                .spawn(async move {
+                    prepare_track(
+                        &track,
+                        share_directory.as_deref(),
+                        Zoom::DEFAULT,
+                        correction,
+                    )
+                })
                 .await;
             this.update(cx, |this, cx| {
                 this.finish_load(deck, generation, prepared, cx);
@@ -521,6 +540,18 @@ impl DubplateApp {
                 self.pad_modes[deck.index()] = next_mode(self.pad_modes[deck.index()]);
             }
             Command::Loop(deck, action) => self.loop_button(deck, action, cx),
+            Command::ToggleHeadphoneCue(deck) => {
+                let cued = self
+                    .headphones()
+                    .is_some_and(|headphones| headphones.is_cued(deck));
+                self.engine_command(cx, |controller| controller.set_headphone_cue(deck, !cued));
+            }
+            Command::ToggleMasterCue => {
+                let cued = self
+                    .headphones()
+                    .is_some_and(|headphones| headphones.master_cue);
+                self.engine_command(cx, |controller| controller.set_master_cue(!cued));
+            }
             Command::LoadSelected(deck) => {
                 if let Some(track) = self.browser.read(cx).selected() {
                     self.load(deck, LoadSource::Collection(track), cx);
@@ -561,6 +592,7 @@ impl DubplateApp {
             Command::MoveSelection(direction) => {
                 if self.mode == Mode::Prepare && self.prepare_focus == PrepareFocus::Set {
                     self.move_set_selection(direction);
+                    self.ensure_track_detail(cx);
                 } else {
                     self.browser
                         .update(cx, |browser, cx| browser.move_selection(direction, cx));
@@ -606,6 +638,9 @@ impl DubplateApp {
             }
             Command::ToggleLibrary => {
                 self.library_open = !self.library_open;
+                if self.library_open {
+                    self.refresh_output_devices(cx);
+                }
                 self.help_open = false;
             }
             Command::AddMusicFolders => self.add_music_folders(cx),
@@ -861,6 +896,14 @@ impl DubplateApp {
                 self.mixer.filters[deck.index()] = fraction;
                 self.engine_command(cx, |controller| controller.set_filter(deck, fraction));
             }
+            Control::HeadphoneMix => {
+                self.mixer.headphone_mix = fraction;
+                self.engine_command(cx, |controller| controller.set_headphone_mix(fraction));
+            }
+            Control::HeadphoneLevel => {
+                self.mixer.headphone_level = fraction;
+                self.engine_command(cx, |controller| controller.set_headphone_level(fraction));
+            }
         }
         cx.notify();
     }
@@ -920,6 +963,27 @@ impl DubplateApp {
         }
         self.update_lights();
         cx.notify();
+    }
+
+    /// The DJ's fix of a track's grid, when the track is in the set.
+    fn grid_correction(&self, track: &CollectionTrack) -> GridCorrection {
+        let entry = track.track.file_path.as_deref().and_then(|path| {
+            let editor = self.set_editor.as_ref()?;
+            editor
+                .set()
+                .entries
+                .iter()
+                .find(|entry| entry.track_path == path)
+        });
+        entry.map(GridCorrection::of).unwrap_or_default()
+    }
+
+    /// The headphone section, when the engine runs.
+    pub(super) fn headphones(&self) -> Option<HeadphoneSettings> {
+        self.engine
+            .as_ref()
+            .ok()
+            .map(|engine| engine.controller.headphones())
     }
 
     /// A deck's tempo and sync, when the engine runs.
@@ -1091,6 +1155,9 @@ impl DubplateApp {
             cue,
             pad_mode: self.pad_modes[deck.index()],
             pads: pad_lights.pads,
+            headphone_cue: self
+                .headphones()
+                .is_some_and(|headphones| headphones.is_cued(deck)),
             sync: self
                 .tempo_state(deck)
                 .is_some_and(|state| state.sync != SyncMode::Off),
@@ -1229,7 +1296,7 @@ impl DubplateApp {
         self.last_frame = now;
         if let Ok(engine) = &self.engine {
             let meters = engine.controller.take_meters();
-            for (meter, peak) in self.deck_meters.iter_mut().zip(meters.deck_peaks) {
+            for (meter, peak) in self.deck_meters.iter_mut().zip(meters.channel_peaks) {
                 meter.update(peak, elapsed);
             }
             self.master_meter.update(meters.master_peak, elapsed);
@@ -1316,23 +1383,6 @@ fn step_unit(unit: EffectUnitId, steps: i32) -> EffectUnitId {
         .unwrap_or(unit)
 }
 
-fn start_engine(mixer: &MixerPositions) -> Result<Engine, SharedString> {
-    let (mut controller, output) = AudioOutput::start(&OutputConfig {
-        buffer_frames: Some(BUFFER_FRAMES),
-    })
-    .map_err(|error| SharedString::from(error_chain(&error)))?;
-    for deck in DeckId::ALL {
-        controller
-            .set_channel_fader(deck, mixer.channel_faders[deck.index()])
-            .map_err(|error| SharedString::from(error.to_string()))?;
-    }
-    controller
-        .set_crossfader(mixer.crossfader)
-        .and_then(|()| controller.set_master_gain(master_gain_at(mixer.master_level)))
-        .map_err(|error| SharedString::from(error.to_string()))?;
-    Ok(Engine { controller, output })
-}
-
 /// An error with its causes, as one sentence.
 fn error_chain(error: &dyn std::error::Error) -> String {
     let mut text = error.to_string();
@@ -1388,7 +1438,7 @@ impl Render for DubplateApp {
                             .clone()
                             .cached(StyleRefinement::default().flex_1().min_h_0().w_full()),
                     ),
-                Mode::Prepare => root.child(
+                Mode::Prepare => root.child(track_check::render(self, cx)).child(
                     div()
                         .flex()
                         .flex_1()

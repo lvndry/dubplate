@@ -31,6 +31,7 @@ mod error;
 mod grid;
 mod headphones;
 mod jog;
+mod keylock;
 mod looping;
 mod mixer;
 mod output;
@@ -49,7 +50,7 @@ pub use curves::{
 };
 pub use deck::DeckId;
 pub use decode::decode_file;
-pub use dubplate_fx::{BeatLength, EffectKind, EqBand};
+pub use dubplate_fx::{BeatLength, EffectKind, EqBand, LIMITER_CEILING};
 pub use effects::{EffectTarget, EffectUnitId, EffectUnitState};
 pub use error::EngineError;
 pub use grid::{BeatGrid, GridBeat};

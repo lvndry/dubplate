@@ -17,10 +17,11 @@ mod types;
 pub use types::{CueSource, EqIntent, Seam, SeamStatus, Set, SetEntry, SetId, SetList};
 
 /// The highest schema version `MIGRATIONS` can bring a database to.
-const SCHEMA_VERSION: u32 = 1;
+const SCHEMA_VERSION: u32 = 2;
 
 /// One migration per schema version, index = target version - 1.
-const MIGRATIONS: &[&str] = &[r#"
+const MIGRATIONS: &[&str] = &[
+    r#"
 CREATE TABLE sets (
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL,
@@ -75,7 +76,14 @@ CREATE TABLE play_history (
 );
 
 PRAGMA user_version = 1;
-"#];
+"#,
+    r#"
+ALTER TABLE set_entry ADD COLUMN grid_offset_ms INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE set_entry ADD COLUMN downbeat_shift INTEGER NOT NULL DEFAULT 0;
+
+PRAGMA user_version = 2;
+"#,
+];
 
 /// A position no real entry can hold while one is in the middle of moving.
 const MOVE_SENTINEL_POSITION: i64 = 1 << 62;
@@ -291,7 +299,8 @@ impl SetStore {
 
         let mut entries_statement = self.connection.prepare(
             "SELECT track_path, rekordbox_id, mix_in_ms, mix_out_ms, cue_source, grid_confirmed,
-                energy_override, vocal_in_ms, vocal_out_ms, note, is_backup
+                energy_override, vocal_in_ms, vocal_out_ms, note, is_backup, grid_offset_ms,
+                downbeat_shift
              FROM set_entry WHERE set_id = ?1
              ORDER BY is_backup, position",
         )?;
@@ -406,7 +415,7 @@ impl SetStore {
             "UPDATE set_entry
              SET track_path = ?3, rekordbox_id = ?4, mix_in_ms = ?5, mix_out_ms = ?6, cue_source = ?7,
                  grid_confirmed = ?8, energy_override = ?9, vocal_in_ms = ?10,
-                 vocal_out_ms = ?11, note = ?12
+                 vocal_out_ms = ?11, note = ?12, grid_offset_ms = ?14, downbeat_shift = ?15
              WHERE set_id = ?1 AND is_backup = ?2 AND position = ?13",
             (
                 set.as_i64(),
@@ -424,6 +433,8 @@ impl SetStore {
                 entry.vocal_out_ms,
                 &entry.note,
                 position as i64,
+                entry.grid_offset_ms,
+                entry.downbeat_shift,
             ),
         )?;
         transaction.commit()?;
@@ -619,8 +630,9 @@ fn insert_entry_row(
     transaction.execute(
         "INSERT INTO set_entry
             (set_id, position, track_path, rekordbox_id, mix_in_ms, mix_out_ms, cue_source,
-             grid_confirmed, energy_override, vocal_in_ms, vocal_out_ms, note, is_backup)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+             grid_confirmed, energy_override, vocal_in_ms, vocal_out_ms, note, is_backup,
+             grid_offset_ms, downbeat_shift)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
         (
             set.as_i64(),
             position as i64,
@@ -637,6 +649,8 @@ fn insert_entry_row(
             entry.vocal_out_ms,
             &entry.note,
             list.is_backup(),
+            entry.grid_offset_ms,
+            entry.downbeat_shift,
         ),
     )?;
     Ok(())
@@ -668,6 +682,8 @@ fn entry_from_row(row: &rusqlite::Row<'_>) -> Result<SetEntry, rusqlite::Error> 
             .and_then(|value| u32::try_from(value).ok()),
         note: row.get(9)?,
         is_backup: is_backup != 0,
+        grid_offset_ms: row.get(11)?,
+        downbeat_shift: row.get(12)?,
     })
 }
 

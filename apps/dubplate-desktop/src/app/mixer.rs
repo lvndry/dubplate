@@ -1,5 +1,5 @@
 //! The mixer between the decks: the master level and meter, each channel's trim, EQ and filter
-//! knobs, a meter and a fader per channel, and the crossfader.
+//! knobs, a meter and a fader per channel, the crossfader, and the headphone section.
 
 use dubplate_engine::{DeckId, EqBand};
 use gpui::prelude::*;
@@ -7,6 +7,7 @@ use gpui::{Context, FontWeight, Pixels, div, px};
 
 use super::slider::{self, CROSSFADER_THUMB, FADER_THUMB, SMALL_THUMB};
 use super::{DubplateApp, knob};
+use crate::commands::Command;
 use crate::controls::{Control, Slider};
 use crate::deck::deck_letter;
 use crate::fonts::MONO_FAMILY;
@@ -16,14 +17,49 @@ use crate::theme;
 const MIXER_WIDTH: Pixels = px(216.0);
 const SEGMENT_SIZE: Pixels = px(4.0);
 const SEGMENT_GAP: Pixels = px(2.0);
+/// The master meter's segments in the header, smaller so the master slider keeps its length.
+const HEADER_SEGMENT_SIZE: Pixels = px(3.0);
+const HEADER_SEGMENT_GAP: Pixels = px(1.5);
+const KNOB_SIZE: Pixels = px(18.0);
+const KNOB_GAP: Pixels = px(5.0);
+const KNOB_ROWS: usize = 5;
+const HEADPHONE_KNOB_SIZE: Pixels = px(16.0);
 
+/// A knob of a channel strip: its name, and the control it turns on a deck.
+type StripKnob = (&'static str, fn(DeckId) -> Control);
+
+/// The knobs of a channel strip, top to bottom.
+const STRIP: [StripKnob; KNOB_ROWS] = [
+    ("Trim", Control::Trim),
+    ("High", high),
+    ("Mid", mid),
+    ("Low", low),
+    ("Filter", Control::Filter),
+];
+
+fn high(deck: DeckId) -> Control {
+    Control::Eq(deck, EqBand::High)
+}
+
+fn mid(deck: DeckId) -> Control {
+    Control::Eq(deck, EqBand::Mid)
+}
+
+fn low(deck: DeckId) -> Control {
+    Control::Eq(deck, EqBand::Low)
+}
+
+/// The mixer, as tall as the decks beside it, laid out like rekordbox's two-deck view: the
+/// master in the header; each channel's knobs in a column on its outer side with the names
+/// shared between the two; each channel's fader and meter beside its knobs; the crossfader
+/// right under the faders.
 pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoElement {
     div()
         .flex()
         .flex_col()
         .flex_none()
         .w(MIXER_WIDTH)
-        .gap(px(10.0))
+        .gap(px(8.0))
         .px(theme::GUTTER)
         .py(px(12.0))
         .bg(theme::BACKGROUND)
@@ -33,28 +69,21 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
         .child(
             div()
                 .flex()
-                .flex_col()
-                .gap(px(6.0))
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .child(label("Master"))
-                        .child(meter(&app.master_meter, MeterDirection::Across)),
-                )
-                .child(slider::render(app, Slider::MasterLevel, SMALL_THUMB, None, cx).w_full()),
+                .items_center()
+                .gap(px(8.0))
+                .child(label("Master"))
+                .child(slider::render(app, Slider::MasterLevel, SMALL_THUMB, None, cx).flex_1())
+                .child(meter(&app.master_meter, MeterDirection::Across)),
         )
-        .child(knobs(app, cx))
         .child(
             div()
                 .flex()
-                .flex_1()
-                .justify_center()
-                .gap(px(30.0))
-                .min_h(px(70.0))
+                .justify_between()
+                .child(knob_column(app, DeckId::A, cx))
                 .child(channel(app, DeckId::A, cx))
-                .child(channel(app, DeckId::B, cx)),
+                .child(names())
+                .child(channel(app, DeckId::B, cx))
+                .child(knob_column(app, DeckId::B, cx)),
         )
         .child(
             div()
@@ -65,54 +94,155 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
                 .child(slider::render(app, Slider::Crossfader, CROSSFADER_THUMB, None, cx).flex_1())
                 .child(deck_label(DeckId::B)),
         )
+        .child(headphones(app, cx))
 }
 
-/// A row of the knob grid: its name, and the knob it is on each deck.
-type KnobRow = (&'static str, fn(DeckId) -> Control);
+/// The headphone section: each channel's CUE on its side, and between them the MIXING knob,
+/// MASTER CUE and the LEVEL knob.
+fn headphones(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoElement {
+    let settings = app.headphones();
+    let cued = |deck| settings.is_some_and(|settings| settings.is_cued(deck));
+    let master_cued = settings.is_some_and(|settings| settings.master_cue);
+    div()
+        .flex()
+        .items_center()
+        .justify_between()
+        .child(cue_button(
+            ("headphone-cue", 0),
+            "Cue",
+            cued(DeckId::A),
+            theme::deck_colour(DeckId::A),
+            Command::ToggleHeadphoneCue(DeckId::A),
+            cx,
+        ))
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(4.0))
+                .child(knob::render(
+                    app,
+                    Control::HeadphoneMix,
+                    HEADPHONE_KNOB_SIZE,
+                    theme::TEXT,
+                    cx,
+                ))
+                .child(label("Mix"))
+                .child(cue_button(
+                    ("master-cue", 0),
+                    "M",
+                    master_cued,
+                    theme::TEXT,
+                    Command::ToggleMasterCue,
+                    cx,
+                ))
+                .child(knob::render(
+                    app,
+                    Control::HeadphoneLevel,
+                    HEADPHONE_KNOB_SIZE,
+                    theme::TEXT,
+                    cx,
+                ))
+                .child(label("Lvl")),
+        )
+        .child(cue_button(
+            ("headphone-cue", 1),
+            "Cue",
+            cued(DeckId::B),
+            theme::deck_colour(DeckId::B),
+            Command::ToggleHeadphoneCue(DeckId::B),
+            cx,
+        ))
+}
 
-/// Trim, the three EQ bands and the filter, deck A on the left and deck B on the right.
-fn knobs(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoElement {
-    let rows: [KnobRow; 5] = [
-        ("Trim", Control::Trim),
-        ("High", |deck| Control::Eq(deck, EqBand::High)),
-        ("Mid", |deck| Control::Eq(deck, EqBand::Mid)),
-        ("Low", |deck| Control::Eq(deck, EqBand::Low)),
-        ("Filter", Control::Filter),
-    ];
-    let mut grid = div().flex().flex_col().gap(px(6.0));
-    for (name, control) in rows {
-        let mut row = div().flex().justify_between();
-        for deck in DeckId::ALL {
-            row = row.child(div().w(px(88.0)).child(knob::render(
-                app,
-                control(deck),
-                format!("{name} {}", deck_letter(deck)).into(),
-                theme::deck_colour(deck),
-                cx,
-            )));
-        }
-        grid = grid.child(row);
+/// A small headphone button, outlined in `colour` while on.
+fn cue_button(
+    id: (&'static str, usize),
+    text: &'static str,
+    on: bool,
+    colour: gpui::Rgba,
+    command: Command,
+    cx: &mut Context<'_, DubplateApp>,
+) -> impl IntoElement + use<> {
+    div()
+        .id(id)
+        .flex()
+        .items_center()
+        .justify_center()
+        .h(px(20.0))
+        .px(px(6.0))
+        .rounded(px(5.0))
+        .border_1()
+        .text_size(theme::TINY_TEXT_SIZE)
+        .cursor_pointer()
+        .map(|button| {
+            if on {
+                button
+                    .border_color(colour)
+                    .bg(theme::faded(colour, 0.18))
+                    .text_color(theme::TEXT)
+            } else {
+                button
+                    .border_color(theme::LINE)
+                    .text_color(theme::MUTED)
+                    .hover(|button| button.text_color(theme::TEXT))
+            }
+        })
+        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_click(cx.listener(move |this, _: &gpui::ClickEvent, window, cx| {
+            this.perform(command, window, cx);
+        }))
+        .child(text)
+}
+
+/// A channel's trim, EQ and filter knobs, top to bottom.
+fn knob_column(
+    app: &DubplateApp,
+    deck: DeckId,
+    cx: &mut Context<'_, DubplateApp>,
+) -> impl IntoElement + use<> {
+    let mut column = div().flex().flex_col().gap(KNOB_GAP);
+    for (_, control) in STRIP {
+        column = column.child(knob::render(
+            app,
+            control(deck),
+            KNOB_SIZE,
+            theme::deck_colour(deck),
+            cx,
+        ));
     }
-    grid
+    column
+}
+
+/// The knobs' names, between the two channels, each beside its row.
+fn names() -> impl IntoElement {
+    let mut column = div().flex().flex_col().items_center().gap(KNOB_GAP);
+    for (name, _) in STRIP {
+        column = column.child(
+            div()
+                .h(KNOB_SIZE)
+                .flex()
+                .items_center()
+                .text_size(theme::TINY_TEXT_SIZE)
+                .text_color(theme::MUTED)
+                .child(name),
+        );
+    }
+    column
+}
+
+/// The height of the knob column, which the faders match.
+fn strip_height() -> Pixels {
+    KNOB_SIZE * KNOB_ROWS as f32 + KNOB_GAP * (KNOB_ROWS - 1) as f32
 }
 
 fn channel(app: &DubplateApp, deck: DeckId, cx: &mut Context<'_, DubplateApp>) -> impl IntoElement {
     div()
         .flex()
-        .flex_col()
-        .items_center()
-        .gap(px(6.0))
-        .child(
-            div()
-                .flex()
-                .flex_1()
-                .gap(px(6.0))
-                .child(meter(&app.deck_meters[deck.index()], MeterDirection::Up))
-                .child(
-                    slider::render(app, Slider::ChannelFader(deck), FADER_THUMB, None, cx).h_full(),
-                ),
-        )
-        .child(deck_label(deck))
+        .gap(px(5.0))
+        .h(strip_height())
+        .child(meter(&app.deck_meters[deck.index()], MeterDirection::Up))
+        .child(slider::render(app, Slider::ChannelFader(deck), FADER_THUMB, None, cx).h_full())
 }
 
 /// Which way a meter's segments run from quiet to loud.
@@ -123,6 +253,10 @@ enum MeterDirection {
 
 fn meter(meter: &PeakMeter, direction: MeterDirection) -> impl IntoElement {
     let lit = meter.lit_segments();
+    let (size, gap) = match direction {
+        MeterDirection::Up => (SEGMENT_SIZE, SEGMENT_GAP),
+        MeterDirection::Across => (HEADER_SEGMENT_SIZE, HEADER_SEGMENT_GAP),
+    };
     let segments = (0..SEGMENTS).map(move |segment| {
         let colour = if segment >= lit {
             theme::METER_OFF
@@ -131,9 +265,9 @@ fn meter(meter: &PeakMeter, direction: MeterDirection) -> impl IntoElement {
         } else {
             theme::METER_ON
         };
-        div().size(SEGMENT_SIZE).rounded(px(1.0)).bg(colour)
+        div().size(size).rounded(px(1.0)).bg(colour)
     });
-    let column = div().flex().gap(SEGMENT_GAP);
+    let column = div().flex().gap(gap);
     match direction {
         MeterDirection::Up => column.flex_col_reverse().justify_start(),
         MeterDirection::Across => column.flex_row(),

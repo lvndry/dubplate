@@ -66,6 +66,16 @@ pub enum SetEdit {
     ToggleBackup,
     /// Undo the last change to the set.
     Undo,
+    /// Confirm the selected set track's grid by ear, or take the confirmation back.
+    ConfirmGrid,
+    /// Move the selected set track's grid by milliseconds, later when positive.
+    NudgeGrid(i32),
+    /// Move the selected set track's bars by beats, later when positive.
+    ShiftDownbeat(i32),
+    /// Put the selected set track's mix-in on the bar nearest the playhead.
+    MixInAtPlayhead,
+    /// Put the selected set track's mix-out on the bar nearest the playhead.
+    MixOutAtPlayhead,
 }
 
 /// A press on one of a deck's performance pads.
@@ -144,6 +154,10 @@ pub enum Command {
     CyclePadMode(DeckId),
     /// A loop button.
     Loop(DeckId, LoopAction),
+    /// A channel's headphone CUE button: hear the channel in the headphones, before its fader.
+    ToggleHeadphoneCue(DeckId),
+    /// MASTER CUE: hear the master in the headphones too.
+    ToggleMasterCue,
     /// Load the track selected in the browser.
     LoadSelected(DeckId),
     /// Load the track playing on the other deck at the same place, as pressing LOAD twice does.

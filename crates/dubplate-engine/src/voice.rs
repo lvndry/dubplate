@@ -116,16 +116,37 @@ impl Voice {
         retire: &mut RetireQueue,
         starved: &mut bool,
     ) -> (f32, f32) {
+        let (left, right) = if gain > 0.0 {
+            self.read_playhead(starved)
+        } else {
+            (0.0, 0.0)
+        };
+        let (tail_left, tail_right) = self.next_tails(retire, starved);
+        (left * gain + tail_left, right * gain + tail_right)
+    }
+
+    /// The track's frame under the playhead, interpolated.
+    #[inline]
+    pub(crate) fn read_playhead(&self, starved: &mut bool) -> (f32, f32) {
+        match &self.track {
+            Some(track) => {
+                let (left, right, missing) = read_interpolated(track, self.position);
+                *starved |= missing;
+                (left, right)
+            }
+            None => (0.0, 0.0),
+        }
+    }
+
+    /// Mixes the next frame of every tail and moves them on.
+    #[inline]
+    pub(crate) fn next_tails(
+        &mut self,
+        retire: &mut RetireQueue,
+        starved: &mut bool,
+    ) -> (f32, f32) {
         let mut left_sum = 0.0;
         let mut right_sum = 0.0;
-        if gain > 0.0
-            && let Some(track) = &self.track
-        {
-            let (left, right, missing) = read_interpolated(track, self.position);
-            *starved |= missing;
-            left_sum += left * gain;
-            right_sum += right * gain;
-        }
         for slot in &mut self.tails {
             let Some(tail) = slot else {
                 continue;

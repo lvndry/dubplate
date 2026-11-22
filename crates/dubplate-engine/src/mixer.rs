@@ -16,7 +16,7 @@ use crate::sync::SyncMode;
 use crate::tempo::{DeckLevel, MasterTempo, TempoMaster, TempoRange};
 use crate::track::TrackBuffer;
 use crate::{DECK_COUNT, INSERT_SLOTS, MAX_BLOCK_FRAMES};
-use dubplate_fx::{BeatLength, EqBand};
+use dubplate_fx::{BeatLength, EqBand, Limiter};
 
 const DECLICK_SECONDS: f64 = 0.005;
 const MAX_COMMANDS_PER_CALLBACK: usize = 256;
@@ -134,6 +134,10 @@ pub(crate) enum Command {
     SetMasterCue(bool),
     SetHeadphoneMix(f32),
     SetHeadphoneLevel(f32),
+    SetKeyLock {
+        deck: DeckId,
+        enabled: bool,
+    },
 }
 
 /// Something the audio thread no longer needs. It goes back to the control side to be dropped,
@@ -187,6 +191,8 @@ pub struct Renderer {
     master_block: StereoBlock,
     master_gain: Ramp,
     headphones: Headphones,
+    master_limiter: Limiter,
+    headphone_limiter: Limiter,
     crossfader: f32,
     sync_half_and_double: bool,
     commands: Consumer<Command>,
@@ -214,6 +220,8 @@ impl Renderer {
             master_block: StereoBlock::with_capacity(MAX_BLOCK_FRAMES),
             master_gain: Ramp::new(1.0, declick_frames),
             headphones: Headphones::new(MAX_BLOCK_FRAMES, declick_frames),
+            master_limiter: Limiter::new(sample_rate as f32),
+            headphone_limiter: Limiter::new(sample_rate as f32),
             crossfader: 0.5,
             sync_half_and_double: true,
             commands,
@@ -228,7 +236,8 @@ impl Renderer {
         for deck in &mut renderer.decks {
             deck.settle_gains();
         }
-        let mixer_latency = renderer.decks[0].mixer_latency_frames();
+        let mixer_latency =
+            renderer.decks[0].mixer_latency_frames() + renderer.master_limiter.latency_frames();
         renderer.shared.stats.mixer_latency_frames.store(
             u32::try_from(mixer_latency).unwrap_or(u32::MAX),
             Ordering::Relaxed,
@@ -343,17 +352,23 @@ impl Renderer {
             &mut self.master_block,
             &master_context,
         );
-        let headphone_peak = self.headphones.finish(&self.master_block);
-        raise_peak(&self.shared.headphone_peak, headphone_peak);
+        self.headphones.finish(&self.master_block);
+        let (headphones_left, headphones_right) = self.headphones.block.channels_mut();
+        self.headphone_limiter
+            .process(headphones_left, headphones_right);
+        raise_peak(&self.shared.headphone_peak, self.headphones.block.peak());
         let (left_channel, right_channel) = self.master_block.channels_mut();
-        let mut peak = 0.0_f32;
         for (left, right) in left_channel.iter_mut().zip(right_channel.iter_mut()) {
             let gain = self.master_gain.next_value();
             *left *= gain;
             *right *= gain;
-            peak = peak.max(left.abs()).max(right.abs());
         }
-        raise_peak(&self.shared.master_peak, peak);
+        self.master_limiter.process(left_channel, right_channel);
+        raise_peak(&self.shared.master_peak, self.master_block.peak());
+        raise_peak(
+            &self.shared.master_limiting,
+            1.0 - self.master_limiter.take_gain_reduction(),
+        );
         starved
     }
 
@@ -477,6 +492,9 @@ impl Renderer {
             Command::SetMasterCue(enabled) => self.headphones.set_master_cue(enabled),
             Command::SetHeadphoneMix(mix) => self.headphones.set_mix(mix),
             Command::SetHeadphoneLevel(level) => self.headphones.set_level(level),
+            Command::SetKeyLock { deck, enabled } => {
+                self.decks[deck.index()].set_key_lock(enabled);
+            }
             Command::SetMasterTempo(source) => self.tempo_master.set_source(source),
             Command::ChangeEffect { unit, change } => self.effects.change(unit, change),
             Command::SetEq {
