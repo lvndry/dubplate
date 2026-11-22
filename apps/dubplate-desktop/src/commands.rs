@@ -144,6 +144,8 @@ pub enum EffectEdit {
 pub enum Command {
     /// Play or pause a deck.
     TogglePlay(DeckId),
+    /// Play or pause the deck the room can hear, as Space does: see [`crate::space`].
+    TogglePlayOnAir,
     /// The CDJ cue button of a deck.
     Cue(DeckId, Press),
     /// Go back to the start of the track, as SHIFT + CUE does.
