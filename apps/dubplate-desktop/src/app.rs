@@ -58,7 +58,8 @@ use crate::controls::{
     nudged_tempo_slider, tempo_fader, trim_gain_at,
 };
 use crate::deck::{
-    Deck, DeckContent, GridSource, HotCues, LoadError, PreparedTrack, TrackVisuals, prepare_track,
+    Deck, DeckContent, GridSource, HotCues, LoadError, PreparedTrack, TrackVisuals, deck_letter,
+    prepare_track,
 };
 use crate::effects::{EffectUnitSetting, search, step_beat, step_effect};
 use crate::fonts::UI_FAMILY;
@@ -669,6 +670,20 @@ impl DubplateApp {
                     SyncMode::Beat
                 };
                 self.engine_command(cx, |controller| controller.set_sync(deck, mode));
+                let nothing_to_follow = DeckId::ALL
+                    .into_iter()
+                    .all(|other| !self.deck_state(other).playing);
+                if mode != SyncMode::Off && nothing_to_follow {
+                    self.show_notice(
+                        NoticePlace::Deck(deck),
+                        format!(
+                            "Sync armed: deck {} locks to the tempo master as soon as a deck \
+                             with a beat grid plays.",
+                            deck_letter(deck)
+                        ),
+                        cx,
+                    );
+                }
             }
             Command::MakeTempoMaster(deck) => self.engine_command(cx, |controller| {
                 controller.set_master_tempo(MasterTempo::Deck(deck))

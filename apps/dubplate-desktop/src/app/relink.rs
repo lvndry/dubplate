@@ -15,6 +15,7 @@ use gpui::{ClickEvent, Context, FontWeight, MouseButton, PathPromptOptions, div,
 
 use super::{DubplateApp, NoticePlace};
 use crate::collection::TrackIndex;
+use crate::folder_picker::open_next_picker_in;
 use crate::relink::{Missing, with_relocations};
 use crate::theme;
 use crate::widgets::{Emphasis, button};
@@ -80,6 +81,15 @@ impl DubplateApp {
         else {
             return;
         };
+        if let Some(start) = self
+            .sources
+            .folders()
+            .first()
+            .cloned()
+            .or_else(dirs::audio_dir)
+        {
+            open_next_picker_in(&start);
+        }
         let chosen = cx.prompt_for_paths(PathPromptOptions {
             files: false,
             directories: true,
