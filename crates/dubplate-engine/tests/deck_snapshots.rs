@@ -1,7 +1,7 @@
 //! Deck transfer and prepared-load regressions across the control/audio boundary.
 
 use dubplate_engine::{
-    BeatGrid, DeckId, DeckRestorePolicy, EngineError, MasterTempo, SyncMode, Track, offline_engine,
+    BeatGrid, DeckId, EngineError, MasterTempo, SyncMode, Track, offline_engine,
 };
 
 fn track(rate: u32) -> Track {
@@ -41,9 +41,7 @@ fn copies_effective_tempo_and_fader_pickup_without_copying_mixer_settings() {
     assert!(source.tempo_state(DeckId::B).fader_waits_for_pickup);
     let snapshot = source.snapshot_deck(DeckId::A).unwrap();
     let (mut target, mut target_renderer) = offline_engine(44_100);
-    target
-        .restore_deck(DeckId::A, &snapshot, DeckRestorePolicy::DeviceChange)
-        .unwrap();
+    target.restore_deck(DeckId::A, &snapshot).unwrap();
     flush(&mut target_renderer);
     assert!((target.deck_state(DeckId::A).tempo - tempo).abs() < 1e-8);
     assert!(target.tempo_state(DeckId::A).fader_waits_for_pickup);

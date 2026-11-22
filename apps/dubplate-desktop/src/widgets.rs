@@ -64,7 +64,9 @@ pub fn button(
 /// Shared keyboard, focus and accessibility behavior for the application's drawn controls.
 /// GPUI's `on_click` dispatches pointer, Enter/Space and assistive activation through one path.
 pub trait InteractiveControl: Sized {
-    /// Makes an action a named button and a stop in the natural tab order.
+    /// Makes an action a named button and a stop in the natural tab order. Only the keyboard
+    /// moves focus onto it: a click leaves focus where it was, so the deck keys (Space, the
+    /// arrows, Enter, Backspace) keep working after the DJ touches a control with the mouse.
     fn accessible_button(self, label: impl Into<SharedString>) -> Self;
     /// A button whose on/off state is announced alongside its name.
     fn accessible_toggle(self, label: impl Into<SharedString>, on: bool) -> Self;
@@ -78,6 +80,7 @@ impl InteractiveControl for Stateful<Div> {
             .aria_label(label)
             .key_context("Control")
             .tab_index(0)
+            .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
             .focus_visible(|style| {
                 style.shadow(vec![
                     gpui::BoxShadow::new(px(0.0), px(0.0), theme::TEXT.into())
