@@ -1,13 +1,14 @@
 //! The window's side of the library: choosing music folders, scanning them in the background,
 //! importing rekordbox when the DJ asks, and rebuilding the collection the browser shows.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
 use dubplate_engine::DeckId;
 use dubplate_library::{FolderScan, LibraryCache};
-use dubplate_prep::{Key, KeyFit};
+use dubplate_prep::{ExportLibrary, Key, KeyFit};
 use gpui::{Context, PathPromptOptions};
 
 use super::{DubplateApp, NoticePlace, error_chain};
@@ -302,19 +303,34 @@ impl DubplateApp {
         };
         let scans = self.sources.chosen_scans();
         let relinks = self.settings.library.relink_map();
+        let set = self.set_editor.as_ref().map(|editor| editor.set().clone());
         cx.spawn(async move |this, cx| {
-            let (collection, catalogue, missing) = cx
+            let (collection, catalogue, missing, moved_files) = cx
                 .background_executor()
                 .spawn(async move {
                     let collection =
                         Collection::build_relinked(rekordbox.as_deref(), &scans, &relinks);
                     let catalogue = prep::Catalogue::build(&collection);
                     let missing = missing_tracks(&collection, &relinks);
-                    (collection, catalogue, missing)
+                    let moved_files = set
+                        .map(|set| {
+                            ExportLibrary::new(
+                                rekordbox.as_deref().map(RekordboxLibrary::collection),
+                                &scans,
+                                &relinks,
+                            )
+                            .moved_files(&set)
+                        })
+                        .unwrap_or_default()
+                        .into_iter()
+                        .filter(|(from, _)| !from.is_file())
+                        .collect::<HashMap<_, _>>();
+                    (collection, catalogue, missing, moved_files)
                 })
                 .await;
             this.update(cx, |this, cx| {
                 if this.library_generation == generation {
+                    this.follow_moved_set_files(&moved_files, cx);
                     this.catalogue = Arc::new(catalogue);
                     this.restore_energy();
                     this.show_library(LibraryStatus::Ready(Arc::new(collection)), cx);
@@ -327,6 +343,28 @@ impl DubplateApp {
             .ok();
         })
         .detach();
+    }
+
+    /// Points the set's tracks at the files' places now, for files gone from where the set last
+    /// saw them, such as a rekordbox track relinked after it went into the set.
+    fn follow_moved_set_files(
+        &mut self,
+        moved_files: &HashMap<PathBuf, PathBuf>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if moved_files.is_empty() {
+            return;
+        }
+        let Some(editor) = &mut self.set_editor else {
+            return;
+        };
+        if let Err(error) = editor.follow_files(moved_files) {
+            self.show_notice(
+                NoticePlace::Window,
+                format!("The set could not follow a moved file: {error}"),
+                cx,
+            );
+        }
     }
 
     fn show_library(&mut self, status: LibraryStatus, cx: &mut Context<'_, Self>) {

@@ -21,7 +21,7 @@ pub struct MissingTrack {
 pub enum RelocationConfidence {
     /// The found file has the same size rekordbox recorded.
     SameSize,
-    /// No matching size, but the found file's length is within one second of what rekordbox recorded.
+    /// No matching size, but the found file's length is within two seconds of what rekordbox recorded.
     SameLength,
 }
 
@@ -36,11 +36,15 @@ pub struct Relocation {
     pub confidence: RelocationConfidence,
 }
 
+/// rekordbox records a track's length in whole seconds, cut down, and decoders disagree by a
+/// fraction of a second on the same file, so a 7:24 in rekordbox can read 7:25.9 from the file.
+const LENGTH_TOLERANCE_SECONDS: f32 = 2.0;
+
 /// Finds, for each missing track, the library track that is its file at a new location.
 ///
 /// Only candidates whose file name matches, ignoring case, are considered. A candidate with the
 /// same size wins outright when the size is known; failing that, a candidate whose length is
-/// within one second wins when both lengths are known. Two equally good candidates are never
+/// within two seconds wins when both lengths are known. Two equally good candidates are never
 /// guessed between, so an ambiguous name yields nothing. The result keeps the order of `missing`.
 pub fn find_relocations(missing: &[MissingTrack], candidates: &[LibraryTrack]) -> Vec<Relocation> {
     missing
@@ -71,7 +75,7 @@ fn find_one(missing: &MissingTrack, candidates: &[LibraryTrack]) -> Option<Reloc
         }
         let length_matches = match (missing.duration_seconds, candidate.duration_seconds) {
             (Some(missing_length), Some(candidate_length)) => {
-                (missing_length - candidate_length).abs() <= 1.0
+                (missing_length - candidate_length).abs() <= LENGTH_TOLERANCE_SECONDS
             }
             _ => false,
         };
@@ -271,7 +275,7 @@ mod tests {
     }
 
     #[test]
-    fn an_unknown_size_is_matched_by_length_within_one_second() {
+    fn an_unknown_size_is_matched_by_length_within_two_seconds() {
         let missing = MissingTrack {
             path: "/Music/afro house/warmup/Moved.mp3".into(),
             size: None,
@@ -280,7 +284,7 @@ mod tests {
         let far = Path::new("/Music/afro house/peak/Moved.mp3");
         let candidates = vec![
             candidate(far, 999_000, Some(295.0)),
-            candidate(&new_home(), 1_000_000, Some(300.7)),
+            candidate(&new_home(), 1_000_000, Some(301.6)),
         ];
 
         let found = find_relocations(&[missing], &candidates);

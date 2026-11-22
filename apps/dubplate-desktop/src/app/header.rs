@@ -69,9 +69,8 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
                 .flex()
                 .flex_none()
                 .gap(px(2.0))
-                .child(mode("Prepare", Some(Mode::Prepare), app.mode, cx))
-                .child(mode("Perform", Some(Mode::Perform), app.mode, cx))
-                .child(mode("Edit", None, app.mode, cx)),
+                .child(mode("Prepare", Mode::Prepare, app.mode, cx))
+                .child(mode("Perform", Mode::Perform, app.mode, cx)),
         )
         .child(
             div()
@@ -84,14 +83,14 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
         .child(status(app, cx))
 }
 
-/// A mode button. Edit has no screen yet, so it shows but does nothing.
+/// A mode button.
 fn mode(
     label: &'static str,
-    mode: Option<Mode>,
+    mode: Mode,
     shown: Mode,
     cx: &mut Context<'_, DubplateApp>,
 ) -> impl IntoElement + use<> {
-    let current = mode == Some(shown);
+    let current = mode == shown;
     div()
         .id(label)
         .flex()
@@ -99,22 +98,22 @@ fn mode(
         .h(px(28.0))
         .px(px(10.0))
         .rounded(theme::SMALL_RADIUS)
+        .cursor_pointer()
         .when(current, |button| {
             button
                 .bg(theme::RAISED)
                 .text_color(theme::TEXT)
                 .font_weight(FontWeight::MEDIUM)
         })
-        .when(!current, |button| button.text_color(theme::MUTED))
-        .when_some(mode, |button, mode| {
+        .when(!current, |button| {
             button
-                .cursor_pointer()
+                .text_color(theme::MUTED)
                 .hover(|button| button.text_color(theme::TEXT))
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                    this.perform(Command::SwitchMode(mode), window, cx);
-                }))
         })
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+            this.perform(Command::SwitchMode(mode), window, cx);
+        }))
         .child(label)
 }
 
@@ -208,7 +207,6 @@ fn status(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoElem
                 .flex_shrink(1.0)
                 .min_w_0()
                 .truncate()
-                .font_family(MONO_FAMILY)
                 .text_color(audio_colour)
                 .child(audio_text),
         )

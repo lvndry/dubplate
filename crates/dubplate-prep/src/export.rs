@@ -379,22 +379,43 @@ impl<'a> ExportLibrary<'a> {
         }
     }
 
-    fn resolve(&self, entry: &SetEntry, problems: &mut Vec<String>) -> ExportTrack {
-        let current_path = self.relinked(&entry.track_path);
-        let rekordbox_track = entry
+    /// Where the file of `entry` is now: rekordbox's track for it, found by its rekordbox id or
+    /// its path, at the place the relinks give; otherwise the entry's own file, relinked.
+    pub fn current_path(&self, entry: &SetEntry) -> PathBuf {
+        match self.rekordbox_track(entry) {
+            Some(track) => track.file_path.as_deref().map_or_else(
+                || self.relinked(&entry.track_path),
+                |path| self.relinked(path),
+            ),
+            None => self.relinked(&entry.track_path),
+        }
+    }
+
+    /// The set's files that are somewhere else now, each old place with its new one.
+    pub fn moved_files(&self, set: &Set) -> HashMap<PathBuf, PathBuf> {
+        set.entries
+            .iter()
+            .filter_map(|entry| {
+                let current = self.current_path(entry);
+                (current != entry.track_path).then(|| (entry.track_path.clone(), current))
+            })
+            .collect()
+    }
+
+    fn rekordbox_track(&self, entry: &SetEntry) -> Option<&'a Track> {
+        entry
             .rekordbox_id
             .as_deref()
             .and_then(|id| self.rekordbox_by_id.get(id))
             .or_else(|| self.rekordbox_by_path.get(&entry.track_path))
-            .copied();
-        if let Some(original) = rekordbox_track {
+            .copied()
+    }
+
+    fn resolve(&self, entry: &SetEntry, problems: &mut Vec<String>) -> ExportTrack {
+        let current_path = self.current_path(entry);
+        if let Some(original) = self.rekordbox_track(entry) {
             let mut track = original.clone();
-            track.file_path = Some(
-                original
-                    .file_path
-                    .as_deref()
-                    .map_or_else(|| current_path.clone(), |path| self.relinked(path)),
-            );
+            track.file_path = Some(current_path.clone());
             let beat_grid = self.beat_grid(&track, problems);
             let cues = self
                 .cues_by_track
