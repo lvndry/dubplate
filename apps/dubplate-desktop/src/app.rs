@@ -580,6 +580,10 @@ impl DubplateApp {
             Command::MakeTempoMaster(deck) => self.engine_command(cx, |controller| {
                 controller.set_master_tempo(MasterTempo::Deck(deck))
             }),
+            Command::ToggleKeyLock(deck) => {
+                let locked = self.key_lock(deck);
+                self.engine_command(cx, |controller| controller.set_key_lock(deck, !locked));
+            }
             Command::CycleTempoRange(deck) => {
                 let range = self.tempo_range(deck).next();
                 self.engine_command(cx, |controller| controller.set_tempo_range(deck, range));
@@ -992,6 +996,13 @@ impl DubplateApp {
             .as_ref()
             .ok()
             .map(|engine| engine.controller.tempo_state(deck))
+    }
+
+    /// Whether a deck's key lock is on.
+    pub(super) fn key_lock(&self, deck: DeckId) -> bool {
+        self.engine
+            .as_ref()
+            .is_ok_and(|engine| engine.controller.key_lock(deck))
     }
 
     /// How far a deck's tempo slider reaches.
