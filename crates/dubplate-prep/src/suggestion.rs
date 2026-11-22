@@ -34,9 +34,12 @@ impl Suggestion<'_> {
     }
 }
 
+/// The mix options the Next suggestions use, read once.
+static MIX_OPTIONS: LazyLock<MixOptions> = LazyLock::new(MixOptions::default);
+
 /// The key relations the Next suggestions accept.
 static SUGGESTED_RELATIONS: LazyLock<Vec<Relation>> =
-    LazyLock::new(|| MixOptions::default().relations);
+    LazyLock::new(|| MIX_OPTIONS.relations.clone());
 
 /// The key moves the Next suggestions accept from one key, to narrow a library the same way.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -78,7 +81,7 @@ pub fn suggest_next<'candidates>(
         .iter()
         .filter(|candidate| candidate.track_path != reference.track_path)
         .filter(|candidate| !is_in_set(candidate));
-    next_tracks(reference, pool, &MixOptions::default(), direction)
+    next_tracks(reference, pool, &MIX_OPTIONS, direction)
         .into_iter()
         .take(limit)
         .map(|mix_match| Suggestion {

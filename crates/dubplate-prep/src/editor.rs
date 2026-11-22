@@ -112,17 +112,20 @@ impl SetEditor {
         after: Option<usize>,
         track: SetTrackRef,
     ) -> Result<usize, StoreError> {
-        let mut target = after.map_or(0, |position| position + 1);
+        let count = self.tracks().len();
         match self.position(&track.path) {
             Some(existing) => {
+                // `after` clamped to the set before the decrement: an out-of-date selection
+                // lands at the end, not past it.
+                let after = after.map_or(0, |position| position.min(count.saturating_sub(1)));
+                let mut target = after + 1;
                 if existing < target {
                     target -= 1;
                 }
-                let target = target.min(self.tracks().len().saturating_sub(1));
                 self.move_track(existing, target)
             }
             None => {
-                let target = target.min(self.tracks().len());
+                let target = after.map_or(0, |position| position + 1).min(count);
                 self.edit(|store, id| store.insert_entry(id, SetList::Main, target, entry(track)))?;
                 Ok(target)
             }
@@ -501,6 +504,27 @@ mod tests {
         assert_eq!(names(&editor), ["b", "c", "a"]);
         assert_eq!(editor.insert_after(None, track("z")).unwrap(), 0);
         assert_eq!(names(&editor), ["z", "b", "c", "a"]);
+    }
+
+    #[test]
+    fn an_out_of_date_selection_lands_where_the_dj_aimed() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut editor = editor(&directory);
+        for name in ["a", "b", "c"] {
+            editor.add(track(name)).unwrap();
+        }
+        // The DJ picked after the third track, then removed two: the position is out of date.
+        editor.remove(2).unwrap();
+        editor.remove(1).unwrap();
+        assert_eq!(names(&editor), ["a"]);
+        // Moving b with that old position: it lands at the end, where the aim was.
+        assert_eq!(editor.insert_after(Some(2), track("b")).unwrap(), 1);
+        assert_eq!(names(&editor), ["a", "b"]);
+        // Adding a new track with the old position: it is appended.
+        assert_eq!(editor.insert_after(Some(2), track("z")).unwrap(), 2);
+        assert_eq!(names(&editor), ["a", "b", "z"]);
+        // The same old position on the track that already sits where the aim was leaves it.
+        assert_eq!(editor.insert_after(Some(2), track("z")).unwrap(), 2);
     }
 
     #[test]

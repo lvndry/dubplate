@@ -14,6 +14,8 @@ use dubplate_stems::{
 const PATIENCE: Duration = Duration::from_secs(10);
 /// How quickly a cancelled or dropped separation must be gone.
 const PROMPT: Duration = Duration::from_millis(500);
+/// The longest a stand-in worker may go quiet in the test that stops a wedged worker.
+const QUIET: Duration = Duration::from_millis(400);
 
 struct Fixture {
     folder: tempfile::TempDir,
@@ -101,6 +103,15 @@ mkdir -p "$2/.incoming-unfinished"
 echo "stage separating"
 echo "progress 1 40"
 exec sleep 30
+"#;
+
+/// Works for a long time without saying another word, with its output left open: the
+/// separation's wedged.
+const SILENT_WORKER: &str = r#"
+echo $$ > "$3"
+echo "stage separating"
+echo "progress 1 40"
+sleep 30
 "#;
 
 fn is_running(pid: u32) -> bool {
@@ -343,6 +354,59 @@ fn a_track_asked_for_twice_waits_once_at_its_earliest_priority() {
     }
     assert_eq!(queued, 3);
     assert_eq!(ready, [blocker, raised, later]);
+}
+
+#[test]
+fn a_worker_that_goes_quiet_is_stopped_and_its_track_fails() {
+    let fixture = Fixture::new();
+    let cache = fixture.cache();
+    let pid_file = fixture.pid_file();
+    let queue = SeparationQueue::start_with_deadline(
+        fixture.location(),
+        move |track: &Path| {
+            // The wedged track goes quiet with its output left open; the rest are separated
+            // at once, so the queue goes on once it has stopped the wedged one.
+            let wedged = track
+                .file_stem()
+                .is_some_and(|stem| stem.to_str() == Some("wedged"));
+            let script = if wedged { SILENT_WORKER } else { SEPARATES };
+            let mut command = Command::new("/bin/sh");
+            command
+                .arg("-c")
+                .arg(script)
+                .arg("worker")
+                .arg(track)
+                .arg(&cache)
+                .arg(&pid_file);
+            command
+        },
+        QUIET,
+    )
+    .expect("the queue starts");
+    let track = fixture.track("wedged");
+    queue.request(track.clone(), SeparationPriority::Now);
+    let stopped = Instant::now();
+    assert_eq!(
+        wait_for(&queue, &track, |status| !status.is_pending()),
+        StemsStatus::Failed(
+            "the separation stopped talking while separating and was stopped".to_owned()
+        ),
+    );
+    // The stop happened by the deadline, not when the worker finally finished.
+    assert!(stopped.elapsed() < PATIENCE);
+    let pid = fixture.worker_pid();
+    assert!(!is_running(pid));
+
+    // The queue goes on: the next track is separated as usual.
+    let next = fixture.track("after");
+    queue.request(next.clone(), SeparationPriority::Now);
+    assert!(matches!(
+        wait_for(&queue, &next, |status| matches!(
+            status,
+            StemsStatus::Ready(_)
+        )),
+        StemsStatus::Ready(_)
+    ));
 }
 
 #[test]

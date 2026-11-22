@@ -5,6 +5,7 @@
 //! own analysis uses, so a track gets the tempo, grid and key Euphoria would give it.
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use dubplate_rekordbox::analysis::{Beat, BeatGrid};
 use euphoria_core::detect::{StratumDetector, detect_beat_grid, read_key};
@@ -38,6 +39,11 @@ pub struct AnalysedGrid {
     pub bpm: f64,
     /// Seconds from the start of the track to the first downbeat, within the first bar.
     pub first_downbeat_seconds: f64,
+}
+
+/// The length of `duration` in whole milliseconds, clamped to what an `i64` holds.
+pub(crate) fn millis_i64(duration: Duration) -> i64 {
+    duration.as_millis().min(i64::MAX as u128) as i64
 }
 
 impl AnalysedGrid {

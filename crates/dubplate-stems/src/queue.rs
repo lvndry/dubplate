@@ -2,9 +2,10 @@
 
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ExitStatus, Stdio};
-use std::sync::mpsc::{Receiver, Sender, channel};
+use std::process::{Child, ChildStdout, ExitStatus, Stdio};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
 
 use crate::files::StemFiles;
 use crate::index::StemsIndex;
@@ -16,6 +17,10 @@ use crate::status::{SeparationProgress, SeparationStage, StemsStatus, StemsUpdat
 /// Prefixes of the folders the cache writes into before a separation is complete. A worker
 /// stopped in the middle leaves one behind.
 const UNFINISHED_PREFIXES: [&str; 2] = [".incoming-", ".replaced-"];
+
+/// The longest time a separation may go without a word from its worker before it is stopped:
+/// a worker that is working always says so, and one that is not leaves the queue stuck.
+pub const WORKER_ACTIVITY_DEADLINE: Duration = Duration::from_secs(8);
 
 /// The order in which tracks are separated.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -42,14 +47,25 @@ pub struct SeparationQueue {
 
 impl SeparationQueue {
     /// Starts the queue's thread, named `dubplate-stems`, which separates into `location` with
-    /// workers from `launcher`.
+    /// workers from `launcher`, stopping a worker that stops talking for
+    /// [`WORKER_ACTIVITY_DEADLINE`].
     pub fn start(location: StemsLocation, launcher: impl WorkerLauncher) -> std::io::Result<Self> {
+        Self::start_with_deadline(location, launcher, WORKER_ACTIVITY_DEADLINE)
+    }
+
+    /// [`SeparationQueue::start`], stopping a worker that stops talking for `deadline` instead.
+    pub fn start_with_deadline(
+        location: StemsLocation,
+        launcher: impl WorkerLauncher,
+        deadline: Duration,
+    ) -> std::io::Result<Self> {
         let (events, event_receiver) = channel();
         let (update_sender, updates) = channel();
         let scheduler = Scheduler {
             index: StemsIndex::open(location.cache_directory()),
             location,
             launcher: Box::new(launcher),
+            deadline,
             events: event_receiver,
             event_sender: events.clone(),
             updates: update_sender,
@@ -149,6 +165,8 @@ struct Running {
     stage: SeparationStage,
     ready: Option<String>,
     failure: Option<String>,
+    /// When the worker last said a word, so a worker that goes quiet can be stopped.
+    last_activity: Instant,
 }
 
 /// How a worker ended.
@@ -162,6 +180,7 @@ struct Scheduler {
     location: StemsLocation,
     launcher: Box<dyn WorkerLauncher>,
     index: StemsIndex,
+    deadline: Duration,
     events: Receiver<Event>,
     event_sender: Sender<Event>,
     updates: Sender<StemsUpdate>,
@@ -178,9 +197,40 @@ impl Scheduler {
             if self.running.is_none() {
                 self.start_next();
             }
-            let Ok(event) = self.events.recv() else {
-                self.stop_running(Outcome::Cancelled);
-                return;
+            // While a worker runs, at most until it goes quiet: a worker that is working
+            // always says so, and one that is not would leave the queue stuck. With none
+            // running, the next track waits on an event, as before.
+            let event = if let Some((stage, wait)) = self.running.as_ref().map(|running| {
+                (
+                    running.stage,
+                    self.deadline
+                        .saturating_sub(Instant::now() - running.last_activity),
+                )
+            }) {
+                match self.events.recv_timeout(wait) {
+                    Ok(event) => event,
+                    Err(RecvTimeoutError::Timeout) => {
+                        // The worker stopped talking before the deadline: it is stuck, and so
+                        // would be the queue. Stop it and fail its track; the waiting tracks
+                        // go on.
+                        let reason = format!(
+                            "the separation stopped talking while {} and was stopped",
+                            stage.label()
+                        );
+                        self.stop_running(Outcome::Failed(reason));
+                        continue;
+                    }
+                    Err(RecvTimeoutError::Disconnected) => {
+                        self.stop_running(Outcome::Cancelled);
+                        return;
+                    }
+                }
+            } else {
+                let Ok(event) = self.events.recv() else {
+                    self.stop_running(Outcome::Cancelled);
+                    return;
+                };
+                event
             };
             match event {
                 Event::Request(requests) => {
@@ -332,19 +382,7 @@ impl Scheduler {
         let events = self.event_sender.clone();
         let reader = std::thread::Builder::new()
             .name("dubplate-stems-worker".to_owned())
-            .spawn(move || {
-                for line in BufReader::new(stdout).lines() {
-                    let Ok(line) = line else {
-                        break;
-                    };
-                    if let Some(message) = WorkerMessage::parse(&line)
-                        && events.send(Event::Worker { job, message }).is_err()
-                    {
-                        return;
-                    }
-                }
-                let _ = events.send(Event::WorkerDone { job });
-            });
+            .spawn(move || read_worker(job, stdout, events));
         let reader = match reader {
             Ok(reader) => reader,
             Err(error) => {
@@ -360,6 +398,7 @@ impl Scheduler {
             stage: SeparationStage::Starting,
             ready: None,
             failure: None,
+            last_activity: Instant::now(),
         })
     }
 
@@ -367,6 +406,7 @@ impl Scheduler {
         let Some(running) = self.running.as_mut().filter(|running| running.job == job) else {
             return;
         };
+        running.last_activity = Instant::now();
         let progress = match message {
             WorkerMessage::Stage(stage) => {
                 running.stage = stage;
@@ -484,4 +524,21 @@ fn remove_unfinished(cache: &Path) {
             let _ = std::fs::remove_dir_all(entry.path());
         }
     }
+}
+
+/// Reads a worker's standard output, sending every message it prints until it closes. A line
+/// it cannot read ends the reading: the worker is then stopped for going quiet, as one is
+/// when it never said anything at all.
+fn read_worker(job: u64, stdout: ChildStdout, events: Sender<Event>) {
+    for line in BufReader::new(stdout).lines() {
+        let Ok(line) = line else {
+            break;
+        };
+        if let Some(message) = WorkerMessage::parse(&line)
+            && events.send(Event::Worker { job, message }).is_err()
+        {
+            return;
+        }
+    }
+    let _ = events.send(Event::WorkerDone { job });
 }
