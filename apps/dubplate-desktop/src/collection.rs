@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use dubplate_library::{FolderScan, LibraryTrack};
+use dubplate_prep::{RekordboxCollection, file_track, folder_track};
 use dubplate_rekordbox::{
     Cue, DatabaseKey, HotCuePad, Library, Playlist, PlaylistKind, Track, default_master_db,
 };
@@ -153,6 +154,15 @@ impl RekordboxLibrary {
     /// How many tracks rekordbox holds.
     pub fn track_count(&self) -> usize {
         self.tracks.len()
+    }
+
+    /// The tracks, cues and analysis folder, as the export to rekordbox reads them.
+    pub fn collection(&self) -> RekordboxCollection<'_> {
+        RekordboxCollection {
+            tracks: &self.tracks,
+            cues: &self.cues,
+            share_directory: &self.share_directory,
+        }
     }
 }
 
@@ -326,48 +336,12 @@ impl CollectionTrack {
     /// An audio file that is not in the rekordbox collection, such as one dropped from Finder.
     /// It has no cues, beat grid or tempo.
     pub fn from_file(path: &Path) -> Self {
-        let track = Track {
-            id: String::new(),
-            title: None,
-            artist: None,
-            album: None,
-            genre: None,
-            label: None,
-            key: None,
-            bpm: None,
-            length_seconds: None,
-            file_path: Some(path.to_path_buf()),
-            file_size: None,
-            rating: None,
-            comment: None,
-            analysis_path: None,
-            date_added: None,
-        };
-        Self::new(track, &[], TrackOrigin::File, "")
+        Self::new(file_track(path), &[], TrackOrigin::File, "")
     }
 
     /// A track found in the music folder called `folder`.
     fn from_folder(found: &LibraryTrack, folder: &str) -> Self {
-        let track = Track {
-            id: String::new(),
-            title: found.title.clone(),
-            artist: found.artist.clone(),
-            album: found.album.clone(),
-            genre: None,
-            label: None,
-            key: found.key.clone(),
-            bpm: found.bpm.map(f64::from),
-            length_seconds: found
-                .duration_seconds
-                .map(|seconds| seconds.round().max(0.0) as u32),
-            file_path: Some(found.path.clone()),
-            file_size: Some(found.size),
-            rating: None,
-            comment: None,
-            analysis_path: None,
-            date_added: None,
-        };
-        Self::new(track, &[], TrackOrigin::Folder, folder)
+        Self::new(folder_track(found), &[], TrackOrigin::Folder, folder)
     }
 
     fn new(track: Track, cues: &[&Cue], origin: TrackOrigin, source: &str) -> Self {

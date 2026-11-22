@@ -7,6 +7,8 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+dirs = "7.0.0"
+dubplate-library = { version = "0.1.0", path = "../dubplate-library" }
 dubplate-rekordbox = { version = "0.1.0", path = "../dubplate-rekordbox" }
 euphoria-core = { git = "https://github.com/lvndry/euphoria", rev = "50492196c9347ab5b315ddbc2a5a544964436c4c", default-features = false, features = ["drone"] }
 rusqlite.workspace = true
@@ -18,4 +20,5 @@ thiserror = "2.0.21"
 workspace = true
 
 [dev-dependencies]
+quick-xml = "0.42.0"
 tempfile = "3.27.0"

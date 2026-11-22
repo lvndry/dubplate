@@ -13,7 +13,7 @@ use crate::browser::LibraryStatus;
 use crate::collection::{Collection, RekordboxLibrary, folder_name};
 use crate::library::{RekordboxSource, ScanRequest};
 use crate::prep;
-use crate::relink::{missing_tracks, relink_map};
+use crate::relink::missing_tracks;
 use crate::settings::Settings;
 
 /// How often the scan progress is redrawn while a scan runs.
@@ -93,7 +93,7 @@ impl DubplateApp {
 
     /// Makes rekordbox's collection part of the library, or takes it out.
     pub(super) fn set_rekordbox_import(&mut self, import: bool, cx: &mut Context<'_, Self>) {
-        self.settings.import_rekordbox = import;
+        self.settings.library.import_rekordbox = import;
         self.save_settings(cx);
         if import {
             self.sources.rekordbox = RekordboxSource::Reading;
@@ -106,7 +106,7 @@ impl DubplateApp {
 
     /// Writes the chosen sources to the settings.
     fn remember_sources(&mut self, cx: &mut Context<'_, Self>) {
-        self.settings.music_folders = self.sources.folders().to_vec();
+        self.settings.library.music_folders = self.sources.folders().to_vec();
         self.save_settings(cx);
     }
 
@@ -228,7 +228,7 @@ impl DubplateApp {
             RekordboxSource::Off | RekordboxSource::Reading | RekordboxSource::Failed(_) => None,
         };
         let scans = self.sources.chosen_scans();
-        let relinks = relink_map(&self.settings.relinks);
+        let relinks = self.settings.library.relink_map();
         cx.spawn(async move |this, cx| {
             let (collection, catalogue, missing) = cx
                 .background_executor()

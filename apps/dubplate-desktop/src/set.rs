@@ -7,7 +7,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use dubplate_prep::{
-    CueSource, EqIntent, Seam, SeamStatus, Set, SetEntry, SetId, SetList, SetStore, StoreError,
+    BEATS_PER_BAR, CueSource, EqIntent, Seam, SeamStatus, Set, SetEntry, SetId, SetList, SetStore,
+    StoreError,
 };
 
 /// The name of the set made on first launch.
@@ -18,8 +19,6 @@ const FIRST_SET_MINUTES: u32 = 120;
 const DEFAULT_OVERLAP_BARS: u32 = 16;
 /// How many edits undo goes back.
 const UNDO_DEPTH: usize = 200;
-/// Beats in a bar, the range a downbeat shift goes round.
-const BEATS_PER_BAR: i32 = 4;
 
 /// A track to put in a set: its file and, when it comes from rekordbox, its id there.
 #[derive(Debug, Clone, PartialEq, Eq)]

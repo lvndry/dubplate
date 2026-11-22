@@ -7,7 +7,7 @@
 
 Pro DJ software that works with rekordbox libraries and Pioneer CDJs.
 
-Dubplate reads the rekordbox library directly, so tracks, cues, beat grids and playlists are the same in both programs. Writing back to rekordbox (to copies first) and exporting USB sticks for CDJ and XDJ players are next.
+Dubplate reads the rekordbox library directly, so tracks, cues, beat grids and playlists are the same in both programs. A set prepared in Dubplate goes back to rekordbox as a rekordbox XML file that rekordbox imports, so Dubplate never writes rekordbox's own library. Exporting USB sticks for CDJ and XDJ players directly is next.
 
 ## Status
 
@@ -18,6 +18,7 @@ To prepare a set and mix it on a DDJ-FLX4, read [the guide](docs/guide.md). What
 - **Perform:** two decks with sync, key lock, key shift, loops, rolls, slip, hot cues, pad effects, a 16-slot sampler, three beat-synced effect units, Smart CFX, Smart Fader, an isolator EQ, headphone cue and a limiter.
 - **DDJ-FLX4:** every control in rekordbox's FLX4 layout, with its lights.
 - **Recording:** the master as the room hears it, to a 24-bit WAV.
+- **To rekordbox:** Export to rekordbox… (Cmd+E) writes the set as a rekordbox XML playlist with corrected grids, the mix-in and mix-out as memory cues, and the tracks' rekordbox cues.
 
 The first piece is a reader for the rekordbox 6 and 7 library. It copies `master.db` to a temporary directory, unlocks the copy and reads tracks, cues, saved loops and the playlist tree. rekordbox's own file is never opened or changed.
 
@@ -41,6 +42,13 @@ cargo run -p dubplate -- rekordbox analysis <track id> --json > analysis.json
 ```
 
 `analysis` takes a track's rekordbox ID or its exact title.
+
+The sets you prepared in the desktop app can be listed and exported to a rekordbox XML file, by default in `~/Music/Dubplate Exports/<set name>.xml`:
+
+```
+cargo run -p dubplate -- set list
+cargo run -p dubplate -- set export "Friday" --xml friday.xml
+```
 
 ## Run the desktop app
 

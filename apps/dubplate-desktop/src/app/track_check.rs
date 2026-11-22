@@ -6,7 +6,7 @@ use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use dubplate_prep::SetEntry;
+use dubplate_prep::{GridCorrection, SetEntry};
 use gpui::prelude::*;
 use gpui::{
     ClickEvent, Context, FontWeight, MouseButton, MouseDownEvent, Pixels, SharedString, canvas,
@@ -18,7 +18,7 @@ use crate::collection::clock;
 use crate::commands::{Command, SetEdit};
 use crate::controls::{Orientation, fraction_at};
 use crate::fonts::MONO_FAMILY;
-use crate::prep::{GridCorrection, TrackDetail, track_detail};
+use crate::prep::{TrackDetail, track_detail};
 use crate::shortcuts::GRID_NUDGE_MS;
 use crate::theme;
 use crate::waveform::BeatMarks;
