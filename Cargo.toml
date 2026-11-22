@@ -36,3 +36,13 @@ unwrap_used = "warn"
 codegen-units = 1
 lto = true
 strip = true
+
+# For running the app while developing: optimised like a release, so audio and analysis run at
+# full speed, but without link-time optimisation and built in parallel and incrementally, so a
+# rebuild after a small change takes seconds. Releases keep `release`.
+[profile.fast]
+inherits = "release"
+lto = false
+codegen-units = 16
+incremental = true
+strip = false
