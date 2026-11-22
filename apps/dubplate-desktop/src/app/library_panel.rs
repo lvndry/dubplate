@@ -129,6 +129,14 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
                     Command::ToggleAutoCue(AutoCueChoice::FirstSound),
                     cx,
                 ))
+                .child(setting_switch(
+                    "fader-echo",
+                    "Echo out on the faders",
+                    "Close a channel fader or the crossfader fast and the outgoing deck echoes on the half beat as it goes, ringing on after the fader is shut. A fader left part way stops echoing.",
+                    app.settings.fader_echo,
+                    Command::SetFaderEcho(!app.settings.fader_echo),
+                    cx,
+                ))
                 .child(section_title("Audio"))
                 .children(output_rows)
                 .child(buffer_row(app, cx))

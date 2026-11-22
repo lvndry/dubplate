@@ -326,6 +326,9 @@ pub enum Command {
     ToggleKeyLock(DeckId),
     /// Choose whether a track loaded on a deck starts with key lock on, from Settings.
     SetKeyLockOnNewTracks(bool),
+    /// Choose whether a channel fader or crossfader closed fast echoes the outgoing deck, from
+    /// Settings.
+    SetFaderEcho(bool),
     /// A stems control of a deck: mute or bring back a stem, or a one-touch mix.
     Stems(DeckId, StemAction),
     /// Move a fader or knob to a position from 0.0 to 1.0.

@@ -579,6 +579,8 @@ impl DubplateApp {
         app.restore_jog_and_quantize(cx);
         app.restore_mixer_switches(cx);
         app.restore_smart_cfx(cx);
+        let fader_echo = app.settings.fader_echo;
+        app.engine_command(cx, |controller| controller.set_fader_echo(fader_echo));
         app.restore_sampler(cx);
         app.restore_library_sorts(cx);
         app.start_library(cx);
@@ -1137,6 +1139,11 @@ impl DubplateApp {
             Command::SetKeyLockOnNewTracks(on) => {
                 self.settings.key_lock_on_new_tracks = on;
                 self.save_settings(cx);
+            }
+            Command::SetFaderEcho(on) => {
+                self.settings.fader_echo = on;
+                self.save_settings(cx);
+                self.engine_command(cx, |controller| controller.set_fader_echo(on));
             }
             Command::Stems(deck, action) => self.apply_stem_action(deck, action, cx),
             Command::ToggleKeyLock(deck) => {

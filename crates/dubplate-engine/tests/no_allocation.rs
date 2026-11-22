@@ -228,6 +228,10 @@ fn run_session(
 
     let steps: &[Step] = &[
         |controller| controller.set_smart_fader(true),
+        |controller| controller.set_fader_echo(true),
+        |controller| controller.set_channel_fader(DeckId::A, 0.3),
+        |controller| controller.set_channel_fader(DeckId::A, 0.0),
+        |controller| controller.set_channel_fader(DeckId::A, 1.0),
         |controller| controller.set_crossfader(0.6),
         |controller| controller.set_crossfader(0.9),
         |controller| controller.set_smart_fader(false),
