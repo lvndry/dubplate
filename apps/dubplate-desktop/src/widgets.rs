@@ -210,6 +210,31 @@ pub fn numeric_actions<T: 'static>(
     })
 }
 
+/// A short explanation that shows under the pointer.
+pub struct Tooltip(SharedString);
+
+impl Render for Tooltip {
+    fn render(&mut self, _: &mut Window, _: &mut Context<'_, Self>) -> impl IntoElement {
+        div()
+            .max_w(px(360.0))
+            .px(px(8.0))
+            .py(px(5.0))
+            .rounded(theme::SMALL_RADIUS)
+            .border_1()
+            .border_color(theme::LINE)
+            .bg(theme::RAISED)
+            .text_color(theme::TEXT)
+            .text_size(theme::SMALL_TEXT_SIZE)
+            .child(self.0.clone())
+    }
+}
+
+/// What `.tooltip()` takes to show `text` under the pointer.
+pub fn tooltip(text: impl Into<SharedString>) -> impl Fn(&mut Window, &mut App) -> AnyView {
+    let text = text.into();
+    move |_, cx| cx.new(|_| Tooltip(text.clone())).into()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -249,29 +274,4 @@ mod tests {
             assert_eq!(adjusted_value(&key(stroke), 0.5, 0.5), None, "{stroke}");
         }
     }
-}
-
-/// A short explanation that shows under the pointer.
-pub struct Tooltip(SharedString);
-
-impl Render for Tooltip {
-    fn render(&mut self, _: &mut Window, _: &mut Context<'_, Self>) -> impl IntoElement {
-        div()
-            .max_w(px(360.0))
-            .px(px(8.0))
-            .py(px(5.0))
-            .rounded(theme::SMALL_RADIUS)
-            .border_1()
-            .border_color(theme::LINE)
-            .bg(theme::RAISED)
-            .text_color(theme::TEXT)
-            .text_size(theme::SMALL_TEXT_SIZE)
-            .child(self.0.clone())
-    }
-}
-
-/// What `.tooltip()` takes to show `text` under the pointer.
-pub fn tooltip(text: impl Into<SharedString>) -> impl Fn(&mut Window, &mut App) -> AnyView {
-    let text = text.into();
-    move |_, cx| cx.new(|_| Tooltip(text.clone())).into()
 }
