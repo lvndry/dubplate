@@ -4,6 +4,7 @@
 use std::time::Duration;
 
 use dubplate_engine::{DeckId, Track};
+use dubplate_rekordbox::MemoryCue;
 use gpui::Context;
 
 use super::DubplateApp;
@@ -28,12 +29,8 @@ impl DubplateApp {
         let setting = self.settings.auto_cue;
         let side = self.deck(deck);
         if setting.saved_cues_first {
-            let memory_cues = side
-                .track
-                .as_ref()
-                .map(|track| track.memory_cues.clone())
-                .unwrap_or_default();
-            let hot_cues = side.hot_cues.iter().map(|(_, seconds)| seconds);
+            let memory_cues = side.cues.memory_cues().iter().map(MemoryCue::start_seconds);
+            let hot_cues = side.cues.hot_cues().map(|(_, cue)| cue.start_seconds());
             if let Some(seconds) = earliest_saved_cue(memory_cues, hot_cues) {
                 self.jump(deck, seconds, cx);
                 return;

@@ -50,6 +50,7 @@ Each set track has a **ready badge**: Ready, or what is missing (Grid unconfirme
 - Type filters in the same field, mixed with words: `bpm:120-124` (or `bpm:120`, `bpm:120+`), `key:8A` (any notation) or `key:fits` (what mixes after the reference track, as Key fits), `genre:amapiano`, `artist:kabza`, `energy:6+` (or `energy:4-6`), `played:no` (not played on a deck this session) and `rated:4+` (rekordbox stars). While the search field has the keyboard, chips under the filter bar suggest them from the track you are mixing from; click one to put it in.
 - **BPM** keeps a tempo range, a few BPM either side of the selected set track (or the playing deck); the arrows move each end.
 - **Key fits** keeps the tracks whose key mixes well after the selected set track in Prepare, or the deck playing in Perform: the same key, one step on the wheel, or the relative key, as the Next suggestions choose.
+- The **Match** column says how each track mixes after the track you mix from, which its heading names ("vs A: Kukaya"): the deck with MASTER pressed, even stopped, else the deck the room hears, else the deck loaded last, so it works before anything plays: the key move with a coloured dot (green for a smooth move such as one step on the wheel, blue for a lift such as an energy boost, red for a clash), the tempo change (amber beyond 6%) and the energy change. Sort by it and the library becomes a ranked list of what to play next, best first, in the Next suggestions' order. **Matches master** keeps only those suggestions. The master's own track says so, and tracks a deck already played this session are dimmed.
 
 ### Check each track
 
@@ -73,7 +74,7 @@ A Free seam never warns: it means you will feel it live. Grids on amapiano are o
 
 - its beat grid, with your nudges and downbeat moves;
 - your mix-in and mix-out as memory cues named "Mix in" and "Mix out";
-- the hot cues and memory cues it already had in rekordbox.
+- its hot cues, memory cues and saved loops: the ones you set in Dubplate, or else the ones it already had in rekordbox.
 
 Tracks from your own folders go in too, so rekordbox adds them; relinked files point at their new place. Dubplate writes only this file, never rekordbox's library.
 
@@ -96,7 +97,7 @@ On the keyboard, **Space** plays or pauses the deck you can hear: the one whose 
 
 On the FLX4, everything works as in rekordbox's FLX4 layout:
 
-- PLAY, CUE (CDJ style), hot cue pads, TEMPO, BEAT SYNC (hold for tempo master, SHIFT for the tempo range), the jogs (touch to scratch, side to nudge, SHIFT to search).
+- PLAY, CUE (CDJ style), hot cue pads (a cue you set or delete is kept with the track, for the next time it loads and for the export), TEMPO, BEAT SYNC (hold for tempo master, SHIFT for the tempo range), the jogs (touch to scratch, side to nudge, SHIFT to search).
 - The mixer: TRIM, HI/MID/LOW, the filter knobs, channel faders, crossfader, headphone CUE, MIX and LEVEL.
 - The pad modes: Hot Cue, Pad FX 1 and 2 (hold for rolls and effects), Beat Jump, Beat Loop, Sampler, Keyboard, Key Shift; the loop section IN, OUT, 4 BEAT/EXIT.
 - BEAT FX: FX SELECT, BEAT left and right, the CH SELECT lever, LEVEL/DEPTH and ON/OFF.
@@ -108,9 +109,22 @@ Each deck's **overview** shows the whole track in rekordbox's three bands (lows 
 
 On screen, each deck also has Sync, Master, Key lock and Slip, and the compact effects strip drives the three effect units. Press ? for every keyboard shortcut.
 
+Key lock (a CDJ's Master Tempo) is on for every track you load, so moving the tempo or syncing keeps a track's pitch. Turn **Key lock on new tracks** off in Settings to load tracks without it, as rekordbox's Master Tempo default; the deck's Key lock button (or K, Shift+K) still changes it for the track on that deck. Key lock steps aside while you scratch.
+
 Drag a deck's waveform on the lanes to move it, as with a jog: a stopped deck scrubs under your hand and lands on the nearest beat when you let go (with quantize on); a playing deck is nudged, never jumped; Shift+drag searches.
 
 **Grid** on a deck (or E, Shift+E for deck B) opens its grid bar to fix any track's beat grid while you play, as rekordbox's grid edit does: the downbeat a beat earlier or later, the grid 5 ms earlier or later, and confirm. The grid keys G, [ ], comma and period then work on that deck. A fix never moves the deck in the track, and it is the same fix the track check shows.
+
+### Stems
+
+Dubplate separates each track of the set into drums, bass, melody and vocals while you prepare, then the shortlist; the separation runs in the background at low priority and takes a few minutes a track. The **Stems** column of the library and each set row show where a track stands: blank, `…` waiting, a percentage while separating, `ready`. Hover a blank cell and click **Separate** to separate a track ahead of the rest, or click **Separate** on a deck. Stems are kept in Dubplate's own folder, so a track is separated once.
+
+Once a deck's track has its stems, the strip under its transport mutes or brings back each stem, with a small level knob beside it, and **Inst** and **Acap** give the instrumental and the acapella in one touch (touch again for every stem back). Every move fades in 20 ms and key lock keeps working. With every stem up the deck plays the track exactly.
+
+- Keys: Q, W, R and V mute or bring back the drums, bass, melody and vocals of deck A, X gives the instrumental and A the acapella; add ⇧ for deck B.
+- FLX4: in Beat Loop mode, hold SHIFT. Pads 1 to 4 mute or bring back the vocals, melody, bass and drums; pad 5 is the acapella, 6 the instrumental, 7 drums and bass only (ride a log drum under the other track), 8 every stem back. rekordbox maps no stems on the FLX4, and SHIFT + the Beat Loop pads do nothing there, so this takes no control from you.
+
+When two tracks with stems sing over each other across a seam, the seam says so in the set and suggests taking the vocals out on the outgoing track.
 
 ## 5. Record
 

@@ -3,14 +3,14 @@
 
 use dubplate_engine::DeckId;
 use dubplate_midi::PadMode;
-use dubplate_rekordbox::HotCuePad;
+use dubplate_rekordbox::{HotCue, HotCuePad};
 use gpui::Context;
 
 use super::DubplateApp;
 use super::notice::NoticePlace;
 use super::sampler::sampler_slot;
+use super::stems::stem_pad_action;
 use crate::commands::{LoopAction, PadPress, Press};
-use crate::deck::pad_position;
 use crate::pads::{
     AUTO_BEAT_LOOP, BEAT_JUMP_SCALE_RANGE, BEAT_LOOP_LENGTHS, KEY_PADS_DOWN_PAD, KEY_PADS_UP_PAD,
     PAD_COUNT, PadFx, beat_jump_beats, clamp_key_pad_offset, key_pad_semitones, pad_fx,
@@ -72,7 +72,7 @@ impl DubplateApp {
                     return;
                 };
                 if press.shift {
-                    self.edit_hot_cues(deck, |hot_cues| hot_cues.delete(pad));
+                    self.edit_cues(deck, |cues| cues.delete_hot_cue(pad), cx);
                 } else {
                     self.keyboard_cues[deck.index()] = pad;
                     self.press_hot_cue(deck, pad, cx);
@@ -125,7 +125,12 @@ impl DubplateApp {
                     }
                 });
             }
-            PadMode::BeatLoop | PadMode::PadFx1 | PadMode::PadFx2 | PadMode::Sampler => {}
+            PadMode::BeatLoop => {
+                if let Some(action) = stem_pad_action(press.pad) {
+                    self.apply_stem_action(deck, action, cx);
+                }
+            }
+            PadMode::PadFx1 | PadMode::PadFx2 | PadMode::Sampler => {}
         }
     }
 
@@ -178,7 +183,7 @@ impl DubplateApp {
             return;
         };
         let cue = self.keyboard_cues[deck.index()];
-        let Some(seconds) = self.deck(deck).hot_cues.get(cue) else {
+        let Some(seconds) = self.deck(deck).cues.hot_cue(cue).map(HotCue::start_seconds) else {
             self.show_notice(
                 NoticePlace::Deck(deck),
                 format!(
@@ -278,8 +283,8 @@ impl DubplateApp {
         } else if side.visuals().is_some() {
             match self.pad_modes[deck.index()] {
                 PadMode::HotCue => {
-                    for (pad, _) in side.hot_cues.iter() {
-                        if let Some(lit) = pads.get_mut(pad_position(pad)) {
+                    for (pad, _) in side.cues.hot_cues() {
+                        if let Some(lit) = pads.get_mut(pad.index()) {
                             *lit = true;
                         }
                     }
