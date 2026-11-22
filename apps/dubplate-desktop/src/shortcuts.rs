@@ -184,6 +184,8 @@ pub const SHORTCUTS: &[Shortcut] = &[
     outside_text("shift-e", Command::ToggleGridBar(DeckId::B)),
     outside_text("k", Command::ToggleKeyLock(DeckId::A)),
     outside_text("shift-k", Command::ToggleKeyLock(DeckId::B)),
+    outside_text("alt-k", Command::KeySync(DeckId::A)),
+    outside_text("shift-alt-k", Command::KeySync(DeckId::B)),
     outside_text(
         "q",
         Command::Stems(DeckId::A, StemAction::Toggle(Stem::Drums)),
@@ -375,6 +377,10 @@ pub fn help_sections() -> Vec<HelpSection> {
                 line(
                     &["k", "shift-k"],
                     "Key lock for the track on deck A / deck B (new tracks: Settings)",
+                ),
+                line(
+                    &["alt-k", "shift-alt-k"],
+                    "Key sync to the other deck, or back to the track's key, deck A / deck B",
                 ),
                 line(&["q", "shift-q"], "Drums stem out or back, deck A / deck B"),
                 line(&["w", "shift-w"], "Bass stem out or back, deck A / deck B"),
@@ -574,6 +580,7 @@ mod tests {
                 }),
                 Command::CyclePadMode(DeckId::A) => Command::CyclePadMode(DeckId::B),
                 Command::ToggleKeyLock(DeckId::A) => Command::ToggleKeyLock(DeckId::B),
+                Command::KeySync(DeckId::A) => Command::KeySync(DeckId::B),
                 Command::CycleCrossfaderAssign(DeckId::A) => {
                     Command::CycleCrossfaderAssign(DeckId::B)
                 }
