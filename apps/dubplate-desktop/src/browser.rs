@@ -983,7 +983,7 @@ impl Browser {
         let on = self.view.match_filter_on();
         let explanation: SharedString = match &reference {
             Some(title) => format!(
-                "Only tracks that mix well after {title}, the tempo master or the deck the room                  hears: a key that fits and a tempo within reach"
+                "Only tracks that mix well after {title}: a key that fits and a tempo within reach"
             )
             .into(),
             None => "Play a deck to see what mixes after it".into(),
