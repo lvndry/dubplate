@@ -16,6 +16,7 @@ const NO_LATENCY: u64 = u64::MAX;
 pub(crate) struct SharedState {
     pub(crate) decks: [DeckShared; DECK_COUNT],
     pub(crate) master_peak: AtomicU32,
+    pub(crate) headphone_peak: AtomicU32,
     pub(crate) effect_sounding: [AtomicBool; EFFECT_UNIT_COUNT],
     pub(crate) tempo_master: AtomicDeck,
     pub(crate) stats: SharedStats,
@@ -42,6 +43,7 @@ pub(crate) struct DeckShared {
     pub(crate) touched: AtomicBool,
     pub(crate) vinyl_mode: AtomicBool,
     pub(crate) peak: AtomicU32,
+    pub(crate) pre_fader_peak: AtomicU32,
 }
 
 pub(crate) struct SharedStats {
@@ -131,6 +133,7 @@ impl SharedState {
                 deck
             }),
             master_peak: AtomicU32::new(0),
+            headphone_peak: AtomicU32::new(0),
             effect_sounding: std::array::from_fn(|_| AtomicBool::new(false)),
             tempo_master: AtomicDeck::default(),
             stats: SharedStats {
@@ -347,8 +350,13 @@ pub struct PlatterState {
 pub struct Meters {
     /// Peak of each deck after its fader, the crossfader and the effect units on it.
     pub deck_peaks: [f32; DECK_COUNT],
+    /// Peak of each channel before its fader, after the trim, the EQ and the filter: what a
+    /// DJ mixer's channel level meters show.
+    pub channel_peaks: [f32; DECK_COUNT],
     /// Peak of the master output.
     pub master_peak: f32,
+    /// Peak of the headphone output.
+    pub headphone_peak: f32,
 }
 
 #[cfg(test)]

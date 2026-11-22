@@ -427,7 +427,7 @@ fn loading_a_new_track_resets_the_deck() {
 }
 
 #[test]
-fn the_mix_goes_to_the_first_two_channels_or_is_summed_to_mono() {
+fn the_master_goes_to_the_first_two_channels_or_is_summed_to_mono() {
     let (mut controller, mut renderer) = offline_engine(SAMPLE_RATE);
     controller
         .load_track(DeckId::A, constant_track(0.5, 0.25, 10.0, SAMPLE_RATE))
@@ -436,11 +436,13 @@ fn the_mix_goes_to_the_first_two_channels_or_is_summed_to_mono() {
     controller.play(DeckId::A).unwrap();
     render_frames(&mut renderer, BLOCK, BLOCK);
 
-    let mut four_channels = vec![1.0; BLOCK * 4];
-    renderer.render(&mut four_channels, 4);
+    controller.set_headphone_level(0.0).unwrap();
+    render_frames(&mut renderer, BLOCK, BLOCK);
+    let mut five_channels = vec![1.0; BLOCK * 5];
+    renderer.render(&mut five_channels, 5);
     assert_eq!(
-        &four_channels[four_channels.len() - 4..],
-        &[0.5, 0.25, 0.0, 0.0]
+        &five_channels[five_channels.len() - 5..],
+        &[0.5, 0.25, 0.0, 0.0, 0.0]
     );
 
     let mut mono = vec![1.0; BLOCK];

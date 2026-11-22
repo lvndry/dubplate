@@ -758,19 +758,8 @@ impl Deck {
 
     /// Adds the deck's block into the master block and returns its peak.
     pub(crate) fn mix_into(&self, master: &mut StereoBlock) -> f32 {
-        let (master_left, master_right) = master.channels_mut();
-        let deck_frames = self.block.left().iter().zip(self.block.right());
-        let mut peak = 0.0_f32;
-        for ((master_left, master_right), (left, right)) in master_left
-            .iter_mut()
-            .zip(master_right.iter_mut())
-            .zip(deck_frames)
-        {
-            peak = peak.max(left.abs()).max(right.abs());
-            *master_left += left;
-            *master_right += right;
-        }
-        peak
+        master.add(&self.block);
+        self.block.peak()
     }
 }
 
