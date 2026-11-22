@@ -6,8 +6,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use dubplate_engine::{DeckId, Stem, StemLevel, StemSettings, channel_fader_gain};
-use dubplate_stems::{SeparationPriority, StemFiles, StemsStatus};
 use dubplate_midi::PadMode;
+use dubplate_stems::{SeparationPriority, StemFiles, StemsStatus};
 use gpui::Context;
 
 use super::DubplateApp;

@@ -175,16 +175,43 @@ pub const SHORTCUTS: [Shortcut; 90] = [
     outside_text("shift-e", Command::ToggleGridBar(DeckId::B)),
     outside_text("k", Command::ToggleKeyLock(DeckId::A)),
     outside_text("shift-k", Command::ToggleKeyLock(DeckId::B)),
-    outside_text("q", Command::Stems(DeckId::A, StemAction::Toggle(Stem::Drums))),
-    outside_text("shift-q", Command::Stems(DeckId::B, StemAction::Toggle(Stem::Drums))),
-    outside_text("w", Command::Stems(DeckId::A, StemAction::Toggle(Stem::Bass))),
-    outside_text("shift-w", Command::Stems(DeckId::B, StemAction::Toggle(Stem::Bass))),
-    outside_text("r", Command::Stems(DeckId::A, StemAction::Toggle(Stem::Melody))),
-    outside_text("shift-r", Command::Stems(DeckId::B, StemAction::Toggle(Stem::Melody))),
-    outside_text("v", Command::Stems(DeckId::A, StemAction::Toggle(Stem::Vocals))),
-    outside_text("shift-v", Command::Stems(DeckId::B, StemAction::Toggle(Stem::Vocals))),
+    outside_text(
+        "q",
+        Command::Stems(DeckId::A, StemAction::Toggle(Stem::Drums)),
+    ),
+    outside_text(
+        "shift-q",
+        Command::Stems(DeckId::B, StemAction::Toggle(Stem::Drums)),
+    ),
+    outside_text(
+        "w",
+        Command::Stems(DeckId::A, StemAction::Toggle(Stem::Bass)),
+    ),
+    outside_text(
+        "shift-w",
+        Command::Stems(DeckId::B, StemAction::Toggle(Stem::Bass)),
+    ),
+    outside_text(
+        "r",
+        Command::Stems(DeckId::A, StemAction::Toggle(Stem::Melody)),
+    ),
+    outside_text(
+        "shift-r",
+        Command::Stems(DeckId::B, StemAction::Toggle(Stem::Melody)),
+    ),
+    outside_text(
+        "v",
+        Command::Stems(DeckId::A, StemAction::Toggle(Stem::Vocals)),
+    ),
+    outside_text(
+        "shift-v",
+        Command::Stems(DeckId::B, StemAction::Toggle(Stem::Vocals)),
+    ),
     outside_text("x", Command::Stems(DeckId::A, StemAction::Instrumental)),
-    outside_text("shift-x", Command::Stems(DeckId::B, StemAction::Instrumental)),
+    outside_text(
+        "shift-x",
+        Command::Stems(DeckId::B, StemAction::Instrumental),
+    ),
     outside_text("a", Command::Stems(DeckId::A, StemAction::Acapella)),
     outside_text("shift-a", Command::Stems(DeckId::B, StemAction::Acapella)),
     outside_text("u", Command::ToggleSlip(DeckId::A)),

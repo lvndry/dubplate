@@ -73,35 +73,43 @@ impl Lights {
     /// have encode to nothing in its mapping.
     pub fn for_each_feedback(&self, mut show: impl FnMut(Feedback)) {
         for (deck, lights) in DECKS.into_iter().zip(&self.decks) {
-            let mut light = |button: Button, on: bool| {
+            let mut light = |button: Button, normal: bool, shifted: bool| {
                 for layer in LAYERS {
+                    let on = match layer {
+                        Layer::Normal => normal,
+                        Layer::Shift => shifted,
+                    };
                     show(Feedback::Light { button, layer, on });
                 }
             };
-            light(Button::Play(deck), lights.play);
-            light(Button::Cue(deck), lights.cue);
-            light(Button::LoopIn(deck), lights.loop_in);
-            light(Button::LoopOut(deck), lights.loop_out);
-            light(Button::FourBeatExit(deck), lights.four_beat);
-            light(Button::Sync(deck), lights.sync);
-            light(Button::HeadphoneCue(deck), lights.headphone_cue);
+            light(Button::Play(deck), lights.play, lights.play);
+            light(Button::Cue(deck), lights.cue, lights.cue);
+            light(Button::LoopIn(deck), lights.loop_in, lights.loop_in);
+            light(Button::LoopOut(deck), lights.loop_out, lights.loop_out);
+            light(
+                Button::FourBeatExit(deck),
+                lights.four_beat,
+                lights.four_beat,
+            );
+            light(Button::Sync(deck), lights.sync, lights.sync);
+            light(
+                Button::HeadphoneCue(deck),
+                lights.headphone_cue,
+                lights.headphone_cue,
+            );
+            let shift_pads = lights.shift_pads.unwrap_or(lights.pads);
             for mode in PAD_MODES {
-                light(Button::PadMode { deck, mode }, mode == lights.pad_mode);
+                let current = mode == lights.pad_mode;
+                light(Button::PadMode { deck, mode }, current, current);
                 for pad_position in 0..PAD_COUNT {
                     let Some(pad) = pad_index(pad_position) else {
                         continue;
                     };
-                    for layer in LAYERS {
-                        let pads = match layer {
-                            Layer::Shift => lights.shift_pads.as_ref().unwrap_or(&lights.pads),
-                            Layer::Normal => &lights.pads,
-                        };
-                        show(Feedback::Light {
-                            button: Button::Pad { deck, mode, pad },
-                            layer,
-                            on: pads[pad_position] && mode == lights.pad_mode,
-                        });
-                    }
+                    light(
+                        Button::Pad { deck, mode, pad },
+                        current && lights.pads[pad_position],
+                        current && shift_pads[pad_position],
+                    );
                 }
             }
             show(Feedback::LevelMeter {
