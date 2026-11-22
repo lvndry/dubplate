@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::commands::Mode;
 use crate::controls::{DEFAULT_MASTER_LEVEL, DEFAULT_SAMPLER_VOLUME, MixerPositions};
 use crate::effects::EffectUnitSetting;
+use crate::library_view::SortSetting;
 
 /// Why the settings could not be read or written.
 #[derive(Debug, thiserror::Error)]
@@ -62,6 +63,8 @@ pub struct Settings {
     pub screen: Option<String>,
     /// The master and headphone levels.
     pub levels: LevelsSetting,
+    /// How the library's tracks are sorted on each screen.
+    pub library_sort: LibrarySortSetting,
 }
 
 /// The output levels as the DJ left them, so Dubplate never opens louder than it closed.
@@ -131,6 +134,35 @@ impl Settings {
     }
 }
 
+/// How the library's tracks are sorted on each screen, when the DJ sorted them. A screen
+/// without one shows each crate in its own order.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LibrarySortSetting {
+    /// In Prepare.
+    pub prepare: Option<SortSetting>,
+    /// In Perform.
+    pub perform: Option<SortSetting>,
+}
+
+impl LibrarySortSetting {
+    /// The sort of `screen`.
+    pub fn of(&self, screen: Mode) -> Option<&SortSetting> {
+        match screen {
+            Mode::Prepare => self.prepare.as_ref(),
+            Mode::Perform => self.perform.as_ref(),
+        }
+    }
+
+    /// Keeps `sort` for `screen`.
+    pub fn set(&mut self, screen: Mode, sort: Option<SortSetting>) {
+        match screen {
+            Mode::Prepare => self.prepare = sort,
+            Mode::Perform => self.perform = sort,
+        }
+    }
+}
+
 /// The sampler as the DJ left it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -183,6 +215,7 @@ impl Default for Settings {
             sampler: SamplerSetting::default(),
             screen: None,
             levels: LevelsSetting::default(),
+            library_sort: LibrarySortSetting::default(),
         }
     }
 }
@@ -314,6 +347,13 @@ mod tests {
                 master: 0.4,
                 headphones: 0.3,
                 headphone_mix: 0.7,
+            },
+            library_sort: LibrarySortSetting {
+                prepare: Some(SortSetting {
+                    column: "bpm".to_owned(),
+                    descending: true,
+                }),
+                perform: None,
             },
         };
         settings.save(&path).unwrap();

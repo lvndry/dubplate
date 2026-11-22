@@ -218,11 +218,14 @@ impl PreviewBus {
             {
                 let gain = preview_voice.voice.transport.next_value();
                 let (playhead_left, playhead_right) = if stretched {
-                    preview_voice
-                        .key_lock
-                        .playhead_frame(index, &preview_voice.voice, starved)
+                    preview_voice.key_lock.playhead_frame(
+                        index,
+                        &preview_voice.voice,
+                        step,
+                        starved,
+                    )
                 } else if gain > 0.0 {
-                    preview_voice.voice.read_playhead(starved)
+                    preview_voice.voice.read_playhead(step, starved)
                 } else {
                     (0.0, 0.0)
                 };

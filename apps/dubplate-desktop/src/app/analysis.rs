@@ -9,7 +9,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use dubplate_engine::DeckId;
-use dubplate_prep::AudioAnalysis;
 use gpui::Context;
 
 use super::DubplateApp;
@@ -65,7 +64,7 @@ impl DubplateApp {
         self.collect_analyses_while_waiting(cx);
     }
 
-    /// Gives a freshly built catalogue the analyses already made.
+    /// Gives a freshly built catalogue the analyses already made, while a rescan confirms them.
     pub(super) fn restore_analyses(&mut self) {
         let catalogue = Arc::make_mut(&mut self.catalogue);
         for (path, analysis) in self.analyses.found() {
@@ -139,7 +138,7 @@ impl DubplateApp {
         }
         let catalogue = Arc::make_mut(&mut self.catalogue);
         for (path, analysis) in &answered {
-            if let Some(analysis) = analysis {
+            if let Ok(analysis) = analysis {
                 catalogue.set_analysis(path, analysis);
             }
         }
@@ -147,8 +146,10 @@ impl DubplateApp {
             self.give_deck_analysed_grid(deck, cx);
         }
         self.check_again_with_analysed_grids(&answered, cx);
+        self.refresh_prepare_view(cx);
         self.browser
             .update(cx, |browser, cx| browser.add_analyses(answered, cx));
+        self.refresh_filter_reference(cx);
         cx.notify();
     }
 
@@ -156,7 +157,7 @@ impl DubplateApp {
     /// shows it and proposes mix cues on it.
     fn check_again_with_analysed_grids(
         &mut self,
-        answered: &[(PathBuf, Option<Arc<AudioAnalysis>>)],
+        answered: &[crate::analysis::AnalysisAnswer],
         cx: &mut Context<'_, Self>,
     ) {
         let Some(editor) = &self.set_editor else {
@@ -174,7 +175,7 @@ impl DubplateApp {
                 in_set.contains(path.as_path())
                     && analysis
                         .as_ref()
-                        .is_some_and(|analysis| analysis.beat_grid.is_some())
+                        .is_ok_and(|analysis| analysis.beat_grid.is_some())
             })
             .map(|(path, _)| path.as_path())
             .collect();

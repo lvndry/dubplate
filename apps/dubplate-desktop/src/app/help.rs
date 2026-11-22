@@ -1,5 +1,6 @@
 //! The list of keyboard shortcuts, over the window.
 
+use gpui::base::FocusTrapElement;
 use gpui::prelude::*;
 use gpui::{ClickEvent, Context, FontWeight, MouseButton, div, px, relative};
 
@@ -8,11 +9,12 @@ use crate::commands::Command;
 use crate::fonts::MONO_FAMILY;
 use crate::shortcuts::{HelpLine, HelpSection, help_sections};
 use crate::theme;
+use crate::widgets::{Emphasis, button};
 
 /// How many sections, from the first, fill the left column; the rest fill the right one.
 const LEFT_COLUMN_SECTIONS: usize = 2;
 
-pub(super) fn render(cx: &mut Context<'_, DubplateApp>) -> impl IntoElement {
+pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoElement {
     let mut sections = help_sections();
     let right_sections = sections.split_off(LEFT_COLUMN_SECTIONS.min(sections.len()));
     div()
@@ -29,12 +31,19 @@ pub(super) fn render(cx: &mut Context<'_, DubplateApp>) -> impl IntoElement {
         .child(
             div()
                 .id("help-card")
+                .role(gpui::Role::Dialog)
+                .aria_label("Keyboard shortcuts")
+                .key_context("Modal")
+                .when(!app.library_open && app.relink_review.is_none(), |card| {
+                    card.track_focus(&app.modal_focus)
+                        .tab_group()
+                        .tab_stop(false)
+                })
                 .flex()
                 .flex_col()
                 .gap(px(16.0))
                 .w(px(960.0))
                 .max_h(relative(0.92))
-                .overflow_y_scroll()
                 .p(px(24.0))
                 .rounded(px(10.0))
                 .border_1()
@@ -47,6 +56,7 @@ pub(super) fn render(cx: &mut Context<'_, DubplateApp>) -> impl IntoElement {
                         .flex()
                         .justify_between()
                         .items_baseline()
+                        .flex_none()
                         .child(
                             div()
                                 .text_size(px(15.0))
@@ -58,16 +68,26 @@ pub(super) fn render(cx: &mut Context<'_, DubplateApp>) -> impl IntoElement {
                                 .text_size(theme::SMALL_TEXT_SIZE)
                                 .text_color(theme::MUTED)
                                 .child("Shift plays the same key on deck B \u{b7} Esc closes"),
-                        ),
+                        )
+                        .child(button("close-help", "Close", Emphasis::Secondary).on_click(
+                            cx.listener(|this, _: &ClickEvent, window, cx| {
+                                this.perform(Command::ToggleHelp, window, cx)
+                            }),
+                        )),
                 )
                 .child(
                     div()
+                        .id("help-content")
+                        .min_h_0()
+                        .overflow_y_scroll()
+                        .flex_1()
                         .flex()
                         .items_start()
                         .gap(px(32.0))
                         .child(column(sections))
                         .child(column(right_sections)),
-                ),
+                )
+                .focus_trap("help-focus-trap", &app.modal_focus),
         )
 }
 
@@ -84,6 +104,9 @@ fn column(sections: Vec<HelpSection>) -> impl IntoElement {
 
 fn section(section: HelpSection) -> impl IntoElement {
     div()
+        .id(section.title)
+        .role(gpui::Role::Group)
+        .aria_label(section.title)
         .flex()
         .flex_col()
         .child(
@@ -98,6 +121,7 @@ fn section(section: HelpSection) -> impl IntoElement {
 }
 
 fn line(line: HelpLine) -> impl IntoElement {
+    let spoken = format!("{}: {}", line.keys.join(" or "), line.description);
     let mut keys = div()
         .flex()
         .flex_none()
@@ -116,6 +140,9 @@ fn line(line: HelpLine) -> impl IntoElement {
         keys = keys.child(keycap(keystroke));
     }
     div()
+        .id(line.description)
+        .role(gpui::Role::Label)
+        .aria_label(spoken)
         .flex()
         .items_center()
         .gap(px(12.0))

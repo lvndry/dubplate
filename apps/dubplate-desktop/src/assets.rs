@@ -15,6 +15,12 @@ pub const PLAY_ICON_PATH: &str = "icons/play.svg";
 pub const PAUSE_ICON_PATH: &str = "icons/pause.svg";
 /// Path of the small arrow that opens a menu.
 pub const CHEVRON_DOWN_PATH: &str = "icons/chevron-down.svg";
+/// Path of the arrow beside a column sorted A to Z.
+pub const ARROW_UP_PATH: &str = "icons/arrow-up.svg";
+/// Path of the arrow beside a column sorted Z to A.
+pub const ARROW_DOWN_PATH: &str = "icons/arrow-down.svg";
+/// Path of the cross that clears a filter.
+pub const CLOSE_ICON_PATH: &str = "icons/close.svg";
 
 const LOGO: &[u8] = include_bytes!("../../../assets/logo/mark.svg");
 
@@ -50,6 +56,9 @@ mod tests {
             PLAY_ICON_PATH,
             PAUSE_ICON_PATH,
             CHEVRON_DOWN_PATH,
+            ARROW_UP_PATH,
+            ARROW_DOWN_PATH,
+            CLOSE_ICON_PATH,
         ] {
             let image = AppAssets.load(path).unwrap();
             assert!(image.is_some_and(|bytes| !bytes.is_empty()), "{path}");

@@ -64,20 +64,7 @@ pub fn double(
     source: DeckId,
     target: DeckId,
 ) -> Result<bool, EngineError> {
-    let Some(track) = controller.track(source).cloned() else {
-        return Ok(false);
-    };
-    let state = controller.deck_state(source);
-    controller.load_track(target, track)?;
-    if let Some(beat_grid) = controller.beat_grid(source) {
-        controller.set_beat_grid(target, Some(beat_grid))?;
-    }
-    controller.set_cue_point(target, state.cue_point_seconds)?;
-    controller.seek(target, state.position_seconds)?;
-    if state.playing {
-        controller.play(target)?;
-    }
-    Ok(true)
+    controller.duplicate_deck(source, target)
 }
 
 /// The deck across from `deck`.
