@@ -93,8 +93,8 @@ impl AnalysedGrid {
 pub struct AudioAnalysis {
     /// The length of the decoded audio, in seconds.
     pub duration_seconds: f32,
-    /// The tempo in beats per minute, between 90 and 180, or None when the track has no
-    /// detectable tempo, such as silence.
+    /// The tempo in beats per minute, the beat grid's when there is one, from about 90 to 180,
+    /// or None when the track has no detectable tempo, such as silence.
     pub bpm: Option<f32>,
     /// Where the beats and bars fall, or None when the track has no tempo or no clear beat.
     pub beat_grid: Option<AnalysedGrid>,
@@ -151,18 +151,24 @@ pub fn analyse_track(path: &Path) -> Result<AudioAnalysis, AnalysisError> {
 /// The tempo detector estimates the tempo and chooses its octave; the energy is rated and the
 /// grid fitted at that estimate placed between 90 and 180 BPM, Euphoria's default range. When
 /// the grid fits the beats well its tempo, whole when a whole tempo fits as well, replaces the
-/// estimate, in the estimate's octave. The grid is then counted at the reported tempo.
+/// estimate, in the estimate's octave, and the grid is counted at that tempo.
+///
+/// The track's tempo is then the grid's, so the library shows the tempo a deck plays and syncs
+/// the track at. Euphoria's own analysis keeps the estimate when the grid fits loosely; the
+/// grid's tempo is the closer of the two there, since it was fitted to the beats. A track
+/// without a grid keeps the estimate.
 pub fn analyse_audio(audio: &AudioBuffer) -> Result<AudioAnalysis, EuphoriaError> {
     let tempo_reading = StratumDetector.read_tempo(audio)?;
     let key = read_key(audio)?.key;
     let tempo = tempo_reading.map(|reading| reading.tempo_in(TempoRange::DEFAULT));
     let energy = rate_track_energy(audio, tempo)?;
     let fitted = tempo.and_then(|tempo| detect_beat_grid(audio, f64::from(tempo)));
-    let bpm =
+    let estimate =
         tempo_reading.map(|reading| TempoRange::DEFAULT.fold(reading.refined_by(fitted.as_ref())));
     let beat_grid = fitted
-        .zip(bpm)
-        .map(|(grid, bpm)| AnalysedGrid::counted_near(&grid, f64::from(bpm)));
+        .zip(estimate)
+        .map(|(grid, estimate)| AnalysedGrid::counted_near(&grid, f64::from(estimate)));
+    let bpm = beat_grid.map(|grid| grid.bpm as f32).or(estimate);
     Ok(AudioAnalysis {
         duration_seconds: audio.duration_seconds(),
         bpm,
