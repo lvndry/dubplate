@@ -366,11 +366,6 @@ impl Deck {
         self.load_generation == generation
     }
 
-    /// The load number of the track on the deck, once one is loaded.
-    pub fn loaded_generation(&self) -> Option<u64> {
-        self.track.as_ref().map(|_| self.committed_generation)
-    }
-
     /// Whether a background visual still belongs to the committed track. A pending or
     /// failed replacement must not cancel work for the track that remains on the deck.
     pub fn is_loaded_generation(&self, generation: u64) -> bool {

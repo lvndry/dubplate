@@ -129,7 +129,7 @@ fn refuses_a_database_newer_than_this_build() {
         result,
         Err(StoreError::NewerSchema {
             found: 99,
-            known: 4
+            known: 5
         })
     ));
 }
