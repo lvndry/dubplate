@@ -84,6 +84,47 @@ fn an_effect_on_deck_a_changes_only_deck_a_and_only_while_on() {
 }
 
 #[test]
+fn an_effect_on_both_decks_changes_each_deck() {
+    let (_reference_controller, mut reference) = two_decks_on_their_own_sides().unwrap();
+    let (mut controller, mut renderer) = two_decks_on_their_own_sides().unwrap();
+    controller
+        .set_effect_kind(FIRST_UNIT, EffectKind::Crusher)
+        .unwrap();
+    controller
+        .set_effect_target(FIRST_UNIT, EffectTarget::BothDecks)
+        .unwrap();
+    controller.set_effect_depth(FIRST_UNIT, 1.0).unwrap();
+    controller.set_effect_enabled(FIRST_UNIT, true).unwrap();
+    let expected = render_frames(&mut reference, BLOCK * 20, BLOCK);
+    let during = render_frames(&mut renderer, BLOCK * 20, BLOCK);
+    let sides = [
+        ("deck A", left_channel(&during), left_channel(&expected)),
+        ("deck B", right_channel(&during), right_channel(&expected)),
+    ];
+    for (name, actual, dry) in sides {
+        let changed = actual
+            .iter()
+            .zip(dry)
+            .filter(|(actual, dry)| (*actual - dry).abs() > 1e-3)
+            .count();
+        assert!(changed > BLOCK * 10, "the crusher barely changed {name}");
+    }
+
+    controller
+        .set_effect_target(FIRST_UNIT, EffectTarget::Deck(DeckId::B))
+        .unwrap();
+    render_frames(&mut reference, BLOCK * 10, BLOCK);
+    render_frames(&mut renderer, BLOCK * 10, BLOCK);
+    let expected = render_frames(&mut reference, BLOCK * 10, BLOCK);
+    let after = render_frames(&mut renderer, BLOCK * 10, BLOCK);
+    assert_eq!(
+        left_channel(&after),
+        left_channel(&expected),
+        "deck A kept the effect after the unit moved to deck B"
+    );
+}
+
+#[test]
 fn an_off_filter_unit_leaves_the_audio_bit_identical() {
     let (_reference_controller, mut reference) = two_decks_on_their_own_sides().unwrap();
     let (mut controller, mut renderer) = two_decks_on_their_own_sides().unwrap();

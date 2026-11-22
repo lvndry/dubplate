@@ -4,9 +4,9 @@ use std::f64::consts::TAU;
 pub const DEFAULT_JOG_TICKS_PER_REVOLUTION: u32 = 720;
 
 /// Seconds of the track one platter revolution covers when scratching: a record at 33⅓ RPM.
-const SCRATCH_SECONDS_PER_REVOLUTION: f64 = 1.8;
+pub const SCRATCH_SECONDS_PER_REVOLUTION: f64 = 1.8;
 /// Seconds of the track one revolution of the jog's edge moves the music by when nudging.
-const NUDGE_SECONDS_PER_REVOLUTION: f64 = 0.3;
+pub const NUDGE_SECONDS_PER_REVOLUTION: f64 = 0.3;
 /// Seconds of the track one revolution moves with SHIFT held.
 const SEARCH_SECONDS_PER_REVOLUTION: f64 = 15.0;
 /// The largest tempo bend a nudge reaches, as a share of the tempo.

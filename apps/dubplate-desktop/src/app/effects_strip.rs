@@ -12,7 +12,7 @@ use gpui::{
     canvas, deferred, div, px, relative, svg,
 };
 
-use super::{DubplateApp, HitAreas};
+use super::{DubplateApp, HitAreas, Lever, MenuOpening};
 use crate::assets::CHEVRON_DOWN_PATH;
 use crate::commands::{Command, Direction, EffectEdit};
 use crate::effects::{effect_label, search, target_letter};
@@ -39,8 +39,9 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
         .bg(theme::BACKGROUND);
     for unit in EffectUnitId::ALL {
         if let Some(state) = app.effect_unit(unit) {
+            let lever = app.beat_fx_lever().filter(|_| app.effect_focus == unit);
             let focused = show_focus && app.effect_focus == unit;
-            strip = strip.child(unit_row(app, unit, state, focused, cx));
+            strip = strip.child(unit_row(app, unit, state, focused, lever, cx));
         }
     }
     strip
@@ -51,12 +52,14 @@ fn unit_row(
     unit: EffectUnitId,
     state: EffectUnitState,
     focused: bool,
+    lever: Option<Lever>,
     cx: &mut Context<'_, DubplateApp>,
 ) -> impl IntoElement + use<> {
-    let menu_open = app.effect_menu == Some(unit);
+    let menu = app.effect_menu.filter(|menu| menu.unit == unit);
+    let menu_open = menu.is_some();
     let accent = match state.target {
         EffectTarget::Deck(deck) => theme::deck_colour(deck),
-        EffectTarget::Master => theme::deck_colour(DeckId::A),
+        EffectTarget::BothDecks | EffectTarget::Master => theme::deck_colour(DeckId::A),
     };
     div()
         .relative()
@@ -74,9 +77,12 @@ fn unit_row(
         .child(effect_button(unit, &state, menu_open, cx))
         .child(beat_stepper(unit, &state, cx))
         .child(targets(unit, &state, cx))
+        .when_some(lever, |row, lever| row.child(lever_reading(lever)))
         .child(level_bar(app, unit, state.depth, cx))
         .child(on_button(unit, state.enabled, accent, cx))
-        .when(menu_open, |row| row.child(menu(app, unit, &state, cx)))
+        .when_some(menu, |row, menu| {
+            row.child(picker(app, unit, &state, menu.opening, cx))
+        })
 }
 
 /// `FX 1`, with a dot when the controller's BEAT FX section drives this unit.
@@ -189,7 +195,7 @@ fn targets(
             let checked = target == current;
             let underline = match target {
                 EffectTarget::Deck(deck) => theme::deck_colour(deck),
-                EffectTarget::Master => theme::TEXT,
+                EffectTarget::BothDecks | EffectTarget::Master => theme::TEXT,
             };
             div()
                 .id((
@@ -238,8 +244,8 @@ fn targets(
         }))
 }
 
-/// The level bar, with an amber mark where the controller's LEVEL/DEPTH knob waits while it has
-/// not picked up this unit's level yet.
+/// The level bar. The controller's LEVEL/DEPTH knob sets it the moment it reports, so the bar
+/// always shows where the knob sits.
 fn level_bar(
     app: &DubplateApp,
     unit: EffectUnitId,
@@ -247,7 +253,6 @@ fn level_bar(
     cx: &mut Context<'_, DubplateApp>,
 ) -> impl IntoElement + use<> {
     let hit_areas: Rc<HitAreas> = Rc::clone(&app.hit_areas);
-    let waiting = app.depth_waiting(unit, depth);
     div()
         .id(("effect-level", unit.index()))
         .accessible_slider(format!("Effect {} depth", unit.index() + 1), depth)
@@ -273,8 +278,8 @@ fn level_bar(
         .cursor_ew_resize()
         .on_mouse_down(
             MouseButton::Left,
-            cx.listener(move |this, event: &MouseDownEvent, _, cx| {
-                this.begin_effect_level_drag(unit, event.position, cx);
+            cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                this.begin_effect_level_drag(unit, event.position, window, cx);
                 cx.stop_propagation();
             }),
         )
@@ -304,17 +309,6 @@ fn level_bar(
                         .bg(theme::TEXT),
                 ),
         )
-        .children(waiting.map(|knob| {
-            div()
-                .absolute()
-                .left(relative(knob.clamp(0.0, 1.0)))
-                .ml(px(-1.0))
-                .top(px(2.0))
-                .bottom(px(2.0))
-                .w(px(2.0))
-                .rounded(px(1.0))
-                .bg(theme::ATTENTION)
-        }))
 }
 
 fn on_button(
@@ -347,14 +341,48 @@ fn on_button(
         .child("On")
 }
 
-/// The effect picker: a search field and the effects in their groups.
-fn menu(
+/// Where the controller's CH SELECT lever sits, next to the targets of the unit it drives, so
+/// a target that differs from the lever shows at once.
+fn lever_reading(lever: Lever) -> impl IntoElement {
+    let reading = match lever {
+        Lever::At(target) => target_letter(target),
+        Lever::Unreported => "?",
+    };
+    div()
+        .id("beat-fx-lever")
+        .aria_label(match lever {
+            Lever::At(target) => format!("CH SELECT lever on {}", target_letter(target)),
+            Lever::Unreported => "CH SELECT lever not reported yet".to_owned(),
+        })
+        .flex()
+        .items_center()
+        .gap(px(3.0))
+        .text_size(theme::TINY_TEXT_SIZE)
+        .text_color(theme::MUTED)
+        .child("lever")
+        .child(
+            div()
+                .font_family(MONO_FAMILY)
+                .text_color(theme::TEXT)
+                .child(reading),
+        )
+}
+
+/// The effect picker. Opened with the pointer it has a search field and stays open; opened by
+/// FX SELECT it only shows the effects with the chosen one highlighted.
+fn picker(
     app: &DubplateApp,
     unit: EffectUnitId,
     state: &EffectUnitState,
+    opening: MenuOpening,
     cx: &mut Context<'_, DubplateApp>,
 ) -> impl IntoElement + use<> {
-    let query = app.effect_search.read(cx).value().to_string();
+    let searching = opening == MenuOpening::Pointer;
+    let query = if searching {
+        app.effect_search.read(cx).value().to_string()
+    } else {
+        String::new()
+    };
     let current = state.kind;
     let mut groups = div().flex().flex_col().gap(px(8.0));
     let found = search(&query);
@@ -389,6 +417,9 @@ fn menu(
                     .cursor_pointer()
                     .when(chosen, |button| {
                         button.bg(theme::RAISED).font_weight(FontWeight::MEDIUM)
+                    })
+                    .when(chosen && !searching, |button| {
+                        button.border_1().border_color(theme::TEXT)
                     })
                     .hover(|button| button.bg(theme::RAISED))
                     .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
@@ -431,18 +462,20 @@ fn menu(
             .shadow_lg()
             .occlude()
             .on_mouse_down_out(cx.listener(|this, _, _, cx| this.close_effect_menu(cx)))
-            .child(
-                div()
-                    .h(px(30.0))
-                    .px(px(8.0))
-                    .flex()
-                    .items_center()
-                    .rounded(px(6.0))
-                    .border_1()
-                    .border_color(theme::LINE)
-                    .bg(theme::BACKGROUND)
-                    .child(Input::new(&app.effect_search).appearance(false)),
-            )
+            .when(searching, |picker| {
+                picker.child(
+                    div()
+                        .h(px(30.0))
+                        .px(px(8.0))
+                        .flex()
+                        .items_center()
+                        .rounded(px(6.0))
+                        .border_1()
+                        .border_color(theme::LINE)
+                        .bg(theme::BACKGROUND)
+                        .child(Input::new(&app.effect_search).appearance(false)),
+                )
+            })
             .child(groups),
     )
     .with_priority(1)
