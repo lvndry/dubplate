@@ -32,6 +32,10 @@ pub enum Control {
     /// A deck's filter knob (CFX): low-pass to the left, flat in the middle, high-pass to the
     /// right.
     Filter(DeckId),
+    /// The headphone MIXING knob: the cued channels to the left, the master to the right.
+    HeadphoneMix,
+    /// The headphone LEVEL knob.
+    HeadphoneLevel,
 }
 
 impl Control {
@@ -43,7 +47,9 @@ impl Control {
             | Control::Tempo(_)
             | Control::Trim(_)
             | Control::Eq(..)
-            | Control::Filter(_) => 0.5,
+            | Control::Filter(_)
+            | Control::HeadphoneMix
+            | Control::HeadphoneLevel => 0.5,
         }
     }
 }
@@ -187,6 +193,10 @@ pub struct MixerPositions {
     pub eqs: [[f32; 3]; 2],
     /// Each deck's filter knob, flat in the middle.
     pub filters: [f32; 2],
+    /// The headphone MIXING knob, cue only at 0.0 and master only at 1.0.
+    pub headphone_mix: f32,
+    /// The headphone LEVEL knob.
+    pub headphone_level: f32,
 }
 
 impl MixerPositions {
@@ -200,6 +210,8 @@ impl MixerPositions {
             Control::Trim(deck) => self.trims[deck.index()],
             Control::Eq(deck, band) => self.eqs[deck.index()][band.index()],
             Control::Filter(deck) => self.filters[deck.index()],
+            Control::HeadphoneMix => self.headphone_mix,
+            Control::HeadphoneLevel => self.headphone_level,
         }
     }
 }
@@ -214,6 +226,8 @@ impl Default for MixerPositions {
             trims: [0.5, 0.5],
             eqs: [[0.5; 3]; 2],
             filters: [0.5, 0.5],
+            headphone_mix: 0.5,
+            headphone_level: 0.5,
         }
     }
 }

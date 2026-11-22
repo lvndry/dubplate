@@ -23,6 +23,8 @@ pub struct DeckLights {
     pub level: U7,
     /// BEAT SYNC.
     pub sync: bool,
+    /// The channel's headphone CUE.
+    pub headphone_cue: bool,
     /// LOOP IN.
     pub loop_in: bool,
     /// LOOP OUT.
@@ -40,6 +42,7 @@ impl Default for DeckLights {
             pads: [false; PAD_COUNT],
             level: U7::MIN,
             sync: false,
+            headphone_cue: false,
             loop_in: false,
             loop_out: false,
             four_beat: false,
@@ -73,7 +76,7 @@ impl Lights {
             light(Button::LoopOut(deck), lights.loop_out);
             light(Button::FourBeatExit(deck), lights.four_beat);
             light(Button::Sync(deck), lights.sync);
-            light(Button::HeadphoneCue(deck), false);
+            light(Button::HeadphoneCue(deck), lights.headphone_cue);
             for mode in PAD_MODES {
                 light(Button::PadMode { deck, mode }, mode == lights.pad_mode);
                 for (pad_position, lit) in lights.pads.iter().enumerate() {
