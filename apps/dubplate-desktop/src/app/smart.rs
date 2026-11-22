@@ -1,6 +1,7 @@
-//! SMART CFX and SMART FADER, as on the DDJ-FLX4 with rekordbox: SMART CFX turns both channels'
-//! filter knobs into the chosen preset, SHIFT + SMART CFX steps the presets, and SMART FADER
-//! makes the crossfader move a shared tempo and swap the bass.
+//! SMART CFX, the Sound Color FX and SMART FADER, as on the DDJ-FLX4 with rekordbox: SMART CFX
+//! turns both channels' CFX knobs into the chosen preset, SHIFT + SMART CFX steps the presets;
+//! with SMART CFX off each CFX knob plays its channel's Sound Color FX, the filter unless the DJ
+//! picked another; SMART FADER makes the crossfader move a shared tempo and swap the bass.
 
 use dubplate_engine::{DeckId, SmartCfx};
 use gpui::Context;
@@ -15,6 +16,8 @@ pub(super) fn preset_label(preset: SmartCfx) -> &'static str {
     match preset {
         SmartCfx::Space => "Space",
         SmartCfx::DubEcho => "Dub echo",
+        SmartCfx::Sweep => "Sweep",
+        SmartCfx::Noise => "Noise",
         SmartCfx::Crush => "Crush",
         SmartCfx::Chop => "Chop",
         SmartCfx::Jet => "Jet",
@@ -22,6 +25,18 @@ pub(super) fn preset_label(preset: SmartCfx) -> &'static str {
         SmartCfx::Pitch => "Pitch",
     }
 }
+
+/// What a CFX knob plays, as the mixer names it: the filter or a Sound Color FX.
+pub(super) fn colour_label(colour: Option<SmartCfx>) -> &'static str {
+    colour.map_or("Filter", preset_label)
+}
+
+/// The name settings keep for a Sound Color FX, `filter` for the plain filter.
+fn colour_name(colour: Option<SmartCfx>) -> String {
+    colour.map_or_else(|| FILTER_NAME.to_owned(), |preset| preset.to_string())
+}
+
+const FILTER_NAME: &str = "filter";
 
 /// The preset a saved name stands for.
 fn preset_named(name: &str) -> Option<SmartCfx> {
@@ -42,9 +57,34 @@ impl DubplateApp {
 
     /// Whether SMART CFX is on.
     pub(super) fn smart_cfx_on(&self) -> bool {
-        self.engine
-            .as_ref()
-            .is_ok_and(|engine| engine.controller.smart_cfx(DeckId::A).is_some())
+        self.settings.smart_cfx_on
+    }
+
+    /// The Sound Color FX a channel's CFX knob plays with SMART CFX off; `None` is the filter.
+    pub(super) fn cfx_colour(&self, deck: DeckId) -> Option<SmartCfx> {
+        self.settings
+            .cfx_colours
+            .get(deck.index())
+            .and_then(|name| preset_named(name))
+    }
+
+    /// Picks the Sound Color FX of one channel, or of both, and remembers it.
+    pub(super) fn choose_cfx_colour(
+        &mut self,
+        decks: &[DeckId],
+        colour: Option<SmartCfx>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let mut colours: Vec<String> = DeckId::ALL
+            .into_iter()
+            .map(|deck| colour_name(self.cfx_colour(deck)))
+            .collect();
+        for deck in decks {
+            colours[deck.index()] = colour_name(colour);
+        }
+        self.settings.cfx_colours = colours;
+        self.save_settings(cx);
+        self.apply_cfx(cx);
     }
 
     /// Whether SMART FADER is on.
@@ -57,19 +97,15 @@ impl DubplateApp {
     /// Turns SMART CFX on with the chosen preset on both channels, or back to the plain filter,
     /// and remembers which for the next launch.
     pub(super) fn toggle_smart_cfx(&mut self, cx: &mut Context<'_, Self>) {
-        let on = !self.smart_cfx_on();
-        let preset = on.then(|| self.smart_cfx_preset());
-        self.apply_smart_cfx(preset, cx);
-        self.settings.smart_cfx_on = on;
+        self.settings.smart_cfx_on = !self.smart_cfx_on();
+        self.apply_cfx(cx);
         self.save_settings(cx);
     }
 
-    /// Turns SMART CFX back on at launch when it was on when Dubplate closed.
+    /// Puts the CFX knobs back as they were when Dubplate closed: SMART CFX, or each channel's
+    /// Sound Color FX.
     pub(super) fn restore_smart_cfx(&mut self, cx: &mut Context<'_, Self>) {
-        if self.settings.smart_cfx_on {
-            let preset = self.smart_cfx_preset();
-            self.apply_smart_cfx(Some(preset), cx);
-        }
+        self.apply_cfx(cx);
     }
 
     /// Picks the preset SMART CFX plays and remembers it; with SMART CFX on, the knobs take it
@@ -78,15 +114,24 @@ impl DubplateApp {
         self.settings.smart_cfx_preset = Some(preset.to_string());
         self.save_settings(cx);
         if self.smart_cfx_on() {
-            self.apply_smart_cfx(Some(preset), cx);
+            self.apply_cfx(cx);
         }
         cx.notify();
     }
 
-    fn apply_smart_cfx(&mut self, preset: Option<SmartCfx>, cx: &mut Context<'_, Self>) {
+    /// Gives each channel's CFX knob what it plays: the SMART CFX preset while SMART CFX is
+    /// on, else the channel's Sound Color FX.
+    fn apply_cfx(&mut self, cx: &mut Context<'_, Self>) {
+        let played = DeckId::ALL.map(|deck| {
+            if self.smart_cfx_on() {
+                Some(self.smart_cfx_preset())
+            } else {
+                self.cfx_colour(deck)
+            }
+        });
         self.engine_command(cx, |controller| {
             for deck in DeckId::ALL {
-                controller.set_smart_cfx(deck, preset)?;
+                controller.set_smart_cfx(deck, played[deck.index()])?;
             }
             Ok(())
         });
@@ -126,5 +171,11 @@ mod tests {
             assert_eq!(preset_named(&preset.to_string()), Some(preset));
         }
         assert_eq!(preset_named("nonsense"), None);
+        assert_eq!(preset_named(&colour_name(None)), None);
+        assert_eq!(colour_label(None), "Filter");
+        assert_eq!(
+            preset_named(&colour_name(Some(SmartCfx::Sweep))),
+            Some(SmartCfx::Sweep)
+        );
     }
 }
