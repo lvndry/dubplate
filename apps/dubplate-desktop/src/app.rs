@@ -33,7 +33,6 @@ mod pad_fx_editor;
 mod pad_grid;
 mod pads;
 mod pickup;
-mod played;
 mod prepare;
 mod recording;
 mod relink;
@@ -249,8 +248,6 @@ pub struct DubplateApp {
     catalogue: Arc<Catalogue>,
     /// What the library's Match column was last worked out for.
     match_source: Option<library_matches::MatchSource>,
-    /// The tracks a deck played this session, by file.
-    played_tracks: Arc<HashSet<PathBuf>>,
     missing: Arc<Vec<Missing>>,
     relinking: bool,
     relink_review: Option<RelinkReview>,
@@ -512,7 +509,6 @@ impl DubplateApp {
             check_cursor_seconds: 0.0,
             catalogue: Arc::default(),
             match_source: None,
-            played_tracks: Arc::default(),
             missing: Arc::default(),
             relinking: false,
             relink_review: None,
@@ -2194,7 +2190,6 @@ impl Render for DubplateApp {
         if self.glitches.observe(self.dropouts(), Instant::now()) {
             self.show_notice(NoticePlace::Window, GLITCH_NOTICE, cx);
         }
-        self.mark_played(&frames, cx);
         self.follow_library_matches(cx);
         let root = div()
             .key_context(WINDOW_CONTEXT)
