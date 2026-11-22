@@ -15,3 +15,10 @@ thiserror = "2.0.21"
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+criterion = "0.8.2"
+
+[[bench]]
+name = "rekordbox"
+harness = false
