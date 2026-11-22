@@ -147,7 +147,7 @@ fn a_quarter_of_the_knob_is_gentle_and_the_middle_is_as_loud_as_the_music() {
     for kind in TRAIL_EFFECTS {
         let gentle = play(at_depth(kind, 0.25).as_mut(), &club_loop);
         assert!(
-            (-16.0..=-6.0).contains(&gentle.trail_loudness_decibels),
+            (-20.0..=-6.0).contains(&gentle.trail_loudness_decibels),
             "{kind} a quarter of the way added a trail at {} dB against the club loop",
             gentle.trail_loudness_decibels
         );

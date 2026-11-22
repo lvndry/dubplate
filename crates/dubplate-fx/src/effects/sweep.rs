@@ -1,9 +1,9 @@
 use crate::context::BlockTiming;
+use crate::context::ProcessContext;
 use crate::dsp::filters::SvfCoefficients;
 use crate::dsp::shaping::smoothstep;
 use crate::dsp::smoothing::Smoothed;
 use crate::effects::filter::{FilterSlope, FilterStages, stage_qualities};
-use crate::context::ProcessContext;
 use crate::unit::{Frame, Kernel, MixLaw, Unit, knob};
 
 const CENTRE_DEAD_ZONE: f32 = 0.02;

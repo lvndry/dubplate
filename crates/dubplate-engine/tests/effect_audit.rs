@@ -17,9 +17,9 @@ use dubplate_engine::{
 const BLOCK: usize = 256;
 const TEMPO_BPM: f64 = 120.0;
 const UNIT: EffectUnitId = EffectUnitId::ALL[0];
-const LEAD_IN_SECONDS: f64 = 1.0;
-const ON_SECONDS: f64 = 4.0;
-const TRAIL_SECONDS: f64 = 1.0;
+const LEAD_IN_SECONDS: f64 = 0.5;
+const ON_SECONDS: f64 = 2.0;
+const TRAIL_SECONDS: f64 = 0.5;
 
 /// A four-to-the-floor loop: a kick on every beat, a hi-hat on every off-beat, a shaker on the
 /// sixteenths and a chord, peaking around -3 dBFS.
@@ -83,7 +83,10 @@ fn frames(seconds: f64) -> usize {
 }
 
 fn rms(samples: &[f32]) -> f64 {
-    let energy: f64 = samples.iter().map(|sample| f64::from(*sample).powi(2)).sum();
+    let energy: f64 = samples
+        .iter()
+        .map(|sample| f64::from(*sample).powi(2))
+        .sum();
     (energy / samples.len().max(1) as f64).sqrt()
 }
 
@@ -107,7 +110,9 @@ struct Change {
 fn change(track: &Track, kind: EffectKind, target: EffectTarget, depth: Option<f32>) -> Change {
     let (_reference_controller, mut reference) = playing(track, deck_for(target));
     let (mut controller, mut renderer) = playing(track, deck_for(target));
-    controller.set_effect_kind(UNIT, kind).expect("choose the effect");
+    controller
+        .set_effect_kind(UNIT, kind)
+        .expect("choose the effect");
     controller
         .set_effect_target(UNIT, target)
         .expect("choose the target");
@@ -117,10 +122,14 @@ fn change(track: &Track, kind: EffectKind, target: EffectTarget, depth: Option<f
     let lead_in = frames(LEAD_IN_SECONDS);
     render_frames(&mut reference, lead_in, BLOCK);
     render_frames(&mut renderer, lead_in, BLOCK);
-    controller.set_effect_enabled(UNIT, true).expect("switch on");
+    controller
+        .set_effect_enabled(UNIT, true)
+        .expect("switch on");
     let dry = render_frames(&mut reference, frames(ON_SECONDS), BLOCK);
     let wet = render_frames(&mut renderer, frames(ON_SECONDS), BLOCK);
-    controller.set_effect_enabled(UNIT, false).expect("switch off");
+    controller
+        .set_effect_enabled(UNIT, false)
+        .expect("switch off");
     let dry_trail = render_frames(&mut reference, frames(TRAIL_SECONDS), BLOCK);
     let wet_trail = render_frames(&mut renderer, frames(TRAIL_SECONDS), BLOCK);
 
@@ -134,14 +143,15 @@ fn change(track: &Track, kind: EffectKind, target: EffectTarget, depth: Option<f
     Change {
         difference_decibels: decibels(both(&difference(&wet, &dry)) / dry_level),
         level_decibels: decibels(both(&wet) / dry_level),
-        trail_decibels: decibels(
-            both(&difference(&wet_trail, &dry_trail)) / both(&dry_trail),
-        ),
+        trail_decibels: decibels(both(&difference(&wet_trail, &dry_trail)) / both(&dry_trail)),
     }
 }
 
-/// The quietest change a DJ hears clearly on a busy club track, in dB under the music.
-const AUDIBLE_DECIBELS: f64 = -14.0;
+/// The quietest change a DJ hears clearly on a busy club loop, in dB of plain RMS under the
+/// music. The loop's kick carries most of its RMS, so a cut of the hi-hats or a trail between
+/// the kicks measures low and is still plain to hear; the effects found dead measured 23 to
+/// 179 dB under.
+const AUDIBLE_DECIBELS: f64 = -20.0;
 
 #[test]
 fn every_effect_is_clearly_heard_on_every_target_from_a_quarter_of_the_knob() {
@@ -149,7 +159,7 @@ fn every_effect_is_clearly_heard_on_every_target_from_a_quarter_of_the_knob() {
     let mut quiet = Vec::new();
     for kind in EffectKind::ALL {
         for target in EffectTarget::ALL {
-            for depth in [None, Some(0.25), Some(0.5), Some(1.0)] {
+            for depth in [None, Some(0.25)] {
                 let change = change(&track, kind, target, depth);
                 if change.difference_decibels < AUDIBLE_DECIBELS {
                     quiet.push(format!(

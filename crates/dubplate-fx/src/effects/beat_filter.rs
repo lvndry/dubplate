@@ -37,7 +37,10 @@ impl BeatFilter {
     /// Builds a beat filter sweeping over 4 beats, with the depth knob half way, switched off.
     pub fn new() -> Self {
         let mut filter = Self {
-            unit: Unit::new(BeatFilterKernel::new(), engaged(DEFAULT_DEPTH, FULL_MIX_DEPTH)),
+            unit: Unit::new(
+                BeatFilterKernel::new(),
+                engaged(DEFAULT_DEPTH, FULL_MIX_DEPTH),
+            ),
         };
         filter.apply_depth(DEFAULT_DEPTH);
         filter.unit.kernel.snap();
