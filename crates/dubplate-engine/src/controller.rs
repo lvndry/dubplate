@@ -133,6 +133,24 @@ impl Controller {
     /// This runs on the control thread; loops and held gestures are not copied.
     /// Returns `DeckStatePending` until preceding commands have been published.
     pub fn snapshot_deck(&self, deck: DeckId) -> Result<DeckSnapshot, EngineError> {
+        if self.shared.applied_command.load(Ordering::Acquire) != self.command_sequence {
+            return Err(EngineError::DeckStatePending);
+        }
+        self.consistent_snapshot(deck)
+            .ok_or(EngineError::DeckStatePending)
+    }
+
+    /// The deck as the audio thread last published it, whether or not it has carried out the
+    /// commands sent since: what can still be known of a deck whose audio stream stopped, as
+    /// when its sound card went away.
+    pub fn last_published_deck(&self, deck: DeckId) -> DeckSnapshot {
+        self.consistent_snapshot(deck)
+            .unwrap_or_else(|| self.read_snapshot(deck))
+    }
+
+    /// A snapshot read between two publications of the audio thread, or `None` when it kept
+    /// publishing while it was read.
+    fn consistent_snapshot(&self, deck: DeckId) -> Option<DeckSnapshot> {
         let shared = &self.shared.decks[deck.index()];
         for _ in 0..8 {
             let publication = shared.publication.load(Ordering::Acquire);
@@ -140,35 +158,36 @@ impl Controller {
                 std::hint::spin_loop();
                 continue;
             }
-            if self.shared.applied_command.load(Ordering::Acquire) != self.command_sequence {
-                return Err(EngineError::DeckStatePending);
-            }
-            let state = self.deck_state(deck);
-            let tempo = self.tempo_state(deck);
-            let snapshot = DeckSnapshot {
-                track: self.track(deck).cloned(),
-                grid: self.beat_grid(deck),
-                playback: DeckPlayback {
-                    position_seconds: state.position_seconds,
-                    cue_seconds: state.cue_point_seconds,
-                    tempo: if state.loaded { state.tempo } else { 1.0 },
-                    fader_position: self.shared.decks[deck.index()].tempo_fader_position.load(),
-                    range: tempo.tempo_range,
-                    waits_for_pickup: tempo.fader_waits_for_pickup,
-                    sync: tempo.sync,
-                    key_lock: self.key_lock(deck),
-                    key_shift: self.key_shift(deck),
-                    slip: self.slip_state(deck).enabled,
-                    vinyl_mode: self.platter_state(deck).vinyl_mode,
-                    playing: state.playing,
-                },
-            };
+            let snapshot = self.read_snapshot(deck);
             std::sync::atomic::fence(Ordering::Acquire);
             if shared.publication.load(Ordering::Relaxed) == publication {
-                return Ok(snapshot);
+                return Some(snapshot);
             }
         }
-        Err(EngineError::DeckStatePending)
+        None
+    }
+
+    fn read_snapshot(&self, deck: DeckId) -> DeckSnapshot {
+        let state = self.deck_state(deck);
+        let tempo = self.tempo_state(deck);
+        DeckSnapshot {
+            track: self.track(deck).cloned(),
+            grid: self.beat_grid(deck),
+            playback: DeckPlayback {
+                position_seconds: state.position_seconds,
+                cue_seconds: state.cue_point_seconds,
+                tempo: if state.loaded { state.tempo } else { 1.0 },
+                fader_position: self.shared.decks[deck.index()].tempo_fader_position.load(),
+                range: tempo.tempo_range,
+                waits_for_pickup: tempo.fader_waits_for_pickup,
+                sync: tempo.sync,
+                key_lock: self.key_lock(deck),
+                key_shift: self.key_shift(deck),
+                slip: self.slip_state(deck).enabled,
+                vinyl_mode: self.platter_state(deck).vinyl_mode,
+                playing: state.playing,
+            },
+        }
     }
 
     /// Puts `snapshot` back on `deck`, stopped, in one queue command, as after a change of

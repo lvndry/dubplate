@@ -146,6 +146,13 @@ pub fn tempo_fader(fraction: f32) -> f64 {
     f64::from(fraction.clamp(0.0, 1.0)) * 2.0 - 1.0
 }
 
+/// Where a tempo slider sits for `tempo`, the speed where 1.0 is the track's own tempo, in
+/// `range`: the inverse of [`tempo_fader`], kept to the slider's ends.
+pub fn tempo_slider_at(tempo: f64, range: TempoRange) -> f32 {
+    let position = (tempo - 1.0) / range.span();
+    ((position + 1.0) / 2.0).clamp(0.0, 1.0) as f32
+}
+
 /// The tempo slider one key press away, a tenth of a percent of tempo in `range`.
 pub fn nudged_tempo_slider(fraction: f32, sign: f64, range: TempoRange) -> f32 {
     let step = TEMPO_STEP / range.span() / 2.0;
@@ -181,6 +188,9 @@ pub fn trim_gain_at(fraction: f32) -> f32 {
 
 /// Where the sampler's volume starts, a little under its loudest so a sample sits in the mix.
 pub const DEFAULT_SAMPLER_VOLUME: f32 = 0.8;
+/// The master level the first time Dubplate opens, 10 dB under full, before the DJ or the
+/// controller's MASTER LEVEL knob sets it.
+pub const DEFAULT_MASTER_LEVEL: f32 = 0.75;
 
 /// Where the mixer and tempo controls are. The interface keeps them, rather than reading them
 /// back from the engine, so quick key presses each count before the engine has caught up.
@@ -290,6 +300,11 @@ mod tests {
         );
         assert_eq!(nudged_tempo_slider(1.0, 1.0, TempoRange::SixPercent), 1.0);
         assert_eq!(tempo_range_label(TempoRange::SixteenPercent), "\u{b1}16%");
+        let in_between = tempo_slider_at(1.03, TempoRange::TenPercent);
+        assert!((in_between - 0.65).abs() < 1e-6, "{in_between}");
+        assert!((tempo_fader(in_between) - 0.3).abs() < 1e-6);
+        assert_eq!(tempo_slider_at(1.2, TempoRange::SixPercent), 1.0);
+        assert_eq!(tempo_slider_at(1.0, TempoRange::Wide), 0.5);
         assert_eq!(tempo_range_label(TempoRange::Wide), "\u{b1}100%");
     }
 

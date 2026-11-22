@@ -3,7 +3,7 @@
 
 use std::rc::Rc;
 
-use dubplate_engine::{DeckId, SyncMode};
+use dubplate_engine::{DeckId, SyncMode, TempoState};
 use gpui::prelude::*;
 use gpui::{
     ClickEvent, Context, FontWeight, MouseButton, MouseDownEvent, Pixels, SharedString, canvas,
@@ -366,7 +366,7 @@ fn transport(
         .child(toggle(
             ("sync", deck.index()),
             "Sync",
-            tempo.is_some_and(|state| state.sync != SyncMode::Off),
+            sync_lit(tempo),
             colour,
             Command::ToggleSync(deck),
             cx,
@@ -374,7 +374,7 @@ fn transport(
         .child(toggle(
             ("master", deck.index()),
             "Master",
-            tempo.is_some_and(|state| state.is_master),
+            Lit::when(tempo.is_some_and(|state| state.is_master)),
             colour,
             Command::MakeTempoMaster(deck),
             cx,
@@ -382,7 +382,7 @@ fn transport(
         .child(toggle(
             ("key-lock", deck.index()),
             "Key lock",
-            app.key_lock(deck),
+            Lit::when(app.key_lock(deck)),
             colour,
             Command::ToggleKeyLock(deck),
             cx,
@@ -390,7 +390,7 @@ fn transport(
         .child(toggle(
             ("slip", deck.index()),
             "Slip",
-            app.slip(deck),
+            Lit::when(app.slip(deck)),
             colour,
             Command::ToggleSlip(deck),
             cx,
@@ -402,12 +402,21 @@ fn transport(
                 .items_center()
                 .gap(px(10.0))
                 .ml(px(10.0))
-                .child(
+                .child({
+                    let waiting = app.tempo_slider_view(deck).waiting_fader.is_some();
                     div()
                         .text_size(theme::SMALL_TEXT_SIZE)
-                        .text_color(theme::MUTED)
-                        .child("Tempo"),
-                )
+                        .text_color(if waiting {
+                            theme::ATTENTION
+                        } else {
+                            theme::MUTED
+                        })
+                        .child(if waiting {
+                            "Move to take over"
+                        } else {
+                            "Tempo"
+                        })
+                })
                 .child(
                     slider::render(
                         app,
@@ -431,12 +440,45 @@ fn transport(
         )
 }
 
+/// How a transport button is lit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Lit {
+    /// Off.
+    Off,
+    /// On but waiting, as Sync is until a tempo master plays: outlined faintly, its label in
+    /// the deck's colour.
+    Armed,
+    /// On.
+    On,
+}
+
+impl Lit {
+    fn when(on: bool) -> Self {
+        if on { Self::On } else { Self::Off }
+    }
+}
+
+/// Sync is on while the deck follows the tempo master or is the master, and armed while it
+/// waits for a master to play.
+fn sync_lit(tempo: Option<TempoState>) -> Lit {
+    match tempo {
+        Some(state) if state.sync != SyncMode::Off => {
+            if state.following || state.is_master {
+                Lit::On
+            } else {
+                Lit::Armed
+            }
+        }
+        _ => Lit::Off,
+    }
+}
+
 /// A transport button that stays lit in the deck's colour while its setting is on, such as
 /// Sync and Master.
 fn toggle(
     id: (&'static str, usize),
     label: &'static str,
-    on: bool,
+    lit: Lit,
     colour: gpui::Rgba,
     command: Command,
     cx: &mut Context<'_, DubplateApp>,
@@ -447,19 +489,19 @@ fn toggle(
                 "Deck {} {label}",
                 deck_letter(if id.1 == 0 { DeckId::A } else { DeckId::B })
             ),
-            on,
+            lit != Lit::Off,
         )
         .px(px(10.0))
         .border_1()
-        .map(|toggle| {
-            if on {
-                toggle.border_color(colour).text_color(theme::TEXT)
-            } else {
-                toggle
-                    .border_color(theme::LINE)
-                    .text_color(theme::MUTED)
-                    .hover(|toggle| toggle.text_color(theme::TEXT))
-            }
+        .map(|toggle| match lit {
+            Lit::On => toggle.border_color(colour).text_color(theme::TEXT),
+            Lit::Armed => toggle
+                .border_color(theme::faded(colour, 0.45))
+                .text_color(colour),
+            Lit::Off => toggle
+                .border_color(theme::LINE)
+                .text_color(theme::MUTED)
+                .hover(|toggle| toggle.text_color(theme::TEXT)),
         })
         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
             this.perform(command, window, cx);

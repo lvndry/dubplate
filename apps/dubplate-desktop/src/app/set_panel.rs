@@ -7,7 +7,7 @@ use std::time::Duration;
 use dubplate_prep::{SetWarning, Severity, WarningKind, WarningPosition};
 use gpui::prelude::*;
 use gpui::{
-    ClickEvent, Context, FontWeight, MouseButton, PathBuilder, Pixels, Rgba, SharedString, Window,
+    ClickEvent, Context, FontWeight, MouseButton, PathBuilder, Pixels, SharedString, Window,
     canvas, div, point, px,
 };
 
@@ -22,7 +22,7 @@ use crate::prep::SeamSummary;
 use crate::set::running_time;
 use crate::shortcuts::{SHORTCUTS, printed_keys};
 use crate::theme;
-use crate::widgets::{Emphasis, InteractiveControl, button};
+use crate::widgets::{Emphasis, InteractiveControl, button, tooltip};
 
 const PANEL_WIDTH: Pixels = px(420.0);
 /// What to do when two tracks with stems sing over each other across a seam.
@@ -325,7 +325,11 @@ fn track_row(
     let duplicate = warnings
         .iter()
         .find(|warning| warning.position == WarningPosition::Track { index: position });
-    let (badge, badge_colour) = ready_badge(row);
+    let readiness = if row.ready.is_ready() {
+        "Ready".to_owned()
+    } else {
+        row.ready.details().replace('\n', ", ")
+    };
     let dragged = DraggedSetTrack {
         position,
         title: title.clone().into(),
@@ -333,7 +337,7 @@ fn track_row(
     div()
         .id(("set-track", position))
         .accessible_button(format!(
-            "Track {}: {title} by {artist}. {bpm} BPM. Key {key}. Energy {energy}. {badge}",
+            "Track {}: {title} by {artist}. {bpm} BPM. Key {key}. Energy {energy}. {readiness}",
             position + 1
         ))
         .role(gpui::Role::ListItem)
@@ -419,12 +423,7 @@ fn track_row(
                         .child(key)
                         .child(div().text_color(theme::MUTED).child(bpm)),
                 )
-                .child(
-                    div()
-                        .text_size(theme::TINY_TEXT_SIZE)
-                        .text_color(badge_colour)
-                        .child(badge),
-                ),
+                .child(ready_badge(row)),
         )
         .when(selected, |row| {
             row.child(
@@ -457,19 +456,40 @@ fn track_row(
         })
 }
 
-/// Ready in green, a missing file in red and anything else to fix in amber, always as words.
-/// A proposal that can fill a missing cue says Y accepts it.
-fn ready_badge(row: &SetRow) -> (String, Rgba) {
+/// Ready in green, a missing file in red and anything else to fix in amber, always as words,
+/// such as "File missing, and 3 more"; hovering it lists every problem. A proposal that can
+/// fill a missing cue shows the Y key that accepts it.
+fn ready_badge(row: &SetRow) -> impl IntoElement + use<> {
     let colour = match row.ready.problems.first().map(|problem| problem.severity()) {
         None => theme::OK,
         Some(Severity::Blocking) => theme::ALERT,
         Some(Severity::NeedsAttention) => theme::ATTENTION,
     };
-    let mut badge = row.ready.badge();
+    let mut details = row.ready.details();
     if row.has_proposal {
-        badge.push_str(" \u{b7} Y proposes cues");
+        details.push_str("\n\nY accepts the mix cues proposed from the phrases.");
     }
-    (badge, colour)
+    div()
+        .id(("ready-badge", row.position))
+        .flex()
+        .items_center()
+        .gap(px(5.0))
+        .text_size(theme::TINY_TEXT_SIZE)
+        .text_color(colour)
+        .when(!details.is_empty(), |badge| badge.tooltip(tooltip(details)))
+        .child(row.ready.badge())
+        .when(row.has_proposal, |badge| {
+            badge.child(
+                div()
+                    .px(px(4.0))
+                    .rounded(px(3.0))
+                    .border_1()
+                    .border_color(theme::LINE)
+                    .font_family(MONO_FAMILY)
+                    .text_color(theme::TEXT)
+                    .child("Y"),
+            )
+        })
 }
 
 /// The thin row between two set tracks: the key move and tempo step, the warnings, and the
@@ -649,7 +669,7 @@ fn next_panel(
                     )
                 }),
         );
-    if pending {
+    if pending && next.is_empty() {
         panel = panel.child(
             div()
                 .text_size(theme::SMALL_TEXT_SIZE)
