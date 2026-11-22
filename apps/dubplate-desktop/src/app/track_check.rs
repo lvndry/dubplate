@@ -95,13 +95,18 @@ impl DubplateApp {
         let Some(index) = collection.find_path(&path) else {
             return;
         };
+        let analysis = self.analyses.get(&path).cloned();
         self.detail_pending = Some(path.clone());
         self.check_cursor_seconds = 0.0;
         cx.spawn(async move |this, cx| {
             let detail = cx
                 .background_executor()
                 .spawn(async move {
-                    track_detail(collection.track(index), collection.share_directory())
+                    track_detail(
+                        collection.track(index),
+                        collection.share_directory(),
+                        analysis.as_deref(),
+                    )
                 })
                 .await;
             this.update(cx, |this, cx| {
