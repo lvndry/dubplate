@@ -96,12 +96,11 @@ impl Headphones {
         }
     }
 
-    /// Mixes the cue bus with `master` into the headphone block and returns its peak.
-    pub(crate) fn finish(&mut self, master: &StereoBlock) -> f32 {
+    /// Mixes the cue bus with `master` into the headphone block.
+    pub(crate) fn finish(&mut self, master: &StereoBlock) {
         if self.settings.master_cue {
             self.cue_block.add(master);
         }
-        let mut peak = 0.0_f32;
         let (left_out, right_out) = self.block.channels_mut();
         let frames = left_out
             .iter_mut()
@@ -114,8 +113,6 @@ impl Headphones {
             let level = self.level.next_value();
             *left = (cue_left * cue_gain + master_left * master_gain) * level;
             *right = (cue_right * cue_gain + master_right * master_gain) * level;
-            peak = peak.max(left.abs()).max(right.abs());
         }
-        peak
     }
 }

@@ -98,7 +98,7 @@ fn a_crossfader_cut_moves_without_a_click() {
     controller.set_crossfader(1.0).unwrap();
     let output = left_channel(&render_frames(&mut renderer, BLOCK, BLOCK));
     assert!(largest_step(&output) <= 0.8 / DECLICK_FRAMES as f32 + 1e-6);
-    assert_eq!(output[DECLICK_FRAMES], 0.0);
+    assert_eq!(output[BLOCK - 1], 0.0);
 }
 
 #[test]

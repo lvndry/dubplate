@@ -17,6 +17,7 @@ pub(crate) struct SharedState {
     pub(crate) decks: [DeckShared; DECK_COUNT],
     pub(crate) master_peak: AtomicU32,
     pub(crate) headphone_peak: AtomicU32,
+    pub(crate) master_limiting: AtomicU32,
     pub(crate) effect_sounding: [AtomicBool; EFFECT_UNIT_COUNT],
     pub(crate) tempo_master: AtomicDeck,
     pub(crate) stats: SharedStats,
@@ -134,6 +135,7 @@ impl SharedState {
             }),
             master_peak: AtomicU32::new(0),
             headphone_peak: AtomicU32::new(0),
+            master_limiting: AtomicU32::new(0),
             effect_sounding: std::array::from_fn(|_| AtomicBool::new(false)),
             tempo_master: AtomicDeck::default(),
             stats: SharedStats {
@@ -253,8 +255,9 @@ pub struct EngineStats {
     pub max_buffer_frames: u32,
     /// Duration of one buffer in milliseconds: the latency the buffer adds.
     pub buffer_latency_ms: f64,
-    /// Time the mixer's channel EQ delays every deck by, so its bands stay in phase. Add it to
-    /// the output latency to line a waveform up with what is heard.
+    /// Time the mixer delays every deck by: the channel EQ, which keeps its bands in phase, and
+    /// the master limiter's look-ahead. Add it to the output latency to line a waveform up with
+    /// what is heard.
     pub mixer_latency_ms: f64,
     /// Time from the callback to the moment its first sample reaches the speakers, as the
     /// device reports it. Includes the buffer and the device's own latency.
@@ -357,6 +360,9 @@ pub struct Meters {
     pub master_peak: f32,
     /// Peak of the headphone output.
     pub headphone_peak: f32,
+    /// The lowest gain the master limiter applied, where 1.0 means it did nothing. Below 1.0
+    /// the master was pushed into the limiter: a LIMIT light.
+    pub master_limiter_gain: f32,
 }
 
 #[cfg(test)]

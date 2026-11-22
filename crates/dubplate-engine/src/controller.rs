@@ -606,6 +606,7 @@ impl Controller {
             }),
             master_peak: take_peak(&self.shared.master_peak),
             headphone_peak: take_peak(&self.shared.headphone_peak),
+            master_limiter_gain: 1.0 - take_peak(&self.shared.master_limiting),
         }
     }
 
