@@ -2,11 +2,12 @@
 //! and the help overlay both come from [`SHORTCUTS`].
 
 use dubplate_engine::DeckId;
+use dubplate_prep::GridEdit;
 use gpui::{Action, KeyBinding};
 
 use crate::commands::{Command, Direction, LoopAction, Mode, PadPress, Press, SetEdit};
 
-/// How far one press of [ or ] moves a set track's grid, in milliseconds.
+/// How far one press of [ or ] moves a track's grid, in milliseconds.
 pub const GRID_NUDGE_MS: i32 = 5;
 
 /// The key context of the window. Keys that type text only count outside the search field.
@@ -129,13 +130,28 @@ pub const SHORTCUTS: &[Shortcut] = &[
     outside_text("f", Command::EditSet(SetEdit::TogglePlanned)),
     outside_text("y", Command::EditSet(SetEdit::AcceptProposedCues)),
     outside_text("b", Command::EditSet(SetEdit::ToggleBackup)),
-    outside_text("g", Command::EditSet(SetEdit::ConfirmGrid)),
+    outside_text(
+        "g",
+        Command::EditSet(SetEdit::Grid(GridEdit::ToggleConfirmed)),
+    ),
     outside_text("i", Command::EditSet(SetEdit::MixInAtPlayhead)),
     outside_text("o", Command::EditSet(SetEdit::MixOutAtPlayhead)),
-    outside_text("[", Command::EditSet(SetEdit::NudgeGrid(-GRID_NUDGE_MS))),
-    outside_text("]", Command::EditSet(SetEdit::NudgeGrid(GRID_NUDGE_MS))),
-    outside_text(",", Command::EditSet(SetEdit::ShiftDownbeat(-1))),
-    outside_text(".", Command::EditSet(SetEdit::ShiftDownbeat(1))),
+    outside_text(
+        "[",
+        Command::EditSet(SetEdit::Grid(GridEdit::Nudge(-GRID_NUDGE_MS))),
+    ),
+    outside_text(
+        "]",
+        Command::EditSet(SetEdit::Grid(GridEdit::Nudge(GRID_NUDGE_MS))),
+    ),
+    outside_text(
+        ",",
+        Command::EditSet(SetEdit::Grid(GridEdit::ShiftDownbeat(-1))),
+    ),
+    outside_text(
+        ".",
+        Command::EditSet(SetEdit::Grid(GridEdit::ShiftDownbeat(1))),
+    ),
     outside_text("cmd-z", Command::EditSet(SetEdit::Undo)),
     Shortcut {
         keystroke: "ctrl-tab",
@@ -158,6 +174,8 @@ pub const SHORTCUTS: &[Shortcut] = &[
     anywhere("cmd-shift-r", Command::ToggleRecording),
     outside_text("t", Command::TapTempo(DeckId::A)),
     outside_text("shift-t", Command::TapTempo(DeckId::B)),
+    outside_text("e", Command::ToggleGridBar(DeckId::A)),
+    outside_text("shift-e", Command::ToggleGridBar(DeckId::B)),
     outside_text("k", Command::ToggleKeyLock(DeckId::A)),
     outside_text("shift-k", Command::ToggleKeyLock(DeckId::B)),
     outside_text("u", Command::ToggleSlip(DeckId::A)),
@@ -299,6 +317,10 @@ pub fn help_sections() -> Vec<HelpSection> {
                 line(&["-", "="], "Tempo down / up, deck A"),
                 line(&["shift--", "shift-="], "Tempo down / up, deck B"),
                 line(&["k", "shift-k"], "Key lock, deck A / deck B"),
+                line(
+                    &["e", "shift-e"],
+                    "Fix the beat grid with the grid keys, deck A / deck B",
+                ),
                 line(&["u", "shift-u"], "Slip, deck A / deck B"),
                 line(&["l", "shift-l"], "Four-beat loop or exit, deck A / deck B"),
                 line(
@@ -357,9 +379,12 @@ pub fn help_sections() -> Vec<HelpSection> {
             ],
         },
         HelpSection {
-            title: "Track check",
+            title: "Grid and track check",
             lines: vec![
-                line(&["g", "y"], "Confirm the grid / accept the proposed cues"),
+                line(
+                    &["g", "y"],
+                    "Confirm the grid (the open deck grid in Perform) / accept the proposed cues",
+                ),
                 line(&["[", "]"], "Grid 5 ms earlier / later"),
                 line(&[",", "."], "Downbeat one beat earlier / later"),
                 line(&["i", "o"], "Mix-in / mix-out on the bar at the playhead"),
@@ -438,6 +463,7 @@ mod tests {
                 }),
                 Command::CyclePadMode(DeckId::A) => Command::CyclePadMode(DeckId::B),
                 Command::ToggleKeyLock(DeckId::A) => Command::ToggleKeyLock(DeckId::B),
+                Command::ToggleGridBar(DeckId::A) => Command::ToggleGridBar(DeckId::B),
                 Command::TapTempo(DeckId::A) => Command::TapTempo(DeckId::B),
                 Command::ToggleSlip(DeckId::A) => Command::ToggleSlip(DeckId::B),
                 Command::Loop(DeckId::A, action) => Command::Loop(DeckId::B, action),
