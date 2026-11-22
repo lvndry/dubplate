@@ -15,10 +15,12 @@ use super::DubplateApp;
 use super::prepare::{NextSuggestions, PrepareFocus, SetRow};
 use crate::audition::AUDITION_LENGTH;
 use crate::browser::DraggedTrack;
+use crate::commands::{Command, SetEdit};
 use crate::energy::{EnergyRange, HIGHEST_ENERGY, LOWEST_ENERGY, set_curve, target_energy};
 use crate::fonts::MONO_FAMILY;
 use crate::prep::SeamSummary;
 use crate::set::running_time;
+use crate::shortcuts::{SHORTCUTS, printed_keys};
 use crate::theme;
 
 const PANEL_WIDTH: Pixels = px(420.0);
@@ -57,13 +59,16 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
     let warnings = DubplateApp::warnings(&rows);
     let next = app.next_tracks(&rows);
     let focused = app.prepare_focus == PrepareFocus::Set;
+    let next_cursor = (app.prepare_focus == PrepareFocus::Next)
+        .then(|| app.next_cursor.min(next.tracks.len().saturating_sub(1)));
     let mut list = div()
         .id("set-tracks")
         .flex()
         .flex_col()
         .flex_1()
         .min_h_0()
-        .overflow_y_scroll();
+        .overflow_y_scroll()
+        .track_scroll(&app.set_scroll);
     if rows.is_empty() {
         list = list.child(
             div()
@@ -104,7 +109,7 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
         .child(summary(app, &rows, cx))
         .child(list)
         .child(backups(app))
-        .child(next_panel(next, cx))
+        .child(next_panel(next, next_cursor, cx))
 }
 
 fn summary(
@@ -134,6 +139,7 @@ fn summary(
     div()
         .flex()
         .flex_col()
+        .flex_none()
         .gap(px(4.0))
         .px(theme::GUTTER)
         .py(px(12.0))
@@ -514,6 +520,7 @@ fn backups(app: &DubplateApp) -> impl IntoElement {
         section
             .flex()
             .flex_col()
+            .flex_none()
             .gap(px(2.0))
             .px(theme::GUTTER)
             .py(px(8.0))
@@ -534,8 +541,11 @@ fn backups(app: &DubplateApp) -> impl IntoElement {
     })
 }
 
+/// The suggestions after the selected set track. `cursor` is the one Enter inserts, while the
+/// keys are on the panel.
 fn next_panel(
     next: NextSuggestions,
+    cursor: Option<usize>,
     cx: &mut Context<'_, DubplateApp>,
 ) -> impl IntoElement + use<> {
     let NextSuggestions {
@@ -561,11 +571,21 @@ fn next_panel(
         .border_color(theme::LINE)
         .child(
             div()
+                .flex()
+                .items_center()
+                .gap(px(8.0))
                 .pb(px(4.0))
-                .truncate()
                 .text_size(theme::TINY_TEXT_SIZE)
                 .text_color(theme::MUTED)
-                .child(heading),
+                .child(div().flex_1().min_w_0().truncate().child(heading))
+                .when(cursor.is_some() && !next.is_empty(), |heading| {
+                    heading.child(
+                        div()
+                            .flex_none()
+                            .text_color(theme::TEXT)
+                            .child("\u{2191}\u{2193} choose \u{b7} \u{21a9} insert"),
+                    )
+                }),
         );
     if after.is_none() {
         panel = panel.child(
@@ -584,15 +604,18 @@ fn next_panel(
     }
     for (rank, suggestion) in next.into_iter().enumerate() {
         let path = suggestion.path.clone();
+        let highlighted = cursor == Some(rank);
         panel = panel.child(
             div()
                 .id(("next-track", rank))
+                .relative()
                 .flex()
                 .flex_col()
                 .px(px(6.0))
                 .py(px(4.0))
                 .rounded(theme::SMALL_RADIUS)
                 .cursor_pointer()
+                .when(highlighted, |row| row.bg(theme::RAISED))
                 .hover(|row| row.bg(theme::RAISED))
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
@@ -601,6 +624,7 @@ fn next_panel(
                 .child(
                     div()
                         .flex()
+                        .items_baseline()
                         .gap(px(6.0))
                         .min_w_0()
                         .child(
@@ -611,9 +635,23 @@ fn next_panel(
                         )
                         .child(
                             div()
+                                .flex_1()
+                                .min_w_0()
                                 .truncate()
                                 .text_color(theme::MUTED)
                                 .child(suggestion.artist),
+                        )
+                        .child(
+                            div()
+                                .flex_none()
+                                .font_family(MONO_FAMILY)
+                                .text_size(theme::TINY_TEXT_SIZE)
+                                .text_color(if highlighted {
+                                    theme::TEXT
+                                } else {
+                                    theme::MUTED
+                                })
+                                .children(insert_key(rank)),
                         ),
                 )
                 .child(
@@ -625,4 +663,13 @@ fn next_panel(
         );
     }
     panel
+}
+
+/// The key that inserts the suggestion at `rank`, as the help prints it: `⌥1` for the first.
+fn insert_key(rank: usize) -> Option<String> {
+    let command = Command::EditSet(SetEdit::InsertSuggestion(rank));
+    SHORTCUTS
+        .iter()
+        .find(|shortcut| shortcut.command == command)
+        .map(|shortcut| printed_keys(shortcut.keystroke).replace(' ', ""))
 }

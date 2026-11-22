@@ -9,6 +9,7 @@ mod deck_panel;
 mod drop_target;
 mod effects_strip;
 mod export;
+mod filter_reference;
 mod header;
 mod help;
 mod knob;
@@ -27,6 +28,7 @@ mod set_panel;
 mod slider;
 mod smart;
 mod track_check;
+mod waveforms;
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
@@ -47,7 +49,7 @@ use gpui::component::input::{InputEvent, InputState};
 use gpui::prelude::*;
 use gpui::{
     Bounds, Context, Entity, FocusHandle, MouseButton, MouseMoveEvent, MouseUpEvent, Pixels, Point,
-    SharedString, StyleRefinement, Subscription, Task, Window, div,
+    ScrollHandle, SharedString, StyleRefinement, Subscription, Task, Window, div,
 };
 
 use crate::analysis::{AnalysisPriority, TrackAnalyser, TrackAnalyses};
@@ -68,6 +70,7 @@ use crate::hardware::{
     DeckLights, Hardware, Lights, LinkEvent, Surface, controller_deck, meter_level,
 };
 use crate::library::LibrarySources;
+use crate::library_view::SortSetting;
 use crate::loading::{LoadRefusal, LoadSource, check_deck_free, check_file, check_present};
 use crate::meter::PeakMeter;
 use crate::pads::{PadFx, next_mode};
@@ -169,6 +172,8 @@ pub struct DubplateApp {
     set_editor: Option<SetEditor>,
     set_selection: Option<usize>,
     prepare_focus: PrepareFocus,
+    next_cursor: usize,
+    set_scroll: ScrollHandle,
     track_checks: HashMap<PathBuf, TrackCheck>,
     checks_pending: HashSet<PathBuf>,
     check_generation: u64,
@@ -219,6 +224,12 @@ impl DubplateApp {
                 BrowserEvent::ImportRekordbox => this.set_rekordbox_import(true, cx),
                 BrowserEvent::RelinkAll => this.start_relink(None, cx),
                 BrowserEvent::Relink(track) => this.start_relink(Some(track), cx),
+                BrowserEvent::Sorted { screen, sort } => {
+                    this.settings
+                        .library_sort
+                        .set(screen, sort.map(SortSetting::of));
+                    this.save_settings(cx);
+                }
             });
         let effect_search = cx.new(|cx| InputState::new(window, cx).placeholder("Find an effect"));
         let quit_subscription = cx.on_app_quit(|this: &mut Self, _| {
@@ -319,6 +330,8 @@ impl DubplateApp {
             set_editor,
             set_selection: None,
             prepare_focus: PrepareFocus::Library,
+            next_cursor: 0,
+            set_scroll: ScrollHandle::new(),
             track_checks: HashMap::new(),
             checks_pending: HashSet::new(),
             check_generation: 0,
@@ -354,6 +367,7 @@ impl DubplateApp {
         };
         app.restore_effect_units(cx);
         app.restore_sampler(cx);
+        app.restore_library_sorts(cx);
         app.start_library(cx);
         if let Some(problem) = problems.into_iter().next() {
             app.show_notice(NoticePlace::Window, problem, cx);
@@ -549,11 +563,15 @@ impl DubplateApp {
             match prepared.and_then(|prepared| self.put_on_deck(deck, prepared)) {
                 Ok(visuals) => {
                     self.signal_controllers(Feedback::TrackLoaded(controller_deck(deck)));
+                    if visuals.zoomed.is_none() {
+                        self.draw_waveform_from_audio(deck, generation, cx);
+                    }
                     (DeckContent::Loaded(visuals), grid_source)
                 }
                 Err(error) => (DeckContent::Failed(error_chain(&error)), None),
             };
         self.decks[deck.index()].content = content;
+        self.refresh_filter_reference(cx);
         self.decks[deck.index()].grid_source = grid_source;
         self.give_deck_analysed_grid(deck, cx);
         self.update_lights();
@@ -679,27 +697,25 @@ impl DubplateApp {
                 let position = self.mixer.crossfader + CROSSFADER_STEP * direction.sign() as f32;
                 self.set_control(Control::Crossfader, position.clamp(0.0, 1.0), cx);
             }
-            Command::MoveSelection(direction) => {
-                if self.mode == Mode::Prepare && self.prepare_focus == PrepareFocus::Set {
+            Command::MoveSelection(direction) => match (self.mode, self.prepare_focus) {
+                (Mode::Prepare, PrepareFocus::Set) => {
                     self.move_set_selection(direction);
                     self.ensure_track_detail(cx);
-                } else {
-                    self.browser
-                        .update(cx, |browser, cx| browser.move_selection(direction, cx));
                 }
-            }
+                (Mode::Prepare, PrepareFocus::Next) => self.move_next_cursor(direction),
+                _ => self
+                    .browser
+                    .update(cx, |browser, cx| browser.move_selection(direction, cx)),
+            },
             Command::SwitchMode(mode) => {
                 self.mode = mode;
-                self.browser.update(cx, |browser, cx| {
-                    browser.show_load_buttons(mode == Mode::Perform, cx)
-                });
+                self.browser
+                    .update(cx, |browser, cx| browser.show_screen(mode, cx));
             }
             Command::EditSet(edit) => self.edit_set(edit, cx),
-            Command::SwitchPrepareFocus => {
-                self.prepare_focus = match self.prepare_focus {
-                    PrepareFocus::Library => PrepareFocus::Set,
-                    PrepareFocus::Set => PrepareFocus::Library,
-                };
+            Command::SwitchPrepareFocus(direction) => {
+                self.prepare_focus = self.prepare_focus.step(direction);
+                self.next_cursor = 0;
             }
             Command::LoadSet => self.load_set(cx),
             Command::ExportSet => self.export_set(cx),
@@ -756,6 +772,7 @@ impl DubplateApp {
                 }
             }
         }
+        self.refresh_filter_reference(cx);
         self.update_lights();
         self.settle_lights(cx);
         cx.notify();

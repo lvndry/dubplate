@@ -203,6 +203,8 @@ mod tests {
             title: None,
             artist: None,
             album: None,
+            genre: None,
+            comment: None,
             bpm: None,
             key: None,
             duration_seconds,

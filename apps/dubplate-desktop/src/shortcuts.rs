@@ -54,6 +54,10 @@ const fn anywhere(keystroke: &'static str, command: Command) -> Shortcut {
     }
 }
 
+const fn suggestion(keystroke: &'static str, rank: usize) -> Shortcut {
+    outside_text(keystroke, Command::EditSet(SetEdit::InsertSuggestion(rank)))
+}
+
 const fn pad(keystroke: &'static str, deck: DeckId, pad: usize) -> Shortcut {
     outside_text(
         keystroke,
@@ -68,7 +72,7 @@ const fn pad(keystroke: &'static str, deck: DeckId, pad: usize) -> Shortcut {
 }
 
 /// Every keyboard shortcut.
-pub const SHORTCUTS: [Shortcut; 70] = [
+pub const SHORTCUTS: [Shortcut; 76] = [
     outside_text("space", Command::TogglePlay(DeckId::A)),
     outside_text("shift-space", Command::TogglePlay(DeckId::B)),
     outside_text("c", Command::Cue(DeckId::A, Press::Tap)),
@@ -120,7 +124,13 @@ pub const SHORTCUTS: [Shortcut; 70] = [
     outside_text(",", Command::EditSet(SetEdit::ShiftDownbeat(-1))),
     outside_text(".", Command::EditSet(SetEdit::ShiftDownbeat(1))),
     outside_text("cmd-z", Command::EditSet(SetEdit::Undo)),
-    outside_text("tab", Command::SwitchPrepareFocus),
+    outside_text("tab", Command::SwitchPrepareFocus(Direction::Down)),
+    outside_text("shift-tab", Command::SwitchPrepareFocus(Direction::Up)),
+    suggestion("alt-1", 0),
+    suggestion("alt-2", 1),
+    suggestion("alt-3", 2),
+    suggestion("alt-4", 3),
+    suggestion("alt-5", 4),
     anywhere("cmd-l", Command::LoadSet),
     anywhere("cmd-e", Command::ExportSet),
     outside_text("s", Command::AuditionSeam),
@@ -241,7 +251,10 @@ pub fn help_sections() -> Vec<HelpSection> {
             title: "Library",
             lines: vec![
                 line(&["up", "down"], "Select the previous / next track"),
-                line(&["/", "cmd-f"], "Search titles and artists"),
+                line(
+                    &["/", "cmd-f"],
+                    "Search titles, artists, genres, folders and comments",
+                ),
                 line(
                     &["shift-left", "shift-right"],
                     "Load the selected track on deck A / deck B",
@@ -261,7 +274,14 @@ pub fn help_sections() -> Vec<HelpSection> {
                 ),
                 line(&["backspace", "cmd-z"], "Take out of the set / undo"),
                 line(&["b"], "Keep as a backup"),
-                line(&["tab"], "Move between library and set"),
+                line(
+                    &["tab", "shift-tab"],
+                    "Move to the library, the set and Next in turn / back",
+                ),
+                line(
+                    &["alt-1"],
+                    "Insert Next suggestion 1 to 5 after the selected set track",
+                ),
                 line(&["f"], "Seam after the selected set track planned or free"),
                 line(
                     &["s"],
@@ -414,7 +434,10 @@ mod tests {
     #[test]
     fn the_help_shows_every_key_but_the_summarised_ones() {
         let summarised = |keystroke: &str| {
-            let key = keystroke.strip_prefix("shift-").unwrap_or(keystroke);
+            let key = keystroke
+                .strip_prefix("shift-")
+                .or_else(|| keystroke.strip_prefix("alt-"))
+                .unwrap_or(keystroke);
             matches!(key, "2" | "3" | "4" | "5" | "6" | "7" | "8") || keystroke == "ctrl-f"
         };
         let shown: HashSet<String> = help_sections()
@@ -428,6 +451,29 @@ mod tests {
                 assert!(shown.contains(&printed), "{}", shortcut.keystroke);
             }
         }
+    }
+
+    #[test]
+    fn option_and_a_digit_insert_that_next_suggestion() {
+        let ranks: Vec<(&str, usize)> = SHORTCUTS
+            .iter()
+            .filter_map(|shortcut| match shortcut.command {
+                Command::EditSet(SetEdit::InsertSuggestion(rank)) => {
+                    Some((shortcut.keystroke, rank))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            ranks,
+            [
+                ("alt-1", 0),
+                ("alt-2", 1),
+                ("alt-3", 2),
+                ("alt-4", 3),
+                ("alt-5", 4)
+            ]
+        );
     }
 
     #[test]

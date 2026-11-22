@@ -3,6 +3,7 @@
 mod analysis;
 mod app;
 mod assets;
+mod audio_waveform;
 mod audition;
 mod browser;
 mod collection;
@@ -15,6 +16,7 @@ mod fonts;
 mod frame_stats;
 mod hardware;
 mod library;
+mod library_view;
 mod loading;
 #[cfg(target_os = "macos")]
 mod macos_identity;
@@ -28,6 +30,7 @@ mod search;
 mod set;
 mod settings;
 mod shortcuts;
+mod single_instance;
 mod tap_tempo;
 mod theme;
 mod transport;
@@ -42,6 +45,8 @@ use gpui::{
 
 use crate::app::DubplateApp;
 use crate::assets::AppAssets;
+use crate::settings::Settings;
+use crate::single_instance::{InstanceError, InstanceLock};
 
 gpui::actions!(
     dubplate,
@@ -54,6 +59,7 @@ gpui::actions!(
 const APP_NAME: &str = "Dubplate";
 
 fn main() {
+    let _instance_lock = claim_instance();
     #[cfg(target_os = "macos")]
     macos_identity::set_app_name(APP_NAME);
     gpui::application()
@@ -79,6 +85,36 @@ fn main() {
                 cx.quit();
             }
         });
+}
+
+/// Makes this the one running Dubplate, or brings the running one to the front and quits. When
+/// the lock cannot be taken at all, Dubplate starts anyway: the DJ needs the decks more than the
+/// guard.
+fn claim_instance() -> Option<InstanceLock> {
+    let path = match Settings::instance_lock_path() {
+        Ok(path) => path,
+        Err(error) => {
+            eprintln!("warning: Dubplate cannot check for another copy running: {error}");
+            return None;
+        }
+    };
+    match InstanceLock::acquire(&path) {
+        Ok(lock) => Some(lock),
+        Err(error @ InstanceError::AlreadyRunning { process_id }) => {
+            eprintln!(
+                "error: {error}. Quit it before starting another: two would play through the same speakers and both answer the controller."
+            );
+            #[cfg(target_os = "macos")]
+            if let Some(process_id) = process_id {
+                macos_identity::bring_to_front(process_id);
+            }
+            std::process::exit(1);
+        }
+        Err(error) => {
+            eprintln!("warning: Dubplate cannot check for another copy running: {error}");
+            None
+        }
+    }
 }
 
 fn open_window(cx: &mut App) -> anyhow::Result<()> {

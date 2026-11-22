@@ -359,6 +359,17 @@ fn mix_cues_are_named_memory_cues_beside_rekordbox_cues() {
 }
 
 #[test]
+fn a_beat_without_a_tempo_never_starts_an_extra_tempo_marker() {
+    let mut grid = steady_grid(8);
+    grid.beats.insert(3, beat(1_300, 0, 0));
+    assert_eq!(
+        tempo_markers(&grid).len(),
+        1,
+        "the beats after an untimed one still follow the first marker"
+    );
+}
+
+#[test]
 fn tempo_markers_follow_tempo_changes_bar_breaks_and_drift() {
     assert_eq!(
         tempo_markers(&steady_grid(400)),
@@ -418,6 +429,8 @@ fn the_library_finds_each_set_track_where_the_dj_keeps_it() {
             title: Some("Folder Title".to_owned()),
             artist: Some("Folder Artist".to_owned()),
             album: None,
+            genre: None,
+            comment: None,
             bpm: Some(124.0),
             key: Some("Am".to_owned()),
             duration_seconds: Some(301.6),

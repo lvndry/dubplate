@@ -124,10 +124,8 @@ fn xml_track(track_id: u32, export: &ExportTrack) -> XmlTrack {
 pub fn tempo_markers(grid: &BeatGrid) -> Vec<TempoMarker> {
     let mut markers = Vec::new();
     let mut anchor: Option<(usize, &Beat)> = None;
-    for (index, beat) in grid.beats.iter().enumerate() {
-        if beat.tempo_hundredths == 0 {
-            continue;
-        }
+    let timed_beats = grid.beats.iter().filter(|beat| beat.tempo_hundredths != 0);
+    for (index, beat) in timed_beats.enumerate() {
         let follows = anchor.is_some_and(|(anchor_index, anchor_beat)| {
             follows_marker(anchor_beat, index - anchor_index, beat)
         });
@@ -490,6 +488,8 @@ pub fn folder_track(found: &LibraryTrack) -> Track {
         title: found.title.clone(),
         artist: found.artist.clone(),
         album: found.album.clone(),
+        genre: found.genre.clone(),
+        comment: found.comment.clone(),
         key: found.key.clone(),
         bpm: found.bpm.map(f64::from),
         length_seconds: found
