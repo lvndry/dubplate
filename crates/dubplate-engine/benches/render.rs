@@ -11,8 +11,8 @@ use std::time::Duration;
 use criterion::{Criterion, criterion_group, criterion_main};
 
 use dubplate_engine::{
-    BeatGrid, Controller, DeckId, EffectKind, EffectTarget, EffectUnitId, EqBand, Renderer, Track,
-    offline_engine,
+    BeatGrid, Controller, DeckId, EffectKind, EffectTarget, EffectUnitId, EqBand, Renderer, Stem,
+    StemLevel, StemSettings, StemTracks, Track, offline_engine,
 };
 
 #[path = "support/cpu_time.rs"]
@@ -37,11 +37,69 @@ enum Scenario {
     TwoDecksPlain,
     /// Two decks off their own tempo with EQ, filter, key lock and three effect units on.
     TwoDecksFull,
+    /// Two decks off their own tempo with key lock, playing their tracks.
+    TwoDecksKeyLock,
+    /// Two decks off their own tempo playing their stems, the vocals out on one and the bass
+    /// down on the other.
+    TwoDecksStems,
+    /// The same with key lock, which stretches the four stems and the track side by side.
+    TwoDecksStemsKeyLock,
+}
+
+impl Scenario {
+    fn plays_stems(self) -> bool {
+        matches!(
+            self,
+            Scenario::TwoDecksStems | Scenario::TwoDecksStemsKeyLock
+        )
+    }
+
+    fn key_lock(self) -> bool {
+        matches!(
+            self,
+            Scenario::TwoDecksKeyLock | Scenario::TwoDecksStemsKeyLock
+        )
+    }
 }
 
 /// Stereo noise shaped into something like music: a low thump, a mid tone and hiss, so every
 /// band of the EQ and every effect has signal to work on.
 fn synthetic_track(sample_rate: u32, seed: u32) -> Track {
+    let (samples, _) = synthetic_samples(sample_rate, seed);
+    Track::from_interleaved_stereo(&samples, sample_rate).expect("a valid synthetic track")
+}
+
+/// The same track with four stems, noise at the track's rate and length: what the stems hold
+/// does not change what they cost.
+fn synthetic_track_with_stems(sample_rate: u32, seed: u32) -> Track {
+    let (samples, frame_count) = synthetic_samples(sample_rate, seed);
+    let track =
+        Track::from_interleaved_stereo(&samples, sample_rate).expect("a valid synthetic track");
+    let stems: Vec<Vec<i16>> = (0..Stem::COUNT as u32)
+        .map(|stem| {
+            let mut state = seed.wrapping_mul(31).wrapping_add(stem + 1);
+            (0..frame_count * 2)
+                .map(|_| {
+                    state ^= state << 13;
+                    state ^= state >> 17;
+                    state ^= state << 5;
+                    (state >> 20) as i16
+                })
+                .collect()
+        })
+        .collect();
+    let stems = StemTracks::from_interleaved_stereo(
+        std::array::from_fn(|stem| stems[stem].as_slice()),
+        sample_rate,
+    )
+    .expect("valid synthetic stems");
+    track
+        .attach_stems(stems)
+        .expect("stems as long as the track");
+    track
+}
+
+fn synthetic_samples(sample_rate: u32, seed: u32) -> (Vec<f32>, usize) {
     let frame_count = (TRACK_SECONDS * f64::from(sample_rate)) as usize;
     let mut state = seed.max(1);
     let mut samples = Vec::with_capacity(frame_count * 2);
@@ -57,7 +115,7 @@ fn synthetic_track(sample_rate: u32, seed: u32) -> Track {
         samples.push(thump * 0.5 + tone + hiss);
         samples.push(thump * 0.5 - tone + hiss);
     }
-    Track::from_interleaved_stereo(&samples, sample_rate).expect("a valid synthetic track")
+    (samples, frame_count)
 }
 
 struct Session {
@@ -72,12 +130,19 @@ impl Session {
     fn new(scenario: Scenario) -> Self {
         let (mut controller, renderer) = offline_engine(OUTPUT_RATE);
         let playing = !matches!(scenario, Scenario::Idle);
+        let track = |sample_rate, seed| {
+            if scenario.plays_stems() {
+                synthetic_track_with_stems(sample_rate, seed)
+            } else {
+                synthetic_track(sample_rate, seed)
+            }
+        };
         if playing {
             controller
-                .load_track(DeckId::A, synthetic_track(44_100, 7))
+                .load_track(DeckId::A, track(44_100, 7))
                 .expect("load deck A");
             controller
-                .load_track(DeckId::B, synthetic_track(OUTPUT_RATE, 11))
+                .load_track(DeckId::B, track(OUTPUT_RATE, 11))
                 .expect("load deck B");
             controller
                 .set_beat_grid(DeckId::A, Some(BeatGrid::new(124.0, 0.1).expect("grid A")))
@@ -89,6 +154,12 @@ impl Session {
         }
         if matches!(scenario, Scenario::TwoDecksFull) {
             configure_full_mix(&mut controller).expect("configure the mix");
+        }
+        if matches!(
+            scenario,
+            Scenario::TwoDecksKeyLock | Scenario::TwoDecksStems | Scenario::TwoDecksStemsKeyLock
+        ) {
+            configure_stems_mix(&mut controller, scenario).expect("configure the stems");
         }
         if playing {
             for deck in DeckId::ALL {
@@ -171,12 +242,34 @@ fn configure_full_mix(controller: &mut Controller) -> Result<(), dubplate_engine
     Ok(())
 }
 
+fn configure_stems_mix(
+    controller: &mut Controller,
+    scenario: Scenario,
+) -> Result<(), dubplate_engine::EngineError> {
+    controller.set_tempo(DeckId::A, 1.04)?;
+    controller.set_tempo(DeckId::B, 0.97)?;
+    for deck in DeckId::ALL {
+        controller.set_key_lock(deck, scenario.key_lock())?;
+    }
+    if scenario.plays_stems() {
+        controller.set_stems(DeckId::A, StemSettings::UNTOUCHED.without(Stem::Vocals))?;
+        controller.set_stems(
+            DeckId::B,
+            StemSettings::UNTOUCHED.with_level(Stem::Bass, StemLevel::new(0.5)),
+        )?;
+    }
+    Ok(())
+}
+
 fn render_block(criterion: &mut Criterion<ThreadCpuTime>) {
     let mut group = criterion.benchmark_group("render_256_frames");
     let scenarios = [
         ("idle", Scenario::Idle),
         ("two_decks_plain", Scenario::TwoDecksPlain),
         ("two_decks_full", Scenario::TwoDecksFull),
+        ("two_decks_key_lock", Scenario::TwoDecksKeyLock),
+        ("two_decks_stems", Scenario::TwoDecksStems),
+        ("two_decks_stems_key_lock", Scenario::TwoDecksStemsKeyLock),
     ];
     for (name, scenario) in scenarios {
         let mut session = Session::new(scenario);
