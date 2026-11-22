@@ -1,7 +1,7 @@
 //! A track's 3-band waveform worked out from its decoded audio, for the tracks rekordbox has no
 //! waveform for. It has the shape of rekordbox's own 3-band waveform: 150 columns a second of
 //! the lows, the mids and the highs, split where the mixer's EQ splits them, so the decks draw
-//! it exactly as they draw rekordbox's.
+//! it exactly as they draw rekordbox's, and a USB export hands it to the players.
 //!
 //! The band filters are recursive, so one run through the track is a chain where every sample
 //! waits for the one before. To use the vector units, the track is cut into [`SEGMENTS`]
@@ -11,8 +11,11 @@
 
 use std::f32::consts::{FRAC_1_SQRT_2, TAU};
 
-use dubplate_engine::{HIGH_CROSSOVER_HZ, LOW_CROSSOVER_HZ, Track};
-use dubplate_rekordbox::analysis::{DETAIL_COLUMNS_PER_SECOND, ThreeBandColumn, Waveforms};
+use crate::track::Track;
+use crate::{HIGH_CROSSOVER_HZ, LOW_CROSSOVER_HZ};
+
+/// Columns per second of audio, as in rekordbox's scrolling waveforms.
+pub const BAND_COLUMNS_PER_SECOND: u32 = 150;
 
 /// Stretches of the track filtered side by side: two 128-bit vectors of `f32`.
 const SEGMENTS: usize = 8;
@@ -28,14 +31,23 @@ const LEVEL_STEPS: f32 = u8::MAX as f32;
 /// rekordbox's own 3-band waveforms of the same tracks, give the same balance.
 const BAND_WEIGHTS: [f32; 3] = [1.0, 1.6, 1.2];
 
-/// The waveforms of `track`'s decoded audio: the scrolling 3-band waveform, from which the
-/// overview is drawn too. Reads the audio once; call it once the track is decoded, off the
-/// interface and audio threads.
-pub fn three_band_waveforms(track: &Track) -> Waveforms {
-    Waveforms {
-        three_band_detail: Some(quantized(&band_levels(track))),
-        ..Waveforms::default()
-    }
+/// One column of a 3-band waveform: how loud the lows, the mids and the highs are, from 0 to
+/// 255, where 255 is the loudest band of the loudest column of the track.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BandLevels {
+    /// The lows, below the EQ's low crossover.
+    pub low: u8,
+    /// The mids, between the crossovers.
+    pub mid: u8,
+    /// The highs, above the EQ's high crossover.
+    pub high: u8,
+}
+
+/// The 3-band waveform of `track`'s decoded audio, [`BAND_COLUMNS_PER_SECOND`] columns a
+/// second. Reads the audio once; call it once the track is decoded, off the interface and audio
+/// threads.
+pub fn three_band_levels(track: &Track) -> Vec<BandLevels> {
+    quantized(&band_levels(track))
 }
 
 /// The root-mean-square level of the lows, the mids and the highs in each column.
@@ -64,7 +76,7 @@ fn band_levels(track: &Track) -> Vec<[f32; 3]> {
 
 /// Weighs the bands as rekordbox does and scales the levels so the loudest band of the
 /// loudest column is the highest step.
-fn quantized(levels: &[[f32; 3]]) -> Vec<ThreeBandColumn> {
+fn quantized(levels: &[[f32; 3]]) -> Vec<BandLevels> {
     let weighed = |column: &[f32; 3]| {
         std::array::from_fn::<f32, 3, _>(|band| column[band] * BAND_WEIGHTS[band])
     };
@@ -75,7 +87,7 @@ fn quantized(levels: &[[f32; 3]]) -> Vec<ThreeBandColumn> {
         .iter()
         .map(|column| {
             let [low, mid, high] = weighed(column);
-            ThreeBandColumn {
+            BandLevels {
                 low: step(low),
                 mid: step(mid),
                 high: step(high),
@@ -96,7 +108,7 @@ impl ColumnClock {
     fn new(sample_rate: u32, frame_count: usize) -> Self {
         let sample_rate = u64::from(sample_rate.max(1));
         let column_count =
-            (frame_count as u64 * u64::from(DETAIL_COLUMNS_PER_SECOND)).div_ceil(sample_rate);
+            (frame_count as u64 * u64::from(BAND_COLUMNS_PER_SECOND)).div_ceil(sample_rate);
         Self {
             sample_rate,
             frame_count,
@@ -106,7 +118,7 @@ impl ColumnClock {
 
     /// The first frame of `column`; the end of the track for the column after the last.
     fn start(&self, column: usize) -> usize {
-        let frame = column as u64 * self.sample_rate / u64::from(DETAIL_COLUMNS_PER_SECOND);
+        let frame = column as u64 * self.sample_rate / u64::from(BAND_COLUMNS_PER_SECOND);
         usize::try_from(frame).map_or(self.frame_count, |frame| frame.min(self.frame_count))
     }
 }
@@ -327,7 +339,6 @@ mod tests {
     use std::f32::consts::TAU;
 
     use super::*;
-    use crate::waveform::{OverviewWaveform, Zoom, ZoomedWaveform};
 
     const SAMPLE_RATE: u32 = 44_100;
 
@@ -346,8 +357,8 @@ mod tests {
         0.5 * (TAU * frequency * frame as f32 / SAMPLE_RATE as f32).sin()
     }
 
-    fn columns(track: &Track) -> Vec<ThreeBandColumn> {
-        three_band_waveforms(track).three_band_detail.unwrap()
+    fn columns(track: &Track) -> Vec<BandLevels> {
+        three_band_levels(track)
     }
 
     #[test]
@@ -390,15 +401,6 @@ mod tests {
     }
 
     #[test]
-    fn a_track_rekordbox_never_analysed_gets_both_waveforms_from_its_audio() {
-        let waveforms = three_band_waveforms(&track(2.0, |frame| sine(120.0, frame)));
-        let zoomed = ZoomedWaveform::from_waveforms(&waveforms, Zoom::DEFAULT).unwrap();
-        assert_eq!(zoomed.columns().len(), 300);
-        let overview = OverviewWaveform::from_waveforms(&waveforms).unwrap();
-        assert!(overview.bars(100).iter().all(|level| level.loudest() > 0.9));
-    }
-
-    #[test]
     fn each_tone_lands_in_its_band_all_through_the_track() {
         for (frequency, band) in [(60.0, 0), (900.0, 1), (9_000.0, 2)] {
             for column in &columns(&track(3.0, |frame| sine(frequency, frame)))[2..448] {
@@ -415,7 +417,7 @@ mod tests {
 
     #[test]
     fn the_stretches_join_without_a_seam() {
-        let one_period_a_column = DETAIL_COLUMNS_PER_SECOND as f32;
+        let one_period_a_column = BAND_COLUMNS_PER_SECOND as f32;
         let columns = columns(&track(4.0, |frame| sine(one_period_a_column, frame)));
         let lows: Vec<u8> = columns[2..columns.len() - 1]
             .iter()
@@ -438,7 +440,7 @@ mod tests {
         }));
         assert_eq!(
             columns[10],
-            ThreeBandColumn {
+            BandLevels {
                 low: 0,
                 mid: 0,
                 high: 0

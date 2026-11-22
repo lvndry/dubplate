@@ -51,6 +51,12 @@ impl SearchQuery {
         !self.filters.is_empty()
     }
 
+    /// Whether the query hides the tracks played this session, as `played:no` and Hide played
+    /// do.
+    pub fn hides_played(&self) -> bool {
+        self.filters.contains(&SearchFilter::Played(false))
+    }
+
     /// Whether every filter keeps `track`, with `fits` the key moves `key:fits` keeps.
     pub fn filters_keep(&self, track: &TrackFacts<'_>, fits: Option<KeyFit>) -> bool {
         self.filters.iter().all(|filter| filter.keeps(track, fits))

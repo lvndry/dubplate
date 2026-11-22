@@ -14,8 +14,11 @@ use gpui::{
 use super::DubplateApp;
 use super::faders::{channel_fader_curve_label, crossfader_curve_label};
 use crate::collection::folder_name;
-use crate::commands::Command;
+use crate::commands::{AutoCueChoice, Command, PadFxEdit};
+use crate::devices::BufferSize;
+use crate::fonts::MONO_FAMILY;
 use crate::library::RekordboxSource;
+use crate::pad_fx::PadFxLayer;
 use crate::theme;
 use crate::widgets::InteractiveControl;
 use crate::widgets::{Emphasis, button};
@@ -108,8 +111,25 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
                 .child(rekordbox_row(app, cx))
                 .child(section_title("Decks"))
                 .child(key_lock_row(app, cx))
-                .child(section_title("Sound card"))
+                .child(setting_switch(
+                    "auto-cue-saved",
+                    "Cue at the first memory or hot cue",
+                    "A track with saved cues loads at the earliest one.",
+                    app.settings.auto_cue.saved_cues_first,
+                    Command::ToggleAutoCue(AutoCueChoice::SavedCuesFirst),
+                    cx,
+                ))
+                .child(setting_switch(
+                    "auto-cue-sound",
+                    "Cue at the first sound",
+                    "Otherwise a track loads at its first sound, on the beat it starts with, not at 0:00.",
+                    app.settings.auto_cue.first_sound,
+                    Command::ToggleAutoCue(AutoCueChoice::FirstSound),
+                    cx,
+                ))
+                .child(section_title("Audio"))
                 .children(output_rows)
+                .child(buffer_row(app, cx))
                 .child(section_title("Mixer"))
                 .child(crossfader_row(app.crossfader().enabled, cx))
                 .child(curve_row(
@@ -138,6 +158,28 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
                         .text_color(theme::MUTED)
                         .child(
                             "Each channel's A, THRU, B switch is under its fader. THRU takes the channel off the crossfader.",
+                        ),
+                )
+                .child(section_title("Pad FX"))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .child(div().text_size(theme::SMALL_TEXT_SIZE).child(format!(
+                            "{}{} \u{b7} 32 pads",
+                            app.pad_fx.preset().label(),
+                            if app.pad_fx.edited() { ", edited" } else { "" }
+                        )))
+                        .child(
+                            button("edit-pad-fx", "Edit Pad FX\u{2026}", Emphasis::Secondary)
+                                .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                                    this.perform(
+                                        Command::PadFx(PadFxEdit::Toggle(PadFxLayer::Fx1)),
+                                        window,
+                                        cx,
+                                    );
+                                })),
                         ),
                 )
                 .focus_trap("settings-focus-trap", &app.modal_focus),
@@ -334,6 +376,146 @@ fn paint_curve(bounds: Bounds<Pixels>, picture: CurvePicture, colour: Rgba, wind
             ));
         }
     }
+}
+
+/// A setting that is on or off: its name and what it does, and a switch at the end of the row.
+fn setting_switch(
+    id: &'static str,
+    name: &'static str,
+    detail: &'static str,
+    on: bool,
+    command: Command,
+    cx: &mut Context<'_, DubplateApp>,
+) -> impl IntoElement + use<> {
+    div()
+        .id(id)
+        .accessible_toggle(format!("{name}. {detail}"), on)
+        .flex()
+        .items_center()
+        .gap(px(12.0))
+        .py(px(8.0))
+        .border_t_1()
+        .border_color(theme::ROW_LINE)
+        .cursor_pointer()
+        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+            this.perform(command, window, cx);
+        }))
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .flex_1()
+                .min_w_0()
+                .gap(px(2.0))
+                .child(div().child(name))
+                .child(
+                    div()
+                        .text_size(theme::SMALL_TEXT_SIZE)
+                        .text_color(theme::MUTED)
+                        .child(detail),
+                ),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_none()
+                .items_center()
+                .w(px(30.0))
+                .h(px(18.0))
+                .p(px(2.0))
+                .rounded_full()
+                .bg(if on { theme::OK } else { theme::TRACK })
+                .when(on, |track| track.justify_end())
+                .child(div().size(px(14.0)).rounded_full().bg(theme::THUMB)),
+        )
+}
+
+/// The buffer size, each choice with how long it lasts, the dropouts since launch, and what
+/// the choice trades.
+fn buffer_row(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoElement + use<> {
+    let current = app.buffer_size();
+    let sample_rate = app
+        .engine
+        .as_ref()
+        .map_or(48_000, |engine| engine.output.sample_rate());
+    let dropouts = app.dropouts();
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(6.0))
+        .py(px(8.0))
+        .border_t_1()
+        .border_color(theme::ROW_LINE)
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .gap(px(12.0))
+                .child("Buffer size")
+                .child(
+                    div()
+                        .id("buffer-sizes")
+                        .role(gpui::Role::RadioGroup)
+                        .aria_label("Buffer size")
+                        .flex()
+                        .gap(px(4.0))
+                        .children(BufferSize::ALL.map(|size| {
+                            let chosen = size == current;
+                            div()
+                                .id(("buffer-size", size.frames() as usize))
+                                .accessible_toggle(
+                                    format!(
+                                        "{} frames, {:.1} ms",
+                                        size.frames(),
+                                        size.milliseconds(sample_rate)
+                                    ),
+                                    chosen,
+                                )
+                                .flex()
+                                .flex_col()
+                                .items_center()
+                                .w(px(64.0))
+                                .py(px(4.0))
+                                .rounded(theme::SMALL_RADIUS)
+                                .border_1()
+                                .cursor_pointer()
+                                .map(|option| {
+                                    if chosen {
+                                        option.border_color(theme::LINE).bg(theme::RAISED)
+                                    } else {
+                                        option
+                                            .border_color(gpui::transparent_black())
+                                            .text_color(theme::MUTED)
+                                            .hover(|option| option.bg(theme::RAISED))
+                                    }
+                                })
+                                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                    this.choose_buffer_size(size, cx);
+                                }))
+                                .child(
+                                    div()
+                                        .font_family(MONO_FAMILY)
+                                        .text_size(theme::SMALL_TEXT_SIZE)
+                                        .child(size.frames().to_string()),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(theme::TINY_TEXT_SIZE)
+                                        .text_color(theme::MUTED)
+                                        .child(format!("{:.1} ms", size.milliseconds(sample_rate))),
+                                )
+                        })),
+                ),
+        )
+        .child(
+            div()
+                .text_size(theme::SMALL_TEXT_SIZE)
+                .text_color(theme::MUTED)
+                .child(format!(
+                    "A larger buffer gives the Mac more time and drops out less; a smaller one answers the controller sooner. Dropouts since launch: {dropouts}."
+                )),
+        )
 }
 
 fn section_title(text: &'static str) -> impl IntoElement {

@@ -14,6 +14,7 @@ use crate::commands::Mode;
 use crate::controls::{DEFAULT_MASTER_LEVEL, DEFAULT_SAMPLER_VOLUME, MixerPositions};
 use crate::effects::EffectUnitSetting;
 use crate::library_view::SortSetting;
+use crate::pad_fx::PadFxSetting;
 
 /// Why the settings could not be read or written.
 #[derive(Debug, thiserror::Error)]
@@ -52,8 +53,14 @@ pub enum SettingsError {
 pub struct Settings {
     /// Whether a playing deck refuses a new track.
     pub lock_playing_deck: bool,
+    /// Whether cues, loops and jumps land on the beat grid.
+    pub quantize: bool,
+    /// Whether each deck's jog top holds the record, deck A first.
+    pub vinyl_mode: [bool; DECK_COUNT],
     /// The sound card last used, by name.
     pub audio_device: Option<String>,
+    /// Frames per buffer of the sound card.
+    pub buffer_frames: Option<u32>,
     /// The music folders, whether rekordbox is in the library, and the relinked files.
     #[serde(flatten)]
     pub library: LibrarySettings,
@@ -68,10 +75,16 @@ pub struct Settings {
     pub cfx_colours: Vec<String>,
     /// The sampler's volume and the sample in each slot.
     pub sampler: SamplerSetting,
+    /// The 32 Pad FX pads and the preset they started from.
+    pub pad_fx: PadFxSetting,
     /// The screen Dubplate was on, `prepare` or `perform`.
     pub screen: Option<String>,
     /// The master and headphone levels.
     pub levels: LevelsSetting,
+    /// The scrolling waveforms' zoom, in pixels a second.
+    pub lane_zoom: Option<f64>,
+    /// Where a track is cued when it loads.
+    pub auto_cue: AutoCueSetting,
     /// The fader curves and the crossfader assign switches.
     pub mixer: MixerSetting,
     /// How the library's tracks are sorted on each screen.
@@ -79,6 +92,25 @@ pub struct Settings {
     /// Whether a track loaded on a deck starts with key lock on, as rekordbox's Master Tempo
     /// default: the deck's Key lock button still changes it for the track on the deck.
     pub key_lock_on_new_tracks: bool,
+}
+
+/// Where a track is cued when it loads, as rekordbox's Preferences > Controller > Deck.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AutoCueSetting {
+    /// Load Setting: cue at the track's earliest memory or hot cue when it has one.
+    pub saved_cues_first: bool,
+    /// Auto Cue: otherwise cue at the first sound, on the beat it starts with.
+    pub first_sound: bool,
+}
+
+impl Default for AutoCueSetting {
+    fn default() -> Self {
+        Self {
+            saved_cues_first: true,
+            first_sound: true,
+        }
+    }
 }
 
 /// The mixer's curves and switches as the DJ left them, by name: `blend`, `constant` or
@@ -285,15 +317,21 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             lock_playing_deck: true,
+            quantize: true,
+            vinyl_mode: [true; DECK_COUNT],
             audio_device: None,
+            buffer_frames: None,
             library: LibrarySettings::default(),
             effect_units: Vec::new(),
             smart_cfx_preset: None,
             smart_cfx_on: false,
             cfx_colours: Vec::new(),
             sampler: SamplerSetting::default(),
+            pad_fx: PadFxSetting::default(),
             screen: None,
             levels: LevelsSetting::default(),
+            lane_zoom: None,
+            auto_cue: AutoCueSetting::default(),
             mixer: MixerSetting::default(),
             library_sort: LibrarySortSetting::default(),
             key_lock_on_new_tracks: true,
@@ -398,7 +436,10 @@ mod tests {
         let path = directory.path().join("nested").join(FILE_NAME);
         let settings = Settings {
             lock_playing_deck: false,
+            quantize: false,
+            vinyl_mode: [true, false],
             audio_device: Some("Studio Speakers".to_owned()),
+            buffer_frames: Some(512),
             library: LibrarySettings {
                 music_folders: vec![
                     PathBuf::from("/Music/House"),
@@ -431,11 +472,24 @@ mod tests {
                     sync: false,
                 }],
             },
+            pad_fx: {
+                let mut banks =
+                    crate::pad_fx::PadFxBanks::from_preset(crate::pad_fx::PadFxPreset::Amapiano);
+                banks.edit(crate::pad_fx::PadFxLayer::Fx2, 2, |slot| {
+                    slot.toggle_trigger().step_parameter(1)
+                });
+                banks.setting()
+            },
             screen: Some("prepare".to_owned()),
             levels: LevelsSetting {
                 master: 0.4,
                 headphones: 0.3,
                 headphone_mix: 0.7,
+            },
+            lane_zoom: Some(75.0),
+            auto_cue: AutoCueSetting {
+                saved_cues_first: false,
+                first_sound: true,
             },
             mixer: MixerSetting::of(
                 &Crossfader {

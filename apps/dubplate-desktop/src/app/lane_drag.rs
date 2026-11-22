@@ -10,7 +10,6 @@ use gpui::{Context, Pixels, Point, Window};
 
 use super::{Drag, DubplateApp};
 use crate::commands::{Command, JogMotion};
-use crate::waveform::Zoom;
 
 /// How long a released scrub takes to come to rest before a stopped deck lands on the beat.
 const SCRUB_SETTLE: Duration = Duration::from_millis(80);
@@ -112,13 +111,9 @@ impl DubplateApp {
         else {
             return;
         };
-        let zoom = self
-            .deck(drag.deck)
-            .visuals()
-            .and_then(|visuals| visuals.zoomed.as_ref())
-            .map_or(Zoom::DEFAULT, |zoomed| zoomed.zoom());
-        let pixels_per_track_second =
-            zoom.pixels_per_track_second(self.deck_state(drag.deck).tempo);
+        let pixels_per_track_second = self
+            .lane_zoom
+            .pixels_per_track_second(self.deck_state(drag.deck).tempo);
         let (ticks, moved) =
             drag.moved_to(position.x, pixels_per_track_second, ticks_per_revolution);
         self.dragging = Some(Drag::Lane(moved));

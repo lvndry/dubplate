@@ -109,8 +109,8 @@ pub const SHORTCUTS: &[Shortcut] = &[
     outside_text("shift--", Command::NudgeTempo(DeckId::B, Direction::Down)),
     outside_text("shift-=", Command::NudgeTempo(DeckId::B, Direction::Up)),
     outside_text("alt-x", Command::ToggleCrossfader),
-    outside_text("x", Command::CycleCrossfaderAssign(DeckId::A)),
-    outside_text("shift-x", Command::CycleCrossfaderAssign(DeckId::B)),
+    outside_text("z", Command::CycleCrossfaderAssign(DeckId::A)),
+    outside_text("shift-z", Command::CycleCrossfaderAssign(DeckId::B)),
     outside_text("left", Command::MoveCrossfader(Direction::Down)),
     outside_text("right", Command::MoveCrossfader(Direction::Up)),
     outside_text("shift-left", Command::LoadSelected(DeckId::A)),
@@ -120,6 +120,9 @@ pub const SHORTCUTS: &[Shortcut] = &[
     outside_text("/", Command::FocusSearch),
     anywhere("cmd-f", Command::FocusSearch),
     anywhere("ctrl-f", Command::FocusSearch),
+    anywhere("cmd-=", Command::ZoomLanes(Direction::Up)),
+    anywhere("cmd--", Command::ZoomLanes(Direction::Down)),
+    anywhere("cmd-0", Command::ResetLaneZoom),
     anywhere("cmd-1", Command::SwitchMode(Mode::Prepare)),
     anywhere("cmd-2", Command::SwitchMode(Mode::Perform)),
     outside_text("enter", Command::EditSet(SetEdit::Add)),
@@ -217,6 +220,9 @@ pub const SHORTCUTS: &[Shortcut] = &[
     ),
     outside_text("a", Command::Stems(DeckId::A, StemAction::Acapella)),
     outside_text("shift-a", Command::Stems(DeckId::B, StemAction::Acapella)),
+    outside_text("alt-q", Command::ToggleQuantize),
+    outside_text("alt-v", Command::ToggleVinylMode(DeckId::A)),
+    outside_text("shift-alt-v", Command::ToggleVinylMode(DeckId::B)),
     outside_text("u", Command::ToggleSlip(DeckId::A)),
     outside_text("shift-u", Command::ToggleSlip(DeckId::B)),
     outside_text("m", Command::CyclePadMode(DeckId::A)),
@@ -390,6 +396,11 @@ pub fn help_sections() -> Vec<HelpSection> {
                     "Fix the beat grid with the grid keys, deck A / deck B",
                 ),
                 line(&["u", "shift-u"], "Slip, deck A / deck B"),
+                line(
+                    &["alt-v", "shift-alt-v"],
+                    "Vinyl mode (jog top scratches) or CDJ mode, deck A / deck B",
+                ),
+                line(&["alt-q"], "Quantize on or off, both decks"),
                 line(&["l", "shift-l"], "Four-beat loop or exit, deck A / deck B"),
                 line(
                     &["h", "j"],
@@ -413,7 +424,11 @@ pub fn help_sections() -> Vec<HelpSection> {
                 ),
                 line(&["left", "right"], "Crossfader towards deck A / deck B"),
                 line(
-                    &["x", "shift-x"],
+                    &["cmd-=", "cmd--", "cmd-0"],
+                    "Zoom the waveforms in / out / back (Shift + BROWSE on the FLX4)",
+                ),
+                line(
+                    &["z", "shift-z"],
                     "Crossfader assign A, THRU or B, deck A / deck B",
                 ),
                 line(&["alt-x"], "Crossfader on or off"),
@@ -555,6 +570,8 @@ mod tests {
                 Command::ToggleGridBar(DeckId::A) => Command::ToggleGridBar(DeckId::B),
                 Command::TapTempo(DeckId::A) => Command::TapTempo(DeckId::B),
                 Command::ToggleSlip(DeckId::A) => Command::ToggleSlip(DeckId::B),
+                Command::ToggleVinylMode(DeckId::A) => Command::ToggleVinylMode(DeckId::B),
+
                 Command::Loop(DeckId::A, action) => Command::Loop(DeckId::B, action),
                 Command::CueLoopCall(DeckId::A, direction) => {
                     Command::CueLoopCall(DeckId::B, direction)

@@ -185,9 +185,9 @@ fn decibels_or_silence(level: f32) -> f32 {
     common::decibels(level.max(1e-6))
 }
 
-#[test]
-fn turning_knobs_and_switching_never_clicks() {
-    let smooth_effects = EffectKind::ALL.into_iter().filter(|kind| {
+/// The effects whose own sound is not made of edges, so a kink in their output is a click.
+fn smooth_effects() -> impl Iterator<Item = EffectKind> {
+    EffectKind::ALL.into_iter().filter(|kind| {
         !matches!(
             kind,
             EffectKind::Trans
@@ -200,8 +200,44 @@ fn turning_knobs_and_switching_never_clicks() {
                 | EffectKind::MobiusSaw
                 | EffectKind::MobiusTriangle
         )
-    });
-    for kind in smooth_effects {
+    })
+}
+
+#[test]
+fn switching_off_dry_leaves_the_music_untouched_without_a_click() {
+    for kind in smooth_effects() {
+        let mut effect = create(kind, &EffectConfig::default());
+        effect.set_depth(0.8);
+        let frames = seconds_to_frames(2.0);
+        let source = Stereo::mono(sine(220.0, 0.5, frames));
+        let mut audio = source.clone();
+        let mut deck = Deck::new(124.0);
+        let switch_on = seconds_to_frames(0.2);
+        let switch = seconds_to_frames(1.0);
+        deck.play_range(effect.as_mut(), &mut audio, 0, switch_on);
+        effect.set_enabled(true);
+        deck.play_range(effect.as_mut(), &mut audio, switch_on, switch);
+        effect.switch_off_dry();
+        deck.play_range(effect.as_mut(), &mut audio, switch, frames);
+
+        let kink = largest_kink(&audio.left).max(largest_kink(&audio.right));
+        assert!(kink < 0.01, "{kind} clicked going dry: largest kink {kink}");
+        let settled = switch + seconds_to_frames(0.1);
+        let leftover = audio.left[settled..]
+            .iter()
+            .zip(&source.left[settled..])
+            .map(|(played, dry)| (played - dry).abs())
+            .fold(0.0, f32::max);
+        assert!(
+            leftover < 1e-3,
+            "{kind} still plays {leftover} over the dry music"
+        );
+    }
+}
+
+#[test]
+fn turning_knobs_and_switching_never_clicks() {
+    for kind in smooth_effects() {
         let mut effect = create(kind, &EffectConfig::default());
         effect.set_depth(0.0);
         let frames = seconds_to_frames(3.0);

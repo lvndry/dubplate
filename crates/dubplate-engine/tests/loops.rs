@@ -92,11 +92,11 @@ fn halving_and_doubling_change_the_loop_from_its_start() {
     seconds(&mut renderer, 0.01);
     assert_eq!(
         controller.loop_state(DeckId::A).length,
-        Some(BeatLength::SIXTEENTH)
+        Some(BeatLength::THIRTY_SECOND)
     );
     assert_close(
         controller.loop_state(DeckId::A).end_seconds.unwrap(),
-        5.0 + 0.5 / 16.0,
+        5.0 + 0.5 / 32.0,
         1e-9,
     );
 }

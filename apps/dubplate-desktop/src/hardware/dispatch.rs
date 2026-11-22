@@ -184,7 +184,15 @@ impl Dispatcher {
             Action::Encoder {
                 encoder: Encoder::Browse,
                 ticks,
-            } => (event.layer == Layer::Normal).then(|| Command::Browse(i32::from(ticks.get()))),
+            } => {
+                let ticks = i32::from(ticks.get());
+                match event.layer {
+                    Layer::Normal => Some(Command::Browse(ticks)),
+                    Layer::Shift if ticks > 0 => Some(Command::ZoomLanes(Direction::Up)),
+                    Layer::Shift if ticks < 0 => Some(Command::ZoomLanes(Direction::Down)),
+                    Layer::Shift => None,
+                }
+            }
             Action::Encoder {
                 encoder: Encoder::Jog { deck, mode },
                 ticks,
@@ -294,6 +302,7 @@ impl Dispatcher {
             (Button::SmartCfx, Layer::Normal) if pressed => Some(Command::ToggleSmartCfx),
             (Button::SmartCfx, Layer::Shift) if pressed => Some(Command::NextSmartCfx),
             (Button::SmartFader, Layer::Normal) if pressed => Some(Command::ToggleSmartFader),
+            (Button::Shift(deck), _) => Some(Command::ShiftHeld(deck_id(deck), pressed)),
             (Button::PadMode { deck, mode }, _) if pressed => {
                 Some(Command::SetPadMode(deck_id(deck), mode))
             }
@@ -519,6 +528,29 @@ mod tests {
     }
 
     #[test]
+    fn each_decks_shift_reports_when_it_is_held_and_let_go() {
+        let mut dispatcher = Dispatcher::default();
+        let surface = Surface::default();
+        let commands = run(
+            &mut dispatcher,
+            &surface,
+            &[
+                press(Button::Shift(Deck::B)),
+                release(Button::Shift(Deck::B)),
+                press(Button::Shift(Deck::A)),
+            ],
+        );
+        assert_eq!(
+            commands,
+            [
+                Command::ShiftHeld(DeckId::B, true),
+                Command::ShiftHeld(DeckId::B, false),
+                Command::ShiftHeld(DeckId::A, true),
+            ]
+        );
+    }
+
+    #[test]
     fn the_flx4_cue_loop_call_arrows_call_store_and_delete_memory_cues() {
         let mapping = Mapping::built_in_for_port("DDJ-FLX4")
             .expect("the built-in mappings parse")
@@ -614,7 +646,7 @@ mod tests {
     }
 
     #[test]
-    fn the_browse_knob_moves_the_cursor_and_its_push_switches_pane() {
+    fn the_browse_knob_moves_the_cursor_zooms_with_shift_and_its_push_switches_pane() {
         let mut dispatcher = Dispatcher::default();
         let surface = Surface::default();
         let turn = |count, layer| ControlEvent {
@@ -631,6 +663,7 @@ mod tests {
                 turn(3, Layer::Normal),
                 turn(-1, Layer::Normal),
                 turn(2, Layer::Shift),
+                turn(-1, Layer::Shift),
                 press(Button::BrowsePush),
                 release(Button::BrowsePush),
             ],
@@ -640,6 +673,8 @@ mod tests {
             [
                 Command::Browse(3),
                 Command::Browse(-1),
+                Command::ZoomLanes(Direction::Up),
+                Command::ZoomLanes(Direction::Down),
                 Command::SwitchBrowserPane
             ]
         );
