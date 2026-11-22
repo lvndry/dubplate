@@ -1,7 +1,9 @@
 //! `dubplate set`: the sets prepared in Dubplate, and their export to rekordbox as a rekordbox
 //! XML file. rekordbox's own files are only ever read, from a copy.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
 use clap::Subcommand;
@@ -19,8 +21,9 @@ pub(crate) enum SetCommand {
     /// List the sets prepared in Dubplate.
     List,
     /// Write a set to a rekordbox XML file for rekordbox to import: the set as a playlist, each
-    /// track with its corrected beat grid, its mix-in and mix-out as memory cues, and the cues
-    /// rekordbox already had. rekordbox's own files are never changed.
+    /// track with its corrected beat grid, its mix-in and mix-out as memory cues, and its cues:
+    /// the ones made in Dubplate, else the ones rekordbox already had. rekordbox's own files are
+    /// never changed.
     Export {
         /// The set's name.
         name: String,
@@ -122,7 +125,13 @@ impl RekordboxData {
 
 fn export(name: &str, xml: Option<PathBuf>, library: Option<PathBuf>) -> Result<()> {
     let data = data_folder()?;
-    let set = find_set(&open_sets(&data)?, name)?;
+    let store = open_sets(&data)?;
+    let set = find_set(&store, name)?;
+    let track_cues: HashMap<_, _> = store
+        .track_cues()?
+        .into_iter()
+        .map(|(identity, cues)| (identity, Arc::new(cues)))
+        .collect();
     let settings = LibrarySettings::load(&data.settings())?;
     let scans: Vec<FolderScan> = LibraryCache::load(&data.library_cache())
         .scans
@@ -142,6 +151,7 @@ fn export(name: &str, xml: Option<PathBuf>, library: Option<PathBuf>) -> Result<
         &scans,
         &relinks,
     )
+    .with_track_cues(&track_cues)
     .export(&set);
     let path = match xml {
         Some(path) => path,

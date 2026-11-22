@@ -45,8 +45,8 @@ impl DubplateApp {
     }
 
     /// The playing deck the room hears most, deck A when they are level.
-    fn on_air_reference(&self) -> Option<FilterReference> {
-        let deck = DeckId::ALL
+    pub(super) fn on_air_deck(&self) -> Option<DeckId> {
+        DeckId::ALL
             .into_iter()
             .filter(|deck| self.deck_state(*deck).playing)
             .reduce(|loudest, deck| {
@@ -55,7 +55,12 @@ impl DubplateApp {
                 } else {
                     loudest
                 }
-            })?;
+            })
+    }
+
+    /// The track of the playing deck the room hears most.
+    fn on_air_reference(&self) -> Option<FilterReference> {
+        let deck = self.on_air_deck()?;
         let track = self.deck(deck).track.as_ref()?;
         let analysis = track
             .track

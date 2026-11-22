@@ -4,7 +4,7 @@ use crate::context::BlockTiming;
 use crate::dsp::filters::{Svf, SvfCoefficients};
 use crate::dsp::shaping::smoothstep;
 use crate::effect::EffectKind;
-use crate::effects::turntable::{Motion, Turntable};
+use crate::effects::release::turntable::{Motion, Turntable};
 use crate::unit::{Controls, Frame, Kernel, MixLaw, Unit, engaged, implement_effect};
 
 const FULL_MIX_DEPTH: f32 = 0.25;

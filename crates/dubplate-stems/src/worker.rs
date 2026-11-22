@@ -80,6 +80,11 @@ fn run(arguments: &WorkerArguments) -> ExitCode {
     }) {
         Ok(files) => match files.entry_name() {
             Some(entry) => {
+                if let Err(error) = files.vocal_presence() {
+                    eprintln!(
+                        "warning: {error}; the set's seams will not know where its vocals are"
+                    );
+                }
                 print_message(&WorkerMessage::Ready {
                     entry: entry.to_owned(),
                 });
@@ -120,7 +125,7 @@ fn separate_reporting(
     };
     let files = separator.stems(track, &observer)?;
     let directory = files.directory().to_path_buf();
-    StemFiles::complete_in(directory.clone()).ok_or(SeparationError::Incomplete(directory))
+    StemFiles::in_folder(directory.clone()).ok_or(SeparationError::Incomplete(directory))
 }
 
 /// Turns the separator's progress into worker messages, a download's at most once a percent.
