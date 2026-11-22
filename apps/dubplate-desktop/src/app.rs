@@ -78,7 +78,7 @@ use crate::deck::{
     prepare_track,
 };
 use crate::devices::DeviceAccess;
-use crate::effects::{EffectUnitSetting, search, step_beat, step_effect};
+use crate::effects::{EffectUnitSetting, search, step_effect, step_parameter};
 use crate::fonts::UI_FAMILY;
 use crate::frame_stats::FrameStats;
 use crate::hardware::{
@@ -1490,8 +1490,11 @@ impl DubplateApp {
             EffectEdit::StepKind(steps) => {
                 controller.set_effect_kind(unit, step_effect(state.kind, steps))
             }
-            EffectEdit::Beat(direction) => {
-                controller.set_effect_beat(unit, step_beat(state.beat, direction))
+            EffectEdit::Parameter(direction) => {
+                match step_parameter(state.kind, state.parameter, direction) {
+                    Some(value) => controller.set_effect_parameter(unit, value),
+                    None => Ok(()),
+                }
             }
             EffectEdit::Target(target) => controller.set_effect_target(unit, target),
             EffectEdit::Depth(depth) => controller.set_effect_depth(unit, depth.clamp(0.0, 1.0)),
@@ -1620,8 +1623,8 @@ impl DubplateApp {
                 if let Some(target) = setting.target() {
                     controller.set_effect_target(unit, target)?;
                 }
-                if let Some(beat) = setting.beat() {
-                    controller.set_effect_beat(unit, beat)?;
+                if let Some(value) = setting.parameter() {
+                    controller.set_effect_parameter(unit, value)?;
                 }
                 match setting.depth() {
                     Some(depth) => controller.set_effect_depth(unit, depth),

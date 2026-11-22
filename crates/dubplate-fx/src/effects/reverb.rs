@@ -10,6 +10,7 @@ use crate::dsp::shaping::flush_denormal;
 use crate::dsp::smoothing::Smoothed;
 use crate::effect::EffectKind;
 use crate::effects::tape::read_taps;
+use crate::parameter::ParameterValue;
 use crate::unit::{Controls, Frame, Kernel, MixLaw, Unit, implement_effect, knob};
 
 const LINE_COUNT: usize = 8;
@@ -43,8 +44,9 @@ const DEFAULT_DAMPING: f32 = 0.45;
 const DEFAULT_PRE_DELAY_SECONDS: f32 = 0.015;
 const DEFAULT_LOW_CUT_HZ: f32 = 200.0;
 const DEFAULT_MIX: f32 = 0.5;
-const SHORTEST_DEPTH_DECAY_SECONDS: f32 = 2.0;
-const LONGEST_DEPTH_DECAY_SECONDS: f32 = 5.0;
+const DEFAULT_SIZE_PERCENT: i16 = 50;
+const SMALLEST_SIZE: f32 = 0.2;
+const DECAY_AT_NO_SIZE_SECONDS: f32 = 0.8;
 
 /// A stereo algorithmic reverb, from a small room to a long hall.
 ///
@@ -54,18 +56,23 @@ const LONGEST_DEPTH_DECAY_SECONDS: f32 = 5.0;
 /// reverb stops taking in new audio and its tail rings out.
 ///
 /// The depth knob balances the music and the reverb, as the LEVEL/DEPTH knob of a DJ mixer
-/// does: in the middle both play at full level and fully right only the reverb plays. It also
-/// lengthens the decay from 2 to 5 s.
+/// does: in the middle both play at full level and fully right only the reverb plays. The
+/// parameter is the size of the space, from 10% (a small room, 1 s) to 100% (a long hall, 8 s).
 pub struct Reverb {
     unit: Unit<ReverbKernel>,
+    size_percent: i16,
 }
 
 impl Reverb {
     /// Builds a reverb with a 2.5 s decay and mix 0.5, switched off. This allocates.
     pub fn new(config: &EffectConfig) -> Self {
-        Self {
+        let mut reverb = Self {
             unit: Unit::new(ReverbKernel::new(config), DEFAULT_MIX),
-        }
+            size_percent: DEFAULT_SIZE_PERCENT,
+        };
+        reverb.apply_parameter(ParameterValue::Percent(DEFAULT_SIZE_PERCENT));
+        reverb.unit.reset();
+        reverb
     }
 
     /// Sets the time the tail takes to fall by 60 dB, from 0.2 to 20 seconds.
@@ -120,10 +127,19 @@ impl Controls for Reverb {
 
     fn apply_depth(&mut self, depth: f32) {
         self.unit.set_mix(depth);
-        self.set_decay_seconds(
-            SHORTEST_DEPTH_DECAY_SECONDS
-                + (LONGEST_DEPTH_DECAY_SECONDS - SHORTEST_DEPTH_DECAY_SECONDS) * depth,
-        );
+    }
+
+    fn apply_parameter(&mut self, value: ParameterValue) {
+        if let ParameterValue::Percent(percent) = value {
+            self.size_percent = percent.clamp(0, 100);
+            let size = f32::from(self.size_percent) / 100.0;
+            self.set_size(SMALLEST_SIZE + (1.0 - SMALLEST_SIZE) * size);
+            self.set_decay_seconds(DECAY_AT_NO_SIZE_SECONDS * 10.0_f32.powf(size));
+        }
+    }
+
+    fn current_parameter(&self) -> Option<ParameterValue> {
+        Some(ParameterValue::Percent(self.size_percent))
     }
 }
 

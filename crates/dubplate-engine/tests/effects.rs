@@ -8,7 +8,7 @@ use common::{
 };
 use dubplate_engine::{
     BeatGrid, BeatLength, Controller, DeckId, EFFECT_UNIT_COUNT, EffectKind, EffectTarget,
-    EffectUnitId, EngineError, MasterTempo, Renderer, Track, offline_engine,
+    EffectUnitId, EngineError, MasterTempo, ParameterValue, Renderer, Track, offline_engine,
 };
 
 const BLOCK: usize = 480;
@@ -268,7 +268,7 @@ fn first_echo_delay(
 ) -> Result<f64, EngineError> {
     controller.set_effect_kind(FIRST_UNIT, EffectKind::Echo)?;
     controller.set_effect_target(FIRST_UNIT, target)?;
-    controller.set_effect_beat(FIRST_UNIT, BeatLength::HALF)?;
+    controller.set_effect_parameter(FIRST_UNIT, ParameterValue::Beats(BeatLength::HALF))?;
     controller.set_effect_depth(FIRST_UNIT, 1.0)?;
     controller.set_effect_enabled(FIRST_UNIT, true)?;
     for deck in DeckId::ALL {
@@ -365,7 +365,10 @@ fn the_controller_reports_unit_settings_and_rejects_bad_values() {
         .set_effect_target(unit, EffectTarget::Deck(DeckId::B))
         .unwrap();
     controller
-        .set_effect_beat(unit, BeatLength::QUARTER)
+        .set_effect_parameter(unit, ParameterValue::Beats(BeatLength::QUARTER))
+        .unwrap();
+    controller
+        .set_effect_parameter(unit, ParameterValue::Percent(40))
         .unwrap();
     controller.set_effect_depth(unit, 0.75).unwrap();
     controller.toggle_effect(unit).unwrap();
@@ -373,7 +376,11 @@ fn the_controller_reports_unit_settings_and_rejects_bad_values() {
     let state = controller.effect_unit(unit);
     assert_eq!(state.kind, EffectKind::Gate);
     assert_eq!(state.target, EffectTarget::Deck(DeckId::B));
-    assert_eq!(state.beat, BeatLength::QUARTER);
+    assert_eq!(
+        state.parameter,
+        Some(ParameterValue::Beats(BeatLength::QUARTER)),
+        "a gate keeps its beat and ignores a percentage"
+    );
     assert_eq!(state.depth, 0.75);
     assert!(state.enabled);
     assert!(state.sounding);

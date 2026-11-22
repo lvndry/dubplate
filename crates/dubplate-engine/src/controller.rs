@@ -29,7 +29,9 @@ use crate::stems::StemSettings;
 use crate::sync::SyncMode;
 use crate::tempo::{MasterTempo, TempoRange};
 use crate::track::{MAX_TRACK_SECONDS, Track};
-use crate::{BeatLength, DECK_COUNT, EFFECT_UNIT_COUNT, EffectKind, EqBand, INSERT_SLOTS};
+use crate::{
+    BeatLength, DECK_COUNT, EFFECT_UNIT_COUNT, EffectKind, EqBand, INSERT_SLOTS, ParameterValue,
+};
 use dubplate_fx::{MAX_TEMPO_BPM, MIN_TEMPO_BPM};
 
 const COMMAND_CAPACITY: usize = 1024;
@@ -1037,14 +1039,18 @@ impl Controller {
         self.change_effect(unit, EffectChange::Target(target))
     }
 
-    /// Sets an effect unit's beat length, like a mixer's beat buttons. Step through the
-    /// buttons' lengths with [`BeatLength::longer`] and [`BeatLength::shorter`].
-    pub fn set_effect_beat(
+    /// Sets the parameter of an effect unit's selected effect, like a mixer's BEAT buttons: a
+    /// beat length for time-based effects, a percentage or a pitch for the others. Step through
+    /// the buttons' values with [`dubplate_fx::ParameterSpec::step`] on the effect's
+    /// [`EffectKind::parameter`]. A value in another unit than the effect's is ignored. Each
+    /// effect of the unit keeps its own parameter, so choosing another effect and coming back
+    /// finds it where it was.
+    pub fn set_effect_parameter(
         &mut self,
         unit: EffectUnitId,
-        beat: BeatLength,
+        value: ParameterValue,
     ) -> Result<(), EngineError> {
-        self.change_effect(unit, EffectChange::Beat(beat))
+        self.change_effect(unit, EffectChange::Parameter(value))
     }
 
     /// Turns an effect unit's level and depth knob, from 0 to 1.

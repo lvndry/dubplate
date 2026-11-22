@@ -115,7 +115,9 @@ fn carry_over(source: &Controller, target: &mut Controller) -> Result<(), Engine
         let state = source.effect_unit(unit);
         target.set_effect_kind(unit, state.kind)?;
         target.set_effect_target(unit, state.target)?;
-        target.set_effect_beat(unit, state.beat)?;
+        if let Some(value) = state.parameter {
+            target.set_effect_parameter(unit, value)?;
+        }
         target.set_effect_depth(unit, state.depth)?;
         target.set_effect_enabled(unit, state.enabled)?;
     }
@@ -239,7 +241,8 @@ impl DubplateApp {
 #[cfg(test)]
 mod tests {
     use dubplate_engine::{
-        BeatLength, EffectKind, EffectTarget, Renderer, SyncMode, TempoRange, Track, offline_engine,
+        BeatLength, EffectKind, EffectTarget, ParameterValue, Renderer, SyncMode, TempoRange,
+        Track, offline_engine,
     };
 
     use super::*;
@@ -269,7 +272,9 @@ mod tests {
         source
             .set_effect_target(unit, EffectTarget::Deck(DeckId::B))
             .unwrap();
-        source.set_effect_beat(unit, BeatLength::HALF).unwrap();
+        source
+            .set_effect_parameter(unit, ParameterValue::Beats(BeatLength::HALF))
+            .unwrap();
         source.set_effect_depth(unit, 0.8).unwrap();
         render(&mut source_renderer);
 
@@ -290,7 +295,10 @@ mod tests {
         let effect = target.effect_unit(unit);
         assert_eq!(effect.kind, EffectKind::Gate);
         assert_eq!(effect.target, EffectTarget::Deck(DeckId::B));
-        assert_eq!(effect.beat, BeatLength::HALF);
+        assert_eq!(
+            effect.parameter,
+            Some(ParameterValue::Beats(BeatLength::HALF))
+        );
         assert!((effect.depth - 0.8).abs() < 1e-6);
     }
 

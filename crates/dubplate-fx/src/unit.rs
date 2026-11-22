@@ -3,6 +3,7 @@ use crate::context::{BlockTiming, ProcessContext};
 use crate::dsp::shaping::{sanitize_input, sanitize_output};
 use crate::dsp::smoothing::Smoothed;
 use crate::effect::EffectKind;
+use crate::parameter::ParameterValue;
 
 pub(crate) type Frame = [f32; 2];
 
@@ -222,6 +223,18 @@ pub(crate) trait Controls {
     fn current_beat(&self) -> Option<BeatLength> {
         None
     }
+
+    /// Sets the effect's parameter. Effects whose parameter is a beat length take it through
+    /// [`Controls::apply_beat`]; the others override this.
+    fn apply_parameter(&mut self, value: ParameterValue) {
+        if let ParameterValue::Beats(beat) = value {
+            self.apply_beat(beat);
+        }
+    }
+
+    fn current_parameter(&self) -> Option<ParameterValue> {
+        self.current_beat().map(ParameterValue::Beats)
+    }
 }
 
 /// Implements [`Effect`] for a type with a `unit` field and [`Controls`].
@@ -271,12 +284,12 @@ macro_rules! implement_effect {
                 }
             }
 
-            fn set_beat(&mut self, beat: $crate::beat::BeatLength) {
-                $crate::unit::Controls::apply_beat(self, beat);
+            fn set_parameter(&mut self, value: $crate::parameter::ParameterValue) {
+                $crate::unit::Controls::apply_parameter(self, value);
             }
 
-            fn beat(&self) -> Option<$crate::beat::BeatLength> {
-                $crate::unit::Controls::current_beat(self)
+            fn parameter(&self) -> Option<$crate::parameter::ParameterValue> {
+                $crate::unit::Controls::current_parameter(self)
             }
 
             fn reset(&mut self) {

@@ -125,8 +125,9 @@ pub enum EffectEdit {
     Kind(EffectKind),
     /// Move through the effects in the picker's order, as FX SELECT does; negative goes back.
     StepKind(i32),
-    /// The next longer ([`Direction::Up`]) or shorter beat length.
-    Beat(Direction),
+    /// Step the effect's parameter up or down, as the BEAT buttons do: the next beat length,
+    /// percentage or pitch the effect offers.
+    Parameter(Direction),
     /// Put the unit on a deck or the master.
     Target(EffectTarget),
     /// Turn the level and depth knob, from 0.0 to 1.0.
