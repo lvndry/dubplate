@@ -158,6 +158,10 @@ pub fn mix_of_stems(seconds: f64, sample_rate: u32) -> Track {
                 .iter()
                 .map(|stem| f32::from(stem[index]) / 32_768.0)
                 .sum()
+        })
+        .collect();
+    Track::from_interleaved_stereo(&samples, sample_rate).expect("valid test track")
+}
 
 /// A four-to-the-floor loop at `tempo_bpm`: a kick on every beat, a hi-hat on every off-beat, a
 /// shaker on the sixteenths and a held chord, peaking around -3 dBFS. Busy enough that a filter,

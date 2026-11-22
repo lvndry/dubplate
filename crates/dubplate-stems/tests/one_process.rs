@@ -10,7 +10,6 @@ use dubplate_stems::{CacheLimit, StemsLocation, separate_in_process};
 const SAMPLE_RATE: u32 = 48_000;
 
 #[test]
-#[ignore = "crashes until euphoria-core's stems feature stops turning on pitch-shift, which links a second Signalsmith Stretch"]
 fn key_lock_plays_stems_in_an_executable_that_also_separates() {
     let folder = tempfile::tempdir().unwrap();
     let weights = folder.path().join("weights.safetensors");
