@@ -26,9 +26,7 @@ pub enum InstanceError {
 }
 
 fn running_process(process_id: Option<u32>) -> String {
-    process_id.map_or_else(String::new, |process_id| {
-        format!(" (process {process_id})")
-    })
+    process_id.map_or_else(String::new, |process_id| format!(" (process {process_id})"))
 }
 
 /// The lock that makes this copy the running Dubplate. The system releases it when the process
@@ -97,7 +95,10 @@ mod tests {
         ));
         assert_eq!(
             second.to_string(),
-            format!("Dubplate is already running (process {})", std::process::id())
+            format!(
+                "Dubplate is already running (process {})",
+                std::process::id()
+            )
         );
         drop(first);
         InstanceLock::acquire(&path).unwrap();
