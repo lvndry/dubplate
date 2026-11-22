@@ -224,7 +224,7 @@ pub fn help_lines() -> Vec<HelpLine> {
         ),
         line(&["cmd-l"], "Load the set's first two tracks on the decks"),
         line(&["cmd-o"], "Add music folders to the library"),
-        line(&["cmd-,"], "Library: music folders and rekordbox"),
+        line(&["cmd-,"], "Settings: music folders, rekordbox, sound card"),
         line(&["?", "escape"], "Show / close this help"),
     ]
 }
