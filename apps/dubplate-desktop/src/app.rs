@@ -1035,7 +1035,7 @@ impl DubplateApp {
                 self.mixer.sampler_volume = fraction;
                 self.settings.sampler.volume = fraction;
                 self.engine_command(cx, |controller| controller.set_sampler_volume(fraction));
-                self.save_settings(cx);
+                self.save_settings_soon(cx);
             }
         }
         cx.notify();
