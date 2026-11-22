@@ -92,11 +92,11 @@ fn halving_and_doubling_change_the_loop_from_its_start() {
     seconds(&mut renderer, 0.01);
     assert_eq!(
         controller.loop_state(DeckId::A).length,
-        Some(BeatLength::SIXTEENTH)
+        Some(BeatLength::THIRTY_SECOND)
     );
     assert_close(
         controller.loop_state(DeckId::A).end_seconds.unwrap(),
-        5.0 + 0.5 / 16.0,
+        5.0 + 0.5 / 32.0,
         1e-9,
     );
 }
@@ -215,6 +215,38 @@ fn a_hot_cue_while_playing_lands_in_rhythm_and_starts_a_stopped_deck() {
     seconds(&mut renderer, 0.01);
     assert!(controller.deck_state(DeckId::A).playing);
     assert_close(position(&controller), 7.26, 1e-9);
+}
+
+#[test]
+fn a_hot_loop_starts_its_loop_in_rhythm_and_starts_a_stopped_deck() {
+    let (mut controller, mut renderer) = deck_on_grid();
+    controller.seek(DeckId::A, 30.1).unwrap();
+    controller.play(DeckId::A).unwrap();
+    seconds(&mut renderer, 0.05);
+    let phase_before = phase(&controller);
+    controller.hot_loop(DeckId::A, 8.0, 10.0).unwrap();
+    seconds(&mut renderer, 0.01);
+    let state = controller.loop_state(DeckId::A);
+    assert!(state.active, "{state:?}");
+    assert_close(state.start_seconds.unwrap(), 8.0, 1e-9);
+    assert_close(state.end_seconds.unwrap(), 10.0, 1e-9);
+    let landed = position(&controller);
+    assert!((8.0..8.5).contains(&landed), "landed at {landed}");
+    let drift = (phase(&controller) - phase_before - 0.02).rem_euclid(1.0);
+    assert!(
+        !(1e-6..1.0 - 1e-6).contains(&drift),
+        "phase moved by {drift}"
+    );
+    seconds(&mut renderer, 2.5);
+    let looped = position(&controller);
+    assert!((8.0..10.0).contains(&looped), "went round to {looped}");
+
+    controller.pause(DeckId::A).unwrap();
+    seconds(&mut renderer, 0.01);
+    controller.hot_loop(DeckId::A, 20.0, 22.0).unwrap();
+    seconds(&mut renderer, 0.01);
+    assert!(controller.deck_state(DeckId::A).playing);
+    assert_close(position(&controller), 20.01, 1e-9);
 }
 
 #[test]

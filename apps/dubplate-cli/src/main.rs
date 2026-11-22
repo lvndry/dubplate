@@ -10,6 +10,7 @@ mod analyse;
 mod analysis;
 mod midi;
 mod set;
+mod usb;
 
 #[derive(Parser)]
 #[command(
@@ -33,6 +34,9 @@ enum Command {
     /// Work with the sets prepared in Dubplate, and export them to rekordbox.
     #[command(subcommand)]
     Set(set::SetCommand),
+    /// Export sets to USB sticks that CDJs and XDJs read.
+    #[command(subcommand)]
+    Usb(usb::UsbCommand),
     /// Find the tempo, beat grid, key and energy of audio files as Dubplate analyses them, and
     /// compare them with rekordbox's. Audio files and rekordbox's files are only read.
     Analyse(analyse::AnalyseArgs),
@@ -80,6 +84,7 @@ fn main() -> Result<()> {
         }) => analysis(&master_db_or_default(library)?, &track, json),
         Command::Midi(command) => midi::run(command),
         Command::Set(command) => set::run(command),
+        Command::Usb(command) => usb::run(command),
         Command::Analyse(arguments) => analyse::run(arguments),
     }
 }

@@ -21,8 +21,10 @@
 //! [`AudioOutput::start`] runs the engine on the default sound card; [`offline_engine`] gives
 //! the same engine without one, for tests and offline rendering.
 
+mod band_waveform;
 mod channel;
 mod controller;
+mod crossfader;
 mod curves;
 mod deck;
 mod decode;
@@ -52,18 +54,21 @@ mod tempo;
 mod track;
 mod voice;
 
+pub use band_waveform::{BAND_COLUMNS_PER_SECOND, BandLevels, three_band_levels};
 pub use channel::ChannelSettings;
 pub use controller::{Controller, DeckSnapshot, offline_engine};
 pub use cpal;
+pub use crossfader::{ChannelFaderCurve, Crossfader, CrossfaderAssign, CrossfaderCurve};
 pub use curves::{
     channel_fader_gain, crossfader_gains, decibels_to_gain, eq_gain, gain_to_decibels,
 };
 pub use deck::DeckId;
-pub use decode::decode_file;
+pub use decode::{AudioFileInfo, decode_file, decode_file_to_end, probe_file};
 pub use dubplate_fx::{
     BeatLength, EffectKind, EqBand, HIGH_CROSSOVER_HZ, LIMITER_CEILING, LOW_CROSSOVER_HZ,
+    ParameterSpec, ParameterValue, SignedBeats,
 };
-pub use effects::{EffectTarget, EffectUnitId, EffectUnitState};
+pub use effects::{EffectTarget, EffectUnitId, EffectUnitState, ReleaseFx};
 pub use error::EngineError;
 pub use grid::{BeatGrid, GridBeat};
 pub use headphones::HeadphoneSettings;
@@ -72,7 +77,7 @@ pub use jog::{
 };
 pub use mixer::Renderer;
 pub use output::{AudioOutput, OutputConfig, OutputDevice, SILENT_OUTPUT_NAME};
-pub use pad_effects::PadEffect;
+pub use pad_effects::{PadEffect, PadRelease};
 pub use preview::{MAX_PREVIEW_SECONDS, Preview, PreviewState, PreviewTrack};
 pub use processor::{AudioProcessor, ProcessContext, StereoBlock};
 pub use recording::RecordingTap;
