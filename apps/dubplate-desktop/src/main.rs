@@ -22,6 +22,7 @@ mod library_view;
 mod loading;
 #[cfg(target_os = "macos")]
 mod macos_identity;
+mod menus;
 mod meter;
 mod pads;
 mod phrases;
@@ -43,7 +44,7 @@ mod widgets;
 
 use gpui::prelude::*;
 use gpui::{
-    App, Bounds, KeyBinding, Menu, MenuItem, TitlebarOptions, WindowBounds, WindowOptions, point,
+    App, Bounds, KeyBinding, TitlebarOptions, WindowBounds, WindowOptions, point,
     px, size,
 };
 
@@ -60,7 +61,8 @@ gpui::actions!(
     ]
 );
 
-const APP_NAME: &str = "Dubplate";
+/// The app's name, in the menu bar and the Dock.
+pub const APP_NAME: &str = "Dubplate";
 
 fn main() {
     let _instance_lock = claim_instance();
@@ -81,8 +83,9 @@ fn main() {
             theme::apply_to_components(cx);
             cx.bind_keys(shortcuts::key_bindings());
             cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
+            cx.bind_keys(menus::key_bindings());
             cx.on_action(|_: &Quit, cx| cx.quit());
-            cx.set_menus([Menu::new(APP_NAME).items([MenuItem::action("Quit Dubplate", Quit)])]);
+            menus::register_app_actions(cx);
             cx.on_window_closed(|cx, _| cx.quit()).detach();
             if let Err(error) = open_window(cx) {
                 eprintln!("error: {error:#}");

@@ -229,6 +229,10 @@ pub enum Command {
     ToggleHelp,
     /// Show or hide the library's settings: the music folders and rekordbox.
     ToggleLibrary,
+    /// Bring the rekordbox collection into the library.
+    ImportRekordbox,
+    /// Look for the files of the tracks that moved, in the music folders.
+    RelinkMissingFiles,
     /// Open the folder picker to add music folders to the library.
     AddMusicFolders,
     /// Close the help or leave the search field.

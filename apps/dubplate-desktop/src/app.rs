@@ -73,9 +73,10 @@ use crate::frame_stats::FrameStats;
 use crate::hardware::{
     DeckLights, Hardware, Lights, LinkEvent, Surface, controller_deck, meter_level,
 };
-use crate::library::LibrarySources;
+use crate::library::{LibrarySources, RekordboxSource};
 use crate::library_view::SortSetting;
 use crate::loading::{LoadRefusal, LoadSource, check_deck_free, check_file, check_present};
+use crate::menus::{self, MenuState};
 use crate::meter::PeakMeter;
 use crate::pads::next_mode;
 use crate::prep::{Catalogue, TrackCheck, TrackDetail};
@@ -223,6 +224,8 @@ pub struct DubplateApp {
     focus_handle: FocusHandle,
     last_frame: Instant,
     frame_stats: Option<Rc<RefCell<FrameStats>>>,
+    /// What the menu bar was last built for.
+    menu_state: Option<MenuState>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -411,6 +414,7 @@ impl DubplateApp {
             focus_handle,
             last_frame: Instant::now(),
             frame_stats: FrameStats::from_environment().map(|stats| Rc::new(RefCell::new(stats))),
+            menu_state: None,
             _subscriptions: vec![subscription, search_subscription, quit_subscription],
         };
         app.browser
@@ -424,6 +428,25 @@ impl DubplateApp {
             app.show_notice(NoticePlace::Window, problem, cx);
         }
         app
+    }
+
+    /// Builds the menu bar again when what it shows has changed: a set to export, recording,
+    /// the rekordbox collection, missing files or the screen.
+    fn refresh_menus(&mut self, cx: &mut Context<'_, Self>) {
+        let state = MenuState {
+            mode: self.mode,
+            has_set: self
+                .set_editor
+                .as_ref()
+                .is_some_and(|editor| !editor.set().entries.is_empty()),
+            recording: self.is_recording(),
+            rekordbox_imported: !matches!(self.sources.rekordbox, RekordboxSource::Off),
+            missing_files: !self.missing.is_empty(),
+        };
+        if self.menu_state != Some(state) {
+            self.menu_state = Some(state);
+            cx.set_menus(menus::menus(crate::APP_NAME, state));
+        }
     }
 
     /// Turns Lock playing deck on or off and remembers it.
@@ -943,6 +966,8 @@ impl DubplateApp {
                 self.help_open = !self.help_open;
                 self.library_open = false;
             }
+            Command::ImportRekordbox => self.set_rekordbox_import(true, cx),
+            Command::RelinkMissingFiles => self.start_relink(None, cx),
             Command::ToggleLibrary => {
                 self.library_open = !self.library_open;
                 if self.library_open {
@@ -1788,11 +1813,15 @@ impl Render for DubplateApp {
             self.refocus_window = false;
         }
         self.modal_active = modal_open;
+        self.refresh_menus(cx);
         let frames = self.advance_frame(window);
         let root = div()
             .key_context(WINDOW_CONTEXT)
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(|this, _: &crate::Quit, _, cx| this.request_quit(cx)))
+            .on_action(|_: &menus::Minimize, window, _| window.minimize_window())
+            .on_action(|_: &menus::Zoom, window, _| window.zoom_window())
+            .on_action(|_: &menus::ToggleFullScreen, window, _| window.toggle_fullscreen())
             .on_action(cx.listener(|this, action: &Perform, window, cx| {
                 this.perform(action.0, window, cx);
             }))

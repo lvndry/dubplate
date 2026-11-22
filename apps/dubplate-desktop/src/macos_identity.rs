@@ -62,6 +62,18 @@ pub fn show_dock_icon() {
     unsafe { application.setApplicationIconImage(Some(&image)) };
 }
 
+/// Shows the standard About panel: the name, the icon and the version from the bundle. Does
+/// nothing off the main thread.
+pub fn show_about_panel() {
+    let Some(main_thread) = MainThreadMarker::new() else {
+        return;
+    };
+    let application = NSApplication::sharedApplication(main_thread);
+    // SAFETY: a nil sender is what the menu item would pass, and the call runs on the main
+    // thread as AppKit requires.
+    unsafe { application.orderFrontStandardAboutPanel(None) };
+}
+
 /// Brings the Dubplate running as `process_id` to the front, for a second launch that quits.
 pub fn bring_to_front(process_id: u32) {
     let Ok(process_id) = i32::try_from(process_id) else {
