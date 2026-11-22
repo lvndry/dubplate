@@ -84,6 +84,7 @@ use crate::relink::Missing;
 use crate::set::SetEditor;
 use crate::settings::{LevelsSetting, Settings};
 use crate::shortcuts::{Perform, WINDOW_CONTEXT};
+use crate::space::{DeckOnAir, space_deck};
 use crate::theme;
 use crate::transport::{self, CueDown, is_at_cue, other_deck};
 use crate::waveform::Zoom;
@@ -790,6 +791,10 @@ impl DubplateApp {
                 }
                 self.engine_command(cx, |controller| controller.toggle_play(deck));
             }
+            Command::TogglePlayOnAir => {
+                self.perform(Command::TogglePlay(self.space_deck()), window, cx);
+                return;
+            }
             Command::Cue(deck, press) => {
                 if matches!(press, Press::Down | Press::Tap) {
                     self.cue_down(deck, cx);
@@ -1300,6 +1305,17 @@ impl DubplateApp {
                 .find(|entry| entry.track_path == path)
         });
         entry.map(GridCorrection::of).unwrap_or_default()
+    }
+
+    /// The deck Space plays or pauses now.
+    pub(super) fn space_deck(&self) -> DeckId {
+        space_deck(
+            DeckId::ALL.map(|deck| DeckOnAir {
+                channel_fader: self.mixer.channel_faders[deck.index()],
+                is_tempo_master: self.tempo_state(deck).is_some_and(|state| state.is_master),
+            }),
+            self.mixer.crossfader,
+        )
     }
 
     /// The headphone section, when the engine runs.
