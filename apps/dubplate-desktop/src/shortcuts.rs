@@ -187,75 +187,107 @@ fn shifted_character(keystroke: &str) -> Option<&'static str> {
 /// A line of the help overlay: the keys, as printed on a keyboard, and what they do.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HelpLine {
-    /// The keys, such as `⇧ Space`.
-    pub keys: String,
+    /// Each keystroke, such as `⇧ Space`, in the order the description names them.
+    pub keys: Vec<String>,
     /// What they do.
     pub description: &'static str,
 }
 
-/// The help overlay, one line per pair of deck A and deck B keys. The keys are written from
-/// [`SHORTCUTS`], so the help always shows the keys that work.
-pub fn help_lines() -> Vec<HelpLine> {
+/// A group of help lines about one part of Dubplate, such as the decks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HelpSection {
+    /// The part, such as `Decks`.
+    pub title: &'static str,
+    /// Its lines.
+    pub lines: Vec<HelpLine>,
+}
+
+/// The help overlay, one line per pair of deck A and deck B keys, grouped by the part of
+/// Dubplate they work on. The keys are written from [`SHORTCUTS`], so the help always shows the
+/// keys that work.
+pub fn help_sections() -> Vec<HelpSection> {
     let line = |keystrokes: &[&str], description| HelpLine {
         keys: keystrokes
             .iter()
             .map(|keystroke| printed_keys(keystroke))
-            .collect::<Vec<_>>()
-            .join("  /  "),
+            .collect(),
         description,
     };
     vec![
-        line(&["space", "shift-space"], "Play or pause deck A / deck B"),
-        line(&["c", "shift-c"], "Cue deck A / deck B"),
-        line(
-            &["1", "shift-1"],
-            "Pads 1 to 8 in the deck's pad mode (hot cues set an empty one), deck A / deck B",
-        ),
-        line(&["-", "="], "Tempo down / up, deck A"),
-        line(&["shift--", "shift-="], "Tempo down / up, deck B"),
-        line(&["left", "right"], "Crossfader towards deck A / deck B"),
-        line(
-            &["shift-left", "shift-right"],
-            "Load the selected track on deck A / deck B",
-        ),
-        line(&["up", "down"], "Select the previous / next track"),
-        line(&["/", "cmd-f"], "Search titles and artists"),
-        line(&["k", "shift-k"], "Key lock, deck A / deck B"),
-        line(
-            &["t", "shift-t"],
-            "Tap the tempo of a track without a grid, deck A / deck B",
-        ),
-        line(&["m", "shift-m"], "Next pad mode, deck A / deck B"),
-        line(&["u", "shift-u"], "Slip, deck A / deck B"),
-        line(&["l", "shift-l"], "Four-beat loop or exit, deck A / deck B"),
-        line(&["cmd-1", "cmd-2"], "Prepare / Perform"),
-        line(&["cmd-shift-r"], "Record the mix, or stop recording"),
-        line(
-            &["enter", "cmd-enter"],
-            "Add to the set / insert after the selected set track",
-        ),
-        line(
-            &["alt-up", "alt-down"],
-            "Move the selected set track up / down",
-        ),
-        line(&["backspace", "cmd-z"], "Take out of the set / undo"),
-        line(&["f"], "Seam after the selected set track planned or free"),
-        line(&["g", "y"], "Confirm the grid / accept the proposed cues"),
-        line(&["i", "o"], "Mix-in / mix-out on the bar at the playhead"),
-        line(&["[", "]"], "Grid 5 ms earlier / later"),
-        line(
-            &["s"],
-            "Hear the seam after the selected set track in the headphones",
-        ),
-        line(&[",", "."], "Downbeat one beat earlier / later"),
-        line(
-            &["b", "tab"],
-            "Keep as a backup / move between library and set",
-        ),
-        line(&["cmd-l"], "Load the set's first two tracks on the decks"),
-        line(&["cmd-o"], "Add music folders to the library"),
-        line(&["cmd-,"], "Settings: music folders, rekordbox, sound card"),
-        line(&["?", "escape"], "Show / close this help"),
+        HelpSection {
+            title: "Decks",
+            lines: vec![
+                line(&["space", "shift-space"], "Play or pause deck A / deck B"),
+                line(&["c", "shift-c"], "Cue deck A / deck B"),
+                line(
+                    &["1", "shift-1"],
+                    "Pads 1 to 8 in the deck's pad mode (hot cues set an empty one), deck A / deck B",
+                ),
+                line(&["m", "shift-m"], "Next pad mode, deck A / deck B"),
+                line(&["-", "="], "Tempo down / up, deck A"),
+                line(&["shift--", "shift-="], "Tempo down / up, deck B"),
+                line(&["k", "shift-k"], "Key lock, deck A / deck B"),
+                line(&["u", "shift-u"], "Slip, deck A / deck B"),
+                line(&["l", "shift-l"], "Four-beat loop or exit, deck A / deck B"),
+                line(
+                    &["t", "shift-t"],
+                    "Tap the tempo of a track without a grid, deck A / deck B",
+                ),
+                line(&["left", "right"], "Crossfader towards deck A / deck B"),
+            ],
+        },
+        HelpSection {
+            title: "Library",
+            lines: vec![
+                line(&["up", "down"], "Select the previous / next track"),
+                line(&["/", "cmd-f"], "Search titles and artists"),
+                line(
+                    &["shift-left", "shift-right"],
+                    "Load the selected track on deck A / deck B",
+                ),
+            ],
+        },
+        HelpSection {
+            title: "Set",
+            lines: vec![
+                line(
+                    &["enter", "cmd-enter"],
+                    "Add to the set / insert after the selected set track",
+                ),
+                line(
+                    &["alt-up", "alt-down"],
+                    "Move the selected set track up / down",
+                ),
+                line(&["backspace", "cmd-z"], "Take out of the set / undo"),
+                line(&["b"], "Keep as a backup"),
+                line(&["tab"], "Move between library and set"),
+                line(&["f"], "Seam after the selected set track planned or free"),
+                line(
+                    &["s"],
+                    "Hear the seam after the selected set track in the headphones",
+                ),
+                line(&["cmd-l"], "Load the set's first two tracks on the decks"),
+            ],
+        },
+        HelpSection {
+            title: "Track check",
+            lines: vec![
+                line(&["g", "y"], "Confirm the grid / accept the proposed cues"),
+                line(&["[", "]"], "Grid 5 ms earlier / later"),
+                line(&[",", "."], "Downbeat one beat earlier / later"),
+                line(&["i", "o"], "Mix-in / mix-out on the bar at the playhead"),
+            ],
+        },
+        HelpSection {
+            title: "Dubplate",
+            lines: vec![
+                line(&["cmd-1", "cmd-2"], "Prepare / Perform"),
+                line(&["cmd-shift-r"], "Record the mix, or stop recording"),
+                line(&["cmd-o"], "Add music folders to the library"),
+                line(&["cmd-,"], "Settings: music folders, rekordbox, sound card"),
+                line(&["?", "escape"], "Show / close this help"),
+            ],
+        },
     ]
 }
 
@@ -280,6 +312,9 @@ pub fn printed_keys(keystroke: &str) -> String {
             "up" => "↑".to_owned(),
             "down" => "↓".to_owned(),
             "escape" => "Esc".to_owned(),
+            "enter" => "↩".to_owned(),
+            "backspace" => "⌫".to_owned(),
+            "tab" => "⇥".to_owned(),
             other => other.to_uppercase(),
         })
         .collect::<Vec<_>>()
@@ -380,14 +415,10 @@ mod tests {
             let key = keystroke.strip_prefix("shift-").unwrap_or(keystroke);
             matches!(key, "2" | "3" | "4" | "5" | "6" | "7" | "8") || keystroke == "ctrl-f"
         };
-        let shown: HashSet<String> = help_lines()
-            .iter()
-            .flat_map(|line| {
-                line.keys
-                    .split("  /  ")
-                    .map(str::to_owned)
-                    .collect::<Vec<_>>()
-            })
+        let shown: HashSet<String> = help_sections()
+            .into_iter()
+            .flat_map(|section| section.lines)
+            .flat_map(|line| line.keys)
             .collect();
         for shortcut in SHORTCUTS {
             if !summarised(shortcut.keystroke) {
@@ -406,6 +437,8 @@ mod tests {
         assert_eq!(printed_keys("shift--"), "⇧ -");
         assert_eq!(printed_keys("shift-="), "⇧ =");
         assert_eq!(printed_keys("c"), "C");
+        assert_eq!(printed_keys("cmd-enter"), "⌘ ↩");
+        assert_eq!(printed_keys("backspace"), "⌫");
     }
 
     #[test]
