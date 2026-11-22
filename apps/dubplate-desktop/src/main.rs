@@ -1,5 +1,6 @@
 //! The Dubplate desktop app: two decks, a mixer and the rekordbox collection in one window.
 
+mod analysis;
 mod app;
 mod assets;
 mod audition;
