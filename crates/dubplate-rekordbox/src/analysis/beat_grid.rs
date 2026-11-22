@@ -50,7 +50,17 @@ pub struct BeatGrid {
 impl BeatGrid {
     /// The first beat that starts a bar.
     pub fn first_downbeat(&self) -> Option<&Beat> {
-        self.beats.iter().find(|beat| beat.is_downbeat())
+        self.downbeats().next()
+    }
+
+    /// Where the first beat that starts a bar is in `beats`.
+    pub fn first_downbeat_index(&self) -> Option<usize> {
+        self.beats.iter().position(Beat::is_downbeat)
+    }
+
+    /// Every beat that starts a bar, in playing order.
+    pub fn downbeats(&self) -> impl Iterator<Item = &Beat> {
+        self.beats.iter().filter(|beat| beat.is_downbeat())
     }
 
     /// The lowest and highest tempo on the grid, in hundredths of a BPM.

@@ -214,7 +214,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("dubplate.db");
         let connection = Connection::open(&path).unwrap();
-        for migration in &MIGRATIONS[..2] {
+        for migration in &MIGRATIONS[..3] {
             connection.execute_batch(migration).unwrap();
         }
         connection
@@ -231,7 +231,7 @@ mod tests {
             .connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 3);
+        assert_eq!(version, 4);
         let set = store.load_set(SetId(1)).unwrap();
         assert_eq!(set.main_entries().count(), 1);
         assert!(store.track_cues().unwrap().is_empty());
@@ -239,8 +239,8 @@ mod tests {
         assert!(
             backups
                 .filter_map(Result::ok)
-                .any(|backup| backup.file_name().to_string_lossy().starts_with("v2-")),
-            "the version 2 file is backed up before the upgrade"
+                .any(|backup| backup.file_name().to_string_lossy().starts_with("v3-")),
+            "the version 3 file is backed up before the upgrade"
         );
 
         let identity = TrackIdentity::Rekordbox("7".to_owned());

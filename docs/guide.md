@@ -64,7 +64,7 @@ Select a set track to open its track check: the waveform with the beat grid, rek
 | Mark the seam after this track Planned or Free | F |
 | Hear that seam in the headphones (20 s) | S |
 
-A Free seam never warns: it means you will feel it live. Grids on amapiano are often off by a beat or a few milliseconds; the nudge keys fix that, and the fix follows the track onto the decks.
+A Free seam never warns: it means you will feel it live. Grids on amapiano are often off by a beat or a few milliseconds; the nudge keys fix that. A track keeps one grid fix by its file, whichever set it is in, so the fix follows it onto the decks, into sync and into the export.
 
 ## Play the set in rekordbox
 
@@ -89,6 +89,8 @@ From then on the set is an ordinary rekordbox playlist, ready to export to a USB
 
 Cmd+L loads the set's first two tracks onto deck A and deck B at their mix-in cues; Cmd+2 opens Perform. A set track whose file is missing is never loaded: its deck keeps what it had, and a notice names the track with a **Relink** button that looks for the file. The same goes for any track loaded from the library.
 
+On the keyboard, **Space** plays or pauses the deck you can hear: the one whose channel fader is up past 20% and that the crossfader lets through. With both up it acts on the tempo master, else the louder one, and with neither it is deck A. A small **Space** label beside a deck's letter shows which one it will be. Shift+Space is always deck B, and the FLX4's PLAY buttons always their own deck.
+
 On the FLX4, everything works as in rekordbox's FLX4 layout:
 
 - PLAY, CUE (CDJ style), hot cue pads (a cue you set or delete is kept with the track, for the next time it loads and for the export), TEMPO, BEAT SYNC (hold for tempo master, SHIFT for the tempo range), the jogs (touch to scratch, side to nudge, SHIFT to search).
@@ -102,6 +104,10 @@ When Smart Fader or sync has moved a deck's tempo away from where its TEMPO slid
 Each deck's **overview** shows the whole track in rekordbox's three bands (lows blue, mids gold, highs white), so drops and breakdowns read at a glance, with the hot cues as coloured letters on top, memory cues as red triangles, the set's mix-in (green) and mix-out (lavender), saved loops in yellow, a tick every minute, and a strip along the bottom coloured by phrase (intro, build, drop, breakdown, outro). The last 30 seconds are tinted and the time left turns amber. Hover it to read the time and phrase under the pointer; click to jump there. The CUE button's point shows as an orange triangle on the overview and the lanes, and any cue you set, from CUE or a hot cue pad, flashes where it landed. The scrolling waveforms above show an active loop as a tinted band with its length, a loop waiting for RELOOP as an outline, and the slip shadow playhead while slipping.
 
 On screen, each deck also has Sync, Master, Key lock and Slip, and the compact effects strip drives the three effect units. Press ? for every keyboard shortcut.
+
+Drag a deck's waveform on the lanes to move it, as with a jog: a stopped deck scrubs under your hand and lands on the nearest beat when you let go (with quantize on); a playing deck is nudged, never jumped; Shift+drag searches.
+
+**Grid** on a deck (or E, Shift+E for deck B) opens its grid bar to fix any track's beat grid while you play, as rekordbox's grid edit does: the downbeat a beat earlier or later, the grid 5 ms earlier or later, and confirm. The grid keys G, [ ], comma and period then work on that deck. A fix never moves the deck in the track, and it is the same fix the track check shows.
 
 ## 5. Record
 
