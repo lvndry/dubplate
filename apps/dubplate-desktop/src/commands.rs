@@ -196,6 +196,10 @@ pub enum Command {
     SetControl(Control, f32),
     /// Move the crossfader one step towards deck A ([`Direction::Down`]) or deck B.
     MoveCrossfader(Direction),
+    /// Zoom the scrolling waveforms in ([`Direction::Up`]) or out by one level.
+    ZoomLanes(Direction),
+    /// Put the scrolling waveforms back at their default zoom.
+    ResetLaneZoom,
     /// Select the row above or below in the browser.
     MoveSelection(Direction),
     /// Move the browser's cursor by a number of rows, in the crates or the tracks, whichever

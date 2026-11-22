@@ -63,6 +63,8 @@ pub struct Settings {
     pub screen: Option<String>,
     /// The master and headphone levels.
     pub levels: LevelsSetting,
+    /// The scrolling waveforms' zoom, in pixels a second.
+    pub lane_zoom: Option<f64>,
     /// How the library's tracks are sorted on each screen.
     pub library_sort: LibrarySortSetting,
 }
@@ -215,6 +217,7 @@ impl Default for Settings {
             sampler: SamplerSetting::default(),
             screen: None,
             levels: LevelsSetting::default(),
+            lane_zoom: None,
             library_sort: LibrarySortSetting::default(),
         }
     }
@@ -348,6 +351,7 @@ mod tests {
                 headphones: 0.3,
                 headphone_mix: 0.7,
             },
+            lane_zoom: Some(75.0),
             library_sort: LibrarySortSetting {
                 prepare: Some(SortSetting {
                     column: "bpm".to_owned(),

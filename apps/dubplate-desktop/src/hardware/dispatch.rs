@@ -148,7 +148,15 @@ impl Dispatcher {
             Action::Encoder {
                 encoder: Encoder::Browse,
                 ticks,
-            } => (event.layer == Layer::Normal).then(|| Command::Browse(i32::from(ticks.get()))),
+            } => {
+                let ticks = i32::from(ticks.get());
+                match event.layer {
+                    Layer::Normal => Some(Command::Browse(ticks)),
+                    Layer::Shift if ticks > 0 => Some(Command::ZoomLanes(Direction::Up)),
+                    Layer::Shift if ticks < 0 => Some(Command::ZoomLanes(Direction::Down)),
+                    Layer::Shift => None,
+                }
+            }
             Action::Encoder {
                 encoder: Encoder::Jog { deck, mode },
                 ticks,
@@ -524,7 +532,7 @@ mod tests {
     }
 
     #[test]
-    fn the_browse_knob_moves_the_cursor_and_its_push_switches_pane() {
+    fn the_browse_knob_moves_the_cursor_zooms_with_shift_and_its_push_switches_pane() {
         let mut dispatcher = Dispatcher::default();
         let surface = Surface::default();
         let turn = |count, layer| ControlEvent {
@@ -541,6 +549,7 @@ mod tests {
                 turn(3, Layer::Normal),
                 turn(-1, Layer::Normal),
                 turn(2, Layer::Shift),
+                turn(-1, Layer::Shift),
                 press(Button::BrowsePush),
                 release(Button::BrowsePush),
             ],
@@ -550,6 +559,8 @@ mod tests {
             [
                 Command::Browse(3),
                 Command::Browse(-1),
+                Command::ZoomLanes(Direction::Up),
+                Command::ZoomLanes(Direction::Down),
                 Command::SwitchBrowserPane
             ]
         );

@@ -101,6 +101,8 @@ When Smart Fader or sync has moved a deck's tempo away from where its TEMPO slid
 
 Each deck's **overview** shows the whole track in rekordbox's three bands (lows blue, mids gold, highs white), so drops and breakdowns read at a glance, with the hot cues as coloured letters on top, memory cues as red triangles, the set's mix-in (green) and mix-out (lavender), saved loops in yellow, a tick every minute, and a strip along the bottom coloured by phrase (intro, build, drop, breakdown, outro). The last 30 seconds are tinted and the time left turns amber. Hover it to read the time and phrase under the pointer; click to jump there. The CUE button's point shows as an orange triangle on the overview and the lanes, and any cue you set, from CUE or a hot cue pad, flashes where it landed. The scrolling waveforms above show an active loop as a tinted band with its length, a loop waiting for RELOOP as an outline, and the slip shadow playhead while slipping.
 
+Cmd+= and Cmd+- zoom both scrolling waveforms in and out together (Shift + BROWSE on the FLX4, or a pinch on the trackpad), from about 3 to 30 seconds across, and Cmd+0 puts them back; the dots at the lanes' top right show the zoom, and Dubplate remembers it.
+
 On screen, each deck also has Sync, Master, Key lock and Slip, and the compact effects strip drives the three effect units. Press ? for every keyboard shortcut.
 
 ## 5. Record

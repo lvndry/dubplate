@@ -26,7 +26,8 @@ impl BandLevels {
         self.low.max(self.mid).max(self.high)
     }
 
-    fn max(self, other: Self) -> Self {
+    /// The louder of `self` and `other` in each band.
+    pub fn max(self, other: Self) -> Self {
         Self {
             low: self.low.max(other.low),
             mid: self.mid.max(other.mid),
@@ -55,6 +56,54 @@ impl Zoom {
     pub const DEFAULT: Self = Self {
         pixels_per_second: DETAIL_COLUMNS_PER_SECOND as f64,
     };
+
+    /// The zooms of the scrolling lanes, widest view first: from about 30 seconds across a
+    /// laptop's lanes to about 3, as rekordbox's enlarged waveform zooms.
+    pub const LEVELS: [Self; 7] = [
+        Self::at(37.5),
+        Self::at(50.0),
+        Self::at(75.0),
+        Self::at(100.0),
+        Self::DEFAULT,
+        Self::at(225.0),
+        Self::at(300.0),
+    ];
+
+    const fn at(pixels_per_second: f64) -> Self {
+        Self { pixels_per_second }
+    }
+
+    /// The next zoom of [`Zoom::LEVELS`] in (`closer` true) or out, staying at the ends. A
+    /// zoom between two levels moves to the next one in that direction.
+    pub fn step(self, closer: bool) -> Self {
+        let levels = Self::LEVELS.into_iter();
+        let next = if closer {
+            levels
+                .filter(|level| level.pixels_per_second > self.pixels_per_second)
+                .min_by(|first, second| {
+                    first.pixels_per_second.total_cmp(&second.pixels_per_second)
+                })
+        } else {
+            levels
+                .filter(|level| level.pixels_per_second < self.pixels_per_second)
+                .max_by(|first, second| {
+                    first.pixels_per_second.total_cmp(&second.pixels_per_second)
+                })
+        };
+        next.unwrap_or(self)
+    }
+
+    /// The zoom kept in the settings as `pixels_per_second`, or the default when that is not
+    /// one of [`Zoom::LEVELS`].
+    pub fn from_setting(pixels_per_second: Option<f64>) -> Self {
+        pixels_per_second
+            .and_then(|kept| {
+                Self::LEVELS
+                    .into_iter()
+                    .find(|level| (level.pixels_per_second - kept).abs() < 1e-6)
+            })
+            .unwrap_or(Self::DEFAULT)
+    }
 
     /// A zoom of `pixels_per_second`, at least one pixel a second.
     #[cfg(test)]
@@ -300,9 +349,17 @@ impl LaneView {
 
     /// The columns of a waveform made at this view's zoom (one column per pixel at the
     /// track's own tempo) that fall on screen, and where they go.
+    #[cfg(test)]
     pub fn visible_columns(&self, column_count: usize) -> VisibleColumns {
-        let column_width = self.pixels_per_track_second() / self.zoom.pixels_per_second();
-        let left_column = self.seconds_on_screen().start * self.zoom.pixels_per_second();
+        self.visible_columns_of(column_count, self.zoom)
+    }
+
+    /// The columns of a waveform made at `made_at` that fall on screen, and where they go:
+    /// columns narrower than a pixel when the view is zoomed out further than the waveform was
+    /// made, wider when zoomed in.
+    pub fn visible_columns_of(&self, column_count: usize, made_at: Zoom) -> VisibleColumns {
+        let column_width = self.pixels_per_track_second() / made_at.pixels_per_second();
+        let left_column = self.seconds_on_screen().start * made_at.pixels_per_second();
         let columns_across = f64::from(self.width) / column_width;
         let first = left_column.floor().max(0.0);
         let last = (left_column + columns_across).ceil().max(0.0);
@@ -728,5 +785,30 @@ mod tests {
         let second = overview.bars(4)[1];
         assert_eq!((second.low, second.mid, second.high), (0.0, 1.0, 0.0));
         assert_eq!(overview.bars(8).len(), 8);
+    }
+
+    #[test]
+    fn zoom_steps_through_the_levels_and_stays_at_the_ends() {
+        assert_eq!(Zoom::DEFAULT.step(true), Zoom::new(225.0));
+        assert_eq!(Zoom::DEFAULT.step(false), Zoom::new(100.0));
+        assert_eq!(Zoom::new(300.0).step(true), Zoom::new(300.0));
+        assert_eq!(Zoom::new(37.5).step(false), Zoom::new(37.5));
+        assert_eq!(Zoom::new(120.0).step(true), Zoom::DEFAULT);
+        assert_eq!(Zoom::from_setting(Some(75.0)), Zoom::new(75.0));
+        assert_eq!(Zoom::from_setting(Some(80.0)), Zoom::DEFAULT);
+        assert_eq!(Zoom::from_setting(None), Zoom::DEFAULT);
+    }
+
+    #[test]
+    fn a_zoomed_out_view_puts_several_columns_in_a_pixel() {
+        let view = LaneView {
+            width: 100.0,
+            playhead_seconds: 10.0,
+            zoom: Zoom::new(50.0),
+            tempo: 1.0,
+        };
+        let visible = view.visible_columns_of(10_000, Zoom::DEFAULT);
+        assert!((visible.column_width - 1.0 / 3.0).abs() < 1e-6);
+        assert_eq!(visible.range, 1350..1650);
     }
 }
