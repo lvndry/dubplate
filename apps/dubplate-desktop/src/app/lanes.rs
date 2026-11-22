@@ -83,6 +83,7 @@ pub(super) fn render(
     frames: &[DeckFrame; 2],
     cx: &mut Context<'_, DubplateApp>,
 ) -> impl IntoElement {
+    let readings = beat_readings(app, frames);
     div()
         .relative()
         .flex()
@@ -98,11 +99,8 @@ pub(super) fn render(
         .on_pinch(cx.listener(|this, event: &PinchEvent, _, cx| {
             this.pinch_lanes(event.delta, cx);
         }))
-        .children({
-            let readings = beat_readings(app, frames);
-            DeckId::ALL
-                .map(|deck| lane(app, deck, &frames[deck.index()], readings[deck.index()], cx))
-        })
+        .child(lane(app, DeckId::A, &frames[0], readings[0], cx))
+        .child(lane(app, DeckId::B, &frames[1], readings[1], cx))
         .child(zoom_label(app.lane_zoom))
         .child(
             div()
