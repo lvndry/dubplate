@@ -9,7 +9,7 @@ mod common;
 
 use std::f64::consts::TAU;
 
-use common::{Deck, SAMPLE_RATE, Stereo, decibels, peak, rms, seconds_to_frames};
+use common::{BLOCK_FRAMES, Deck, SAMPLE_RATE, Stereo, decibels, peak, rms, seconds_to_frames};
 use dubplate_fx::{
     Echo, Effect, EffectConfig, EffectKind, LIMITER_CEILING, Limiter, PingPong, Reverb, create,
 };
@@ -117,11 +117,11 @@ fn play(effect: &mut dyn Effect, dry: &Stereo) -> LevelChange {
         right: difference(&wet.right, &dry.right),
     };
     let mut limited = wet.clone();
-    let mut limiter = Limiter::new(common::SAMPLE_RATE);
+    let mut limiter = Limiter::new(SAMPLE_RATE);
     for (left, right) in limited
         .left
-        .chunks_mut(common::BLOCK_FRAMES)
-        .zip(limited.right.chunks_mut(common::BLOCK_FRAMES))
+        .chunks_mut(BLOCK_FRAMES)
+        .zip(limited.right.chunks_mut(BLOCK_FRAMES))
     {
         limiter.process(left, right);
     }
