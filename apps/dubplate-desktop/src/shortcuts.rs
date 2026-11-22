@@ -68,7 +68,7 @@ const fn pad(keystroke: &'static str, deck: DeckId, pad: usize) -> Shortcut {
 }
 
 /// Every keyboard shortcut.
-pub const SHORTCUTS: [Shortcut; 61] = [
+pub const SHORTCUTS: [Shortcut; 63] = [
     outside_text("space", Command::TogglePlay(DeckId::A)),
     outside_text("shift-space", Command::TogglePlay(DeckId::B)),
     outside_text("c", Command::Cue(DeckId::A, Press::Tap)),
@@ -122,6 +122,8 @@ pub const SHORTCUTS: [Shortcut; 61] = [
     outside_text("cmd-z", Command::EditSet(SetEdit::Undo)),
     outside_text("tab", Command::SwitchPrepareFocus),
     anywhere("cmd-l", Command::LoadSet),
+    outside_text("k", Command::ToggleKeyLock(DeckId::A)),
+    outside_text("shift-k", Command::ToggleKeyLock(DeckId::B)),
     outside_text("m", Command::CyclePadMode(DeckId::A)),
     outside_text("shift-m", Command::CyclePadMode(DeckId::B)),
     outside_text("l", Command::Loop(DeckId::A, LoopAction::FourBeatOrExit)),
@@ -212,6 +214,7 @@ pub fn help_lines() -> Vec<HelpLine> {
         ),
         line(&["up", "down"], "Select the previous / next track"),
         line(&["/", "cmd-f"], "Search titles and artists"),
+        line(&["k", "shift-k"], "Key lock, deck A / deck B"),
         line(&["m", "shift-m"], "Next pad mode, deck A / deck B"),
         line(&["l", "shift-l"], "Four-beat loop or exit, deck A / deck B"),
         line(&["cmd-1", "cmd-2"], "Prepare / Perform"),
@@ -296,6 +299,7 @@ mod tests {
                     ..press
                 }),
                 Command::CyclePadMode(DeckId::A) => Command::CyclePadMode(DeckId::B),
+                Command::ToggleKeyLock(DeckId::A) => Command::ToggleKeyLock(DeckId::B),
                 Command::Loop(DeckId::A, action) => Command::Loop(DeckId::B, action),
                 Command::NudgeTempo(DeckId::A, direction) => {
                     Command::NudgeTempo(DeckId::B, direction)

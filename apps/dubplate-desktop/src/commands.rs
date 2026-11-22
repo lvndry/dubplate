@@ -170,6 +170,8 @@ pub enum Command {
     MakeTempoMaster(DeckId),
     /// Step a deck's tempo range: ±6%, ±10%, ±16%, wide.
     CycleTempoRange(DeckId),
+    /// Key lock, a CDJ's MASTER TEMPO: tempo changes keep the track's pitch.
+    ToggleKeyLock(DeckId),
     /// Move a fader or knob to a position from 0.0 to 1.0.
     SetControl(Control, f32),
     /// Move the crossfader one step towards deck A ([`Direction::Down`]) or deck B.

@@ -322,6 +322,14 @@ fn transport(
             Command::MakeTempoMaster(deck),
             cx,
         ))
+        .child(toggle(
+            ("key-lock", deck.index()),
+            "Key lock",
+            app.key_lock(deck),
+            colour,
+            Command::ToggleKeyLock(deck),
+            cx,
+        ))
         .child(
             div()
                 .flex()
