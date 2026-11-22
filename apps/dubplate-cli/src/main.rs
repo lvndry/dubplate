@@ -6,6 +6,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use dubplate_rekordbox::{DatabaseKey, Library, Playlist, PlaylistKind, Track, default_master_db};
 
+mod analyse;
 mod analysis;
 mod midi;
 mod set;
@@ -32,6 +33,9 @@ enum Command {
     /// Work with the sets prepared in Dubplate, and export them to rekordbox.
     #[command(subcommand)]
     Set(set::SetCommand),
+    /// Find the tempo, beat grid, key and energy of audio files as Dubplate analyses them, and
+    /// compare them with rekordbox's. Audio files and rekordbox's files are only read.
+    Analyse(analyse::AnalyseArgs),
 }
 
 #[derive(Subcommand)]
@@ -76,6 +80,7 @@ fn main() -> Result<()> {
         }) => analysis(&master_db_or_default(library)?, &track, json),
         Command::Midi(command) => midi::run(command),
         Command::Set(command) => set::run(command),
+        Command::Analyse(arguments) => analyse::run(arguments),
     }
 }
 
