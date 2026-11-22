@@ -109,7 +109,7 @@ Statuses are as audited on 22 November 2026, on `main` with a second Dubplate ru
 
 **B8 Drag the waveform.** Status: **Done** (drag the lanes to scrub a stopped deck or nudge a playing one); to check on the decks.
 
-**B9 Pitch-bend feedback.** See: while nudging, the BPM shows the bent tempo. Status: **Missing.**
+**B9 Pitch-bend feedback.** See: while nudging, the BPM shows the bent tempo. Status: **Done**: while the jog's edge bends a playing deck, its BPM follows the record's speed in the deck's colour, and settles back to the set tempo in white once the bend has faded.
 
 ## Waveforms
 
