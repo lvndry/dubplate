@@ -100,6 +100,29 @@ impl Ramp {
         self.current
     }
 
+    /// Whether the value has reached its target and stays there.
+    pub(crate) fn is_settled(&self) -> bool {
+        self.step == 0.0
+    }
+
+    /// Multiplies both channels by the value, moving it on one step per frame. A value at rest
+    /// is one multiplication by a constant, which the compiler turns into vector code.
+    pub(crate) fn apply(&mut self, left: &mut [f32], right: &mut [f32]) {
+        if self.is_settled() {
+            let gain = self.current;
+            for (left, right) in left.iter_mut().zip(right.iter_mut()) {
+                *left *= gain;
+                *right *= gain;
+            }
+            return;
+        }
+        for (left, right) in left.iter_mut().zip(right.iter_mut()) {
+            let gain = self.next_value();
+            *left *= gain;
+            *right *= gain;
+        }
+    }
+
     pub(crate) fn next_value(&mut self) -> f32 {
         if self.step != 0.0 {
             self.current += self.step;
@@ -124,6 +147,26 @@ mod tests {
         ramp.set_target(1.0);
         let values: Vec<f32> = (0..6).map(|_| ramp.next_value()).collect();
         assert_eq!(values, vec![0.25, 0.5, 0.75, 1.0, 1.0, 1.0]);
+    }
+
+    #[test]
+    fn applying_a_ramp_matches_stepping_it_frame_by_frame() {
+        let samples: Vec<f32> = (0..12).map(|index| index as f32 - 4.5).collect();
+        for (start, target) in [(1.0, 1.0), (0.25, 0.25), (0.0, 1.0), (1.0, 0.2)] {
+            let mut applied = Ramp::new(start, 5);
+            applied.set_target(target);
+            let mut stepped = applied;
+            let mut left = samples.clone();
+            let mut right: Vec<f32> = samples.iter().map(|sample| -sample).collect();
+            applied.apply(&mut left, &mut right);
+            for (index, sample) in samples.iter().enumerate() {
+                let gain = stepped.next_value();
+                assert_eq!(left[index], sample * gain);
+                assert_eq!(right[index], -sample * gain);
+            }
+            assert_eq!(applied.current(), stepped.current());
+            assert!(applied.is_settled());
+        }
     }
 
     #[test]

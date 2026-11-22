@@ -12,6 +12,7 @@ mod controls;
 mod deck;
 mod effects;
 mod energy;
+mod folder_picker;
 mod fonts;
 mod frame_stats;
 mod hardware;
@@ -35,6 +36,7 @@ mod tap_tempo;
 mod theme;
 mod transport;
 mod waveform;
+mod waveform_cache;
 mod widgets;
 
 use gpui::prelude::*;

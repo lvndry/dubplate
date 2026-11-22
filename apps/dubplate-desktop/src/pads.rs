@@ -5,6 +5,8 @@
 use dubplate_engine::{BeatLength, EffectKind, PadEffect};
 use dubplate_midi::PadMode;
 
+use crate::effects::effect_pad_label;
+
 /// Pads on a deck.
 pub const PAD_COUNT: usize = 8;
 
@@ -71,7 +73,7 @@ impl PadFx {
     pub fn label(self) -> (&'static str, String) {
         match self {
             PadFx::Roll(length) => ("Roll", length.to_string()),
-            PadFx::Effect(effect) => (effect_name(effect.kind), effect.beat.to_string()),
+            PadFx::Effect(effect) => (effect_pad_label(effect.kind), effect.beat.to_string()),
         }
     }
 }
@@ -145,25 +147,6 @@ pub fn pad_fx(mode: PadMode, pad: usize, shift: bool) -> Option<PadFx> {
         _ => return None,
     };
     PAD_FX_BANKS[bank].get(pad).copied()
-}
-
-/// An effect's short name on a pad.
-fn effect_name(kind: EffectKind) -> &'static str {
-    match kind {
-        EffectKind::Echo => "Echo",
-        EffectKind::PingPong => "Ping pong",
-        EffectKind::Reverb => "Reverb",
-        EffectKind::LowPass => "Low pass",
-        EffectKind::HighPass => "High pass",
-        EffectKind::BandPass => "Band pass",
-        EffectKind::Filter => "Filter",
-        EffectKind::Flanger => "Flanger",
-        EffectKind::Phaser => "Phaser",
-        EffectKind::Gate => "Gate",
-        EffectKind::Crusher => "Crusher",
-        EffectKind::Brake => "Brake",
-        EffectKind::Backspin => "Backspin",
-    }
 }
 
 /// The semitones of the Keyboard and Key Shift pads before SHIFT moves them, pad 1 first: +4 to

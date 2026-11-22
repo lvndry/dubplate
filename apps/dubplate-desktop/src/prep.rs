@@ -360,7 +360,7 @@ mod tests {
         assert!(readiness(&known, Some(&check), &cues).is_ready());
         assert_eq!(
             readiness(&known, Some(&check), &SetEntry::default()).badge(),
-            "Grid unconfirmed +2"
+            "Grid unconfirmed, and 2 more"
         );
         let unconfirmed = SetEntry {
             grid_confirmed: false,

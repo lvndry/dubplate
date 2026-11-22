@@ -126,7 +126,11 @@ impl DubplateApp {
             this.update(cx, |this, cx| {
                 if this.detail_pending.as_ref() == Some(&path) {
                     this.detail_pending = None;
-                    this.track_detail = Some((path, Arc::new(detail)));
+                    let needs_drawing = detail.zoomed.is_none();
+                    this.track_detail = Some((path.clone(), Arc::new(detail)));
+                    if needs_drawing {
+                        this.draw_check_waveforms(path, cx);
+                    }
                     cx.notify();
                 }
             })
@@ -393,7 +397,14 @@ fn lane(
             canvas(
                 |_, _, _| {},
                 move |bounds, (), window, _| {
-                    lanes::paint_lane(bounds, zoomed.as_deref(), Some(&marks), playhead, window);
+                    lanes::paint_lane(
+                        bounds,
+                        zoomed.as_deref(),
+                        Some(&marks),
+                        playhead,
+                        1.0,
+                        window,
+                    );
                     let zoom = zoomed
                         .as_deref()
                         .map_or(crate::waveform::Zoom::DEFAULT, |waveform| waveform.zoom());

@@ -63,6 +63,26 @@ pub fn effect_label(kind: EffectKind) -> &'static str {
     }
 }
 
+/// The effect's name on a performance pad, short enough to sit beside the beat length:
+/// the filters by their DJ shorthand, such as `BPF` for the band-pass.
+pub fn effect_pad_label(kind: EffectKind) -> &'static str {
+    match kind {
+        EffectKind::Echo => "Echo",
+        EffectKind::PingPong => "Ping",
+        EffectKind::Reverb => "Reverb",
+        EffectKind::LowPass => "LPF",
+        EffectKind::HighPass => "HPF",
+        EffectKind::BandPass => "BPF",
+        EffectKind::Filter => "Filter",
+        EffectKind::Flanger => "Flanger",
+        EffectKind::Phaser => "Phaser",
+        EffectKind::Gate => "Gate",
+        EffectKind::Crusher => "Crush",
+        EffectKind::Brake => "Brake",
+        EffectKind::Backspin => "Spin",
+    }
+}
+
 /// Every effect in the picker's order, which FX SELECT steps through.
 fn picker_order() -> impl DoubleEndedIterator<Item = EffectKind> + Clone {
     CATALOGUE
@@ -177,6 +197,14 @@ mod tests {
     use std::collections::HashSet;
 
     use super::*;
+
+    #[test]
+    fn pad_labels_leave_room_for_the_beat_length() {
+        for kind in picker_order() {
+            let label = effect_pad_label(kind);
+            assert!(label.chars().count() <= 7, "{label}");
+        }
+    }
 
     #[test]
     fn every_effect_is_in_exactly_one_group() {

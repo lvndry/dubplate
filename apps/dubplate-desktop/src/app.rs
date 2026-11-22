@@ -32,7 +32,7 @@ mod track_check;
 mod waveforms;
 
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -62,7 +62,8 @@ use crate::controls::{
     nudged_tempo_slider, tempo_fader, trim_gain_at,
 };
 use crate::deck::{
-    Deck, DeckContent, GridSource, HotCues, LoadError, PreparedTrack, TrackVisuals, prepare_track,
+    Deck, DeckContent, GridSource, HotCues, LoadError, PreparedTrack, TrackVisuals, deck_letter,
+    prepare_track,
 };
 use crate::effects::{EffectUnitSetting, search, step_beat, step_effect};
 use crate::fonts::UI_FAMILY;
@@ -79,11 +80,12 @@ use crate::prep::{Catalogue, TrackCheck, TrackDetail};
 use crate::recording::Recording;
 use crate::relink::Missing;
 use crate::set::SetEditor;
-use crate::settings::Settings;
+use crate::settings::{LevelsSetting, Settings};
 use crate::shortcuts::{Perform, WINDOW_CONTEXT};
 use crate::theme;
 use crate::transport::{self, CueDown, is_at_cue, other_deck};
 use crate::waveform::Zoom;
+use crate::waveform_cache::WaveformCache;
 use audition::Audition;
 use notice::{NoticePlace, Notices};
 use pads::HeldPad;
@@ -183,6 +185,7 @@ pub struct DubplateApp {
     quit_refused: bool,
     prepare_focus: PrepareFocus,
     next_cursor: usize,
+    queued_suggestions: VecDeque<usize>,
     set_scroll: ScrollHandle,
     prepare_view: Arc<prepare::PrepareViewModel>,
     prepare_generation: u64,
@@ -191,6 +194,7 @@ pub struct DubplateApp {
     check_generation: u64,
     track_detail: Option<(PathBuf, Arc<TrackDetail>)>,
     detail_pending: Option<PathBuf>,
+    waveform_cache: WaveformCache,
     check_cursor_seconds: f64,
     catalogue: Arc<Catalogue>,
     missing: Arc<Vec<Missing>>,
@@ -296,10 +300,11 @@ impl DubplateApp {
                 })
             })
             .unwrap_or_default();
-        let mixer = MixerPositions {
+        let mixer = settings.levels.apply(MixerPositions {
             sampler_volume: settings.sampler.volume.clamp(0.0, 1.0),
             ..MixerPositions::default()
-        };
+        });
+        let mode = settings.screen();
         let (engine, audio_problem) = audio::start_engine(&mixer, settings.audio_device.as_deref());
         problems.extend(audio_problem);
         let hardware = match Hardware::start() {
@@ -342,7 +347,7 @@ impl DubplateApp {
             edited_hot_cues: HashMap::new(),
             lights_settling: false,
             effect_focus: EffectUnitId::ALL[0],
-            mode: Mode::Perform,
+            mode,
             pad_modes: [PadMode::HotCue; DECK_COUNT],
             beat_jump_scales: [0; DECK_COUNT],
             held_pads: [None; DECK_COUNT],
@@ -362,6 +367,7 @@ impl DubplateApp {
             quit_refused: false,
             prepare_focus: PrepareFocus::Library,
             next_cursor: 0,
+            queued_suggestions: VecDeque::new(),
             set_scroll: ScrollHandle::new(),
             prepare_view: Arc::default(),
             prepare_generation: 0,
@@ -370,6 +376,7 @@ impl DubplateApp {
             check_generation: 0,
             track_detail: None,
             detail_pending: None,
+            waveform_cache: WaveformCache::default(),
             check_cursor_seconds: 0.0,
             catalogue: Arc::default(),
             missing: Arc::default(),
@@ -398,6 +405,8 @@ impl DubplateApp {
             frame_stats: FrameStats::from_environment().map(|stats| Rc::new(RefCell::new(stats))),
             _subscriptions: vec![subscription, search_subscription, quit_subscription],
         };
+        app.browser
+            .update(cx, |browser, cx| browser.show_screen(mode, cx));
         app.restore_effect_units(cx);
         app.restore_sampler(cx);
         app.restore_library_sorts(cx);
@@ -839,6 +848,20 @@ impl DubplateApp {
                     SyncMode::Beat
                 };
                 self.engine_command(cx, |controller| controller.set_sync(deck, mode));
+                let nothing_to_follow = DeckId::ALL
+                    .into_iter()
+                    .all(|other| !self.deck_state(other).playing);
+                if mode != SyncMode::Off && nothing_to_follow {
+                    self.show_notice(
+                        NoticePlace::Deck(deck),
+                        format!(
+                            "Sync armed: deck {} locks to the tempo master as soon as a deck \
+                             with a beat grid plays.",
+                            deck_letter(deck)
+                        ),
+                        cx,
+                    );
+                }
             }
             Command::MakeTempoMaster(deck) => self.engine_command(cx, |controller| {
                 controller.set_master_tempo(MasterTempo::Deck(deck))
@@ -868,6 +891,8 @@ impl DubplateApp {
             },
             Command::SwitchMode(mode) => {
                 self.mode = mode;
+                self.settings.set_screen(mode);
+                self.save_settings(cx);
                 self.browser
                     .update(cx, |browser, cx| browser.show_screen(mode, cx));
             }
@@ -1124,6 +1149,7 @@ impl DubplateApp {
             }
             Control::MasterLevel => {
                 self.mixer.master_level = fraction;
+                self.remember_levels(cx);
                 self.engine_command(cx, |controller| {
                     controller.set_master_gain(master_gain_at(fraction))
                 });
@@ -1144,17 +1170,19 @@ impl DubplateApp {
             }
             Control::HeadphoneMix => {
                 self.mixer.headphone_mix = fraction;
+                self.remember_levels(cx);
                 self.engine_command(cx, |controller| controller.set_headphone_mix(fraction));
             }
             Control::HeadphoneLevel => {
                 self.mixer.headphone_level = fraction;
+                self.remember_levels(cx);
                 self.engine_command(cx, |controller| controller.set_headphone_level(fraction));
             }
             Control::SamplerVolume => {
                 self.mixer.sampler_volume = fraction;
                 self.settings.sampler.volume = fraction;
                 self.engine_command(cx, |controller| controller.set_sampler_volume(fraction));
-                self.save_settings(cx);
+                self.save_settings_soon(cx);
             }
         }
         cx.notify();
@@ -1386,8 +1414,7 @@ impl DubplateApp {
         }
     }
 
-    /// Saves the effect units' settings a moment after the last change, so turning the level
-    /// knob writes the file once rather than on every step.
+    /// Remembers the effect units' settings.
     fn remember_effect_units(&mut self, cx: &mut Context<'_, Self>) {
         let units: Vec<EffectUnitSetting> = EffectUnitId::ALL
             .into_iter()
@@ -1397,6 +1424,18 @@ impl DubplateApp {
         if units.len() == EFFECT_UNIT_COUNT {
             self.settings.effect_units = units;
         }
+        self.save_settings_soon(cx);
+    }
+
+    /// Remembers the master and headphone levels, so the next launch opens no louder.
+    fn remember_levels(&mut self, cx: &mut Context<'_, Self>) {
+        self.settings.levels = LevelsSetting::of(&self.mixer);
+        self.save_settings_soon(cx);
+    }
+
+    /// Saves the settings a moment after the last change, so turning a knob writes the file
+    /// once rather than on every step.
+    fn save_settings_soon(&mut self, cx: &mut Context<'_, Self>) {
         if std::mem::replace(&mut self.settings_save_pending, true) {
             return;
         }
