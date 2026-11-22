@@ -29,7 +29,7 @@ const BRIGHTEST_DAMPING_HZ: f32 = 20_000.0;
 const DARKEST_DAMPING_HZ: f32 = 1_200.0;
 const MIN_LOW_CUT_HZ: f32 = 20.0;
 const MAX_LOW_CUT_HZ: f32 = 1_000.0;
-const OUTPUT_GAIN: f32 = 0.14;
+const OUTPUT_GAIN: f32 = 0.28;
 const LEVEL_REFERENCE_DECAY_SECONDS: f32 = 2.5;
 const MAX_LEVEL_BOOST: f32 = 1.4;
 const CONTROL_INTERVAL: u32 = 32;
@@ -42,7 +42,9 @@ const DEFAULT_SIZE: f32 = 0.6;
 const DEFAULT_DAMPING: f32 = 0.45;
 const DEFAULT_PRE_DELAY_SECONDS: f32 = 0.015;
 const DEFAULT_LOW_CUT_HZ: f32 = 200.0;
-const DEFAULT_MIX: f32 = 0.35;
+const DEFAULT_MIX: f32 = 0.5;
+const SHORTEST_DEPTH_DECAY_SECONDS: f32 = 2.0;
+const LONGEST_DEPTH_DECAY_SECONDS: f32 = 5.0;
 
 /// A stereo algorithmic reverb, from a small room to a long hall.
 ///
@@ -51,13 +53,15 @@ const DEFAULT_MIX: f32 = 0.35;
 /// 200 Hz by default, so reverb on a kick drum adds space without mud. Switched off, the
 /// reverb stops taking in new audio and its tail rings out.
 ///
-/// The depth knob raises the reverb level up to the dry level and the decay from 1.2 to 6 s.
+/// The depth knob balances the music and the reverb, as the LEVEL/DEPTH knob of a DJ mixer
+/// does: in the middle both play at full level and fully right only the reverb plays. It also
+/// lengthens the decay from 2 to 5 s.
 pub struct Reverb {
     unit: Unit<ReverbKernel>,
 }
 
 impl Reverb {
-    /// Builds a reverb with a 2.5 s decay and mix 0.35, switched off. This allocates.
+    /// Builds a reverb with a 2.5 s decay and mix 0.5, switched off. This allocates.
     pub fn new(config: &EffectConfig) -> Self {
         Self {
             unit: Unit::new(ReverbKernel::new(config), DEFAULT_MIX),
@@ -115,8 +119,11 @@ impl Controls for Reverb {
     }
 
     fn apply_depth(&mut self, depth: f32) {
-        self.unit.set_mix(0.5 * depth);
-        self.set_decay_seconds(1.2 + 4.8 * depth);
+        self.unit.set_mix(depth);
+        self.set_decay_seconds(
+            SHORTEST_DEPTH_DECAY_SECONDS
+                + (LONGEST_DEPTH_DECAY_SECONDS - SHORTEST_DEPTH_DECAY_SECONDS) * depth,
+        );
     }
 }
 

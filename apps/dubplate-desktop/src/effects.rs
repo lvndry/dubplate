@@ -31,7 +31,7 @@ pub const CATALOGUE: [EffectGroup; 3] = [
     EffectGroup {
         name: "Sweep",
         effects: &[
-            EffectKind::SweepFilter,
+            EffectKind::Filter,
             EffectKind::LowPass,
             EffectKind::HighPass,
             EffectKind::BandPass,
@@ -53,7 +53,7 @@ pub fn effect_label(kind: EffectKind) -> &'static str {
         EffectKind::LowPass => "Low-pass",
         EffectKind::HighPass => "High-pass",
         EffectKind::BandPass => "Band-pass",
-        EffectKind::SweepFilter => "Filter",
+        EffectKind::Filter => "Filter",
         EffectKind::Flanger => "Flanger",
         EffectKind::Phaser => "Phaser",
         EffectKind::Gate => "Gate",
@@ -73,7 +73,7 @@ pub fn effect_pad_label(kind: EffectKind) -> &'static str {
         EffectKind::LowPass => "LPF",
         EffectKind::HighPass => "HPF",
         EffectKind::BandPass => "BPF",
-        EffectKind::SweepFilter => "Sweep",
+        EffectKind::Filter => "Filter",
         EffectKind::Flanger => "Flanger",
         EffectKind::Phaser => "Phaser",
         EffectKind::Gate => "Gate",
@@ -222,7 +222,7 @@ mod tests {
         assert_eq!(step_effect(EffectKind::Echo, 1), EffectKind::PingPong);
         assert_eq!(step_effect(EffectKind::Echo, -1), EffectKind::Backspin);
         assert_eq!(step_effect(EffectKind::Backspin, 1), EffectKind::Echo);
-        assert_eq!(step_effect(EffectKind::Gate, 1), EffectKind::SweepFilter);
+        assert_eq!(step_effect(EffectKind::Gate, 1), EffectKind::Filter);
     }
 
     #[test]
