@@ -1,6 +1,7 @@
 //! What each deck holds on the interface side: the track, its waveforms and beat grid, and the
-//! playhead shown. Preparing a track (opening the audio file and reading rekordbox's analysis)
-//! happens on a background thread; the audio itself lives in the engine.
+//! playhead shown. Preparing a track (opening the audio file and reading rekordbox's analysis,
+//! or taking Dubplate's for a track rekordbox never analysed) happens on a background thread;
+//! the audio itself lives in the engine.
 
 use std::cell::RefCell;
 use std::path::Path;
@@ -8,11 +9,13 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use dubplate_engine::DeckId;
-use dubplate_prep::GridCorrection;
+use dubplate_prep::{AudioAnalysis, GridCorrection};
+use dubplate_rekordbox::analysis::BeatGrid;
 use dubplate_rekordbox::{HotCuePad, TrackAnalysis};
 
 use crate::collection::{CollectionTrack, TrackOrigin};
 use crate::playhead::PlayheadClock;
+use crate::prep::chosen_grid;
 use crate::tap_tempo::TapTempo;
 use crate::waveform::{BeatMarks, OverviewWaveform, Zoom, ZoomedWaveform};
 
@@ -25,8 +28,44 @@ pub struct PreparedTrack {
     beats: BeatMarks,
     /// The tempo and first downbeat, for the engine's beat-synced effects.
     pub beat_grid: Option<dubplate_engine::BeatGrid>,
+    /// Where the beat grid comes from, when the track has one.
+    pub grid_source: Option<GridSource>,
     analysis_problem: Option<String>,
 }
+
+/// Where the beat grid of the track on a deck comes from, which decides what may replace it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GridSource {
+    /// rekordbox's analysis, which nothing on the deck replaces.
+    Rekordbox,
+    /// Dubplate's analysis, for a track rekordbox never analysed; tapping replaces it.
+    Analysis,
+    /// The DJ's taps.
+    Tapped,
+}
+
+/// A beat grid made ready for a deck: its marks for the waveforms and the engine's grid.
+pub struct DeckGrid {
+    /// The beats drawn on the waveforms.
+    pub beats: BeatMarks,
+    /// The tempo and first downbeat, for sync, the beat-synced effects, loops and quantize.
+    pub engine: Option<dubplate_engine::BeatGrid>,
+}
+
+impl DeckGrid {
+    /// `grid` with the DJ's `correction`, as the deck uses it.
+    pub fn new(grid: &BeatGrid, correction: GridCorrection) -> Self {
+        let corrected = correction.apply(grid);
+        Self {
+            beats: BeatMarks::from_grid(&corrected),
+            engine: engine_beat_grid(&corrected),
+        }
+    }
+}
+
+/// What the lanes say where a track rekordbox never analysed has no waveform, once Dubplate's
+/// analysis has given it a beat grid.
+pub const ANALYSED_GRID_NOTE: &str = "Dubplate's beat grid \u{b7} no waveform outside rekordbox";
 
 /// The waveforms and beat grid of a loaded track. Missing analysis leaves them empty and says
 /// why in `analysis_problem`; the track still plays.
@@ -96,12 +135,14 @@ pub enum LoadError {
 }
 
 /// Opens the track's audio and reads its analysis from rekordbox's `share_directory`, with
-/// the DJ's `correction` of its beat grid. Disk work: run it off the interface thread.
+/// the DJ's `correction` of its beat grid. A track rekordbox has no grid for takes the grid of
+/// Dubplate's `analysis`, when it has arrived. Disk work: run it off the interface thread.
 pub fn prepare_track(
     entry: &CollectionTrack,
     share_directory: Option<&Path>,
     zoom: Zoom,
     correction: GridCorrection,
+    analysis: Option<&AudioAnalysis>,
 ) -> Result<PreparedTrack, LoadError> {
     let path = entry.track.file_path.as_deref().ok_or(LoadError::NoFile)?;
     if !path.is_file() {
@@ -114,7 +155,7 @@ pub fn prepare_track(
         .analysis_path
         .as_deref()
         .filter(|analysis_path| !analysis_path.is_empty());
-    let analysis = match (entry.origin, analysis_path, share_directory) {
+    let rekordbox = match (entry.origin, analysis_path, share_directory) {
         (TrackOrigin::File, _, _) => {
             Err("Not in your rekordbox collection: no beat grid, cues or waveform".to_owned())
         }
@@ -124,37 +165,33 @@ pub fn prepare_track(
         }
         (TrackOrigin::Rekordbox, _, _) => Err("rekordbox has not analysed this track".to_owned()),
     };
-    Ok(match analysis {
-        Ok(analysis) => {
-            let grid = analysis
-                .beat_grid
-                .as_ref()
-                .map(|grid| correction.apply(grid));
-            PreparedTrack {
-                audio,
-                zoomed: ZoomedWaveform::from_waveforms(&analysis.waveforms, zoom),
-                overview: OverviewWaveform::from_waveforms(&analysis.waveforms),
-                beats: grid.as_ref().map(BeatMarks::from_grid).unwrap_or_default(),
-                beat_grid: grid.as_ref().and_then(engine_beat_grid),
-                analysis_problem: None,
-            }
-        }
-        Err(problem) => PreparedTrack {
-            audio,
-            zoomed: None,
-            overview: None,
-            beats: BeatMarks::default(),
-            beat_grid: None,
-            analysis_problem: Some(problem),
-        },
+    let rekordbox_problem = rekordbox.as_ref().err().cloned();
+    let rekordbox = rekordbox.as_ref().ok();
+    let chosen = chosen_grid(rekordbox, analysis);
+    let grid_source = chosen.as_ref().map(|(_, source)| *source);
+    let (beats, beat_grid) = chosen
+        .map(|(grid, _)| DeckGrid::new(&grid, correction))
+        .map_or_else(Default::default, |grid| (grid.beats, grid.engine));
+    let analysis_problem = match grid_source {
+        Some(GridSource::Analysis) => Some(ANALYSED_GRID_NOTE.to_owned()),
+        Some(GridSource::Rekordbox | GridSource::Tapped) | None => rekordbox_problem,
+    };
+    Ok(PreparedTrack {
+        audio,
+        zoomed: rekordbox
+            .and_then(|analysis| ZoomedWaveform::from_waveforms(&analysis.waveforms, zoom)),
+        overview: rekordbox
+            .and_then(|analysis| OverviewWaveform::from_waveforms(&analysis.waveforms)),
+        beats,
+        beat_grid,
+        grid_source,
+        analysis_problem,
     })
 }
 
 /// rekordbox's grid as the engine keeps it: the tempo at the first downbeat, and where that
 /// downbeat falls, so effects land on the beat and the bar.
-fn engine_beat_grid(
-    grid: &dubplate_rekordbox::analysis::BeatGrid,
-) -> Option<dubplate_engine::BeatGrid> {
+fn engine_beat_grid(grid: &BeatGrid) -> Option<dubplate_engine::BeatGrid> {
     let first = grid
         .beats
         .iter()
@@ -249,10 +286,10 @@ pub struct Deck {
     pub clock: PlayheadClock,
     /// Whether CUE is held down at the cue point, playing until it is let go, as on a CDJ.
     pub cue_preview: bool,
-    /// The taps on this deck's tempo, and whether the deck's grid came from them.
+    /// The taps on this deck's tempo.
     pub tap_tempo: TapTempo,
-    /// Whether the deck's beat grid was tapped by the DJ, so more taps may change it.
-    pub tapped_grid: bool,
+    /// Where the deck's beat grid comes from, when it has one.
+    pub grid_source: Option<GridSource>,
     load_generation: u64,
 }
 
@@ -266,7 +303,7 @@ impl Deck {
         self.hot_cues = hot_cues;
         self.cue_preview = false;
         self.tap_tempo = TapTempo::default();
-        self.tapped_grid = false;
+        self.grid_source = None;
         self.load_generation
     }
 

@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use dubplate_engine::DeckId;
+use dubplate_prep::AudioAnalysis;
 use gpui::component::input::{Input, InputEvent, InputState};
 use gpui::prelude::*;
 use gpui::{
@@ -14,8 +15,9 @@ use gpui::{
     Window, div, px, svg, uniform_list,
 };
 
+use crate::analysis::{AnalysisState, bpm_cell, energy_cell, key_cell};
 use crate::assets::SEARCH_ICON_PATH;
-use crate::collection::{Collection, CrateIndex, CrateKind, TrackIndex};
+use crate::collection::{Collection, CollectionTrack, CrateIndex, CrateKind, TrackIndex};
 use crate::commands::Direction;
 use crate::deck::deck_letter;
 use crate::fonts::MONO_FAMILY;
@@ -119,7 +121,7 @@ pub struct Browser {
     shows_load: bool,
     missing: Arc<HashSet<TrackIndex>>,
     relinking: bool,
-    energies: HashMap<PathBuf, Option<u8>>,
+    analyses: HashMap<PathBuf, Option<Arc<AudioAnalysis>>>,
     search_input: Entity<InputState>,
     table_focus: FocusHandle,
     scroll: UniformListScrollHandle,
@@ -155,7 +157,7 @@ impl Browser {
             shows_load: true,
             missing: Arc::default(),
             relinking: false,
-            energies: HashMap::new(),
+            analyses: HashMap::new(),
             search_input,
             table_focus: cx.focus_handle(),
             scroll: UniformListScrollHandle::new(),
@@ -197,14 +199,27 @@ impl Browser {
         cx.notify();
     }
 
-    /// Shows the energies just rated, `None` for a track that has none or could not be read.
-    pub fn add_energies(
+    /// Shows what the analyses just made found, `None` for a track that could not be analysed.
+    pub fn add_analyses(
         &mut self,
-        ratings: Vec<(PathBuf, Option<u8>)>,
+        analyses: Vec<(PathBuf, Option<Arc<AudioAnalysis>>)>,
         cx: &mut Context<'_, Self>,
     ) {
-        self.energies.extend(ratings);
+        self.analyses.extend(analyses);
         cx.notify();
+    }
+
+    /// What the analyser has said about `entry` so far.
+    fn analysis_state(&self, entry: &CollectionTrack) -> AnalysisState<'_> {
+        match entry
+            .track
+            .file_path
+            .as_ref()
+            .and_then(|path| self.analyses.get(path))
+        {
+            Some(answer) => AnalysisState::of_answer(answer.as_ref()),
+            None => AnalysisState::Waiting,
+        }
     }
 
     /// Marks the rekordbox tracks whose files are not where rekordbox says, and whether their
@@ -487,16 +502,7 @@ impl Browser {
         let entry = collection.track(track);
         let row = &entry.row;
         let actions = self.actions();
-        let energy: SharedString = match entry
-            .track
-            .file_path
-            .as_ref()
-            .and_then(|path| self.energies.get(path))
-        {
-            Some(Some(rating)) => rating.to_string().into(),
-            Some(None) => "\u{2013}".into(),
-            None => SharedString::default(),
-        };
+        let analysis = self.analysis_state(entry);
         let selected = self.selected == Some(track);
         let missing = self.missing.contains(&track);
         let dragged = DraggedTrack {
@@ -559,9 +565,9 @@ impl Browser {
                     .px(px(8.0))
                     .text_color(theme::MUTED),
             )
-            .child(number_cell(row.bpm.clone(), BPM_WIDTH).justify_end())
-            .child(number_cell(row.key.clone(), KEY_WIDTH))
-            .child(number_cell(energy, ENERGY_WIDTH).justify_end())
+            .child(number_cell(bpm_cell(entry, analysis), BPM_WIDTH).justify_end())
+            .child(number_cell(key_cell(entry, analysis), KEY_WIDTH))
+            .child(number_cell(energy_cell(analysis), ENERGY_WIDTH).justify_end())
             .child(
                 number_cell(row.time.clone(), TIME_WIDTH)
                     .justify_end()
