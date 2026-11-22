@@ -36,12 +36,19 @@ Cmd+1 opens Prepare: the library on the left, your set on the right.
 | Move a set track up or down | Alt+Up / Alt+Down |
 | Take a track out / undo | Backspace / Cmd+Z |
 | Keep a track as a backup | B |
-| Move between the library, the set and Next / back | Tab / Shift+Tab |
+| Move between the library, the set and Next / back | Ctrl+Tab / Ctrl+Shift+Tab |
 | Insert Next suggestion 1 to 5 after the selected set track | Option+1 to Option+5 |
 
-The **Next** panel suggests what to play after the selected set track, with the reason ("One step on the wheel · +1.6% · energy +2"), steered by the set's energy curve against its target. The target climbs from your library's calmer tracks to its most intense, so it fits how your music is rated. Each suggestion shows its Option key. Tab to the panel, choose with the arrows and press Enter to insert one: the suggestions then follow the track you just placed, so Enter, Enter, Enter builds a run.
+The **Next** panel suggests what to play after the selected set track, with the reason ("One step on the wheel · +1.6% · energy +2"), steered by the set's energy curve against its target. The target climbs from your library's calmer tracks to its most intense, so it fits how your music is rated. Each suggestion shows its Option key. Use Ctrl+Tab to reach Next, choose with the arrows and press Enter to insert one. When the refreshed suggestions arrive, they follow the track you just placed. Tab and Shift+Tab move through individual controls.
 
 Each set track has a **ready badge**: Ready, or what is missing (Grid unconfirmed, No mix-in cue, No mix-out cue, File missing, Key unknown), the most urgent first, such as "File missing, and 3 more"; hover it to see every problem. A small **Y** beside it means Dubplate can propose the missing mix cues from the phrases: press Y to accept them. Each seam between two tracks shows the key move, the tempo step and any warning: key clash, a tempo gap over 6%, vocals meeting, an energy drop, or the same track twice.
+
+### Dig through the library
+
+- Click a column header to sort by it, again to reverse it, and a third time to go back to the crate's own order. Prepare and Perform each remember their sort.
+- The search field matches titles, artists, genres, comments and the folders a track is filed in, so `amapiano warmup` finds the tracks in your amapiano/warmup folder. The Genre column shows the genre tag, or those folders when the track has none.
+- **BPM** keeps a tempo range, a few BPM either side of the selected set track (or the playing deck); the arrows move each end.
+- **Key fits** keeps the tracks whose key mixes well after the selected set track in Prepare, or the deck playing in Perform: the same key, one step on the wheel, or the relative key, as the Next suggestions choose.
 
 ### Check each track
 
@@ -80,7 +87,7 @@ From then on the set is an ordinary rekordbox playlist, ready to export to a USB
 
 ## 4. Mix
 
-Cmd+L loads the set's first two tracks onto deck A and deck B at their mix-in cues; Cmd+2 opens Perform.
+Cmd+L loads the set's first two tracks onto deck A and deck B at their mix-in cues; Cmd+2 opens Perform. A set track whose file is missing is never loaded: its deck keeps what it had, and a notice names the track with a **Relink** button that looks for the file. The same goes for any track loaded from the library.
 
 On the FLX4, everything works as in rekordbox's FLX4 layout:
 

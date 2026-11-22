@@ -10,6 +10,7 @@ use gpui::{
 use super::DubplateApp;
 use crate::controls::Control;
 use crate::theme;
+use crate::widgets::{InteractiveControl, adjusted_value, control_label};
 
 const STROKE: Pixels = px(1.5);
 /// Where the arc starts, in degrees clockwise from three o'clock: seven o'clock.
@@ -37,6 +38,17 @@ pub(super) fn render(
     };
     div()
         .id(SharedString::from(format!("knob-{control:?}")))
+        .accessible_slider(control_label(control), value)
+        .map(|element| super::slider::accessible_adjustments(element, control, cx))
+        .on_key_down(cx.listener(move |this, event, _, cx| {
+            let control = control;
+            if let Some(value) =
+                adjusted_value(event, this.control_fraction(control), control.resting())
+            {
+                this.set_control(control, value, cx);
+                cx.stop_propagation();
+            }
+        }))
         .size(size)
         .flex_none()
         .cursor_ns_resize()

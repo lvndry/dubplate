@@ -48,6 +48,8 @@ impl Priority {
 pub struct AnalysisResult {
     /// The track the request was for.
     pub path: PathBuf,
+    /// Caller revision, echoed so obsolete answers can be discarded.
+    pub revision: u64,
     /// What the analysis found, or why the track could not be analysed.
     pub outcome: Result<AudioAnalysis, String>,
 }
@@ -58,6 +60,7 @@ struct QueuedTrack {
     path: PathBuf,
     priority: Priority,
     sequence: u64,
+    revision: u64,
 }
 
 /// The tracks waiting to be analysed.
@@ -88,6 +91,7 @@ impl QueueState {
             .iter_mut()
             .find(|queued| queued.path == request.path)
         {
+            queued.revision = request.revision;
             if !queued.priority.at_least(request.priority) {
                 queued.priority = request.priority;
             }
@@ -154,9 +158,23 @@ impl AnalysisQueue {
     /// Queues several tracks at once. The worker takes the whole batch before it picks the next
     /// track, so a batch is always analysed in priority order.
     pub fn request_all(&self, requests: impl IntoIterator<Item = (PathBuf, Priority)>) {
+        self.request_all_versioned(
+            requests
+                .into_iter()
+                .map(|(path, priority)| (path, priority, 0)),
+        );
+    }
+
+    /// Queues requests with a caller revision, echoed in each result. A newer request for
+    /// a queued path supersedes its revision while preserving its earliest priority.
+    pub fn request_all_versioned(
+        &self,
+        requests: impl IntoIterator<Item = (PathBuf, Priority, u64)>,
+    ) {
         let batch: Vec<QueuedTrack> = requests
             .into_iter()
-            .map(|(path, priority)| QueuedTrack {
+            .map(|(path, priority, revision)| QueuedTrack {
+                revision,
                 path,
                 priority,
                 sequence: 0,
@@ -228,6 +246,7 @@ impl Worker {
                 let outcome = self.answer(&track, &mut cache);
                 let _ = self.result_sender.send(AnalysisResult {
                     path: track.path,
+                    revision: track.revision,
                     outcome,
                 });
             }
@@ -264,6 +283,7 @@ impl Worker {
             for track in batch {
                 let _ = self.result_sender.send(AnalysisResult {
                     path: track.path,
+                    revision: track.revision,
                     outcome: Err(message.to_owned()),
                 });
             }

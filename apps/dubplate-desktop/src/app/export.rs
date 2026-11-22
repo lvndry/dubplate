@@ -10,7 +10,8 @@ use dubplate_prep::{
 };
 use gpui::Context;
 
-use super::{DubplateApp, NoticePlace, error_chain};
+use super::notice::NoticePlace;
+use super::{DubplateApp, error_chain};
 use crate::collection::RekordboxLibrary;
 use crate::library::RekordboxSource;
 

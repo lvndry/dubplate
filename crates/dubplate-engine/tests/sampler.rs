@@ -189,3 +189,31 @@ fn sampler_slots_and_settings_are_checked() {
     controller.eject_sample(1).unwrap();
     assert!(controller.sampler_state().slots[1].is_none());
 }
+
+#[test]
+fn resampled_loops_keep_their_level_across_the_file_seam() {
+    for source_rate in [44_100, 96_000, 192_000, 384_000] {
+        let (mut controller, mut renderer) = engine();
+        let sample = constant_track(0.25, 0.25, 0.1, source_rate);
+        controller
+            .load_sample(
+                0,
+                sample,
+                SampleSettings {
+                    mode: SampleMode::Loop,
+                    ..SampleSettings::default()
+                },
+            )
+            .unwrap();
+        controller.trigger_sample(0).unwrap();
+        let frames = render(&mut renderer, 0.5);
+        for (index, frame) in frames.iter().enumerate().skip(SAMPLE_RATE as usize / 20) {
+            assert!(
+                (frame[0] - 0.25).abs() < 1e-5,
+                "source rate {source_rate}, output frame {index}: {}",
+                frame[0]
+            );
+            assert!((frame[1] - 0.25).abs() < 1e-5);
+        }
+    }
+}

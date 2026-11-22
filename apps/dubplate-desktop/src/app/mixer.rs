@@ -15,6 +15,7 @@ use crate::deck::deck_letter;
 use crate::fonts::MONO_FAMILY;
 use crate::meter::{HOT_FROM, PeakMeter, SEGMENTS};
 use crate::theme;
+use crate::widgets::InteractiveControl;
 
 const MIXER_WIDTH: Pixels = px(216.0);
 const SEGMENT_SIZE: Pixels = px(4.0);
@@ -141,6 +142,8 @@ fn smart_buttons(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl I
                 .child(
                     div()
                         .id("smart-cfx-preset")
+                        .accessible_button("Choose Smart CFX preset")
+                        .aria_expanded(app.smart_cfx_menu)
                         .flex()
                         .items_center()
                         .h(px(20.0))
@@ -197,6 +200,7 @@ fn smart_cfx_menu(current: SmartCfx, cx: &mut Context<'_, DubplateApp>) -> impl 
                 let chosen = preset == current;
                 div()
                     .id(SharedString::from(format!("smart-cfx-{preset}")))
+                    .accessible_toggle(preset_label(preset), chosen)
                     .flex()
                     .items_center()
                     .justify_between()
@@ -288,8 +292,16 @@ fn cue_button(
     command: Command,
     cx: &mut Context<'_, DubplateApp>,
 ) -> impl IntoElement + use<> {
+    let accessible_name = match id.0 {
+        "headphone-cue" => format!("Deck {} headphone Cue", if id.1 == 0 { "A" } else { "B" }),
+        "master-cue" => "M: Master headphone cue".to_owned(),
+        "smart-cfx" => "Smart CFX".to_owned(),
+        "smart-fader" => "Smart Fader".to_owned(),
+        _ => text.to_owned(),
+    };
     div()
         .id(id)
+        .accessible_toggle(accessible_name, on)
         .flex()
         .items_center()
         .justify_center()

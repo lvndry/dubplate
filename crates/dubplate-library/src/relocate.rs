@@ -46,23 +46,50 @@ const LENGTH_TOLERANCE_SECONDS: f32 = 2.0;
 /// same size wins outright when the size is known; failing that, a candidate whose length is
 /// within two seconds wins when both lengths are known. Two equally good candidates are never
 /// guessed between, so an ambiguous name yields nothing. The result keeps the order of `missing`.
+/// Only candidates named like a missing file have their path resolved on disk.
 pub fn find_relocations(missing: &[MissingTrack], candidates: &[LibraryTrack]) -> Vec<Relocation> {
+    let wanted_names: HashSet<String> = missing
+        .iter()
+        .filter_map(|missing| lowercase_name(&missing.path))
+        .collect();
+    // Overlapping source folders (and aliases of a folder) can report the same file more
+    // than once. Ambiguity means distinct files, never duplicate scan results.
+    let mut seen_paths = HashSet::new();
+    let mut seen_identities = HashSet::new();
+    let mut by_name: HashMap<String, Vec<&LibraryTrack>> = HashMap::new();
+    for candidate in candidates {
+        let Some(name) = lowercase_name(&candidate.path) else {
+            continue;
+        };
+        if !wanted_names.contains(&name) || !seen_paths.insert(&candidate.path) {
+            continue;
+        }
+        let identity = candidate
+            .path
+            .canonicalize()
+            .unwrap_or_else(|_| candidate.path.clone());
+        // The same physical file may have aliases with different names. Keep each usable
+        // name, but count a physical file only once when assessing that name's ambiguity.
+        if seen_identities.insert((name.clone(), identity)) {
+            by_name.entry(name).or_default().push(candidate);
+        }
+    }
     missing
         .iter()
-        .filter_map(|missing| find_one(missing, candidates))
+        .filter_map(|missing| {
+            let candidates = by_name.get(&lowercase_name(&missing.path)?)?;
+            find_one(missing, candidates)
+        })
         .collect()
 }
 
-fn find_one(missing: &MissingTrack, candidates: &[LibraryTrack]) -> Option<Relocation> {
-    let wanted_name = lowercase_name(&missing.path)?;
+/// Chooses among distinct files whose names already match this missing file.
+fn find_one(missing: &MissingTrack, candidates: &[&LibraryTrack]) -> Option<Relocation> {
     let mut same_size: Option<&Path> = None;
     let mut same_length: Option<&Path> = None;
     let mut length_is_ambiguous = false;
     for candidate in candidates {
         if candidate.path == missing.path {
-            continue;
-        }
-        if lowercase_name(&candidate.path).is_none_or(|name| name != wanted_name) {
             continue;
         }
         let size_matches = missing.size.is_some_and(|size| candidate.size == size);
@@ -203,6 +230,8 @@ mod tests {
             title: None,
             artist: None,
             album: None,
+            genre: None,
+            comment: None,
             bpm: None,
             key: None,
             duration_seconds,
@@ -255,6 +284,25 @@ mod tests {
         assert_eq!(found[0].confidence, RelocationConfidence::SameSize);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn differently_named_alias_does_not_hide_a_matching_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let actual = directory.path().join("Moved.mp3");
+        std::fs::write(&actual, b"audio").unwrap();
+        let alias = directory.path().join("Other.mp3");
+        std::os::unix::fs::symlink(&actual, &alias).unwrap();
+        let found = find_relocations(
+            &[moved_track()],
+            &[
+                candidate(&alias, 1_000_000, None),
+                candidate(&actual, 1_000_000, None),
+            ],
+        );
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].found, actual);
+    }
+
     #[test]
     fn a_size_match_wins_even_after_two_length_matches() {
         let first_decoy = Path::new("/Music/afro house/peak/Moved.mp3");
@@ -290,6 +338,30 @@ mod tests {
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].found, new_home());
         assert_eq!(found[0].confidence, RelocationConfidence::SameLength);
+    }
+
+    #[test]
+    fn duplicate_scans_of_one_file_are_not_ambiguous() {
+        let track = candidate(&new_home(), 1_000_000, Some(300.0));
+        let found = find_relocations(&[moved_track()], &[track.clone(), track]);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].found, new_home());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn folder_aliases_of_one_file_are_not_ambiguous() {
+        let directory = tempfile::tempdir().unwrap();
+        let actual = directory.path().join("actual");
+        std::fs::create_dir(&actual).unwrap();
+        std::fs::write(actual.join("Moved.mp3"), b"audio").unwrap();
+        let alias = directory.path().join("alias");
+        std::os::unix::fs::symlink(&actual, &alias).unwrap();
+        let candidates = [
+            candidate(&actual.join("Moved.mp3"), 1_000_000, None),
+            candidate(&alias.join("Moved.mp3"), 1_000_000, None),
+        ];
+        assert_eq!(find_relocations(&[moved_track()], &candidates).len(), 1);
     }
 
     #[test]

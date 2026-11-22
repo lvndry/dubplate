@@ -15,14 +15,14 @@ use super::DubplateApp;
 use super::prepare::{NextSuggestions, PrepareFocus, SetRow};
 use crate::audition::AUDITION_LENGTH;
 use crate::browser::DraggedTrack;
-use crate::commands::{Command, SetEdit};
+use crate::commands::{Command, Direction, SetEdit};
 use crate::energy::{EnergyRange, HIGHEST_ENERGY, LOWEST_ENERGY, set_curve, target_energy};
 use crate::fonts::MONO_FAMILY;
 use crate::prep::SeamSummary;
 use crate::set::running_time;
 use crate::shortcuts::{SHORTCUTS, printed_keys};
 use crate::theme;
-use crate::widgets::tooltip;
+use crate::widgets::{Emphasis, InteractiveControl, button, tooltip};
 
 const PANEL_WIDTH: Pixels = px(420.0);
 const ROW_HEIGHT: Pixels = px(40.0);
@@ -55,15 +55,18 @@ impl Render for DraggedSetTrack {
 }
 
 pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoElement {
-    let rows = app.set_rows();
-    let seams = DubplateApp::seams(&rows);
-    let warnings = DubplateApp::warnings(&rows);
-    let next = app.next_tracks(&rows);
+    let view = &app.prepare_view;
+    let rows = &view.rows;
+    let seams = &view.seams;
+    let warnings = &view.warnings;
+    let next = view.next.clone();
     let focused = app.prepare_focus == PrepareFocus::Set;
     let next_cursor = (app.prepare_focus == PrepareFocus::Next)
         .then(|| app.next_cursor.min(next.tracks.len().saturating_sub(1)));
     let mut list = div()
         .id("set-tracks")
+        .role(gpui::Role::List)
+        .aria_label("Set tracks")
         .flex()
         .flex_col()
         .flex_1()
@@ -81,16 +84,16 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
                 ),
         );
     }
-    for row in &rows {
+    for row in rows {
         let selected = app.set_selection == Some(row.position);
-        list = list.child(track_row(row, selected, focused, &warnings, cx));
+        list = list.child(track_row(row, selected, focused, warnings, rows.len(), cx));
         if let Some(seam) = seams.get(row.position) {
             let audition = app
                 .audition
                 .as_ref()
                 .filter(|audition| audition.after == row.position)
                 .map(|audition| audition.started.map(|started| started.elapsed()));
-            list = list.child(seam_row(row, seam.as_ref(), &warnings, audition, cx));
+            list = list.child(seam_row(row, seam.as_ref(), warnings, audition, cx));
         }
     }
     div()
@@ -107,7 +110,7 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
             let last = this.set_track_count().checked_sub(1);
             this.insert_into_set(dragged.track, last, cx);
         }))
-        .child(summary(app, &rows, cx))
+        .child(summary(app, rows, cx))
         .child(list)
         .child(backups(app))
         .child(next_panel(next, next_cursor, cx))
@@ -185,9 +188,7 @@ fn summary(
                 .when(!rows.is_empty(), |line| line.child(export_button(cx))),
         )
         .when(!rows.is_empty(), |summary| {
-            let range = EnergyRange::of_library(
-                app.catalogue.tracks.iter().filter_map(|track| track.energy),
-            );
+            let range = app.prepare_view.energy_range;
             summary.child(energy_curve(rows, target, range))
         })
 }
@@ -196,6 +197,7 @@ fn summary(
 fn export_button(cx: &mut Context<'_, DubplateApp>) -> impl IntoElement + use<> {
     div()
         .id("export-set")
+        .accessible_button("Export to rekordbox")
         .flex_none()
         .px(px(6.0))
         .rounded(theme::SMALL_RADIUS)
@@ -295,6 +297,7 @@ fn track_row(
     selected: bool,
     focused: bool,
     warnings: &[SetWarning],
+    row_count: usize,
     cx: &mut Context<'_, DubplateApp>,
 ) -> impl IntoElement + use<> {
     let position = row.position;
@@ -326,10 +329,21 @@ fn track_row(
     };
     div()
         .id(("set-track", position))
+        .accessible_button(format!(
+            "Track {}: {title} by {artist}. {bpm} BPM. Key {key}. Energy {energy}. {badge}",
+            position + 1
+        ))
+        .role(gpui::Role::ListItem)
+        .aria_selected(selected)
+        .aria_position_in_set(position + 1)
+        .aria_size_of_set(row_count)
+        .on_click(
+            cx.listener(move |this, _: &ClickEvent, _, cx| this.select_set_track(position, cx)),
+        )
         .flex()
         .items_center()
         .gap(px(10.0))
-        .h(ROW_HEIGHT)
+        .min_h(ROW_HEIGHT)
         .px(theme::GUTTER)
         .cursor_pointer()
         .when(selected, |row| {
@@ -369,13 +383,13 @@ fn track_row(
                 .min_w_0()
                 .child(
                     div()
-                        .truncate()
+                        .when(!selected, |text| text.truncate())
                         .font_weight(FontWeight::MEDIUM)
                         .child(title),
                 )
                 .child(
                     div()
-                        .truncate()
+                        .when(!selected, |text| text.truncate())
                         .text_size(theme::SMALL_TEXT_SIZE)
                         .text_color(theme::MUTED)
                         .child(match duplicate {
@@ -403,6 +417,35 @@ fn track_row(
                 )
                 .child(ready_badge(row)),
         )
+        .when(selected, |row| {
+            row.child(
+                div()
+                    .flex()
+                    .flex_none()
+                    .flex_col()
+                    .gap(px(2.0))
+                    .when(position > 0, |buttons| {
+                        buttons.child(
+                            button(("set-earlier", position), "↑", Emphasis::Secondary)
+                                .aria_label("Move selected track earlier")
+                                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                    this.select_set_track(position, cx);
+                                    this.edit_set(SetEdit::Move(Direction::Up), cx);
+                                })),
+                        )
+                    })
+                    .when(position + 1 < row_count, |buttons| {
+                        buttons.child(
+                            button(("set-later", position), "↓", Emphasis::Secondary)
+                                .aria_label("Move selected track later")
+                                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                    this.select_set_track(position, cx);
+                                    this.edit_set(SetEdit::Move(Direction::Down), cx);
+                                })),
+                        )
+                    }),
+            )
+        })
 }
 
 /// Ready in green, a missing file in red and anything else to fix in amber, always as words,
@@ -502,6 +545,10 @@ fn seam_row(
         .child(
             div()
                 .id(("seam-audition", position))
+                .accessible_toggle(
+                    format!("Listen to transition after track {}", position + 1),
+                    audition.is_some(),
+                )
                 .flex_none()
                 .px(px(6.0))
                 .rounded(theme::SMALL_RADIUS)
@@ -531,7 +578,7 @@ fn seam_row(
 }
 
 fn backups(app: &DubplateApp) -> impl IntoElement {
-    let titles = app.backup_titles();
+    let titles = app.prepare_view.backups.clone();
     div().when(!titles.is_empty(), |section| {
         section
             .flex()
@@ -548,12 +595,11 @@ fn backups(app: &DubplateApp) -> impl IntoElement {
                     .text_color(theme::MUTED)
                     .child("Backups"),
             )
-            .children(titles.into_iter().map(|title| {
-                div()
-                    .truncate()
-                    .text_size(theme::SMALL_TEXT_SIZE)
-                    .child(title)
-            }))
+            .children(
+                titles
+                    .into_iter()
+                    .map(|title| div().text_size(theme::SMALL_TEXT_SIZE).child(title)),
+            )
     })
 }
 
@@ -565,6 +611,7 @@ fn next_panel(
     cx: &mut Context<'_, DubplateApp>,
 ) -> impl IntoElement + use<> {
     let NextSuggestions {
+        pending,
         after,
         direction,
         tracks: next,
@@ -577,6 +624,11 @@ fn next_panel(
         (None, _) => "Next".to_owned(),
     };
     let mut panel = div()
+        .id("next-suggestions")
+        .role(gpui::Role::Group)
+        .aria_label("Next track suggestions")
+        .max_h(px(220.0))
+        .overflow_y_scroll()
         .flex()
         .flex_col()
         .flex_none()
@@ -603,7 +655,14 @@ fn next_panel(
                     )
                 }),
         );
-    if after.is_none() {
+    if pending {
+        panel = panel.child(
+            div()
+                .text_size(theme::SMALL_TEXT_SIZE)
+                .text_color(theme::MUTED)
+                .child("Finding matching tracks…"),
+        );
+    } else if after.is_none() {
         panel = panel.child(
             div()
                 .text_size(theme::SMALL_TEXT_SIZE)
@@ -625,6 +684,18 @@ fn next_panel(
             div()
                 .id(("next-track", rank))
                 .relative()
+                .accessible_button(format!(
+                    "Add {} by {}. {}",
+                    suggestion.title, suggestion.artist, suggestion.reason
+                ))
+                .when(rank < 5, |button| {
+                    button.aria_keyshortcuts(format!("Alt+{}", rank + 1))
+                })
+                .aria_description(if highlighted {
+                    "Selected next suggestion. Enter inserts it."
+                } else {
+                    "Enter inserts this suggestion."
+                })
                 .flex()
                 .flex_col()
                 .px(px(6.0))
@@ -645,7 +716,6 @@ fn next_panel(
                         .min_w_0()
                         .child(
                             div()
-                                .truncate()
                                 .font_weight(FontWeight::MEDIUM)
                                 .child(suggestion.title),
                         )
@@ -653,7 +723,6 @@ fn next_panel(
                             div()
                                 .flex_1()
                                 .min_w_0()
-                                .truncate()
                                 .text_color(theme::MUTED)
                                 .child(suggestion.artist),
                         )
