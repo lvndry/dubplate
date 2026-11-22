@@ -114,7 +114,8 @@ impl Sampler {
         let Some(slot) = self.slots.get_mut(slot) else {
             return;
         };
-        slot.voice.start_tail(0.0, retire);
+        slot.voice
+            .start_tail_with_wrap(0.0, slot.settings.mode == SampleMode::Loop, retire);
         slot.playing = false;
         if let Some(previous) = std::mem::replace(&mut slot.voice.track, track) {
             retire.track(previous);
@@ -166,7 +167,8 @@ impl Sampler {
         };
         let step = source_rate / output_rate;
         if slot.playing {
-            slot.voice.jump(start, step, retire);
+            slot.voice
+                .jump_with_wrap(start, step, slot.settings.mode == SampleMode::Loop, retire);
         } else {
             slot.voice.position = start;
             slot.voice.transport.jump_to(0.0);
@@ -188,7 +190,8 @@ impl Sampler {
             && slot.playing
         {
             slot.playing = false;
-            slot.voice.start_tail(0.0, retire);
+            slot.voice
+                .start_tail_with_wrap(0.0, slot.settings.mode == SampleMode::Loop, retire);
         }
     }
 
@@ -247,7 +250,13 @@ impl Sampler {
             let gain = slot.settings.gain;
             for (left, right) in left_bus.iter_mut().zip(right_bus.iter_mut()) {
                 let playhead_gain = slot.voice.transport.next_value() * gain;
-                let (slot_left, slot_right) = slot.voice.next_frame(playhead_gain, retire, starved);
+                let (slot_left, slot_right) = slot.voice.next_frame(
+                    playhead_gain,
+                    step,
+                    slot.settings.mode == SampleMode::Loop,
+                    retire,
+                    starved,
+                );
                 *left += slot_left;
                 *right += slot_right;
                 if !slot.playing {

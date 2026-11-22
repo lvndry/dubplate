@@ -1,5 +1,8 @@
+use std::sync::LazyLock;
+
 use euphoria_core::harmony::words::relation_name;
-use euphoria_core::harmony::{EnergyDirection, MixOptions, next_tracks};
+use euphoria_core::harmony::{EnergyDirection, MixOptions, Relation, next_tracks};
+use euphoria_core::key::Key;
 
 use crate::track::PrepTrack;
 
@@ -28,6 +31,37 @@ impl Suggestion<'_> {
             parts.push(format!("energy {energy:+.0}"));
         }
         parts.join(" · ")
+    }
+}
+
+/// The key relations the Next suggestions accept.
+static SUGGESTED_RELATIONS: LazyLock<Vec<Relation>> =
+    LazyLock::new(|| MixOptions::default().relations);
+
+/// The key moves the Next suggestions accept from one key, to narrow a library the same way.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KeyFit {
+    reference: Key,
+}
+
+impl KeyFit {
+    /// The moves from `reference`: the same key, one step on the wheel and the relative key.
+    pub fn new(reference: Key) -> Self {
+        Self { reference }
+    }
+
+    /// The key every move starts from.
+    pub fn reference(self) -> Key {
+        self.reference
+    }
+
+    /// How a track in `candidate` follows, in Euphoria's words such as "One step on the
+    /// wheel", when the suggestions would accept the move.
+    pub fn key_move(self, candidate: &Key) -> Option<&'static str> {
+        let relation = self.reference.relation_to(candidate)?;
+        SUGGESTED_RELATIONS
+            .contains(&relation)
+            .then(|| relation_name(relation))
     }
 }
 
