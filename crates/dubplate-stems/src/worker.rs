@@ -80,6 +80,11 @@ fn run(arguments: &WorkerArguments) -> ExitCode {
     }) {
         Ok(files) => match files.entry_name() {
             Some(entry) => {
+                if let Err(error) = files.vocal_presence() {
+                    eprintln!(
+                        "warning: {error}; the set's seams will not know where its vocals are"
+                    );
+                }
                 print_message(&WorkerMessage::Ready {
                     entry: entry.to_owned(),
                 });

@@ -14,7 +14,7 @@ use crate::commands::{Command, Mode};
 use crate::fonts::MONO_FAMILY;
 use crate::set::running_time;
 use crate::theme;
-use crate::widgets::InteractiveControl;
+use crate::widgets::{InteractiveControl, tooltip};
 
 /// The search field never gets narrower than this: the status beside it gives way first.
 const SEARCH_MIN_WIDTH: Pixels = px(170.0);
@@ -193,7 +193,8 @@ fn status(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoElem
                 .child(dot(library_colour))
                 .child(div().truncate().child(library_text)),
         )
-        .child(
+        .child({
+            let narrow = app.narrow_window();
             div()
                 .id("controller-status")
                 .flex()
@@ -201,48 +202,38 @@ fn status(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoElem
                 .min_w_0()
                 .items_center()
                 .gap(px(6.0))
-                .child(dot(controller_colour))
-                .child(div().truncate().child(controller_text)),
-        )
-        .child(
-            div()
-                .flex_shrink(1.0)
-                .min_w_0()
-                .truncate()
-                .text_color(audio_colour)
-                .child(audio_text),
-        )
-        .child(record_button(app, cx))
-        .child(
-            div()
-                .id("lock-playing-deck")
-                .accessible_toggle("Lock playing deck", app.lock_playing_deck)
-                .flex()
-                .items_center()
-                .gap(px(6.0))
-                .h(px(28.0))
-                .px(px(10.0))
-                .rounded(theme::CONTROL_RADIUS)
-                .border_1()
-                .border_color(theme::LINE)
-                .text_color(if app.lock_playing_deck {
-                    theme::TEXT
-                } else {
-                    theme::MUTED
+                .when(narrow, |status| {
+                    status.tooltip(tooltip(format!("{controller_text} \u{b7} {audio_text}")))
                 })
-                .cursor_pointer()
-                .hover(|button| button.bg(theme::RAISED))
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                    this.toggle_lock_playing_deck(cx);
-                }))
-                .child(dot(if app.lock_playing_deck {
-                    theme::OK
-                } else {
-                    theme::MUTED
-                }))
-                .child("Lock playing deck"),
-        )
+                .child(dot(controller_colour))
+                .when(!narrow, |status| {
+                    status
+                        .child(div().truncate().child(controller_text.clone()))
+                        .child(
+                            div()
+                                .flex_shrink(1.0)
+                                .min_w_0()
+                                .truncate()
+                                .text_color(audio_colour)
+                                .child(audio_text.clone()),
+                        )
+                })
+        })
+        .child(record_button(app, cx))
+        .child(header_switch(
+            "quantize",
+            "Quantize",
+            app.quantize(),
+            Command::ToggleQuantize,
+            cx,
+        ))
+        .child(header_switch(
+            "lock-playing-deck",
+            "Lock playing deck",
+            app.lock_playing_deck,
+            Command::ToggleLockPlayingDeck,
+            cx,
+        ))
         .child(
             div()
                 .id("help-button")
@@ -322,6 +313,36 @@ fn record_button(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl I
         }))
         .child(dot(colour))
         .child(label)
+}
+
+/// A switch in the header that applies to both decks, with a dot that is green while it is on.
+fn header_switch(
+    id: &'static str,
+    name: &'static str,
+    on: bool,
+    command: Command,
+    cx: &mut Context<'_, DubplateApp>,
+) -> impl IntoElement + use<> {
+    div()
+        .id(id)
+        .accessible_toggle(name, on)
+        .flex()
+        .items_center()
+        .gap(px(6.0))
+        .h(px(28.0))
+        .px(px(10.0))
+        .rounded(theme::CONTROL_RADIUS)
+        .border_1()
+        .border_color(theme::LINE)
+        .text_color(if on { theme::TEXT } else { theme::MUTED })
+        .cursor_pointer()
+        .hover(|button| button.bg(theme::RAISED))
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+            this.perform(command, window, cx);
+        }))
+        .child(dot(if on { theme::OK } else { theme::MUTED }))
+        .child(name)
 }
 
 fn dot(colour: Rgba) -> impl IntoElement {

@@ -6,7 +6,7 @@ use crate::dsp::delay_time::DelayTime;
 use crate::dsp::shaping::flush_denormal;
 use crate::dsp::smoothing::Smoothed;
 use crate::effect::EffectKind;
-use crate::effects::tape::{
+use crate::effects::delays::tape::{
     DEFAULT_DEPTH, RepeatTone, RepeatToneGains, TrailLevel, feedback_for_depth, mix_for_depth,
     read_taps,
 };
