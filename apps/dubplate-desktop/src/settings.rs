@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::controls::DEFAULT_SAMPLER_VOLUME;
 use crate::effects::EffectUnitSetting;
 
 const FILE_NAME: &str = "settings.toml";
@@ -56,6 +57,49 @@ pub struct Settings {
     pub effect_units: Vec<EffectUnitSetting>,
     /// The Smart CFX preset SMART CFX turns on, by name.
     pub smart_cfx_preset: Option<String>,
+    /// The sampler's volume and the sample in each slot.
+    pub sampler: SamplerSetting,
+}
+
+/// The sampler as the DJ left it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SamplerSetting {
+    /// The sampler's volume, from 0.0 to 1.0.
+    pub volume: f32,
+    /// The loaded slots; the others are empty.
+    pub slots: Vec<SampleSlotSetting>,
+}
+
+impl Default for SamplerSetting {
+    fn default() -> Self {
+        Self {
+            volume: DEFAULT_SAMPLER_VOLUME,
+            slots: Vec::new(),
+        }
+    }
+}
+
+/// One sampler slot as the DJ left it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SampleSlotSetting {
+    /// The slot, 0 for slot 1.
+    pub slot: usize,
+    /// The sample's audio file.
+    pub path: PathBuf,
+    /// The sample's own tempo, when known, for sync.
+    #[serde(default)]
+    pub bpm: Option<f64>,
+    /// Plays round and round until stopped, rather than once.
+    #[serde(default)]
+    pub looped: bool,
+    /// Plays only while its pad is held.
+    #[serde(default)]
+    pub gate: bool,
+    /// Plays at the tempo master's BPM.
+    #[serde(default)]
+    pub sync: bool,
 }
 
 impl Default for Settings {
@@ -67,6 +111,7 @@ impl Default for Settings {
             import_rekordbox: false,
             effect_units: Vec::new(),
             smart_cfx_preset: None,
+            sampler: SamplerSetting::default(),
         }
     }
 }
@@ -158,6 +203,17 @@ mod tests {
                 depth: 0.25,
             }],
             smart_cfx_preset: Some("dub echo".to_owned()),
+            sampler: SamplerSetting {
+                volume: 0.6,
+                slots: vec![SampleSlotSetting {
+                    slot: 9,
+                    path: PathBuf::from("/Music/Samples/Horn.wav"),
+                    bpm: Some(120.0),
+                    looped: false,
+                    gate: true,
+                    sync: false,
+                }],
+            },
         };
         settings.save(&path).unwrap();
         assert_eq!(Settings::load(&path).unwrap(), settings);

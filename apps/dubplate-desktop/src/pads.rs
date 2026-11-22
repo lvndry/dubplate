@@ -56,11 +56,6 @@ pub fn mode_label(mode: PadMode) -> &'static str {
     }
 }
 
-/// Whether Dubplate plays the pads of this mode yet. The sampler lights its button and waits.
-pub fn mode_is_playable(mode: PadMode) -> bool {
-    !matches!(mode, PadMode::Sampler)
-}
-
 /// What a Pad FX pad plays while it is held.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PadFx {
@@ -272,9 +267,6 @@ mod tests {
         );
         assert_eq!(next_mode(PadMode::KeyShift), PadMode::HotCue);
         assert_eq!(next_mode(PadMode::HotCue), PadMode::Keyboard);
-        assert!(mode_is_playable(PadMode::BeatLoop));
-        assert!(mode_is_playable(PadMode::PadFx2));
-        assert!(!mode_is_playable(PadMode::Sampler));
     }
 
     #[test]

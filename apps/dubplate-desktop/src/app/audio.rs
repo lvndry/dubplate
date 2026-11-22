@@ -58,7 +58,8 @@ fn apply_mixer(controller: &mut Controller, mixer: &MixerPositions) -> Result<()
     controller.set_crossfader(mixer.crossfader)?;
     controller.set_master_gain(master_gain_at(mixer.master_level))?;
     controller.set_headphone_mix(mixer.headphone_mix)?;
-    controller.set_headphone_level(mixer.headphone_level)
+    controller.set_headphone_level(mixer.headphone_level)?;
+    controller.set_sampler_volume(mixer.sampler_volume)
 }
 
 /// Puts on `target` what `source` has beyond the mixer: the tracks at their places with their
@@ -188,6 +189,7 @@ impl DubplateApp {
             );
         }
         self.engine = Ok(engine);
+        self.restore_sampler(cx);
         self.settings.audio_device = Some(name);
         self.save_settings(cx);
         cx.notify();

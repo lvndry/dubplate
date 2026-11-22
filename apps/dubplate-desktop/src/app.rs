@@ -19,6 +19,7 @@ mod pad_grid;
 mod pads;
 mod prepare;
 mod recording;
+mod sampler;
 mod set_panel;
 mod slider;
 mod smart;
@@ -176,6 +177,7 @@ pub struct DubplateApp {
     held_pads: [Option<HeldPad>; DECK_COUNT],
     key_pad_offsets: [i32; DECK_COUNT],
     keyboard_cues: [HotCuePad; DECK_COUNT],
+    selected_samples: [usize; DECK_COUNT],
     set_editor: Option<SetEditor>,
     set_selection: Option<usize>,
     prepare_focus: PrepareFocus,
@@ -226,7 +228,6 @@ impl DubplateApp {
                 BrowserEvent::AddMusicFolders => this.add_music_folders(cx),
                 BrowserEvent::ImportRekordbox => this.set_rekordbox_import(true, cx),
             });
-        let mixer = MixerPositions::default();
         let effect_search = cx.new(|cx| InputState::new(window, cx).placeholder("Find an effect"));
         let quit_subscription = cx.on_app_quit(|this: &mut Self, _| {
             this.finish_recording_on_quit();
@@ -265,6 +266,10 @@ impl DubplateApp {
                 })
             })
             .unwrap_or_default();
+        let mixer = MixerPositions {
+            sampler_volume: settings.sampler.volume.clamp(0.0, 1.0),
+            ..MixerPositions::default()
+        };
         let (engine, audio_problem) = audio::start_engine(&mixer, settings.audio_device.as_deref());
         problems.extend(audio_problem);
         let hardware = match Hardware::start() {
@@ -316,6 +321,7 @@ impl DubplateApp {
             held_pads: [None; DECK_COUNT],
             key_pad_offsets: [0; DECK_COUNT],
             keyboard_cues: [HotCuePad::ALL[0]; DECK_COUNT],
+            selected_samples: [0; DECK_COUNT],
             set_editor,
             set_selection: None,
             prepare_focus: PrepareFocus::Library,
@@ -351,6 +357,7 @@ impl DubplateApp {
             _subscriptions: vec![subscription, search_subscription, quit_subscription],
         };
         app.restore_effect_units(cx);
+        app.restore_sampler(cx);
         app.start_library(cx);
         if let Some(problem) = problems.into_iter().next() {
             app.show_notice(NoticePlace::Window, problem, cx);
@@ -965,6 +972,12 @@ impl DubplateApp {
             Control::HeadphoneLevel => {
                 self.mixer.headphone_level = fraction;
                 self.engine_command(cx, |controller| controller.set_headphone_level(fraction));
+            }
+            Control::SamplerVolume => {
+                self.mixer.sampler_volume = fraction;
+                self.settings.sampler.volume = fraction;
+                self.engine_command(cx, |controller| controller.set_sampler_volume(fraction));
+                self.save_settings(cx);
             }
         }
         cx.notify();

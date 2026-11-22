@@ -6,6 +6,7 @@ use dubplate_midi::PadMode;
 use dubplate_rekordbox::HotCuePad;
 use gpui::Context;
 
+use super::sampler::sampler_slot;
 use super::{DubplateApp, NoticePlace};
 use crate::commands::{LoopAction, PadPress, Press};
 use crate::deck::pad_position;
@@ -49,10 +50,14 @@ impl DubplateApp {
         if let Some(mode) = press.mode {
             self.set_pad_mode(deck, mode, cx);
         }
+        let mode = self.pad_modes[deck.index()];
+        if mode == PadMode::Sampler {
+            self.press_sampler_pad(press, cx);
+            return;
+        }
         if self.deck(deck).visuals().is_none() {
             return;
         }
-        let mode = self.pad_modes[deck.index()];
         if matches!(mode, PadMode::PadFx1 | PadMode::PadFx2) {
             self.press_pad_fx(press, mode, cx);
             return;
@@ -252,7 +257,15 @@ impl DubplateApp {
             .and_then(|state| state.length);
         let waiting_for_out = loop_state.is_some_and(|state| state.pending_start_seconds.is_some());
         let mut pads = [false; PAD_COUNT];
-        if side.visuals().is_some() {
+        if self.pad_modes[deck.index()] == PadMode::Sampler {
+            let slots = self.sampler_state().map(|state| state.slots);
+            for (pad, lit) in pads.iter_mut().enumerate() {
+                let slot = slots
+                    .as_ref()
+                    .and_then(|slots| slots.get(sampler_slot(deck, pad)).copied().flatten());
+                *lit = slot.is_some_and(|slot| !slot.playing || blink);
+            }
+        } else if side.visuals().is_some() {
             match self.pad_modes[deck.index()] {
                 PadMode::HotCue => {
                     for (pad, _) in side.hot_cues.iter() {
