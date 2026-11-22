@@ -11,7 +11,9 @@ mod buffer;
 mod settings;
 
 pub use buffer::StemTracks;
-pub(crate) use buffer::{AttachedStems, PART_CHANNELS, PartFrame, all_full, mix_parts};
+pub(crate) use buffer::{
+    AttachedStems, PART_CHANNELS, PartFrame, STEM_CHANNELS, all_full, mix_parts,
+};
 pub(crate) use settings::StemMix;
 pub use settings::{StemLevel, StemSettings};
 

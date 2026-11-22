@@ -2,7 +2,9 @@ use std::sync::{Arc, OnceLock};
 
 use crate::curves::Ramp;
 use crate::mixer::RetireQueue;
-use crate::stems::{PART_CHANNELS, PartFrame, Stem, all_full, mix_parts};
+use crate::stems::{
+    AttachedStems, PART_CHANNELS, PartFrame, STEM_CHANNELS, Stem, all_full, mix_parts,
+};
 use crate::track::{FrameRead, TrackBuffer};
 
 /// The gain of each stem for one output frame, in the order of [`Stem::ALL`].
@@ -10,29 +12,6 @@ pub(crate) type StemGains = [f32; Stem::COUNT];
 
 /// Every stem at its level in the track.
 pub(crate) const UNITY_STEM_GAINS: StemGains = [1.0; Stem::COUNT];
-
-/// Audio the resampling kernel reads, a left and a right channel at a time: a track, or one stem
-/// of its stems.
-pub(crate) trait StereoFrames {
-    /// One frame, without waiting.
-    fn read_frame(&self, index: i64) -> FrameRead;
-
-    /// Hands `visit` the `N` frames from `first` on with their offset in the window, and
-    /// returns whether any of them is not decoded yet.
-    fn visit_frames<const N: usize>(&self, first: i64, visit: impl FnMut(usize, f32, f32)) -> bool;
-}
-
-impl StereoFrames for TrackBuffer {
-    #[inline]
-    fn read_frame(&self, index: i64) -> FrameRead {
-        TrackBuffer::read_frame(self, index)
-    }
-
-    #[inline]
-    fn visit_frames<const N: usize>(&self, first: i64, visit: impl FnMut(usize, f32, f32)) -> bool {
-        TrackBuffer::visit_frames::<N>(self, first, visit)
-    }
-}
 
 /// Fades that can overlap on one deck, for jumps that come faster than a fade lasts.
 const MAX_TAILS: usize = 8;
@@ -231,7 +210,9 @@ impl Voice {
         starved: &mut bool,
     ) -> PartFrame {
         let mut frame = match &self.track {
-            Some(track) => self.kernel.read_parts(track, self.position, step, starved),
+            Some(track) => self
+                .kernel
+                .read_track_parts(track, self.position, step, starved),
             None => [0.0; PART_CHANNELS],
         };
         for slot in &mut self.tails {
@@ -239,9 +220,9 @@ impl Voice {
                 continue;
             };
             let tail_gain = tail.gain(self.declick_frames);
-            let tail_frame = self
-                .kernel
-                .read_parts(&tail.track, tail.position, tail.step, starved);
+            let tail_frame =
+                self.kernel
+                    .read_track_parts(&tail.track, tail.position, tail.step, starved);
             for (sample, tail_sample) in frame.iter_mut().zip(tail_frame) {
                 *sample += tail_sample * tail_gain;
             }
@@ -387,52 +368,77 @@ impl ResamplingKernel {
         stem_gains: &StemGains,
         starved: &mut bool,
     ) -> (f32, f32) {
-        let (left, right, missing) = self.read_wrapped(track, position, step, wrap_frames);
-        *starved |= missing;
         match track.stems() {
             Some(stems) if reads_stems && !all_full(stem_gains) => {
-                let mut stem_frame = [0.0; PART_CHANNELS - 2];
-                for stem in Stem::ALL {
-                    let (stem_left, stem_right, _) =
-                        self.read_wrapped(&stems.channel(stem), position, step, wrap_frames);
-                    stem_frame[stem.index() * 2] = stem_left;
-                    stem_frame[stem.index() * 2 + 1] = stem_right;
-                }
-                mix_parts((left, right), &stem_frame, stem_gains)
+                let (frame, missing) = self.read_parts(track, stems, position, step);
+                *starved |= missing;
+                mix_parts(
+                    (frame[STEM_CHANNELS], frame[STEM_CHANNELS + 1]),
+                    &frame[..STEM_CHANNELS],
+                    stem_gains,
+                )
             }
-            _ => (left, right),
+            _ => {
+                let (left, right, missing) = self.read_wrapped(track, position, step, wrap_frames);
+                *starved |= missing;
+                (left, right)
+            }
         }
     }
 
     /// Every stem of `track` at `position`, then the track itself; silent stems when it has
     /// none.
     #[inline]
-    fn read_parts(
+    fn read_track_parts(
         &self,
         track: &TrackBuffer,
         position: f64,
         step: f64,
         starved: &mut bool,
     ) -> PartFrame {
-        let mut frame = [0.0; PART_CHANNELS];
-        if let Some(stems) = track.stems() {
-            for stem in Stem::ALL {
-                let (left, right, _) =
-                    self.read_wrapped(&stems.channel(stem), position, step, None);
-                frame[stem.index() * 2] = left;
-                frame[stem.index() * 2 + 1] = right;
+        let (frame, missing) = match track.stems() {
+            Some(stems) => self.read_parts(track, stems, position, step),
+            None => {
+                let (left, right, missing) = self.read_wrapped(track, position, step, None);
+                let mut frame = [0.0; PART_CHANNELS];
+                frame[STEM_CHANNELS] = left;
+                frame[STEM_CHANNELS + 1] = right;
+                (frame, missing)
             }
-        }
-        let (left, right, missing) = self.read_wrapped(track, position, step, None);
+        };
         *starved |= missing;
-        frame[PART_CHANNELS - 2] = left;
-        frame[PART_CHANNELS - 1] = right;
         frame
+    }
+
+    /// Every stem and the track at `position`, read with one set of tap weights.
+    #[inline]
+    fn read_parts(
+        &self,
+        track: &TrackBuffer,
+        stems: &AttachedStems,
+        position: f64,
+        step: f64,
+    ) -> (PartFrame, bool) {
+        let speed = step.abs();
+        if speed <= 2.0 {
+            return self.normal.read_parts(track, stems, position, step);
+        }
+        if speed >= 3.0 {
+            return self.wide.read_parts(track, stems, position, step);
+        }
+        let (mut frame, missing) = self.normal.read_parts(track, stems, position, step);
+        let (wide, wide_missing) = self.wide.read_parts(track, stems, position, step);
+        let fraction = (speed - 2.0) as f32;
+        let mix = fraction * fraction * (3.0 - 2.0 * fraction);
+        for (sample, wide_sample) in frame.iter_mut().zip(wide) {
+            *sample += (wide_sample - *sample) * mix;
+        }
+        (frame, missing || wide_missing)
     }
 
     fn read_wrapped(
         &self,
-        track: &impl StereoFrames,
+        track: &TrackBuffer,
         position: f64,
         step: f64,
         wrap_frames: Option<usize>,
@@ -490,9 +496,73 @@ impl<const TAPS: usize> CoefficientBank<TAPS> {
         Self { coefficients }
     }
 
+    /// The tap weights of a read `fraction` of a frame past a frame, moving `step` frames per
+    /// output frame: the four nearest tables, mixed by phase and cutoff.
+    #[inline]
+    fn weights(&self, fraction: f32, step: f64) -> [f32; TAPS] {
+        let cutoff = (1.0 / (1.0 + 1.1 * (step.abs() - 1.0).max(0.0))) as f32;
+        let phase = fraction * PHASES as f32;
+        let phase_index = (phase as usize).min(PHASES - 1);
+        let phase_mix = phase - phase_index as f32;
+        let cutoff_position = cutoff * CUTOFFS as f32;
+        let cutoff_index = (cutoff_position as usize).min(CUTOFFS - 1);
+        let cutoff_mix = cutoff_position - cutoff_index as f32;
+        let first = cutoff_index * (PHASES + 1) + phase_index;
+        let low_before = &self.coefficients[first];
+        let low_after = &self.coefficients[first + 1];
+        let high_before = &self.coefficients[first + PHASES + 1];
+        let high_after = &self.coefficients[first + PHASES + 2];
+        std::array::from_fn(|index| {
+            let low = low_before[index] + (low_after[index] - low_before[index]) * phase_mix;
+            let high = high_before[index] + (high_after[index] - high_before[index]) * phase_mix;
+            low + (high - low) * cutoff_mix
+        })
+    }
+
+    /// Every stem and the track at `position`, with the weights worked out once for all five.
+    #[inline]
+    fn read_parts(
+        &self,
+        track: &TrackBuffer,
+        stems: &AttachedStems,
+        position: f64,
+        step: f64,
+    ) -> (PartFrame, bool) {
+        let base = position.floor();
+        let fraction = (position - base) as f32;
+        let base_index = base as i64;
+        let mut frame = [0.0; PART_CHANNELS];
+        if step.abs() <= 1.0 && fraction == 0.0 {
+            frame[..STEM_CHANNELS].copy_from_slice(&stems.frame(base_index));
+            let missing = match track.read_frame(base_index) {
+                FrameRead::Frame(left, right) => {
+                    frame[STEM_CHANNELS] = left;
+                    frame[STEM_CHANNELS + 1] = right;
+                    false
+                }
+                FrameRead::Outside => false,
+                FrameRead::Missing => true,
+            };
+            return (frame, missing);
+        }
+        let weights = self.weights(fraction, step);
+        let first_frame = base_index.saturating_add(1 - (TAPS / 2) as i64);
+        let mut left = 0.0;
+        let mut right = 0.0;
+        let missing =
+            track.visit_frames::<TAPS>(first_frame, |index, sample_left, sample_right| {
+                left += sample_left * weights[index];
+                right += sample_right * weights[index];
+            });
+        stems.accumulate(first_frame, &weights, &mut frame[..STEM_CHANNELS]);
+        frame[STEM_CHANNELS] = left;
+        frame[STEM_CHANNELS + 1] = right;
+        (frame, missing)
+    }
+
     fn read(
         &self,
-        track: &impl StereoFrames,
+        track: &TrackBuffer,
         position: f64,
         step: f64,
         wrap_frames: Option<usize>,
@@ -509,27 +579,13 @@ impl<const TAPS: usize> CoefficientBank<TAPS> {
                 FrameRead::Missing => (0.0, 0.0, true),
             };
         }
-        let cutoff = (1.0 / (1.0 + 1.1 * (step.abs() - 1.0).max(0.0))) as f32;
-        let phase = fraction * PHASES as f32;
-        let phase_index = (phase as usize).min(PHASES - 1);
-        let phase_mix = phase - phase_index as f32;
-        let cutoff_position = cutoff * CUTOFFS as f32;
-        let cutoff_index = (cutoff_position as usize).min(CUTOFFS - 1);
-        let cutoff_mix = cutoff_position - cutoff_index as f32;
-        let first = cutoff_index * (PHASES + 1) + phase_index;
-        let low_before = &self.coefficients[first];
-        let low_after = &self.coefficients[first + 1];
-        let high_before = &self.coefficients[first + PHASES + 1];
-        let high_after = &self.coefficients[first + PHASES + 2];
+        let weights = self.weights(fraction, step);
         let mut left = 0.0;
         let mut right = 0.0;
         let first_frame = base_index.saturating_add(1 - (TAPS / 2) as i64);
         let mut accumulate = |index: usize, sample_left: f32, sample_right: f32| {
-            let low = low_before[index] + (low_after[index] - low_before[index]) * phase_mix;
-            let high = high_before[index] + (high_after[index] - high_before[index]) * phase_mix;
-            let weight = low + (high - low) * cutoff_mix;
-            left += sample_left * weight;
-            right += sample_right * weight;
+            left += sample_left * weights[index];
+            right += sample_right * weights[index];
         };
         let missing = match wrap_frames.filter(|frames| {
             first_frame < 0 || first_frame.saturating_add(TAPS as i64) > *frames as i64
@@ -646,7 +702,7 @@ mod tests {
             for step in [0.91875, 1.5, 2.0, 4.0, 8.0, -8.0] {
                 for position in [0.0, 0.375, frames as f64 - 0.625] {
                     let (left, right, missing) =
-                        kernel.read_wrapped(track.buffer().as_ref(), position, step, Some(frames));
+                        kernel.read_wrapped(track.buffer(), position, step, Some(frames));
                     assert!(
                         (left - 0.3).abs() < 1e-6,
                         "length {frames}, position {position}, rate {step}: {left}"
