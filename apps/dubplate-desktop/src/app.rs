@@ -103,6 +103,10 @@ use relink::RelinkReview;
 
 /// Frames per device buffer: about 5 ms at 48 kHz.
 const BUFFER_FRAMES: u32 = 256;
+/// Below this width the header shows the controller and the sound card as dots.
+const NARROW_WINDOW_WIDTH: Pixels = px(1320.0);
+/// Below this height the lanes are lower.
+const SHORT_WINDOW_HEIGHT: Pixels = px(820.0);
 /// How often the controller lights follow the decks while nothing else updates them, for the
 /// blinking lights and the level meters.
 const LIGHTS_INTERVAL: Duration = Duration::from_millis(30);
@@ -239,6 +243,8 @@ pub struct DubplateApp {
     focus_handle: FocusHandle,
     last_frame: Instant,
     frame_stats: Option<Rc<RefCell<FrameStats>>>,
+    /// The window's size at the last frame, for the layout of small windows.
+    window_size: gpui::Size<Pixels>,
     /// Whether the sound cards and controllers may be opened.
     devices: DeviceAccess,
     _subscriptions: Vec<Subscription>,
@@ -441,6 +447,7 @@ impl DubplateApp {
             focus_handle,
             last_frame: Instant::now(),
             frame_stats: FrameStats::from_environment().map(|stats| Rc::new(RefCell::new(stats))),
+            window_size: window.viewport_size(),
             devices,
             _subscriptions: vec![subscription, search_subscription, quit_subscription],
         };
@@ -456,6 +463,18 @@ impl DubplateApp {
             app.show_notice(NoticePlace::Window, problem, cx);
         }
         app
+    }
+
+    /// Whether the window is too narrow for the header to spell out the controller and the
+    /// sound card: they shrink to their status dots, named in tooltips.
+    pub(super) fn narrow_window(&self) -> bool {
+        self.window_size.width < NARROW_WINDOW_WIDTH
+    }
+
+    /// Whether the window is too short for full-height lanes: they get lower so the library
+    /// keeps some rows.
+    pub(super) fn short_window(&self) -> bool {
+        self.window_size.height < SHORT_WINDOW_HEIGHT
     }
 
     /// Turns Lock playing deck on or off and remembers it.
@@ -1959,6 +1978,7 @@ impl Render for DubplateApp {
             self.refocus_window = false;
         }
         self.modal_active = modal_open;
+        self.window_size = window.viewport_size();
         let frames = self.advance_frame(window);
         let root = div()
             .key_context(WINDOW_CONTEXT)

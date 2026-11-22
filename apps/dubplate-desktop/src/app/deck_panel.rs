@@ -48,6 +48,10 @@ pub(super) fn render(
     accept_drops(panel, deck, cx)
 }
 
+/// The narrowest the tempo slider with its label and range gets before it wraps under the
+/// transport buttons.
+const TEMPO_GROUP_MIN_WIDTH: Pixels = px(220.0);
+
 fn title_row(
     app: &DubplateApp,
     deck: DeckId,
@@ -167,11 +171,17 @@ fn title_row(
                         .min_w_0()
                         .child(
                             div()
+                                .truncate()
                                 .text_size(px(14.0))
                                 .font_weight(FontWeight::MEDIUM)
                                 .child(title),
                         )
-                        .child(div().text_color(subtitle_colour).child(subtitle)),
+                        .child(
+                            div()
+                                .truncate()
+                                .text_color(subtitle_colour)
+                                .child(subtitle),
+                        ),
                 ),
         )
         .child(
@@ -226,8 +236,11 @@ fn transport(
     let playing = frame.state.playing;
     let colour = theme::deck_colour(deck);
     let tempo = app.tempo_state(deck);
+    // The tempo slider wraps under the buttons when the deck is too narrow for both on one
+    // row, rather than being pushed off the deck.
     div()
         .flex()
+        .flex_wrap()
         .items_center()
         .gap(px(6.0))
         .child(
@@ -307,6 +320,7 @@ fn transport(
             div()
                 .flex()
                 .flex_1()
+                .min_w(TEMPO_GROUP_MIN_WIDTH)
                 .items_center()
                 .gap(px(10.0))
                 .ml(px(10.0))
