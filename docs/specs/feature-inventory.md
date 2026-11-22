@@ -18,7 +18,7 @@ Each table has the same columns:
 - **Dubplate**, judged on `main` at the commit this file was written on:
   - **Done**: works as a DJ would expect.
   - **Partial**: exists, but a DJ would notice what is missing, which the cell names.
-  - **In progress**: an open pull request delivers it (its number is given).
+  - **In progress**: an open pull request delivers it.
   - **Missing**: not there.
 - **Priority** for an afro house and amapiano DJ who prepares on a DDJ-FLX4 and plays clubs on CDJs:
   - **P0**: blocks a club night.
@@ -49,8 +49,8 @@ Ranked by what stops the owner from playing a club night with Dubplate alone, th
 2. **Save the cues made in Dubplate.** Hot cues A to H, memory cues and loops set live or in prep are kept per track in Dubplate's store, survive a relaunch, and go into the XML and USB exports. Today live hot cues vanish when the deck reloads.
 3. **Memory cues on the decks.** Draw them as red triangles on the lanes and the overview; CUE/LOOP CALL ◁ ▷ calls the previous or next one when no loop plays; SHIFT + ▷ saves one, SHIFT + ◁ deletes it; up to 10 per track.
 4. **Grid editing on the decks for every track.** Set the downbeat at the playhead, shift 1 ms, type a BPM, x2 and /2, widen and narrow, edit from here, metronome; saved and exported like track check edits.
-5. **Land the waveform and overview work (#104).** Cue point mark, loops and the slip shadow on the lanes, a 3-band overview with hot cues, memory cues, mix cues, loops and phrases, and the end-of-track warning.
-6. **Land the FLX4 Beat FX fixes (#102).** CH SELECT 1&2 puts the effect on both decks, LEVEL/DEPTH follows the knob from its first report, FX SELECT shows its choice.
+5. **Waveform and overview (done).** Cue point mark, loops and the slip shadow on the lanes, a 3-band overview with hot cues, memory cues, mix cues, loops and phrases, and the end-of-track warning.
+6. **FLX4 Beat FX fixes (in progress).** CH SELECT 1&2 puts the effect on both decks, LEVEL/DEPTH follows the knob from its first report, FX SELECT shows its choice.
 7. **Auto Gain.** Read the gain rekordbox stores for its tracks (djmdMixerParam), measure loudness for folder tracks, and set the trim on load, with a switch in Settings.
 8. **Auto cue on load.** Every track loads cued at its first beat (or first audio above -36 to -78 dB, or the nearest memory or hot cue), never at 0:00 in silence.
 9. **History and tracklists.** Record each play of a minute or more with start time, duration and deck in the play history table that already exists, show a history per session, and export it as TXT, CSV or M3U with timestamps, also beside each recording.
@@ -265,7 +265,7 @@ Ranked by what stops the owner from playing a club night with Dubplate alone, th
 | Grid edits follow the track | Edits apply on decks and in the export. | n/a | Free | Done (onto the decks and into the XML export) | P0 |
 | Grid edit on CDJ | CDJ grid adjust (snap, shift, half beat, reset; 3000X adds x2, /2, 1 ms); comes back with Update Collection. | CDJ | Free | Missing | P3 |
 | Flexible grid markers | Several tempo zones per track (Traktor 4, djay Fluid Beatgrid). | Not in rekordbox (dynamic analysis only) | n/a | Partial: rekordbox's tempo-changing grids play right; no manual markers | P3 |
-| Phrase display | Phrase strip under the waveform, coloured by type. | Preferences > View > Layout > Phrases | Free | Partial: track check shows phrase names; deck overview strip on an open PR (#104) | P1 |
+| Phrase display | Phrase strip under the waveform, coloured by type. | Preferences > View > Layout > Phrases | Free | Partial: track check shows phrase names, the deck overview shows the phrase strip; folder tracks have no phrases | P1 |
 | Phrase edit | CUT to split, drag to move or merge, change type, CLEAR. | GRID/PHRASE EDIT | Free | Missing | P2 |
 | Fill-in marks | Up to 4 beats marked at the end of Intro, Up and Chorus. | Waveform | Free | Missing | P3 |
 
@@ -411,21 +411,21 @@ These are features of the players. Dubplate prepares for them once it writes USB
 | Waveform zoom | Zoom in and out, RST; FLX4 SHIFT + BROWSE turn. | Enlarged waveform, FLX4 | Free (FLX4) | Missing: fixed at about 9 seconds across | P1 |
 | Hot cue marks on the scrolling waveform | Letters and flags at each hot cue. | Enlarged waveform | Free (FLX4) | Done (flags above the lane) | P0 |
 | Memory cue marks on the scrolling waveform | Red triangles at memory cues. | Enlarged waveform | Free (FLX4) | Missing | P0 |
-| Cue point mark | Orange marker at the current cue. | Enlarged waveform | Free (FLX4) | In progress (#104) | P0 |
-| Loop shown on the waveform | The active loop as a tinted band; a saved loop as a span. | Enlarged waveform | Free (FLX4) | In progress (#104) | P0 |
-| Slip shadow playhead | The background position while slipping. | Enlarged waveform | Free (FLX4) | In progress (#104) | P1 |
+| Cue point mark | Orange marker at the current cue. | Enlarged waveform | Free (FLX4) | Done | P0 |
+| Loop shown on the waveform | The active loop as a tinted band; a saved loop as a span. | Enlarged waveform | Free (FLX4) | Done | P0 |
+| Slip shadow playhead | The background position while slipping. | Enlarged waveform | Free (FLX4) | Done | P1 |
 | Beat count display | Current bar, or bars or beats to the next memory cue. | Preferences > View > Display Type | Free | Missing | P1 |
 | Phrases on the scrolling waveform | Phrase strip under the zoomed waveform. | Preferences > View > Layout > Phrases | Free | Missing | P2 |
 | Vocal sections on waveforms | Detected vocals marked on both waveforms. | Preferences > View > Layout > Vocal | Free | Missing | P2 |
 | Click the waveform to play or cue | Left click play/pause, right click CUE. | Preferences > View > Display Type | Free | Missing | P3 |
 | Drag the waveform to scrub | Drag to move through the track. | Enlarged waveform | Free | Missing | P2 |
-| Overview (full waveform) | The whole track with playhead and played part. | Track information panel | Free (FLX4) | Partial: single-colour overview with hot cue marks; the 3-band overview is on an open PR (#104) | P0 |
-| Overview cue and loop marks | Hot cues, memory cues, loops and phrases on the overview. | Overview | Free (FLX4) | In progress (#104) | P0 |
-| Overview phrases | Phrase strip on the full waveform. | Preferences > View > Layout > Phrases | Free | In progress (#104) | P1 |
-| End of track warning | The overview and time flash in the last seconds. | Overview, time | Free | In progress (#104: last 30 s tinted, time turns amber) | P0 |
-| Minute ticks and hover time | Not in rekordbox in this form. | n/a | n/a | In progress (#104) | P2 |
+| Overview (full waveform) | The whole track with playhead and played part. | Track information panel | Free (FLX4) | Done: 3-band overview with cues, loops, phrases and the end warning | P0 |
+| Overview cue and loop marks | Hot cues, memory cues, loops and phrases on the overview. | Overview | Free (FLX4) | Done | P0 |
+| Overview phrases | Phrase strip on the full waveform. | Preferences > View > Layout > Phrases | Free | Done | P1 |
+| End of track warning | The overview and time flash in the last seconds. | Overview, time | Free | Done (last 30 s tinted, time turns amber) | P0 |
+| Minute ticks and hover time | Not in rekordbox in this form. | n/a | n/a | Done | P2 |
 | Needle search | Click the overview to jump. | Overview | Free (FLX4) | Done | P1 |
-| Needle lock | Blocks needle search while playing. | Preferences > Controller > Deck | Free | Partial: keys on the overview no longer move a playing deck on #104; clicks still jump | P1 |
+| Needle lock | Blocks needle search while playing. | Preferences > Controller > Deck | Free | Partial: keys on the overview no longer move a playing deck; clicks still jump | P1 |
 | Phase meter | Bars showing each deck's beat offset from the master. | Above the decks | Free (FLX4) | Missing | P1 |
 | Parallel waveforms | Two waveforms on one time axis to see drift (Traktor). | Not in rekordbox | n/a | Done (both lanes on one real-time axis) | P1 |
 | Platter display | On-screen jog with cue marker; hot cue countdown mode. | JOG panel | Free | Missing | P3 |
@@ -460,13 +460,13 @@ These are features of the players. Dubplate prepares for them once it writes USB
 | Smart Cue | Pressing a hot cue makes it the new cue point; the CUE button takes its colour (7.2.14). | Preferences > Controller > Deck > HOT CUE | Free | Missing | P2 |
 | Gate Cue | While paused, holding a hot cue plays from it and releasing returns. | Preferences > Controller > Deck > HOT CUE | Free | Missing | P2 |
 | Hot cue call mode | Immediate jump keeping the beat offset, or wait for the next beat. | Preferences > Controller > Others > Mode | Free | Partial: immediate with the beat offset only | P3 |
-| Memory cues | Up to 10 cues and 10 loops per track with colour and comment. | MEMORY CUE pad mode, deck | Free | Partial: read from rekordbox; drawn only on an open PR (#104) | P0 |
+| Memory cues | Up to 10 cues and 10 loops per track with colour and comment. | MEMORY CUE pad mode, deck | Free | Partial: read from rekordbox and drawn on the overview; not callable, not savable | P0 |
 | Call memory cues | CUE/LOOP CALL ◁ ▷ steps to the previous or next memory cue or loop. | FLX4 CUE/LOOP CALL | Free (FLX4) | Missing | P0 |
 | Save a memory cue | SHIFT + CUE/LOOP CALL ▷, or MEMORY. | FLX4 | Free (FLX4) | Missing | P1 |
 | Delete a memory cue | SHIFT + CUE/LOOP CALL ◁. | FLX4 | Free (FLX4) | Missing | P2 |
 | Memory cue call lock | Blocks memory cue calls while playing. | Preferences > Controller > Deck | Free | Missing | P3 |
 | Cue and loop list | Every memory cue, hot cue and loop with time, colour and comment, click to jump. | MEMORY CUE pad mode | Free | Missing | P2 |
-| Mix cues on the deck | Not in rekordbox: the set's mix-in and mix-out. | Not in rekordbox | n/a | In progress (#104 draws them on the overview) | P1 |
+| Mix cues on the deck | Not in rekordbox: the set's mix-in and mix-out. | Not in rekordbox | n/a | Done (draws them on the overview) | P1 |
 | Bar countdown to the mix-out | Not in rekordbox (planned in Dubplate's spec). | Not in rekordbox | n/a | Missing | P1 |
 | Active Censor | Sections where an effect (reverse roll, trans, echo, vinyl brake) replaces the audio automatically. | ACT. CENSR pad mode | Free | Missing | P3 |
 
@@ -480,7 +480,7 @@ These are features of the players. Dubplate prepares for them once it writes USB
 | Loop in and out adjust | With a loop on, IN or OUT then the jog moves that point. | FLX4 IN/OUT + jog | Free (FLX4) | Partial: OUT alone moves the loop end to the playhead; no jog adjust of either point | P1 |
 | Halve and double | CUE/LOOP CALL while looping. | FLX4 | Free (FLX4) | Done | P0 |
 | Reloop and exit | Leave the loop or go back into it. | FLX4 4 BEAT/EXIT, deck | Free (FLX4) | Done | P0 |
-| Saved loops | Memory loops and hot loops, 10 per track, orange icon. | MEMORY CUE, HOT CUE | Free | Partial: drawn on the overview on an open PR (#104); not callable, not savable | P1 |
+| Saved loops | Memory loops and hot loops, 10 per track, orange icon. | MEMORY CUE, HOT CUE | Free | Partial: drawn on the overview; not callable, not savable | P1 |
 | Active loop | A saved loop marked active engages when the playhead reaches it; SHIFT + 4 BEAT/EXIT toggles it. | FLX4 SHIFT + 4 BEAT/EXIT | Free (FLX4) | Missing | P2 |
 | Loop roll | Rolls of 1/32 to 4 beats while held, slipping back in time. | PAD FX, BEAT FX ROLL | Free (FLX4) | Done (1/16 to 8 beats) | P1 |
 | Slicer | 8 slices of a 2 to 16 bar range on the pads, rolls of 1/64 to 1/8 of the range, slicer or slicer loop mode. | SLICER pad mode | Free | Missing | P2 |
@@ -571,7 +571,7 @@ rekordbox does not print its full Beat FX list; these names come from the plan p
 | Feature | What it does | Where in rekordbox | Tier | Dubplate | Priority |
 | --- | --- | --- | --- | --- | --- |
 | Two Beat FX units | FX1 and FX2, each on any deck, the sampler or the master. | Effect panel | Free (FLX4) | Done (three units on deck A, deck B or the master) | P0 |
-| Effect on both decks (1&2) | FLX4 CH SELECT 1&2 runs the effect on channels 1 and 2. | FLX4 CH SELECT | Free (FLX4) | In progress (#102) | P0 |
+| Effect on both decks (1&2) | FLX4 CH SELECT 1&2 runs the effect on channels 1 and 2. | FLX4 CH SELECT | Free (FLX4) | In progress | P0 |
 | Effect on the sampler | Assign a unit to the sampler. | Effect panel [S] | Free | Missing | P3 |
 | Single mode | One effect with its own parameter knobs and snapshots. | Effect panel | Free | Partial: one depth knob per effect | P1 |
 | Multi mode | Up to 3 effects chained per unit, each with on, beat and level. | Effect panel | Free | Missing | P2 |
@@ -673,7 +673,7 @@ rekordbox does not print its full Beat FX list; these names come from the plan p
 | Seam audition | Not in rekordbox: hears a planned transition in the headphones only. | Not in rekordbox | n/a | Done | P1 |
 | Sandbox | VirtualDJ: rehearse the next transition in the headphones while the master plays on. | Not in rekordbox | n/a | Partial: the seam audition plays a fixed 20 s; no free rehearsal | P2 |
 | Sound card choice | Output device; FLX4: master on outputs 1/2, headphones on 3/4. | Preferences > Audio | Free | Done | P0 |
-| Carry decks to a new sound card | Decks keep their tracks when the card changes. | n/a | Free | Done (a dead card is handled on an open PR, #105) | P1 |
+| Carry decks to a new sound card | Decks keep their tracks when the card changes. | n/a | Free | Done, including a card that stopped | P1 |
 | Buffer size | Samples per transfer, with the latency shown. | Preferences > Audio | Free | Missing on screen (the engine supports a fixed buffer) | P1 |
 | Sample rate | Sampling rate sent to the device (44.1 or 48 kHz on the FLX4). | Preferences > Audio | Free | Partial: follows the device | P3 |
 | Output channel mapping | Master, headphones and booth outputs chosen by hand. | Preferences > Audio > Input/Output | Free | Partial: automatic | P2 |
@@ -774,11 +774,11 @@ Every control in Pioneer's "DDJ-FLX4 Hardware Diagram for rekordbox", with and w
 | CUE/LOOP CALL ▷ | Call next cue or loop; double while looping; with SHIFT: Save cue or loop point | FLX4 hardware diagram | Free (FLX4) | Partial: double only | P0 |
 | BEAT SYNC | Sync on/off; hold for tempo master; with SHIFT: Tempo range | FLX4 hardware diagram | Free (FLX4) | Done | P0 |
 | TEMPO | Tempo | FLX4 hardware diagram | Free (FLX4) | Done (with pick-up) | P0 |
-| FX CH SELECT lever | Beat FX channel 1, 2 or 1&2 | FLX4 hardware diagram | Free (FLX4) | In progress (#102: 1&2 means both decks; on main 1&2 means the master) | P0 |
-| FX SELECT | Next Beat FX; with SHIFT: Previous Beat FX | FLX4 hardware diagram | Free (FLX4) | Done; picker popover in progress (#102) | P1 |
+| FX CH SELECT lever | Beat FX channel 1, 2 or 1&2 | FLX4 hardware diagram | Free (FLX4) | In progress (1&2 means both decks; on main 1&2 means the master) | P0 |
+| FX SELECT | Next Beat FX; with SHIFT: Previous Beat FX | FLX4 hardware diagram | Free (FLX4) | Done; picker popover in progress | P1 |
 | BEAT ◁ | Shorter beat; with SHIFT: BPM auto mode | FLX4 hardware diagram | Free (FLX4) | Partial: SHIFT moves the FLX4 to another effect unit instead of AUTO/TAP BPM | P2 |
 | BEAT ▷ | Longer beat; with SHIFT: BPM tap mode | FLX4 hardware diagram | Free (FLX4) | Partial: SHIFT moves the FLX4 to another effect unit instead of AUTO/TAP BPM | P2 |
-| LEVEL/DEPTH | Beat FX parameter | FLX4 hardware diagram | Free (FLX4) | Partial: waits for pick-up; absolute from the first report in progress (#102) | P0 |
+| LEVEL/DEPTH | Beat FX parameter | FLX4 hardware diagram | Free (FLX4) | Partial: waits for pick-up; absolute from the first report in progress | P0 |
 | BEAT FX ON/OFF | Beat FX on/off; with SHIFT: Release FX on | FLX4 hardware diagram | Free (FLX4) | Partial: no Release FX | P1 |
 | MASTER LEVEL | Master volume | FLX4 hardware diagram | Free (FLX4) | Done | P0 |
 | HEADPHONE CUE (MASTER) | Master in headphones | FLX4 hardware diagram | Free (FLX4) | Done | P0 |
