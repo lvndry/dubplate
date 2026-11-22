@@ -29,7 +29,11 @@ pub(crate) struct RollKernel {
     style: RollStyle,
     beat: BeatLength,
     loop_samples: usize,
+    wanted_loop_samples: usize,
     edge_samples: f32,
+    dip: f32,
+    swapping: bool,
+    restarting: bool,
 }
 
 impl RollKernel {
@@ -41,14 +45,19 @@ impl RollKernel {
             elapsed: 0,
             style,
             beat: BeatLength::HALF,
-            loop_samples: 1,
+            loop_samples: 2,
+            wanted_loop_samples: 2,
             edge_samples: 1.0,
+            dip: 1.0,
+            swapping: false,
+            restarting: false,
         }
     }
 
     pub(crate) fn set_beat(&mut self, beat: BeatLength) {
-        if beat != self.beat && self.style == RollStyle::Slip {
-            self.restart();
+        if beat != self.beat {
+            self.swapping = true;
+            self.restarting = self.style == RollStyle::Slip;
         }
         self.beat = beat;
     }
@@ -56,6 +65,27 @@ impl RollKernel {
     fn restart(&mut self) {
         self.recorded = 0;
         self.elapsed = 0;
+    }
+
+    /// Steps the dip that hides a new loop length: the output fades out, the loop takes its
+    /// new length (a slip roll also starts over) at silence, and the output fades back in.
+    #[inline]
+    fn step_dip(&mut self) -> f32 {
+        let step = 1.0 / self.edge_samples;
+        if self.swapping {
+            self.dip -= step;
+            if self.dip <= 0.0 {
+                self.dip = 0.0;
+                self.loop_samples = self.wanted_loop_samples;
+                self.swapping = false;
+                if self.restarting {
+                    self.restart();
+                }
+            }
+        } else if self.dip < 1.0 {
+            self.dip = (self.dip + step).min(1.0);
+        }
+        self.dip
     }
 
     /// The gain that fades the repeat out and in over a millisecond and a half at each end of
@@ -74,13 +104,17 @@ impl Kernel for RollKernel {
 
     fn begin_block(&mut self, timing: &BlockTiming) {
         let capacity = self.recording[0].len();
-        self.loop_samples =
+        self.wanted_loop_samples =
             (timing.beats_to_samples(self.beat.beats()).round() as usize).clamp(2, capacity);
+        if !self.swapping {
+            self.loop_samples = self.wanted_loop_samples;
+        }
         self.edge_samples = (EDGE_SECONDS * timing.sample_rate).max(1.0);
     }
 
     #[inline]
     fn tick(&mut self, input: Frame, _beat_position: f64) -> Frame {
+        let dip = self.step_dip();
         let capacity = self.recording[0].len();
         if self.recorded < capacity {
             for (channel, sample) in self.recording.iter_mut().zip(input) {
@@ -93,14 +127,14 @@ impl Kernel for RollKernel {
         self.elapsed += 1;
         if first_pass {
             let to_end = (self.loop_samples - 1 - position) as f32;
-            let gain = (to_end / self.edge_samples).min(1.0);
+            let gain = (to_end / self.edge_samples).min(1.0) * dip;
             return input.map(|sample| sample * gain);
         }
         let index = match self.style {
             RollStyle::Hold | RollStyle::Slip => position,
             RollStyle::Reverse => self.loop_samples - 1 - position,
         };
-        let gain = self.edge_gain(position);
+        let gain = self.edge_gain(position) * dip;
         [
             self.recording[0][index] * gain,
             self.recording[1][index] * gain,
@@ -109,10 +143,16 @@ impl Kernel for RollKernel {
 
     fn reset(&mut self) {
         self.restart();
+        self.dip = 1.0;
+        self.swapping = false;
+        self.loop_samples = self.wanted_loop_samples;
     }
 
     fn switched_on(&mut self) {
         self.restart();
+        self.dip = 1.0;
+        self.swapping = false;
+        self.loop_samples = self.wanted_loop_samples;
     }
 }
 

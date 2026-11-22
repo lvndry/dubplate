@@ -69,9 +69,10 @@ pub(crate) trait Voicing: Send + 'static {
     /// Called each time the effect is switched on.
     fn switched_on(&mut self) {}
 
-    /// Whether the loop is frozen: it takes in no new music and holds what it has forever.
-    fn frozen(&self) -> bool {
-        false
+    /// How frozen the loop is, from 0 to 1: fully frozen, it takes in no new music and holds
+    /// what it has forever. Read once per sample, after [`Voicing::send`].
+    fn frozen(&self) -> f32 {
+        0.0
     }
 
     /// Clears every internal state.
@@ -143,9 +144,8 @@ impl<V: Voicing> Kernel for EchoLoop<V> {
             sent[0].abs().max(sent[1].abs()),
             delayed[0].abs().max(delayed[1].abs()),
         );
-        if self.voicing.frozen() {
-            gains.feedback = 1.0;
-        }
+        let frozen = self.voicing.frozen();
+        gains.feedback += (1.0 - gains.feedback) * frozen;
         let repeats = self.voicing.shape(delayed);
         for ((line, channel_sent), repeat) in self.lines.iter_mut().zip(sent).zip(repeats) {
             line.write(flush_denormal(channel_sent + repeat * gains.feedback));

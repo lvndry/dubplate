@@ -198,6 +198,7 @@ fn turning_knobs_and_switching_never_clicks() {
                 | EffectKind::VinylBrake
                 | EffectKind::Noise
                 | EffectKind::MobiusSaw
+                | EffectKind::MobiusTriangle
         )
     });
     for kind in smooth_effects {

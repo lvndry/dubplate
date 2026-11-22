@@ -608,14 +608,22 @@ impl Voicing for Diffused {
 
 const HELIX_LOWEST_FEEDBACK: f32 = 0.6;
 const HELIX_FREEZE_DEPTH: f32 = 0.98;
+const HELIX_FREEZE_SECONDS: f32 = 0.004;
 
 /// Records the music into the loop and repeats it every beat length without ageing it, laying
 /// each new pass over the last; changing the beat length bends the recording's pitch: the
 /// Helix. The knob sets how much of each pass stays, and fully right freezes the loop: it takes
 /// no new music and repeats what it holds for as long as it plays.
-#[derive(Default)]
 pub(crate) struct Layered {
-    frozen: bool,
+    frozen: Smoothed,
+}
+
+impl Default for Layered {
+    fn default() -> Self {
+        Self {
+            frozen: Smoothed::new(0.0, HELIX_FREEZE_SECONDS),
+        }
+    }
 }
 
 impl Voicing for Layered {
@@ -629,19 +637,27 @@ impl Voicing for Layered {
         HELIX_LOWEST_FEEDBACK + (1.0 - HELIX_LOWEST_FEEDBACK) * depth
     }
 
-    fn prepare(&mut self, _sample_rate: f32) {}
-
-    fn set_depth(&mut self, depth: f32) {
-        self.frozen = depth >= HELIX_FREEZE_DEPTH;
+    fn prepare(&mut self, sample_rate: f32) {
+        self.frozen.prepare(sample_rate);
     }
 
-    fn frozen(&self) -> bool {
-        self.frozen
+    fn set_depth(&mut self, depth: f32) {
+        let frozen = if depth >= HELIX_FREEZE_DEPTH {
+            1.0
+        } else {
+            0.0
+        };
+        self.frozen.set_target(frozen);
+    }
+
+    fn frozen(&self) -> f32 {
+        self.frozen.current()
     }
 
     #[inline]
     fn send(&mut self, input: Frame) -> Frame {
-        if self.frozen { [0.0; 2] } else { input }
+        let open = 1.0 - self.frozen.next();
+        input.map(|sample| sample * open)
     }
 
     #[inline]
@@ -649,11 +665,14 @@ impl Voicing for Layered {
         repeat
     }
 
-    fn reset(&mut self) {}
+    fn reset(&mut self) {
+        self.frozen.snap_to_target();
+    }
 }
 
 const OUT_SHORTEST_FEEDBACK: f32 = 0.55;
 const OUT_LONGEST_FEEDBACK: f32 = 0.85;
+const OUT_EDGE_SECONDS: f32 = 0.003;
 
 /// Takes in one beat length of the music from the moment it is switched on, then cuts the music
 /// and lets the echoes of that last beat length fade away: the Echo Out, the afro house exit,
@@ -663,6 +682,7 @@ pub(crate) struct Outgoing {
     tape: Tape,
     taken: f32,
     window: f32,
+    edge_samples: f32,
 }
 
 impl Voicing for Outgoing {
@@ -680,6 +700,7 @@ impl Voicing for Outgoing {
 
     fn prepare(&mut self, sample_rate: f32) {
         self.tape.prepare(sample_rate);
+        self.edge_samples = (OUT_EDGE_SECONDS * sample_rate).max(1.0);
     }
 
     fn set_loop_samples(&mut self, samples: f32) {
@@ -692,12 +713,12 @@ impl Voicing for Outgoing {
 
     #[inline]
     fn send(&mut self, input: Frame) -> Frame {
-        if self.taken < self.window {
-            self.taken += 1.0;
-            input
-        } else {
-            [0.0; 2]
+        if self.taken >= self.window {
+            return [0.0; 2];
         }
+        let edge = (self.taken.min(self.window - self.taken) / self.edge_samples.max(1.0)).min(1.0);
+        self.taken += 1.0;
+        input.map(|sample| sample * edge)
     }
 
     #[inline]
