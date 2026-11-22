@@ -310,7 +310,10 @@ pub(super) fn render(
                     .pending
                     .iter()
                     .enumerate()
-                    .map(|(position, relocation)| pending_row(position, relocation, cx)),
+                    .map(|(position, relocation)| {
+                        let track = track_name(app, relocation);
+                        pending_row(position, relocation, track, cx)
+                    }),
             );
     }
     if !review.not_found.is_empty() {
@@ -366,9 +369,27 @@ pub(super) fn render(
         .child(card)
 }
 
+/// The missing track as the library names it, `Title · Artist`, or its file's name when the
+/// library does not hold it.
+fn track_name(app: &DubplateApp, relocation: &Relocation) -> String {
+    app.collection()
+        .and_then(|collection| {
+            let row = &collection
+                .track(collection.find_path(&relocation.missing)?)
+                .row;
+            Some(if row.artist.is_empty() {
+                row.title.to_string()
+            } else {
+                format!("{} \u{b7} {}", row.title, row.artist)
+            })
+        })
+        .unwrap_or_else(|| file_name(&relocation.found))
+}
+
 fn pending_row(
     position: usize,
     relocation: &Relocation,
+    track: String,
     cx: &mut Context<'_, DubplateApp>,
 ) -> impl IntoElement + use<> {
     div()
@@ -384,7 +405,7 @@ fn pending_row(
                 .flex_col()
                 .flex_1()
                 .min_w_0()
-                .child(div().truncate().child(file_name(&relocation.found)))
+                .child(div().truncate().child(track))
                 .child(
                     div()
                         .truncate()
