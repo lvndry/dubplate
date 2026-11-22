@@ -112,9 +112,27 @@ Each channel has a CUE button that sends its sound to the headphones before its 
 
 ## Key lock
 
-Key lock, the MASTER TEMPO button of a CDJ, changes a deck's tempo without changing its pitch. It runs the Signalsmith Stretch time-stretcher, chosen after comparing it with Rubber Band's R2 and R3 engines on real music at ±8% and ±16%. It kept the music's spectrum closest to the original, kept the stereo image, held a 1 kHz tone to the cent and cost about 0.2 µs per stereo frame, half of R2 and a tenth of R3. Its preset that spreads each spectral frame's work over the frame interval keeps every audio callback close to the average: its slowest 256-frame block took 70 µs, against 350 µs without spreading.
+Key lock, the MASTER TEMPO button of a CDJ, changes a deck's tempo without changing its pitch. It runs the Signalsmith Stretch time-stretcher, chosen after comparing it with Rubber Band's R2 and R3 engines on real music at ±8% and ±16%. It kept the music's spectrum closest to the original, kept the stereo image, held a 1 kHz tone to the cent and cost about 0.2 µs per stereo frame, half of R2 and a tenth of R3. Its default preset overlaps its spectral frames four times, which keeps a key-shifted pitch true to within a few cents; the preset that spreads its work more evenly was up to 7 cents off when shifting the key.
 
-The stretcher needs to hear about 140 ms of music ahead of what it plays. The track is fully decoded, so the deck reads ahead by that much, round loops as the playhead will, and the stretched beats land within a millisecond of the playhead. After a jump, hot cue or beat jump the stretcher starts again at the new place at once. Scratching, and a record held still, play without key lock, as on a CDJ; at the track's own tempo the deck plays the track untouched. Turning key lock on or off crossfades over 20 ms. In the play example, a switches key lock on the selected deck.
+The stretcher needs to hear about 120 ms of music ahead of what it plays. The track is fully decoded, so the deck reads ahead by that much, round loops as the playhead will, and the stretched beats land within a millisecond of the playhead. After a jump, hot cue or beat jump the stretcher starts again at the new place at once. Scratching, and a record held still, play without key lock, as on a CDJ; at the track's own tempo the deck plays the track untouched. Turning key lock on or off crossfades over 20 ms. In the play example, a switches key lock on the selected deck.
+
+## Pads: rolls, slip, pad effects and key shift
+
+The DDJ-FLX4's pad modes map onto the engine:
+
+- **Hot Cue** plays hot cues, in rhythm with quantize.
+- **Beat Jump** jumps 1, 2, 4 or 8 beats either way.
+- **Beat Loop** sets 1/4 to 32-beat loops.
+- **Rolls** repeat the beat just passed while a pad is held. The track keeps playing silently underneath, and on release the deck lands in rhythm where it would have been: slip.
+- **SLIP** extends slip to scratches and loops. `SlipState` gives the shadow playhead for the waveform.
+- **Pad FX** holds any of the effects on one deck, after its EQ and filter. A brake gives the live track back on release, since the track kept playing; echoes and reverbs ring out.
+- **Key Shift** and **Keyboard** move the key by -12 to +12 semitones through the key lock time-stretcher, at any tempo. Without key lock the shift adds to the pitch the tempo gives.
+
+While a deck slips, beat sync leaves it alone, because its shadow stays in phase.
+
+## Recording
+
+`Controller::start_recording` returns a `RecordingTap`: the master output exactly as it goes to the speakers, after the master level and the limiter, as interleaved stereo frames at the engine's sample rate. The audio thread copies each block into the tap's buffer without allocating or waiting. Frames that do not fit, because the tap was not read in time, are dropped and counted in `RecordingTap::dropped_frames`. Reading it on a thread of your own and writing a WAV file records the set.
 
 ## Preview a seam
 

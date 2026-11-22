@@ -236,6 +236,23 @@ impl EffectUnit {
     }
 }
 
+/// The limits every effect the engine builds allocates for: the engine's own sample rate.
+pub(crate) fn effect_config(sample_rate: u32) -> EffectConfig {
+    EffectConfig {
+        max_sample_rate: sample_rate as f32,
+        ..EffectConfig::default()
+    }
+}
+
+/// The tempo and beat position effects follow for a block, from the engine's context. Without
+/// a beat grid the effects fall back to their own tempo.
+pub(crate) fn effect_context(context: &ProcessContext) -> dubplate_fx::ProcessContext {
+    let (tempo_bpm, beat_position) = context
+        .beat_clock
+        .map_or((0.0, 0.0), |clock| (clock.bpm, clock.beat_position));
+    dubplate_fx::ProcessContext::new(context.sample_rate as f32, tempo_bpm, beat_position)
+}
+
 /// The audio-thread side of every effect unit.
 pub(crate) struct EffectRack {
     units: [EffectUnit; EFFECT_UNIT_COUNT],
@@ -245,10 +262,7 @@ impl EffectRack {
     /// Builds every effect of every unit for `sample_rate`. This allocates, so it runs before
     /// the renderer reaches the audio thread.
     pub(crate) fn new(sample_rate: u32) -> Self {
-        let config = EffectConfig {
-            max_sample_rate: sample_rate as f32,
-            ..EffectConfig::default()
-        };
+        let config = effect_config(sample_rate);
         Self {
             units: EffectUnitId::ALL
                 .map(|unit| EffectUnit::new(EffectSettings::initial(unit), &config)),
@@ -266,11 +280,7 @@ impl EffectRack {
         block: &mut StereoBlock,
         context: &ProcessContext,
     ) {
-        let (tempo_bpm, beat_position) = context
-            .beat_clock
-            .map_or((0.0, 0.0), |clock| (clock.bpm, clock.beat_position));
-        let effect_context =
-            dubplate_fx::ProcessContext::new(context.sample_rate as f32, tempo_bpm, beat_position);
+        let effect_context = effect_context(context);
         let (left, right) = block.channels_mut();
         for unit in &mut self.units {
             unit.process(target, left, right, &effect_context);

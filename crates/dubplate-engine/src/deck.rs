@@ -10,7 +10,9 @@ use crate::jog::{BlockStart, JogInput, Platter};
 use crate::keylock::{KeyLock, KeyLockBlock};
 use crate::looping::{LoopRegion, Looping};
 use crate::mixer::RetireQueue;
+use crate::pad_effects::{PadEffect, PadEffects};
 use crate::processor::{AudioProcessor, ProcessContext, StereoBlock};
+use crate::slip::Slip;
 use crate::sync::{MasterBeat, PhaseAction, SyncFollow, SyncMode, phase_action, sync_multiple};
 use crate::tempo::{BeatClock, TempoFader, TempoRange};
 use crate::track::{MAX_TRACK_SECONDS, TrackBuffer};
@@ -65,6 +67,13 @@ pub(crate) struct Deck {
     cue_point: f64,
     looping: Looping,
     quantize: bool,
+    slip: Slip,
+    slipping_loop: bool,
+    slipping_touch: bool,
+    roll: Option<Option<LoopRegion>>,
+    pad_effects: PadEffects,
+    key_shift: f32,
+    pending_landing: bool,
     beat_grid: Option<BeatGrid>,
     fader: TempoFader,
     sync: SyncFollow,
@@ -92,6 +101,13 @@ impl Deck {
             cue_point: 0.0,
             looping: Looping::default(),
             quantize: true,
+            slip: Slip::default(),
+            slipping_loop: false,
+            slipping_touch: false,
+            roll: None,
+            pad_effects: PadEffects::new(output_rate),
+            key_shift: 0.0,
+            pending_landing: false,
             beat_grid: None,
             fader: TempoFader::default(),
             sync: SyncFollow::default(),
@@ -212,6 +228,11 @@ impl Deck {
         self.voice.position = 0.0;
         self.cue_point = 0.0;
         self.looping.clear();
+        self.slip.clear();
+        self.slipping_loop = false;
+        self.slipping_touch = false;
+        self.roll = None;
+        self.pad_effects.release();
         self.key_lock.stop(retire);
         if let Some(previous) = self.beat_grid.take() {
             retire.beat_grid(previous);
@@ -344,6 +365,9 @@ impl Deck {
     /// the loop on from the loop in point. Without a loop in point it moves the end of the
     /// current loop.
     pub(crate) fn loop_out(&mut self, retire: &mut RetireQueue) {
+        if self.looping.pending_start.is_some() {
+            self.start_slipping_loop();
+        }
         let start = match (self.looping.pending_start.take(), self.looping.region) {
             (Some(start), _) => start,
             (None, Some(region)) => region.start,
@@ -367,6 +391,11 @@ impl Deck {
     /// A beat loop of `length` from the beat the deck just passed with quantize, or from where
     /// it is without. With a loop on, changes its length from its start instead.
     pub(crate) fn beat_loop(&mut self, length: BeatLength, retire: &mut RetireQueue) {
+        self.start_slipping_loop();
+        self.start_beat_loop(length, retire);
+    }
+
+    fn start_beat_loop(&mut self, length: BeatLength, retire: &mut RetireQueue) {
         let start = match self.looping.active_loop() {
             Some(region) => region.start,
             None if self.quantizes() => {
@@ -433,7 +462,13 @@ impl Deck {
             return;
         };
         region.active = !region.active;
-        if region.active {
+        if !region.active {
+            if std::mem::take(&mut self.slipping_loop) {
+                self.land(retire);
+            }
+            return;
+        }
+        {
             let start = region.start;
             let target = if self.playing {
                 self.in_phase(start)
@@ -442,6 +477,72 @@ impl Deck {
             };
             self.jump_to_frame(target, retire);
         }
+    }
+
+    /// With SLIP on, a loop starts a slip: leaving it lands where the track would have been.
+    fn start_slipping_loop(&mut self) {
+        if self.slip.enabled && !self.slipping_loop && self.roll.is_none() && self.playing {
+            self.slip.begin(self.voice.position);
+            self.slipping_loop = true;
+        }
+    }
+
+    /// Lands on the slip shadow when the last slipping action ends.
+    fn land(&mut self, retire: &mut RetireQueue) {
+        if let Some(shadow) = self.slip.end() {
+            let target = match self.looping.active_loop() {
+                Some(region) => region.fold(shadow),
+                None => shadow,
+            };
+            self.jump_to_frame(target, retire);
+        }
+    }
+
+    /// A loop roll of `length` while a pad is held: the deck loops on the beat while the track
+    /// keeps playing underneath, and `None` lets go, landing in rhythm where the track would
+    /// have been. Pressing another length while rolling changes the roll's length.
+    pub(crate) fn beat_roll(&mut self, length: Option<BeatLength>, retire: &mut RetireQueue) {
+        match length {
+            Some(length) => {
+                if self.roll.is_none() {
+                    self.roll = Some(self.looping.region.take());
+                    self.slip.begin(self.voice.position);
+                }
+                self.start_beat_loop(length, retire);
+            }
+            None => {
+                if let Some(previous) = self.roll.take() {
+                    self.looping.region = previous;
+                    self.land(retire);
+                }
+            }
+        }
+    }
+
+    /// The SLIP button.
+    pub(crate) fn set_slip(&mut self, enabled: bool) {
+        self.slip.enabled = enabled;
+    }
+
+    pub(crate) fn slip_enabled(&self) -> bool {
+        self.slip.enabled
+    }
+
+    pub(crate) fn slip_shadow(&self) -> Option<f64> {
+        self.slip.shadow()
+    }
+
+    pub(crate) fn hold_pad_effect(&mut self, pad: PadEffect) {
+        self.pad_effects.hold(pad);
+    }
+
+    pub(crate) fn release_pad_effect(&mut self) {
+        self.pad_effects.release();
+    }
+
+    /// Shifts the key by `semitones` through the key lock stretcher, whatever the tempo.
+    pub(crate) fn set_key_shift(&mut self, semitones: f32) {
+        self.key_shift = semitones;
     }
 
     /// Puts a loop on the deck and brings a playhead past its end back inside it.
@@ -610,7 +711,8 @@ impl Deck {
         let lock_beats = self.sync.mode == SyncMode::Beat
             && master.running
             && self.playing
-            && !self.platter.is_holding();
+            && !self.platter.is_holding()
+            && self.slip.shadow().is_none();
         let mut phase_bend = 0.0;
         if lock_beats {
             let beat = grid.beat_at(seconds);
@@ -647,6 +749,21 @@ impl Deck {
             self.loosen_beat_sync();
         }
         self.platter.apply(input, self.playing);
+        match input {
+            JogInput::Touch(true)
+                if self.slip.enabled && self.playing && self.platter.is_touched() =>
+            {
+                if !self.slipping_touch {
+                    self.slip.begin(self.voice.position);
+                    self.slipping_touch = true;
+                }
+            }
+            JogInput::Touch(false) if self.slipping_touch => {
+                self.slipping_touch = false;
+                self.pending_landing = true;
+            }
+            _ => {}
+        }
     }
 
     pub(crate) fn set_jog_ticks_per_revolution(&mut self, ticks: u32) {
@@ -718,6 +835,10 @@ impl Deck {
             motor_step,
             frames: frame_count,
         });
+        if std::mem::take(&mut self.pending_landing) {
+            self.platter.drop_carry();
+            self.land(retire);
+        }
         let holding = self.platter.is_holding();
         let transport_target = if self.playing || holding { 1.0 } else { 0.0 };
         if self.voice.transport.target() != transport_target {
@@ -734,12 +855,22 @@ impl Deck {
         let audible_step = unit_step * AUDIBLE_SPEED;
         let end_frame = self.voice.end_frame();
         let active_loop = self.looping.active_loop();
+        self.slip
+            .advance(motor_step * frame_count as f64, end_frame);
+        let tempo_moved = (self.tempo - 1.0).abs() > KEY_LOCK_TEMPO_TOLERANCE;
+        let key_shifted = self.key_shift != 0.0;
+        let tempo_semitones = if self.key_lock_enabled {
+            0.0
+        } else {
+            12.0 * self.tempo.log2() as f32
+        };
+        self.key_lock
+            .set_transpose(self.key_shift + tempo_semitones);
         let stretched = self.key_lock.prepare(
             KeyLockBlock {
-                wanted: self.key_lock_enabled
+                wanted: ((self.key_lock_enabled && tempo_moved) || key_shifted)
                     && self.playing
-                    && !holding
-                    && (self.tempo - 1.0).abs() > KEY_LOCK_TEMPO_TOLERANCE,
+                    && !holding,
                 track: self.voice.track.as_ref(),
                 playhead: self.voice.position,
                 advance,
@@ -798,6 +929,7 @@ impl Deck {
             *right = (playhead_right * gain + tail_right) * trim;
         }
         self.strip.process(&mut self.block);
+        self.pad_effects.process(&mut self.block, context);
         for processor in self.inserts.iter_mut().flatten() {
             processor.process(&mut self.block, context);
         }

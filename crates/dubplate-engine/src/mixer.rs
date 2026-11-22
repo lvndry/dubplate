@@ -10,8 +10,10 @@ use crate::effects::{EffectChange, EffectRack, EffectTarget, EffectUnitId};
 use crate::grid::BeatGrid;
 use crate::headphones::Headphones;
 use crate::jog::JogInput;
+use crate::pad_effects::PadEffect;
 use crate::preview::{PreviewBus, PreviewPlan};
 use crate::processor::{AudioProcessor, ProcessContext, StereoBlock};
+use crate::recording::RecordingSink;
 use crate::state::{GapDetector, SharedState, encode_loop_length, raise_peak};
 use crate::sync::SyncMode;
 use crate::tempo::{DeckLevel, MasterTempo, TempoMaster, TempoRange};
@@ -140,6 +142,24 @@ pub(crate) enum Command {
         enabled: bool,
     },
     Preview(Option<PreviewPlan>),
+    SetRecording(Option<RecordingSink>),
+    SetSlip {
+        deck: DeckId,
+        enabled: bool,
+    },
+    BeatRoll {
+        deck: DeckId,
+        length: Option<BeatLength>,
+    },
+    HoldPadEffect {
+        deck: DeckId,
+        pad: PadEffect,
+    },
+    ReleasePadEffect(DeckId),
+    SetKeyShift {
+        deck: DeckId,
+        semitones: f32,
+    },
 }
 
 /// Something the audio thread no longer needs. It goes back to the control side to be dropped,
@@ -148,6 +168,7 @@ pub(crate) enum Retired {
     Track(#[allow(dead_code)] Arc<TrackBuffer>),
     Processor(#[allow(dead_code)] Box<dyn AudioProcessor>),
     BeatGrid(#[allow(dead_code)] BeatGrid),
+    Recording(#[allow(dead_code)] RecordingSink),
 }
 
 /// The audio thread's end of the queue of retired objects.
@@ -166,6 +187,10 @@ impl RetireQueue {
 
     pub(crate) fn beat_grid(&mut self, beat_grid: BeatGrid) {
         self.retire(Retired::BeatGrid(beat_grid));
+    }
+
+    fn recording(&mut self, sink: RecordingSink) {
+        self.retire(Retired::Recording(sink));
     }
 
     fn processor(&mut self, processor: Box<dyn AudioProcessor>) {
@@ -195,6 +220,7 @@ pub struct Renderer {
     headphones: Headphones,
     preview: PreviewBus,
     master_limiter: Limiter,
+    recording: Option<RecordingSink>,
     headphone_limiter: Limiter,
     crossfader: f32,
     sync_half_and_double: bool,
@@ -225,6 +251,7 @@ impl Renderer {
             headphones: Headphones::new(MAX_BLOCK_FRAMES, declick_frames),
             preview: PreviewBus::new(sample_rate, MAX_BLOCK_FRAMES, declick_frames),
             master_limiter: Limiter::new(sample_rate as f32),
+            recording: None,
             headphone_limiter: Limiter::new(sample_rate as f32),
             crossfader: 0.5,
             sync_half_and_double: true,
@@ -370,6 +397,9 @@ impl Renderer {
             *right *= gain;
         }
         self.master_limiter.process(left_channel, right_channel);
+        if let Some(recording) = &mut self.recording {
+            recording.write(&self.master_block);
+        }
         raise_peak(&self.shared.master_peak, self.master_block.peak());
         raise_peak(
             &self.shared.master_limiting,
@@ -509,6 +539,20 @@ impl Renderer {
                 self.decks[deck.index()].set_key_lock(enabled);
             }
             Command::Preview(plan) => self.preview.set(plan, &mut self.retire),
+            Command::SetRecording(sink) => {
+                if let Some(previous) = std::mem::replace(&mut self.recording, sink) {
+                    self.retire.recording(previous);
+                }
+            }
+            Command::SetSlip { deck, enabled } => self.decks[deck.index()].set_slip(enabled),
+            Command::BeatRoll { deck, length } => {
+                self.decks[deck.index()].beat_roll(length, &mut self.retire);
+            }
+            Command::HoldPadEffect { deck, pad } => self.decks[deck.index()].hold_pad_effect(pad),
+            Command::ReleasePadEffect(deck) => self.decks[deck.index()].release_pad_effect(),
+            Command::SetKeyShift { deck, semitones } => {
+                self.decks[deck.index()].set_key_shift(semitones);
+            }
             Command::SetMasterTempo(source) => self.tempo_master.set_source(source),
             Command::ChangeEffect { unit, change } => self.effects.change(unit, change),
             Command::SetEq {
@@ -565,6 +609,13 @@ impl Renderer {
             shared
                 .fader_waits_for_pickup
                 .store(deck.fader_waits_for_pickup(), Ordering::Relaxed);
+            shared
+                .slip_enabled
+                .store(deck.slip_enabled(), Ordering::Relaxed);
+            shared.slip_shadow_seconds.store(
+                deck.slip_shadow()
+                    .map_or(f64::NAN, |frames| deck.frames_to_seconds(frames)),
+            );
             let region = deck.loop_region();
             let seconds_or_none = |frames: Option<f64>| {
                 frames.map_or(f64::NAN, |frames| deck.frames_to_seconds(frames))

@@ -13,10 +13,12 @@ use crate::grid::BeatGrid;
 use crate::headphones::HeadphoneSettings;
 use crate::jog::JogInput;
 use crate::mixer::{Command, Renderer, RetireQueue, Retired};
+use crate::pad_effects::PadEffect;
 use crate::preview::{MAX_PREVIEW_SECONDS, Preview, PreviewPlan, PreviewState};
 use crate::processor::AudioProcessor;
+use crate::recording::{RecordingTap, recording_tap};
 use crate::state::{
-    DeckState, EngineStats, LoopState, Meters, PlatterState, SharedState, TempoState,
+    DeckState, EngineStats, LoopState, Meters, PlatterState, SharedState, SlipState, TempoState,
     decode_loop_length, take_peak,
 };
 use crate::sync::SyncMode;
@@ -29,6 +31,7 @@ const RETIRE_CAPACITY: usize = COMMAND_CAPACITY * 4;
 const MAX_TEMPO: f64 = 4.0;
 const MAX_GAIN: f32 = 16.0;
 const MAX_JUMP_BEATS: f64 = 1_024.0;
+const MAX_RECORDING_BUFFER_SECONDS: f64 = 600.0;
 
 /// Creates an engine whose audio side is driven by hand instead of a sound card.
 ///
@@ -49,6 +52,8 @@ pub fn offline_engine(sample_rate: u32) -> (Controller, Renderer) {
         quantize: true,
         headphones: HeadphoneSettings::default(),
         key_locks: [false; DECK_COUNT],
+        key_shifts: [0.0; DECK_COUNT],
+        pad_effects: [None; DECK_COUNT],
     };
     let renderer = Renderer::new(
         sample_rate,
@@ -74,6 +79,8 @@ pub struct Controller {
     quantize: bool,
     headphones: HeadphoneSettings,
     key_locks: [bool; DECK_COUNT],
+    key_shifts: [f32; DECK_COUNT],
+    pad_effects: [Option<PadEffect>; DECK_COUNT],
 }
 
 impl Controller {
@@ -448,6 +455,96 @@ impl Controller {
         PreviewState {
             playing: self.shared.preview_playing.load(Ordering::Relaxed),
             position_seconds: self.shared.preview_position_seconds.load(),
+        }
+    }
+
+    /// Starts a recording tap: the master output exactly as it goes to the speakers, after the
+    /// master level and the limiter, into a buffer of `buffer_seconds` that the returned tap
+    /// reads. Starting another tap stops this one. Frames that do not fit while the tap is not
+    /// read are dropped and counted, never waited for.
+    pub fn start_recording(&mut self, buffer_seconds: f64) -> Result<RecordingTap, EngineError> {
+        check_range(
+            "recording buffer seconds",
+            buffer_seconds,
+            0.01,
+            MAX_RECORDING_BUFFER_SECONDS,
+        )?;
+        let sample_rate = self.shared.stats.sample_rate;
+        let capacity_frames = (buffer_seconds * f64::from(sample_rate)).ceil() as usize;
+        let (tap, sink) = recording_tap(capacity_frames, sample_rate);
+        self.send(Command::SetRecording(Some(sink)))?;
+        Ok(tap)
+    }
+
+    /// Stops the recording tap. Frames already in its buffer can still be read.
+    pub fn stop_recording(&mut self) -> Result<(), EngineError> {
+        self.send(Command::SetRecording(None))
+    }
+
+    /// The SLIP button: with it on, scratching and loops slip as well as rolls. While an action
+    /// slips, the track keeps playing silently underneath and the deck lands back on it, in
+    /// rhythm, when the action ends.
+    pub fn set_slip(&mut self, deck: DeckId, enabled: bool) -> Result<(), EngineError> {
+        self.send(Command::SetSlip { deck, enabled })
+    }
+
+    /// Starts or changes a loop roll of `length` while a pad is held, like rekordbox's roll:
+    /// the deck repeats the beat just passed while the track keeps playing underneath.
+    pub fn beat_roll(&mut self, deck: DeckId, length: BeatLength) -> Result<(), EngineError> {
+        self.send(Command::BeatRoll {
+            deck,
+            length: Some(length),
+        })
+    }
+
+    /// Lets go of a roll: the deck lands in rhythm where the track would have been.
+    pub fn release_roll(&mut self, deck: DeckId) -> Result<(), EngineError> {
+        self.send(Command::BeatRoll { deck, length: None })
+    }
+
+    /// Holds a pad effect on a deck, after its EQ and filter, until released. Holding another
+    /// lets go of the first. Brake and backspin give back the live track on release, which
+    /// kept playing underneath; echoes and reverbs ring out.
+    pub fn hold_pad_effect(&mut self, deck: DeckId, pad: PadEffect) -> Result<(), EngineError> {
+        check_range("pad effect depth", f64::from(pad.depth), 0.0, 1.0)?;
+        self.send(Command::HoldPadEffect { deck, pad })?;
+        self.pad_effects[deck.index()] = Some(pad);
+        Ok(())
+    }
+
+    /// Lets go of a deck's pad effect.
+    pub fn release_pad_effect(&mut self, deck: DeckId) -> Result<(), EngineError> {
+        self.send(Command::ReleasePadEffect(deck))?;
+        self.pad_effects[deck.index()] = None;
+        Ok(())
+    }
+
+    /// The pad effect held on a deck.
+    pub fn pad_effect(&self, deck: DeckId) -> Option<PadEffect> {
+        self.pad_effects[deck.index()]
+    }
+
+    /// Shifts a deck's key by `semitones`, from -12 to +12, through the key lock time-stretcher,
+    /// whatever the tempo: Key Shift and Keyboard pads. 0 plays the track's own key.
+    pub fn set_key_shift(&mut self, deck: DeckId, semitones: f32) -> Result<(), EngineError> {
+        check_range("key shift", f64::from(semitones), -12.0, 12.0)?;
+        self.send(Command::SetKeyShift { deck, semitones })?;
+        self.key_shifts[deck.index()] = semitones;
+        Ok(())
+    }
+
+    /// A deck's key shift in semitones.
+    pub fn key_shift(&self, deck: DeckId) -> f32 {
+        self.key_shifts[deck.index()]
+    }
+
+    /// A deck's slip mode, as the audio thread last published it.
+    pub fn slip_state(&self, deck: DeckId) -> SlipState {
+        let shared = &self.shared.decks[deck.index()];
+        let shadow = shared.slip_shadow_seconds.load();
+        SlipState {
+            enabled: shared.slip_enabled.load(Ordering::Relaxed),
+            shadow_seconds: shadow.is_finite().then_some(shadow),
         }
     }
 

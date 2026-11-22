@@ -43,6 +43,8 @@ pub(crate) struct DeckShared {
     pub(crate) loop_active: AtomicBool,
     pub(crate) loop_length: AtomicU32,
     pub(crate) pending_loop_start_seconds: AtomicF64,
+    pub(crate) slip_enabled: AtomicBool,
+    pub(crate) slip_shadow_seconds: AtomicF64,
     pub(crate) touched: AtomicBool,
     pub(crate) vinyl_mode: AtomicBool,
     pub(crate) peak: AtomicU32,
@@ -130,6 +132,7 @@ impl SharedState {
                 deck.loop_start_seconds.store(f64::NAN);
                 deck.loop_end_seconds.store(f64::NAN);
                 deck.pending_loop_start_seconds.store(f64::NAN);
+                deck.slip_shadow_seconds.store(f64::NAN);
                 deck.tempo_range
                     .store(TempoRange::default().index(), Ordering::Relaxed);
                 deck.vinyl_mode.store(true, Ordering::Relaxed);
@@ -337,6 +340,16 @@ pub struct LoopState {
     pub length: Option<BeatLength>,
     /// A loop in point waiting for its loop out, in seconds.
     pub pending_start_seconds: Option<f64>,
+}
+
+/// A deck's slip mode, as the audio thread last published it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SlipState {
+    /// The SLIP button: scratches and loops slip, not only rolls.
+    pub enabled: bool,
+    /// Where the track would be now, in seconds, while a roll, scratch or loop slips: the
+    /// shadow playhead a waveform draws, and where the deck lands when it lets go.
+    pub shadow_seconds: Option<f64>,
 }
 
 /// What a deck's jog wheel is doing, as the audio thread last published it.

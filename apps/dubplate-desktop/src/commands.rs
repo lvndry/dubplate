@@ -66,6 +66,16 @@ pub enum SetEdit {
     ToggleBackup,
     /// Undo the last change to the set.
     Undo,
+    /// Confirm the selected set track's grid by ear, or take the confirmation back.
+    ConfirmGrid,
+    /// Move the selected set track's grid by milliseconds, later when positive.
+    NudgeGrid(i32),
+    /// Move the selected set track's bars by beats, later when positive.
+    ShiftDownbeat(i32),
+    /// Put the selected set track's mix-in on the bar nearest the playhead.
+    MixInAtPlayhead,
+    /// Put the selected set track's mix-out on the bar nearest the playhead.
+    MixOutAtPlayhead,
 }
 
 /// A press on one of a deck's performance pads.
@@ -148,6 +158,9 @@ pub enum Command {
     ToggleHeadphoneCue(DeckId),
     /// MASTER CUE: hear the master in the headphones too.
     ToggleMasterCue,
+    /// A tap on the beat, as SHIFT + a channel's CUE does: enough taps give a track without a
+    /// beat grid its tempo and beats.
+    TapTempo(DeckId),
     /// Load the track selected in the browser.
     LoadSelected(DeckId),
     /// Load the track playing on the other deck at the same place, as pressing LOAD twice does.
@@ -160,6 +173,8 @@ pub enum Command {
     MakeTempoMaster(DeckId),
     /// Step a deck's tempo range: ±6%, ±10%, ±16%, wide.
     CycleTempoRange(DeckId),
+    /// Key lock, a CDJ's MASTER TEMPO: tempo changes keep the track's pitch.
+    ToggleKeyLock(DeckId),
     /// Move a fader or knob to a position from 0.0 to 1.0.
     SetControl(Control, f32),
     /// Move the crossfader one step towards deck A ([`Direction::Down`]) or deck B.

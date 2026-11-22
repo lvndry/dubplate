@@ -13,7 +13,7 @@ use common::{SAMPLE_RATE, constant_track, wait_until_decoded, write_wav};
 use dubplate_engine::cpal::{OutputCallbackInfo, OutputStreamTimestamp, StreamInstant};
 use dubplate_engine::{
     AudioProcessor, BeatGrid, BeatLength, Controller, DeckId, EffectKind, EffectTarget,
-    EffectUnitId, EngineError, EqBand, GridBeat, MasterTempo, Preview, PreviewTrack,
+    EffectUnitId, EngineError, EqBand, GridBeat, MasterTempo, PadEffect, Preview, PreviewTrack,
     ProcessContext, Renderer, StereoBlock, SyncMode, TempoRange, offline_engine,
 };
 
@@ -151,6 +151,7 @@ fn run_session(
         controller.set_effect_target(unit, target)?;
         controller.set_effect_enabled(unit, true)?;
     }
+    let recording = controller.start_recording(0.5)?;
     controller.set_key_lock(DeckId::A, true)?;
     controller.set_key_lock(DeckId::B, true)?;
     controller.set_tempo(DeckId::A, 1.07)?;
@@ -185,7 +186,7 @@ fn run_session(
     controller.set_sync(DeckId::A, SyncMode::Beat)?;
     render_armed(renderer, &mut output[..9600], 2);
 
-    let steps: [Step; 52] = [
+    let steps: [Step; 61] = [
         |controller| {
             let track = controller
                 .track(DeckId::B)
@@ -207,6 +208,24 @@ fn run_session(
             }))
         },
         |controller| controller.preview(None),
+        |controller| controller.set_slip(DeckId::A, true),
+        |controller| controller.beat_roll(DeckId::A, BeatLength::QUARTER),
+        |controller| controller.beat_roll(DeckId::A, BeatLength::EIGHTH),
+        |controller| controller.release_roll(DeckId::A),
+        |controller| {
+            controller.hold_pad_effect(
+                DeckId::B,
+                PadEffect {
+                    kind: EffectKind::Brake,
+                    beat: BeatLength::HALF,
+                    depth: 1.0,
+                },
+            )
+        },
+        |controller| controller.release_pad_effect(DeckId::B),
+        |controller| controller.set_key_shift(DeckId::A, 3.0),
+        |controller| controller.set_key_shift(DeckId::B, -2.0),
+        |controller| controller.set_key_shift(DeckId::A, 0.0),
         |controller| controller.set_key_lock(DeckId::B, false),
         |controller| controller.set_key_lock(DeckId::B, true),
         |controller| controller.set_headphone_cue(DeckId::A, true),
@@ -263,6 +282,12 @@ fn run_session(
         render_armed(renderer, &mut output[..4800], 2);
     }
     render_armed(renderer, &mut output, 2);
+    assert!(
+        recording.dropped_frames() > 0,
+        "the full tap keeps dropping without allocating"
+    );
+    controller.stop_recording()?;
+    render_armed(renderer, &mut output[..4800], 2);
     let mut odd_sized = vec![0.0_f32; 1999 * 3];
     render_armed(renderer, &mut odd_sized, 3);
     let mut four_channels = vec![0.0_f32; 2048 * 4];
