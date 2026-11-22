@@ -87,7 +87,7 @@ From then on the set is an ordinary rekordbox playlist, ready to export to a USB
 
 ## 4. Mix
 
-Cmd+L loads the set's first two tracks onto deck A and deck B at their mix-in cues; Cmd+2 opens Perform.
+Cmd+L loads the set's first two tracks onto deck A and deck B at their mix-in cues; Cmd+2 opens Perform. A set track whose file is missing is never loaded: its deck keeps what it had, and a notice names the track with a **Relink** button that looks for the file. The same goes for any track loaded from the library.
 
 On the FLX4, everything works as in rekordbox's FLX4 layout:
 
@@ -96,6 +96,8 @@ On the FLX4, everything works as in rekordbox's FLX4 layout:
 - The pad modes: Hot Cue, Pad FX 1 and 2 (hold for rolls and effects), Beat Jump, Beat Loop, Sampler, Keyboard, Key Shift; the loop section IN, OUT, 4 BEAT/EXIT.
 - BEAT FX: FX SELECT, BEAT left and right, the CH SELECT lever, LEVEL/DEPTH and ON/OFF.
 - SMART CFX turns both filter knobs into the chosen preset (Space, Dub echo, Crush, Chop, Jet, Phase; SHIFT + SMART CFX steps through them). SMART FADER makes the crossfader glide a shared tempo and swap the bass for you; a LOW knob you turn takes over.
+
+When Smart Fader or sync has moved a deck's tempo away from where its TEMPO slider sits, the on-screen slider shows the tempo the deck plays, an amber outline where the fader waits, and "Move to take over": move the fader through the playing tempo and it takes over without a jump, as in rekordbox. The BEAT FX LEVEL/DEPTH knob shows an amber mark on the effect's level bar in the same case.
 
 On screen, each deck also has Sync, Master, Key lock and Slip, and the compact effects strip drives the three effect units. Press ? for every keyboard shortcut.
 

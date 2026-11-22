@@ -10,7 +10,8 @@ use dubplate_library::{FolderScan, LibraryCache};
 use dubplate_prep::ExportLibrary;
 use gpui::{Context, PathPromptOptions};
 
-use super::{DubplateApp, NoticePlace, error_chain};
+use super::notice::NoticePlace;
+use super::{DubplateApp, error_chain};
 use crate::browser::LibraryStatus;
 use crate::collection::{Collection, RekordboxLibrary, folder_name};
 use crate::commands::Mode;
@@ -273,8 +274,7 @@ impl DubplateApp {
                     this.follow_moved_set_files(&moved_files, cx);
                     this.catalogue = Arc::new(catalogue);
                     this.analyses.refresh();
-                    this.browser
-                        .update(cx, |browser, cx| browser.clear_analyses(cx));
+                    this.restore_analyses();
                     this.show_library(LibraryStatus::Ready(Arc::new(collection)), cx);
                     this.show_missing(missing, cx);
                     this.forget_track_checks();
