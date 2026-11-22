@@ -53,6 +53,10 @@ pub struct CollectionTrack {
     pub row: RowText,
     /// Its hot cues, ordered by pad.
     pub hot_cues: Vec<HotCue>,
+    /// Its memory cues, in seconds from the start, in order.
+    pub memory_cues: Vec<f64>,
+    /// Its saved loops, hot or memory, as start and end in seconds.
+    pub saved_loops: Vec<(f64, f64)>,
     /// Its title, artist, genre, folder and comment folded for search.
     pub search_text: SearchText,
 }
@@ -384,6 +388,22 @@ impl CollectionTrack {
             .collect();
         hot_cues.sort_by_key(|cue| cue.pad);
         hot_cues.dedup_by_key(|cue| cue.pad);
+        let mut memory_cues: Vec<f64> = cues
+            .iter()
+            .filter(|cue| cue.kind.pad().is_none() && cue.loop_end_ms.is_none())
+            .map(|cue| milliseconds_to_seconds(cue.start_ms))
+            .collect();
+        memory_cues.sort_by(f64::total_cmp);
+        let saved_loops: Vec<(f64, f64)> = cues
+            .iter()
+            .filter_map(|cue| {
+                let end = cue.loop_end_ms.filter(|end| *end > cue.start_ms)?;
+                Some((
+                    milliseconds_to_seconds(cue.start_ms),
+                    milliseconds_to_seconds(end),
+                ))
+            })
+            .collect();
         let title = track.title.clone().unwrap_or_else(|| file_name(&track));
         let artist = track.artist.clone().unwrap_or_default();
         let genre_tag = track.genre.as_deref().map(str::trim).unwrap_or_default();
@@ -422,6 +442,8 @@ impl CollectionTrack {
             origin,
             row,
             hot_cues,
+            memory_cues,
+            saved_loops,
             search_text,
         }
     }
