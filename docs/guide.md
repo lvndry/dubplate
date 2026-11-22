@@ -49,6 +49,8 @@ Each set track has a **ready badge**: Ready, or what is missing (Grid unconfirme
 
 ### Dig through the library
 
+- Right-click a track, or Control-click it, in the library or the set for what you can do with it: load it on deck A or B, preview it in the headphones, add it to the set or insert it after the selected set track (or remove it from the set), separate its stems, relink it when its file moved, **Show in Finder** (Option+Command+R) and **Copy File Path** (Option+Command+C). Each item shows its key, and items that do not apply are dimmed.
+
 - Click a column header to sort by it, again to reverse it, and a third time to go back to the crate's own order. Prepare and Perform each remember their sort.
 - The search field matches titles, artists, genres, comments and the folders a track is filed in, so `amapiano warmup` finds the tracks in your amapiano/warmup folder. The Genre column shows the genre tag, or those folders when the track has none.
 - Type filters in the same field, mixed with words: `bpm:120-124` (or `bpm:120`, `bpm:120+`), `key:8A` (any notation) or `key:fits` (what mixes after the reference track, as Key fits), `genre:amapiano`, `artist:kabza`, `energy:6+` (or `energy:4-6`), `played:no` (not played for a minute or more on a deck this session; the Hide played chip next to Key fits puts it in or takes it out) and `rated:4+` (rekordbox stars). While the search field has the keyboard, chips under the filter bar suggest them from the track you are mixing from; click one to put it in.
@@ -91,6 +93,18 @@ To bring it in, in rekordbox:
 
 From then on the set is an ordinary rekordbox playlist, ready to export to a USB stick for CDJs.
 
+## Play the set on CDJs
+
+**USB…** at the top of the Set panel, or Cmd+Shift+E, exports the set straight to a USB stick for CDJs and XDJs, without rekordbox. Choose the stick (or any folder) in the picker. Dubplate writes what rekordbox's Export mode writes:
+
+- the audio files, under `Contents/<artist>/<album>`; a file already on the stick, byte for byte, is not copied again;
+- for each track, the analysis files players read: the beat grid with your fixes, the hot cues A to H with their colours and names, memory cues, saved loops, and the blue, RGB and 3-band waveforms (rekordbox's own when rekordbox analysed the track, else drawn by Dubplate from the audio) and rekordbox's phrases;
+- the library players browse (`PIONEER/rekordbox/export.pdb`), with the set as a playlist and its backups as a second one, and the title, artist, album, genre, label, key, BPM, length and rating of every track.
+
+A notice follows the export track by track and says what it did. In the library, a chosen playlist or music folder shows **USB…** beside its name to export it the same way.
+
+A stick Dubplate exported to before is added to, and a playlist of the same name is replaced. A stick that already holds a library rekordbox wrote is refused, so nothing on it changes: use another stick, or a folder. Dubplate never replaces or deletes a file it did not write, and never writes inside rekordbox's folders. The CDJ-2000NXS2, CDJ-3000 and XDJs read this library; the newest players that read only rekordbox 7's OneLibrary (CDJ-3000X, XDJ-AZ, OPUS-QUAD) do not yet.
+
 ## 4. Mix
 
 P plays the track selected in the library in the headphones, from its first memory or hot cue, without loading it: the headphone MIX and LEVEL knobs set how loud, the header shows "Preview" with its title (click to stop), and P again stops it. It never reaches the master or a deck, and stops by itself after 30 seconds.
@@ -110,7 +124,7 @@ On the FLX4, everything works as in rekordbox's FLX4 layout:
 - The pad modes: Hot Cue, Pad FX 1 and 2 (hold for rolls and effects), Beat Jump, Beat Loop, Sampler, Keyboard, Key Shift; the loop section IN, OUT, 4 BEAT/EXIT.
 - CUE/LOOP CALL ◀ ▶ calls the memory cue before or after the playhead: the deck pauses there with its cue point on it, as on a CDJ. With a loop on, they halve and double it. SHIFT + ▶ keeps the cue point (or the loop that is on) as a memory cue, up to 10 per track; SHIFT + ◀ deletes the memory cue at the cue point. Memory cues show as red triangles along the top of the scrolling waveforms and are kept with the track. On the keyboard: H and J call, N keeps, ⌥N deletes (with ⇧ for deck B).
 - BEAT FX: FX SELECT, BEAT left and right, the CH SELECT lever, LEVEL/DEPTH and ON/OFF.
-- SMART CFX turns both CFX knobs into the chosen preset (Space, Dub echo, Sweep, Noise, Crush, Pitch, Chop, Jet, Phase; SHIFT + SMART CFX steps through them). With SMART CFX off, each CFX knob plays its channel's Sound Color FX: the filter, or one of the same colours, picked from the CFX name between the mixer's knobs for both channels or one (**A and B**, **A**, **B**) and remembered. Sweep gates the music to the left and narrows it to a band-pass to the right, without the filter; Noise lays white noise over the music through the filter. SMART FADER makes the crossfader glide a shared tempo and swap the bass for you; a LOW knob you turn takes over.
+- SMART CFX turns both CFX knobs into the chosen preset (Space, Dub echo, Sweep, Noise, Crush, Pitch, Chop, Jet, Phase; SHIFT + SMART CFX steps through them). With SMART CFX off, each CFX knob plays its channel's Sound Color FX: the filter, or one of the same colours, picked from the CFX name between the mixer's knobs for both channels or one (**A and B**, **A**, **B**) and remembered. Sweep gates the music to the left and narrows it to a band-pass to the right, without the filter; Noise lays white noise over the music through the filter. SMART FADER makes the crossfader glide a shared tempo and swap the bass for you; a LOW knob you turn takes over. In Settings > Mixer, **Smart Fader moves with** chooses what drives it: **Both** (the crossfader, leaned toward the louder channel), the **Crossfader** alone, or the **Channel faders** alone, which also works with the crossfader off. **Echo out on the faders**, in Settings, is the afro house exit: close a channel fader or the crossfader fast and the outgoing deck echoes on the half beat as it goes, the echoes ringing on after the fader is shut; with Smart Fader on, throwing the crossfader to the edge echoes the outgoing deck the same way.
 
 SHIFT never turns pages of pads on the FLX4; it gives each pad a second job, as rekordbox's FLX4 layout does. The FLX4 has 8 hot cues per track, A to H, with no banks or pages. While SHIFT is held the pads on screen show their SHIFT job:
 

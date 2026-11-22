@@ -4,7 +4,7 @@
 
 use dubplate_engine::{
     ChannelFaderCurve, CrossfaderAssign, CrossfaderCurve, DeckId, EffectKind, EffectTarget,
-    EffectUnitId, SmartCfx, Stem, StemSettings,
+    EffectUnitId, SmartCfx, SmartFaderSource, Stem, StemSettings,
 };
 use dubplate_midi::PadMode;
 use dubplate_prep::GridEdit;
@@ -308,10 +308,19 @@ pub enum Command {
     ChooseCfxColour(Option<SmartCfx>),
     /// SMART FADER: the crossfader moves a shared tempo and swaps the bass.
     ToggleSmartFader,
-    /// Play the track selected in the browser in the headphones, or stop it.
+    /// Play the selected track in the headphones, or stop it: the set track when the keys are on
+    /// the set, else the library's.
     PreviewSelected,
-    /// Load the track selected in the browser.
+    /// Load the selected track, the set track when the keys are on the set, else the library's.
     LoadSelected(DeckId),
+    /// Show the selected track's file in Finder, as Finder's Show in Enclosing Folder.
+    RevealSelected,
+    /// Copy the selected track's file path, as Finder's Copy as Pathname.
+    CopySelectedPath,
+    /// Separate the selected track's stems now.
+    SeparateSelectedStems,
+    /// Look for the moved file of the selected track.
+    RelinkSelected,
     /// Load the track playing on the other deck at the same place, as pressing LOAD twice does.
     InstantDouble(DeckId),
     /// Change a deck's tempo by one step.
@@ -324,8 +333,13 @@ pub enum Command {
     CycleTempoRange(DeckId),
     /// Key lock, a CDJ's MASTER TEMPO: tempo changes keep the track's pitch.
     ToggleKeyLock(DeckId),
+    /// KEY SYNC: move a deck's key to match the other deck's, or back to the track's own key.
+    KeySync(DeckId),
     /// Choose whether a track loaded on a deck starts with key lock on, from Settings.
     SetKeyLockOnNewTracks(bool),
+    /// Choose whether a channel fader or crossfader closed fast echoes the outgoing deck, from
+    /// Settings.
+    SetFaderEcho(bool),
     /// A stems control of a deck: mute or bring back a stem, or a one-touch mix.
     Stems(DeckId, StemAction),
     /// Move a fader or knob to a position from 0.0 to 1.0.
@@ -338,6 +352,8 @@ pub enum Command {
     ResetLaneZoom,
     /// Put the crossfader in or out of use: out of use, both channels play as if on THRU.
     ToggleCrossfader,
+    /// Choose what moves Smart Fader's blend, from Settings.
+    SetSmartFaderSource(SmartFaderSource),
     /// Put a deck's channel on side A or B of the crossfader, or THRU, off it.
     SetCrossfaderAssign(DeckId, CrossfaderAssign),
     /// Move a deck's crossfader assign switch to its next position: A, THRU, B.
@@ -375,6 +391,8 @@ pub enum Command {
     LoadSet,
     /// Save the set as a rekordbox XML file for rekordbox to import.
     ExportSet,
+    /// Export the set to a USB stick or folder for CDJs and XDJs.
+    ExportSetToUsb,
     /// Show or hide the list of shortcuts.
     ToggleHelp,
     /// Switch one of the Auto Cue settings on or off.

@@ -5,10 +5,11 @@
 use std::time::Duration;
 
 use dubplate_prep::{SetWarning, Severity, WarningKind, WarningPosition};
+use gpui::component::menu::ContextMenuExt;
 use gpui::prelude::*;
 use gpui::{
-    ClickEvent, Context, FontWeight, MouseButton, PathBuilder, Pixels, SharedString, Window,
-    canvas, div, point, px,
+    ClickEvent, Context, FocusHandle, FontWeight, MouseButton, PathBuilder, Pixels, SharedString,
+    Window, canvas, div, point, px,
 };
 
 use super::DubplateApp;
@@ -22,6 +23,7 @@ use crate::prep::SeamSummary;
 use crate::set::running_time;
 use crate::shortcuts::{SHORTCUTS, printed_keys};
 use crate::theme;
+use crate::track_menu;
 use crate::widgets::{Emphasis, InteractiveControl, button, tooltip};
 
 const PANEL_WIDTH: Pixels = px(420.0);
@@ -88,7 +90,16 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
     }
     for row in rows {
         let selected = app.set_selection == Some(row.position);
-        list = list.child(track_row(row, selected, focused, warnings, rows.len(), cx));
+        let keys = app.focus_handle.clone();
+        list = list.child(track_row(
+            row,
+            selected,
+            focused,
+            warnings,
+            rows.len(),
+            keys,
+            cx,
+        ));
         if let Some(seam) = seams.get(row.position) {
             let audition = app
                 .audition
@@ -191,7 +202,9 @@ fn summary(
                     if rows.len() == 1 { "" } else { "s" },
                     rows.len()
                 )))
-                .when(!rows.is_empty(), |line| line.child(export_button(cx))),
+                .when(!rows.is_empty(), |line| {
+                    line.child(export_button(cx)).child(usb_button(cx))
+                }),
         )
         .when(!rows.is_empty(), |summary| {
             let range = app.prepare_view.energy_range;
@@ -215,6 +228,24 @@ fn export_button(cx: &mut Context<'_, DubplateApp>) -> impl IntoElement + use<> 
         })
         .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.export_set(cx)))
         .child("Export to rekordbox\u{2026}")
+}
+
+/// Exports the set to a USB stick for CDJs, as Command-Shift-E does.
+fn usb_button(cx: &mut Context<'_, DubplateApp>) -> impl IntoElement + use<> {
+    div()
+        .id("export-set-usb")
+        .accessible_button("Export to USB")
+        .flex_none()
+        .px(px(6.0))
+        .rounded(theme::SMALL_RADIUS)
+        .cursor_pointer()
+        .hover(|button| {
+            button
+                .bg(theme::active().raised)
+                .text_color(theme::active().text)
+        })
+        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.export_set_to_usb(cx)))
+        .child("USB\u{2026}")
 }
 
 /// The set's energy track by track as steps, over the target it should follow, across the
@@ -308,9 +339,11 @@ fn track_row(
     focused: bool,
     warnings: &[SetWarning],
     row_count: usize,
+    keys: FocusHandle,
     cx: &mut Context<'_, DubplateApp>,
 ) -> impl IntoElement + use<> {
     let position = row.position;
+    let menu_facts = row.menu;
     let (title, artist, key, bpm, energy) = match &row.track {
         Some(track) => (
             track.title.clone(),
@@ -369,6 +402,10 @@ fn track_row(
         .hover(|row| row.bg(theme::active().selected_row))
         .on_mouse_down(
             MouseButton::Left,
+            cx.listener(move |this, _, _, cx| this.select_set_track(position, cx)),
+        )
+        .on_mouse_down(
+            MouseButton::Right,
             cx.listener(move |this, _, _, cx| this.select_set_track(position, cx)),
         )
         .on_drag(dragged, |dragged, _, _, cx| cx.new(|_| dragged.clone()))
@@ -467,6 +504,7 @@ fn track_row(
                     }),
             )
         })
+        .context_menu(move |menu, _, _| track_menu::build(menu, menu_facts, keys.clone()))
 }
 
 /// Ready in green, a missing file in red and anything else to fix in amber, always as words,

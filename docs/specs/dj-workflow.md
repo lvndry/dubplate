@@ -77,7 +77,7 @@ Statuses are as audited on 22 November 2026, on `main` with a second Dubplate ru
 
 **T2 Tempo range.** SHIFT + BEAT SYNC steps ±6, ±10, ±16, WIDE. See: the range beside the tempo. Status: **Done.**
 
-**T3 Fine tempo by key.** Must: 0.02% steps, a CDJ's finest at ±6. Status: **Gap** (0.1% a press).
+**T3 Fine tempo by key.** Must: 0.02% steps, a CDJ's finest at ±6. Status: **Done**: each press moves the range's finest step, 0.02% at ±6, 0.04% at ±10 and ±16, 0.5% at WIDE.
 
 **T4 BEAT SYNC.** Must: takes the master's BPM and beat phase at once and follows it. See: SYNC lit (armed while it waits for a master); the beat lines line up. FLX4: BEAT SYNC lit. Status: **Done.**
 
@@ -87,7 +87,7 @@ Statuses are as audited on 22 November 2026, on `main` with a second Dubplate ru
 
 **T7 Key lock.** Status: **Done.**
 
-**T8 Key shift and key sync.** Status: key shift **Done** (Key Shift and Keyboard pad modes); key sync **Missing** ([inventory 24](feature-inventory.md#top-40-gaps)).
+**T8 Key shift and key sync.** Status: key shift **Done** (Key Shift and Keyboard pad modes); key sync **Done**: the deck's Key sync button or Option+K (Shift+Option+K for deck B) moves the key to the other deck's Camelot number, the same key or its relative, by the fewest semitones, and lights while it holds; a second press puts the track's own key back.
 
 **T9 Tap tempo.** Status: **Done.**
 

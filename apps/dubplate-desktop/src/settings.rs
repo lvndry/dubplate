@@ -88,6 +88,9 @@ pub struct Settings {
     pub auto_cue: AutoCueSetting,
     /// The fader curves and the crossfader assign switches.
     pub mixer: MixerSetting,
+    /// What moves Smart Fader's blend: `crossfader-and-channel-faders`, `crossfader` or
+    /// `channel-faders`.
+    pub smart_fader_source: String,
     /// How the library's tracks are sorted on each screen.
     pub library_sort: LibrarySortSetting,
     /// The theme Dubplate wears, by name.
@@ -95,6 +98,9 @@ pub struct Settings {
     /// Whether a track loaded on a deck starts with key lock on, as rekordbox's Master Tempo
     /// default: the deck's Key lock button still changes it for the track on the deck.
     pub key_lock_on_new_tracks: bool,
+    /// Whether a channel fader or crossfader closed fast echoes the outgoing deck as it goes,
+    /// the afro house echo out.
+    pub fader_echo: bool,
 }
 
 /// Where a track is cued when it loads, as rekordbox's Preferences > Controller > Deck.
@@ -350,9 +356,11 @@ impl Default for Settings {
             lane_zoom: None,
             auto_cue: AutoCueSetting::default(),
             mixer: MixerSetting::default(),
+            smart_fader_source: String::new(),
             library_sort: LibrarySortSetting::default(),
             theme: None,
             key_lock_on_new_tracks: true,
+            fader_echo: false,
         }
     }
 }
@@ -519,6 +527,7 @@ mod tests {
                 },
                 ChannelFaderCurve::Fast,
             ),
+            smart_fader_source: "channel-faders".to_owned(),
             library_sort: LibrarySortSetting {
                 prepare: Some(SortSetting {
                     column: "bpm".to_owned(),
@@ -527,6 +536,7 @@ mod tests {
                 perform: None,
             },
             key_lock_on_new_tracks: false,
+            fader_echo: true,
         };
         settings.save(&path).unwrap();
         assert_eq!(Settings::load(&path).unwrap(), settings);

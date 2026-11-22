@@ -56,6 +56,7 @@ key space
 press shift
 release shift
 click 400 300
+rightclick 400 300
 drag 400 300 520 300
 ```
 

@@ -59,6 +59,7 @@ const fn anywhere(keystroke: &'static str, command: Command) -> Shortcut {
             | Command::SwitchMode(_)
             | Command::LoadSet
             | Command::ExportSet
+            | Command::ExportSetToUsb
             | Command::AddMusicFolders => Scope::OutsideModal,
             _ => Scope::Window,
         },
@@ -114,6 +115,8 @@ pub const SHORTCUTS: &[Shortcut] = &[
     outside_text("left", Command::MoveCrossfader(Direction::Down)),
     outside_text("right", Command::MoveCrossfader(Direction::Up)),
     outside_text("p", Command::PreviewSelected),
+    outside_text("alt-cmd-r", Command::RevealSelected),
+    outside_text("alt-cmd-c", Command::CopySelectedPath),
     outside_text("shift-left", Command::LoadSelected(DeckId::A)),
     outside_text("shift-right", Command::LoadSelected(DeckId::B)),
     outside_text("up", Command::MoveSelection(Direction::Up)),
@@ -174,6 +177,7 @@ pub const SHORTCUTS: &[Shortcut] = &[
     suggestion("alt-5", 4),
     anywhere("cmd-l", Command::LoadSet),
     anywhere("cmd-e", Command::ExportSet),
+    anywhere("cmd-shift-e", Command::ExportSetToUsb),
     outside_text("s", Command::AuditionSeam),
     anywhere("cmd-shift-r", Command::ToggleRecording),
     outside_text("t", Command::TapTempo(DeckId::A)),
@@ -182,6 +186,8 @@ pub const SHORTCUTS: &[Shortcut] = &[
     outside_text("shift-e", Command::ToggleGridBar(DeckId::B)),
     outside_text("k", Command::ToggleKeyLock(DeckId::A)),
     outside_text("shift-k", Command::ToggleKeyLock(DeckId::B)),
+    outside_text("alt-k", Command::KeySync(DeckId::A)),
+    outside_text("shift-alt-k", Command::KeySync(DeckId::B)),
     outside_text(
         "q",
         Command::Stems(DeckId::A, StemAction::Toggle(Stem::Drums)),
@@ -374,6 +380,10 @@ pub fn help_sections() -> Vec<HelpSection> {
                     &["k", "shift-k"],
                     "Key lock for the track on deck A / deck B (new tracks: Settings)",
                 ),
+                line(
+                    &["alt-k", "shift-alt-k"],
+                    "Key sync to the other deck, or back to the track's key, deck A / deck B",
+                ),
                 line(&["q", "shift-q"], "Drums stem out or back, deck A / deck B"),
                 line(&["w", "shift-w"], "Bass stem out or back, deck A / deck B"),
                 line(
@@ -451,6 +461,10 @@ pub fn help_sections() -> Vec<HelpSection> {
                     &["p"],
                     "Preview the selected track in the headphones, or stop",
                 ),
+                line(
+                    &["alt-cmd-r", "alt-cmd-c"],
+                    "Show the selected track in Finder / copy its file path",
+                ),
             ],
         },
         HelpSection {
@@ -481,6 +495,7 @@ pub fn help_sections() -> Vec<HelpSection> {
                 ),
                 line(&["cmd-l"], "Load the set's first two tracks on the decks"),
                 line(&["cmd-e"], "Export the set to rekordbox"),
+                line(&["cmd-shift-e"], "Export the set to a USB stick for CDJs"),
             ],
         },
         HelpSection {
@@ -571,6 +586,7 @@ mod tests {
                 }),
                 Command::CyclePadMode(DeckId::A) => Command::CyclePadMode(DeckId::B),
                 Command::ToggleKeyLock(DeckId::A) => Command::ToggleKeyLock(DeckId::B),
+                Command::KeySync(DeckId::A) => Command::KeySync(DeckId::B),
                 Command::CycleCrossfaderAssign(DeckId::A) => {
                     Command::CycleCrossfaderAssign(DeckId::B)
                 }

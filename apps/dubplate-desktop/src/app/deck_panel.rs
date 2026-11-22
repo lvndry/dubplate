@@ -337,6 +337,14 @@ fn transport(
             cx,
         ))
         .child(toggle(
+            ("key-sync", deck.index()),
+            "Key sync",
+            Lit::when(app.key_synced(deck)),
+            colour,
+            Command::KeySync(deck),
+            cx,
+        ))
+        .child(toggle(
             ("slip", deck.index()),
             "Slip",
             Lit::when(app.slip(deck)),

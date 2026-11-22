@@ -32,10 +32,10 @@ Some controls appear twice, once in their area and once in the FLX4 table, so th
 
 | Status | Rows | P0 | P1 | P2 | P3 |
 | --- | --- | --- | --- | --- | --- |
-| Done | 161 | 87 | 49 | 18 | 7 |
-| Partial | 127 | 12 | 44 | 49 | 22 |
-| In progress | 10 | 6 | 3 | 1 | 0 |
-| Missing | 327 | 14 | 69 | 104 | 140 |
+| Done | 193 | 99 | 62 | 24 | 8 |
+| Partial | 128 | 11 | 46 | 49 | 22 |
+| In progress | 2 | 2 | 0 | 0 | 0 |
+| Missing | 302 | 7 | 57 | 99 | 139 |
 | n/a | 3 | 0 | 0 | 0 | 3 |
 | Total | 628 | 119 | 165 | 172 | 172 |
 
@@ -45,7 +45,7 @@ The 17 features in the last section, which rekordbox does not have, are not coun
 
 Ranked by what stops the owner from playing a club night with Dubplate alone, then by what a professional notices first.
 
-1. **USB export for CDJs.** Write the Device Library (export.pdb) and OneLibrary (exportLibrary.db) with the ANLZ files (.DAT, .EXT, .2EX: blue, RGB and 3-band waveforms, grid, cues, phrases) for sets and playlists, to FAT32, exFAT or HFS+ sticks, from a Devices pane with progress and eject. Today a set reaches CDJs only through rekordbox.
+1. **USB export for CDJs.** The Device Library (export.pdb) and the ANLZ files are written for sets, playlists and music folders, from the Set panel, the library and the command line, with progress. Still to do: a first test on CDJs, OneLibrary (exportLibrary.db) for the players that read only it, a Devices pane with eject, adding to a stick rekordbox wrote, and artwork.
 2. **Save the cues made in Dubplate (done for XML).** Hot cues A to H, memory cues and loops set live or in prep are kept per track in Dubplate's store, survive a relaunch, and go into the XML export; the USB export waits for item 1.
 3. **Memory cues on the decks (done).** Draw them as red triangles on the lanes and the overview; CUE/LOOP CALL ◁ ▷ calls the previous or next one when no loop plays; SHIFT + ▷ saves one, SHIFT + ◁ deletes it; up to 10 per track.
 4. **Grid editing on the decks for every track.** Set the downbeat at the playhead, shift 1 ms, type a BPM, x2 and /2, widen and narrow, edit from here, metronome; saved and exported like track check edits.
@@ -327,10 +327,10 @@ Ranked by what stops the owner from playing a club night with Dubplate alone, th
 | Feature | What it does | Where in rekordbox | Tier | Dubplate | Priority |
 | --- | --- | --- | --- | --- | --- |
 | Devices pane | Shows USB sticks and SD cards with their library, settings and eject. | Media Browser > Devices | Free | Missing | P0 |
-| Export tracks and playlists to USB | Drag to the stick; tracks, analysis, cues and grids copied. | Devices | Free | Missing (export goes through rekordbox via XML) | P0 |
-| Device Library (export.pdb) | The library CDJ-3000, NXS2 and older players read. | USB | Free | Missing | P0 |
+| Export tracks and playlists to USB | Drag to the stick; tracks, analysis, cues and grids copied. | Devices | Free | Partial: sets, playlists and music folders export from the Set panel, the library and `dubplate usb export`; no Devices pane or drag | P0 |
+| Device Library (export.pdb) | The library CDJ-3000, NXS2 and older players read. | USB | Free | Done (written and read; not yet tried on a player) | P0 |
 | OneLibrary (Device Library Plus, exportLibrary.db) | The library CDJ-3000X, CDJ-1500X, OPUS-QUAD, OMNIS-DUO and XDJ-AZ read; written alongside the old one. | USB | Free | Missing | P0 |
-| ANLZ analysis files on USB | Waveforms (Blue, RGB, 3-band), grid, cues and phrases per track (.DAT, .EXT, .2EX). | USB | Free | Partial: read from rekordbox; never written | P0 |
+| ANLZ analysis files on USB | Waveforms (Blue, RGB, 3-band), grid, cues and phrases per track (.DAT, .EXT, .2EX). | USB | Free | Done (rekordbox's waveforms and phrases copied, or waveforms drawn from the audio) | P0 |
 | Keep the folder tree on export | Exports nested playlists into the same folders; asked for, not in rekordbox. | Not in rekordbox | n/a | Missing | P2 |
 | Delete tracks with a playlist | Deleting a playlist from the stick removes its unused tracks. | Preferences > DJ System > Device | Free | Missing | P2 |
 | Device settings: General | Device name, background colour, waveform colour, overview type. | Device settings | Free | Missing | P2 |
@@ -362,7 +362,7 @@ These are features of the players. Dubplate prepares for them once it writes USB
 | Waveform colour on CDJ | Blue, RGB or 3-band, overview and zoomed; phrase strip on 3000X. | CDJ SHORTCUT > Device settings | Free | Missing | P1 |
 | Beat countdown | Bars and beats to the next memory cue. | CDJ waveform screen | Free | Missing | P1 |
 | Key display on CDJ | Classic or alphanumeric as set in rekordbox; green when related to the master's key. | CDJ, Preferences > DJ System > General | Free | Missing | P2 |
-| Key sync and key shift | Shifts to the nearest related key (same, dominant, subdominant, relatives); semitone shift. | CDJ KEY SYNC, KEY SHIFT | Free | Missing | P2 |
+| Key sync and key shift | Shifts to the nearest related key (same, dominant, subdominant, relatives); semitone shift. | CDJ KEY SYNC, KEY SHIFT | Free | Done | P2 |
 | Beat sync and instant doubles | Needs rekordbox grids; hold BEAT SYNC for instant doubles. | CDJ | Free | Missing | P1 |
 | Quantize and beat jump values | Quantize 1/8 to 1; beat jump 1/2 to 64 (default 16). | CDJ UTILITY | Free | Missing | P2 |
 | Jog screen | Artwork, slip, sync, vinyl, master, cue marker; custom image on 3000X. | CDJ jog | Free | Missing | P3 |
@@ -508,7 +508,7 @@ These are features of the players. Dubplate prepares for them once it writes USB
 | BPM sync or beat sync | Sync type preference: tempo only, or tempo and phase. | Preferences > Controller > Deck | Free | Partial: beat sync, dropping to tempo sync when nudged; no preference | P2 |
 | Double and half sync | Allows sync at x2 or x1/2 of the master; SYNC RATE button cycles x1, x2, x1/2. | Preferences > Controller > Deck, deck | Free | Partial: automatic half/double lock; no SYNC RATE button | P2 |
 | Tempo master | MASTER button or hold BEAT SYNC; moves on when the master track ends. | Deck, FLX4 | Free (FLX4) | Done | P0 |
-| Key sync | Shifts the deck's key to match the other deck; stays until KEY RESET. | Deck KEY SYNC | Free | Missing | P1 |
+| Key sync | Shifts the deck's key to match the other deck; stays until KEY RESET. | Deck KEY SYNC | Free | Done | P1 |
 | Semitone up and down | One semitone per click on the deck. | Deck | Free | Partial: Key Shift pads; no deck buttons | P2 |
 | Key shift range | -12 to +12 semitones. | KEY SHIFT pad mode | Free (FLX4) | Done | P2 |
 | Tap tempo | SHIFT + channel CUE taps the BPM. | FLX4 | Free (FLX4) | Done | P2 |
@@ -623,8 +623,8 @@ rekordbox does not print its full Beat FX list; these names come from the plan p
 | Merge FX | One knob builds with effects and samples, then releases into a drop sample (4 presets). | MFX panel | Core (FLX4 unlocks) | Missing | P3 |
 | Smart CFX | One CFX knob drives a preset of several effects (some change loops and key). | FLX4 SMART CFX | Free (FLX4) | Done (six presets: Space, Dub Echo, Crush, Chop, Jet, Phase) | P1 |
 | Smart CFX preset window | SHIFT + SMART CFX opens a preset picker; window position in Preferences. | FLX4, Preferences | Free (FLX4) | Done (picker and SHIFT stepping) | P2 |
-| Smart Fader | The crossfader blends tempo, swaps the low EQ between 1/3 and 2/3 of its travel, and echoes the outgoing deck at the far edge; sync forced on. | FLX4 SMART FADER | Free (FLX4) | Partial: tempo blend and bass swap; no echo at the edge | P1 |
-| Smart Fader source | Crossfader and channel faders, crossfader only, or channel faders only; recommended curve option. | Preferences > Controller > Mixer | Free (FLX4) | Missing: crossfader only | P2 |
+| Smart Fader | The crossfader blends tempo, swaps the low EQ between 1/3 and 2/3 of its travel, and echoes the outgoing deck at the far edge; sync forced on. | FLX4 SMART FADER | Free (FLX4) | Done: tempo blend, bass swap, and the echo at the edge with Echo out on the faders on | P1 |
+| Smart Fader source | Crossfader and channel faders, crossfader only, or channel faders only; recommended curve option. | Preferences > Controller > Mixer | Free (FLX4) | Done: Both, Crossfader or Channel faders in Settings > Mixer; no recommended curve option | P2 |
 | Fader echo | An echo tail when a fader closes (Engine DJ), the afro house echo-out move. | Not in rekordbox | n/a | Missing | P1 |
 | Stem echo out | Echo only the vocal or the drums (Serato, VirtualDJ, djay). | STEM FX | Free | Missing | P2 |
 | Crossfader FX | djay: moving the crossfader morphs with echo, filter, riser or stem transitions. | Not in rekordbox | n/a | Missing | P3 |

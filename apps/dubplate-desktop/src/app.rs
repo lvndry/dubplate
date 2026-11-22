@@ -19,6 +19,7 @@ mod grid_controls;
 mod header;
 mod help;
 mod history;
+mod key_sync;
 mod knob;
 mod lane_drag;
 mod lanes;
@@ -43,8 +44,10 @@ mod slider;
 mod smart;
 mod stems;
 mod stems_strip;
+mod track_actions;
 mod track_check;
 mod track_preview;
+mod usb_export;
 mod waveforms;
 
 use std::cell::{Cell, RefCell};
@@ -329,8 +332,15 @@ impl DubplateApp {
                     None => this.show_notice(NoticePlace::Window, "Both decks are playing.", cx),
                 },
                 BrowserEvent::AddMusicFolders => this.add_music_folders(cx),
+                BrowserEvent::TookKeys => {
+                    this.prepare_focus = PrepareFocus::Library;
+                    cx.notify();
+                }
                 BrowserEvent::ImportRekordbox => this.set_rekordbox_import(true, cx),
                 BrowserEvent::RelinkAll => this.start_relink(None, cx),
+                BrowserEvent::ExportCrateToUsb(crate_index) => {
+                    this.export_crate_to_usb(crate_index, cx);
+                }
                 BrowserEvent::Relink(track) => this.start_relink(Some(track), cx),
                 BrowserEvent::ExportHistory { page, format } => {
                     this.export_history(page, format, cx);
@@ -579,6 +589,8 @@ impl DubplateApp {
         app.restore_jog_and_quantize(cx);
         app.restore_mixer_switches(cx);
         app.restore_smart_cfx(cx);
+        let fader_echo = app.settings.fader_echo;
+        app.engine_command(cx, |controller| controller.set_fader_echo(fader_echo));
         app.restore_sampler(cx);
         app.restore_library_sorts(cx);
         app.start_library(cx);
@@ -1093,10 +1105,14 @@ impl DubplateApp {
             }
             Command::PreviewSelected => self.toggle_track_preview(cx),
             Command::LoadSelected(deck) => {
-                if let Some(track) = self.browser.read(cx).selected() {
+                if let Some(track) = self.selected_track(cx) {
                     self.load(deck, LoadSource::Collection(track), cx);
                 }
             }
+            Command::RevealSelected => self.reveal_selected(cx),
+            Command::CopySelectedPath => self.copy_selected_path(cx),
+            Command::SeparateSelectedStems => self.separate_selected_stems(cx),
+            Command::RelinkSelected => self.relink_selected(cx),
             Command::InstantDouble(deck) => self.instant_double(deck, cx),
             Command::NudgeTempo(deck, direction) => {
                 let slider = nudged_tempo_slider(
@@ -1138,11 +1154,17 @@ impl DubplateApp {
                 self.settings.key_lock_on_new_tracks = on;
                 self.save_settings(cx);
             }
+            Command::SetFaderEcho(on) => {
+                self.settings.fader_echo = on;
+                self.save_settings(cx);
+                self.engine_command(cx, |controller| controller.set_fader_echo(on));
+            }
             Command::Stems(deck, action) => self.apply_stem_action(deck, action, cx),
             Command::ToggleKeyLock(deck) => {
                 let locked = self.key_lock(deck);
                 self.engine_command(cx, |controller| controller.set_key_lock(deck, !locked));
             }
+            Command::KeySync(deck) => self.toggle_key_sync(deck, cx),
             Command::CycleTempoRange(deck) => {
                 let range = self.tempo_range(deck).next();
                 self.engine_command(cx, |controller| controller.set_tempo_range(deck, range));
@@ -1161,6 +1183,7 @@ impl DubplateApp {
             }
             Command::CycleCrossfaderAssign(deck) => self.cycle_crossfader_assign(deck, cx),
             Command::ToggleCrossfader => self.toggle_crossfader(cx),
+            Command::SetSmartFaderSource(source) => self.set_smart_fader_source(source, cx),
             Command::SetCrossfaderCurve(curve) => self.set_crossfader_curve(curve, cx),
             Command::SetChannelFaderCurve(curve) => self.set_channel_fader_curve(curve, cx),
             Command::MoveSelection(direction) => match (self.mode, self.prepare_focus) {
@@ -1190,6 +1213,7 @@ impl DubplateApp {
             }
             Command::LoadSet => self.load_set(cx),
             Command::ExportSet => self.export_set(cx),
+            Command::ExportSetToUsb => self.export_set_to_usb(cx),
             Command::Browse(steps) => self
                 .browser
                 .update(cx, |browser, cx| browser.browse(steps, cx)),
