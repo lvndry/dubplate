@@ -143,6 +143,11 @@ pub(crate) enum Command {
         deck: DeckId,
         seconds: f64,
     },
+    HotLoop {
+        deck: DeckId,
+        start_seconds: f64,
+        end_seconds: f64,
+    },
     BeatJump {
         deck: DeckId,
         beats: f64,
@@ -394,7 +399,13 @@ impl Renderer {
         frame_count: usize,
     ) {
         let stats = &self.shared.stats;
-        stats.record_output_latency(playback_time.saturating_sub(callback_time));
+        let output_latency = playback_time.saturating_sub(callback_time);
+        stats.record_output_latency(output_latency);
+        let lag_frames = output_latency.as_secs_f64() * f64::from(self.sample_rate)
+            + f64::from(stats.mixer_latency_frames.load(Ordering::Relaxed));
+        for deck in &mut self.decks {
+            deck.set_output_lag(lag_frames);
+        }
         if self
             .gap_detector
             .observe(callback_time, frame_count, self.sample_rate)
@@ -642,6 +653,13 @@ impl Renderer {
             }
             Command::HotCue { deck, seconds } => {
                 self.decks[deck.index()].hot_cue(seconds, &mut self.retire);
+            }
+            Command::HotLoop {
+                deck,
+                start_seconds,
+                end_seconds,
+            } => {
+                self.decks[deck.index()].hot_loop(start_seconds, end_seconds, &mut self.retire);
             }
             Command::BeatJump { deck, beats } => {
                 self.decks[deck.index()].beat_jump(beats, &mut self.retire);

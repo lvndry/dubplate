@@ -52,6 +52,11 @@ impl HotCue {
         seconds(self.start_ms)
     }
 
+    /// Where its loop ends, in seconds, for a hot loop.
+    pub fn loop_end_seconds(&self) -> Option<f64> {
+        self.loop_end_ms.map(seconds)
+    }
+
     /// The colour it is drawn in: its own, else the default rekordbox draws for a hot loop or
     /// for a hot cue on `pad`.
     pub fn display_color(&self, pad: HotCuePad) -> PaletteColor {
@@ -157,6 +162,13 @@ impl TrackCues {
     /// The memory cues and saved memory loops, in time order.
     pub fn memory_cues(&self) -> &[MemoryCue] {
         &self.memory
+    }
+
+    /// The memory cues from `start_ms` to `end_ms`, both included, in time order.
+    pub fn memory_cues_between(&self, start_ms: u32, end_ms: u32) -> &[MemoryCue] {
+        let first = self.memory.partition_point(|cue| cue.start_ms < start_ms);
+        let last = self.memory.partition_point(|cue| cue.start_ms <= end_ms);
+        &self.memory[first..last.max(first)]
     }
 
     /// Adds a memory cue in its place in time, after any already at the same place.
@@ -276,6 +288,14 @@ mod tests {
         cues.insert_memory_cue(MemoryCue::at(40_000));
         let starts: Vec<u32> = cues.memory_cues().iter().map(|cue| cue.start_ms).collect();
         assert_eq!(starts, [10_000, 20_000, 30_000, 40_000]);
+        let between: Vec<u32> = cues
+            .memory_cues_between(20_000, 35_000)
+            .iter()
+            .map(|cue| cue.start_ms)
+            .collect();
+        assert_eq!(between, [20_000, 30_000]);
+        assert!(cues.memory_cues_between(41_000, 90_000).is_empty());
+        assert!(cues.memory_cues_between(30_000, 10_000).is_empty());
         cues.remove_memory_cues(|cue| cue.start_ms == 20_000);
         assert_eq!(cues.memory_cues().len(), 3);
     }

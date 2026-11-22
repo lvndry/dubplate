@@ -66,6 +66,7 @@ impl DubplateApp {
 
     /// Gives a freshly built catalogue the analyses already made, while a rescan confirms them.
     pub(super) fn restore_analyses(&mut self) {
+        self.rematch_library();
         let catalogue = Arc::make_mut(&mut self.catalogue);
         for (path, analysis) in self.analyses.found() {
             catalogue.set_analysis(path, analysis);
@@ -139,6 +140,7 @@ impl DubplateApp {
         if answered.is_empty() {
             return;
         }
+        self.rematch_library();
         let catalogue = Arc::make_mut(&mut self.catalogue);
         for (path, analysis) in &answered {
             if let Ok(analysis) = analysis {

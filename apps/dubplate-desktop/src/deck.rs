@@ -7,6 +7,7 @@ use std::cell::RefCell;
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::time::Instant;
 
 use dubplate_engine::DeckId;
 use dubplate_prep::{AudioAnalysis, GridCorrection};
@@ -295,6 +296,7 @@ pub struct Deck {
     load_generation: u64,
     committed_generation: u64,
     pending: Option<(Arc<CollectionTrack>, Arc<TrackCues>)>,
+    loaded_at: Option<Instant>,
 }
 
 impl Deck {
@@ -323,6 +325,7 @@ impl Deck {
             return false;
         };
         self.committed_generation = generation;
+        self.loaded_at = Some(Instant::now());
         self.track = Some(track);
         self.cues = cues;
         self.content = DeckContent::Loaded(visuals);
@@ -341,6 +344,11 @@ impl Deck {
         if self.track.is_none() {
             self.content = DeckContent::Failed(problem);
         }
+    }
+
+    /// When the track on the deck finished loading, if one did.
+    pub fn loaded_at(&self) -> Option<Instant> {
+        self.loaded_at
     }
 
     /// The number of the latest load asked for.

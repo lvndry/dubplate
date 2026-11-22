@@ -19,7 +19,9 @@ mod knob;
 mod lane_drag;
 mod lanes;
 mod library;
+mod library_matches;
 mod library_panel;
+mod memory_cues;
 mod mixer;
 mod notice;
 mod overview;
@@ -54,12 +56,12 @@ use dubplate_engine::{
 };
 use dubplate_midi::{Feedback, PadMode};
 use dubplate_prep::{AnalysisQueue, GridCorrection, TrackGrid, TrackIdentity};
-use dubplate_rekordbox::{HotCue, HotCuePad, TrackCues, cue_milliseconds};
+use dubplate_rekordbox::{HotCue, HotCuePad, TrackCues};
 use gpui::component::input::{InputEvent, InputState};
 use gpui::prelude::*;
 use gpui::{
     Bounds, Context, Entity, FocusHandle, MouseButton, MouseMoveEvent, MouseUpEvent, Pixels, Point,
-    ScrollHandle, SharedString, StyleRefinement, Subscription, Task, Window, div,
+    ScrollHandle, SharedString, StyleRefinement, Subscription, Task, Window, div, px,
 };
 
 use crate::analysis::{AnalysisPriority, TrackAnalyser, TrackAnalyses};
@@ -100,6 +102,7 @@ use crate::transport::{self, CueDown, is_at_cue, other_deck};
 use crate::waveform::Zoom;
 use crate::waveform_cache::WaveformCache;
 use audition::Audition;
+use cues::new_cue_span;
 use notice::{NoticePlace, Notices};
 use overview::DeckOverview;
 use pads::HeldPad;
@@ -108,6 +111,10 @@ use relink::RelinkReview;
 
 /// Frames per device buffer: about 5 ms at 48 kHz.
 const BUFFER_FRAMES: u32 = 256;
+/// Below this width the header shows the controller and the sound card as dots.
+const NARROW_WINDOW_WIDTH: Pixels = px(1320.0);
+/// Below this height the lanes are lower.
+const SHORT_WINDOW_HEIGHT: Pixels = px(820.0);
 /// How often the controller lights follow the decks while nothing else updates them, for the
 /// blinking lights and the level meters.
 const LIGHTS_INTERVAL: Duration = Duration::from_millis(30);
@@ -220,6 +227,8 @@ pub struct DubplateApp {
     waveform_cache: WaveformCache,
     check_cursor_seconds: f64,
     catalogue: Arc<Catalogue>,
+    /// What the library's Match column was last worked out for.
+    match_source: Option<library_matches::MatchSource>,
     /// The tracks a deck played this session, by file.
     played_tracks: Arc<HashSet<PathBuf>>,
     missing: Arc<Vec<Missing>>,
@@ -248,6 +257,8 @@ pub struct DubplateApp {
     focus_handle: FocusHandle,
     last_frame: Instant,
     frame_stats: Option<Rc<RefCell<FrameStats>>>,
+    /// The window's size at the last frame, for the layout of small windows.
+    window_size: gpui::Size<Pixels>,
     /// Whether the sound cards and controllers may be opened.
     devices: DeviceAccess,
     _subscriptions: Vec<Subscription>,
@@ -454,6 +465,7 @@ impl DubplateApp {
             waveform_cache: WaveformCache::default(),
             check_cursor_seconds: 0.0,
             catalogue: Arc::default(),
+            match_source: None,
             played_tracks: Arc::default(),
             missing: Arc::default(),
             relinking: false,
@@ -486,6 +498,7 @@ impl DubplateApp {
             focus_handle,
             last_frame: Instant::now(),
             frame_stats: FrameStats::from_environment().map(|stats| Rc::new(RefCell::new(stats))),
+            window_size: window.viewport_size(),
             devices,
             _subscriptions: vec![subscription, search_subscription, quit_subscription],
         };
@@ -502,6 +515,18 @@ impl DubplateApp {
             app.show_notice(NoticePlace::Window, problem, cx);
         }
         app
+    }
+
+    /// Whether the window is too narrow for the header to spell out the controller and the
+    /// sound card: they shrink to their status dots, named in tooltips.
+    pub(super) fn narrow_window(&self) -> bool {
+        self.window_size.width < NARROW_WINDOW_WIDTH
+    }
+
+    /// Whether the window is too short for full-height lanes: they get lower so the library
+    /// keeps some rows.
+    pub(super) fn short_window(&self) -> bool {
+        self.window_size.height < SHORT_WINDOW_HEIGHT
     }
 
     /// Turns Lock playing deck on or off and remembers it.
@@ -897,6 +922,9 @@ impl DubplateApp {
             }
             Command::ToggleSlip(deck) => self.toggle_slip(deck, cx),
             Command::Loop(deck, action) => self.loop_button(deck, action, cx),
+            Command::CueLoopCall(deck, direction) => self.cue_loop_call(deck, direction, cx),
+            Command::StoreMemoryCue(deck) => self.store_memory_cue(deck, cx),
+            Command::DeleteMemoryCue(deck) => self.delete_memory_cue(deck, cx),
             Command::ToggleHeadphoneCue(deck) => {
                 let cued = self
                     .headphones()
@@ -1112,23 +1140,33 @@ impl DubplateApp {
     }
 
     /// A hot cue pad, as in rekordbox: a set pad plays from its cue, whether the deck was
-    /// playing or not; an empty pad takes the beat nearest to what the DJ hears now.
+    /// playing or not, and a hot loop starts its loop; an empty pad keeps the loop that is on
+    /// as a hot loop, else takes the beat nearest to what the DJ hears now.
     fn press_hot_cue(&mut self, deck: DeckId, pad: HotCuePad, cx: &mut Context<'_, Self>) {
         if self.deck(deck).visuals().is_none() {
             return;
         }
-        match self.deck(deck).cues.hot_cue(pad).map(HotCue::start_seconds) {
-            Some(seconds) => {
+        let called = self
+            .deck(deck)
+            .cues
+            .hot_cue(pad)
+            .map(|cue| (cue.start_seconds(), cue.loop_end_seconds()));
+        match called {
+            Some((start, loop_end)) => {
                 self.decks[deck.index()].cue_preview = false;
-                self.engine_command(cx, |controller| controller.hot_cue(deck, seconds));
+                self.engine_command(cx, |controller| match loop_end {
+                    Some(end) => controller.hot_loop(deck, start, end),
+                    None => controller.hot_cue(deck, start),
+                });
             }
             None => {
-                let seconds = self.quantized(deck, self.heard_seconds(deck));
-                self.edit_cues(
-                    deck,
-                    |cues| cues.set_hot_cue(pad, HotCue::at(cue_milliseconds(seconds))),
-                    cx,
-                );
+                let heard = self.quantized(deck, self.heard_seconds(deck));
+                let (start_ms, loop_end_ms) = new_cue_span(self.active_loop(deck), heard);
+                let cue = HotCue {
+                    loop_end_ms,
+                    ..HotCue::at(start_ms)
+                };
+                self.edit_cues(deck, |cues| cues.set_hot_cue(pad, cue), cx);
             }
         }
     }
@@ -2011,8 +2049,10 @@ impl Render for DubplateApp {
             self.refocus_window = false;
         }
         self.modal_active = modal_open;
+        self.window_size = window.viewport_size();
         let frames = self.advance_frame(window);
         self.mark_played(&frames, cx);
+        self.follow_library_matches(cx);
         let root = div()
             .key_context(WINDOW_CONTEXT)
             .track_focus(&self.focus_handle)
