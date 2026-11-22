@@ -107,7 +107,7 @@ Statuses are as audited on 22 November 2026, on `main` with a second Dubplate ru
 
 **B7 Zoom.** Status: **In progress** (seven levels, Cmd+= and Cmd+-, Shift + BROWSE, pinch).
 
-**B8 Drag the waveform.** Status: **In progress** (drag-to-scrub, #111).
+**B8 Drag the waveform.** Status: **Done** (#111: drag the lanes to scrub a stopped deck or nudge a playing one); to check on the decks.
 
 **B9 Pitch-bend feedback.** See: while nudging, the BPM shows the bent tempo. Status: **Missing.**
 
@@ -173,7 +173,7 @@ Statuses are as audited on 22 November 2026, on `main` with a second Dubplate ru
 
 ## Effects
 
-**FX1 to FX6 Beat FX.** Status: **In progress** (FLX4 lever and knob, #102; effect tuning and parity owned by the effects work).
+**FX1 to FX6 Beat FX.** Status: the FLX4 lever and knob **Done** (#102); effect tuning and the full Beat FX list **In progress** (effects work).
 
 **CF1 Filter knob.** Status: **Done.**
 
@@ -221,7 +221,7 @@ Statuses are as audited on 22 November 2026, on `main` with a second Dubplate ru
 
 ## Preparing
 
-**PR1 Beat grid.** Status: track check **Done**; on the decks **In progress** (#111).
+**PR1 Beat grid.** Status: **Done** in the track check and on the decks (#111).
 
 **PR2 Cues.** Status: **In progress** (saved cues).
 
