@@ -360,7 +360,7 @@ fn the_controller_reports_unit_settings_and_rejects_bad_values() {
     assert!(BeatGrid::new(5.0, 0.0).is_err());
 
     let unit = EffectUnitId::ALL[1];
-    controller.set_effect_kind(unit, EffectKind::Gate).unwrap();
+    controller.set_effect_kind(unit, EffectKind::Trans).unwrap();
     controller
         .set_effect_target(unit, EffectTarget::Deck(DeckId::B))
         .unwrap();
@@ -374,7 +374,7 @@ fn the_controller_reports_unit_settings_and_rejects_bad_values() {
     controller.toggle_effect(unit).unwrap();
     render_frames(&mut renderer, BLOCK, BLOCK);
     let state = controller.effect_unit(unit);
-    assert_eq!(state.kind, EffectKind::Gate);
+    assert_eq!(state.kind, EffectKind::Trans);
     assert_eq!(state.target, EffectTarget::Deck(DeckId::B));
     assert_eq!(
         state.parameter,

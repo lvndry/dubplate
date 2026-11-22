@@ -268,7 +268,7 @@ mod tests {
         source.set_sync(DeckId::A, SyncMode::Beat).unwrap();
         source.set_key_lock(DeckId::B, true).unwrap();
         let unit = EffectUnitId::ALL[2];
-        source.set_effect_kind(unit, EffectKind::Gate).unwrap();
+        source.set_effect_kind(unit, EffectKind::Trans).unwrap();
         source
             .set_effect_target(unit, EffectTarget::Deck(DeckId::B))
             .unwrap();
@@ -293,7 +293,7 @@ mod tests {
         assert_eq!(target.tempo_state(DeckId::A).sync, SyncMode::Beat);
         assert!(target.key_lock(DeckId::B) && !target.key_lock(DeckId::A));
         let effect = target.effect_unit(unit);
-        assert_eq!(effect.kind, EffectKind::Gate);
+        assert_eq!(effect.kind, EffectKind::Trans);
         assert_eq!(effect.target, EffectTarget::Deck(DeckId::B));
         assert_eq!(
             effect.parameter,
