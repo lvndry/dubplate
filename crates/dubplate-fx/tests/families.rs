@@ -6,7 +6,7 @@ mod common;
 
 use std::f32::consts::TAU;
 
-use common::{Deck, SAMPLE_RATE, Stereo, peak, rms, seconds_to_frames, sine};
+use common::{Deck, SAMPLE_RATE, Stereo, peak, rms, sine};
 use dubplate_fx::{
     BeatLength, Effect, EffectConfig, EffectKind, ParameterValue, SignedBeats, create,
 };

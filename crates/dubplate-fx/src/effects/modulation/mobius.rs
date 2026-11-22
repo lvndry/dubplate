@@ -90,12 +90,14 @@ impl MobiusKernel {
             sample_rate: 48_000.0,
         }
     }
+}
 
-    /// One sample of a waveform at `phase`, from 0 to 1, between -1 and 1. The sawtooth is
+impl Waveform {
+    /// One sample of the waveform at `phase`, from 0 to 1, between -1 and 1. The sawtooth is
     /// smoothed at its jump over one sample step so it does not alias harshly.
     #[inline]
-    fn shape(&self, phase: f32, step: f32) -> f32 {
-        match self.waveform {
+    fn sample(self, phase: f32, step: f32) -> f32 {
+        match self {
             Waveform::Saw => 2.0 * phase - 1.0 - poly_blep(phase, step),
             Waveform::Triangle => 1.0 - 4.0 * (phase - 0.5).abs(),
         }
@@ -136,7 +138,7 @@ impl Kernel for MobiusKernel {
             let frequency = LOWEST_HZ * (voice.height * SHEPARD_VOICES as f32).exp2();
             let step = frequency / self.sample_rate;
             *phase = (*phase + step).fract();
-            tone += self.shape(*phase, step) * voice.level;
+            tone += self.waveform.sample(*phase, step) * voice.level;
         }
         let level = tone * TONE_LEVEL * 2.0 / SHEPARD_VOICES as f32;
         [level, level]
