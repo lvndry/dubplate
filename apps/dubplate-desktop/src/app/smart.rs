@@ -53,10 +53,22 @@ impl DubplateApp {
             .is_ok_and(|engine| engine.controller.smart_fader())
     }
 
-    /// Turns SMART CFX on with the chosen preset on both channels, or back to the plain filter.
+    /// Turns SMART CFX on with the chosen preset on both channels, or back to the plain filter,
+    /// and remembers which for the next launch.
     pub(super) fn toggle_smart_cfx(&mut self, cx: &mut Context<'_, Self>) {
-        let preset = (!self.smart_cfx_on()).then(|| self.smart_cfx_preset());
+        let on = !self.smart_cfx_on();
+        let preset = on.then(|| self.smart_cfx_preset());
         self.apply_smart_cfx(preset, cx);
+        self.settings.smart_cfx_on = on;
+        self.save_settings(cx);
+    }
+
+    /// Turns SMART CFX back on at launch when it was on when Dubplate closed.
+    pub(super) fn restore_smart_cfx(&mut self, cx: &mut Context<'_, Self>) {
+        if self.settings.smart_cfx_on {
+            let preset = self.smart_cfx_preset();
+            self.apply_smart_cfx(Some(preset), cx);
+        }
     }
 
     /// Picks the preset SMART CFX plays and remembers it; with SMART CFX on, the knobs take it
