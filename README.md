@@ -34,11 +34,11 @@ Dubplate needs the key of the rekordbox library. It is not stored in this reposi
 Then:
 
 ```
-cargo run -p dubplate -- rekordbox inspect
-cargo run -p dubplate -- rekordbox inspect --json > library.json
-cargo run -p dubplate -- rekordbox inspect --library /path/to/master.db
-cargo run -p dubplate -- rekordbox analysis "Track Title"
-cargo run -p dubplate -- rekordbox analysis <track id> --json > analysis.json
+cargo cli rekordbox inspect
+cargo cli rekordbox inspect --json > library.json
+cargo cli rekordbox inspect --library /path/to/master.db
+cargo cli rekordbox analysis "Track Title"
+cargo cli rekordbox analysis <track id> --json > analysis.json
 ```
 
 `analysis` takes a track's rekordbox ID or its exact title.
@@ -46,8 +46,22 @@ cargo run -p dubplate -- rekordbox analysis <track id> --json > analysis.json
 The sets you prepared in the desktop app can be listed and exported to a rekordbox XML file, by default in `~/Music/Dubplate Exports/<set name>.xml`:
 
 ```
-cargo run -p dubplate -- set list
-cargo run -p dubplate -- set export "Friday" --xml friday.xml
+cargo cli set list
+cargo cli set export "Friday" --xml friday.xml
+```
+
+Dubplate analyses the tracks rekordbox never did (tempo, beat grid with downbeats, key and energy, with Euphoria's detectors). The same analysis runs on audio files or whole folders from the command line, and can be compared with rekordbox's BPM, key and grid for the tracks rekordbox also holds. Audio files and rekordbox's files are only read:
+
+```
+cargo run --release -p dubplate -- analyse ~/Music/House
+cargo run --release -p dubplate -- analyse ~/Music/House --compare-rekordbox
+```
+
+Dubplate analyses the tracks rekordbox never did (tempo, beat grid with downbeats, key and energy, with Euphoria's detectors). The same analysis runs on audio files or whole folders from the command line, and can be compared with rekordbox's BPM, key and grid for the tracks rekordbox also holds. Audio files and rekordbox's files are only read:
+
+```
+cargo run --release -p dubplate -- analyse ~/Music/House
+cargo run --release -p dubplate -- analyse ~/Music/House --compare-rekordbox
 ```
 
 ## Run the desktop app
@@ -55,8 +69,10 @@ cargo run -p dubplate -- set export "Friday" --xml friday.xml
 On first launch the desktop app asks for your music folders; importing the rekordbox collection is a separate choice. For the rekordbox collection it reads the same key as the command line tool (see "Try it" above) and a copy of rekordbox's `master.db`, so rekordbox can stay open.
 
 ```
-cargo run --release -p dubplate-desktop
+cargo app
 ```
+
+`cargo app` and `cargo cli …` build with the `fast` profile: optimised like a release, so audio runs at full speed, but incremental and without link-time optimisation, so a rebuild after a small change takes seconds. Releases keep `--release`.
 
 On macOS, `cargo run` starts it from a `Dubplate.app` next to the binary (see `.cargo/config.toml`), so the menu bar and the Dock show Dubplate and the One groove icon. To build a release `Dubplate.app` to keep:
 
@@ -105,9 +121,9 @@ The jog wheels take the ticks a controller reports, 720 per revolution on the DD
 Dubplate maps the Pioneer DDJ-FLX4. Plug it in, then:
 
 ```
-cargo run -p dubplate -- midi devices
-cargo run -p dubplate -- midi monitor
-cargo run -p dubplate -- midi monitor --device "DDJ-FLX4" --lights
+cargo cli midi devices
+cargo cli midi monitor
+cargo cli midi monitor --device "DDJ-FLX4" --lights
 ```
 
 `monitor` prints every message with the time, the bytes and what Dubplate reads from it, such as `B0 22 41  deck A jog turn +1 (scratch)`, until Ctrl-C. `--lights` lights each button while it is held.
@@ -228,3 +244,7 @@ cargo fmt --all
 cargo clippy --workspace --all-targets
 cargo test --workspace
 ```
+
+## License
+
+Dubplate is free software under the GNU General Public License, version 3 or any later version (`GPL-3.0-or-later`); see [LICENSE](LICENSE). It builds on Euphoria's `euphoria-core`, which uses the same license.

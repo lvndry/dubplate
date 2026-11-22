@@ -9,7 +9,7 @@ use dubplate_prep::{Key, KeyFit};
 use gpui::SharedString;
 use serde::{Deserialize, Serialize};
 
-use crate::commands::Direction;
+use crate::commands::{Direction, Mode};
 
 /// A column of the library's track table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -334,6 +334,116 @@ impl FilterReference {
     }
 }
 
+/// How the library's table is ordered and narrowed: each screen's sort, the BPM range, and
+/// the key filter with the track it starts from.
+#[derive(Debug, Clone, Default)]
+pub struct LibraryView {
+    prepare_sort: Option<Sort>,
+    perform_sort: Option<Sort>,
+    bpm_range: Option<BpmRange>,
+    key_filter: bool,
+    reference: Option<FilterReference>,
+}
+
+impl LibraryView {
+    /// How `screen` sorts the tracks, or `None` for the crate's own order.
+    pub fn sort(&self, screen: Mode) -> Option<Sort> {
+        match screen {
+            Mode::Prepare => self.prepare_sort,
+            Mode::Perform => self.perform_sort,
+        }
+    }
+
+    /// Sorts `screen`'s tracks by `sort`.
+    pub fn set_sort(&mut self, screen: Mode, sort: Option<Sort>) {
+        match screen {
+            Mode::Prepare => self.prepare_sort = sort,
+            Mode::Perform => self.perform_sort = sort,
+        }
+    }
+
+    /// The tempos kept, when the BPM filter is on.
+    pub fn bpm_range(&self) -> Option<BpmRange> {
+        self.bpm_range
+    }
+
+    /// Turns the BPM filter off, or on around the reference's tempo, else `fallback_bpm`.
+    pub fn toggle_bpm_range(&mut self, fallback_bpm: Option<f64>) {
+        self.bpm_range = match self.bpm_range {
+            Some(_) => None,
+            None => Some(BpmRange::around(
+                self.reference
+                    .as_ref()
+                    .and_then(|reference| reference.bpm)
+                    .or(fallback_bpm),
+            )),
+        };
+    }
+
+    /// Moves one end of the BPM range a BPM, when the filter is on.
+    pub fn step_bpm_range(&mut self, end: RangeEnd, direction: Direction) {
+        self.bpm_range = self.bpm_range.map(|range| range.step(end, direction));
+    }
+
+    /// Turns the key filter on or off. It only narrows once there is a key to start from.
+    pub fn toggle_key_filter(&mut self) {
+        self.key_filter = !self.key_filter;
+    }
+
+    /// Whether the DJ turned the key filter on.
+    pub fn key_filter_on(&self) -> bool {
+        self.key_filter
+    }
+
+    /// The track the filters start from.
+    pub fn reference(&self) -> Option<&FilterReference> {
+        self.reference.as_ref()
+    }
+
+    /// Takes a new track to start from. Without one the last stays, so the tracks shown do
+    /// not jump when a deck stops. Returns whether the tracks kept may change.
+    pub fn set_reference(&mut self, reference: Option<FilterReference>) -> bool {
+        let Some(reference) = reference else {
+            return false;
+        };
+        let key_changed = self.reference.as_ref().map(|current| current.key) != Some(reference.key);
+        self.reference = Some(reference);
+        self.key_filter && key_changed
+    }
+
+    /// Whether a filter narrows the tracks.
+    pub fn is_filtered(&self) -> bool {
+        self.bpm_range.is_some() || self.active_key_filter().is_some()
+    }
+
+    fn active_key_filter(&self) -> Option<&FilterReference> {
+        self.reference
+            .as_ref()
+            .filter(|reference| self.key_filter && reference.key.is_some())
+    }
+
+    /// Keeps the rows the filters let through, then orders them as `screen` sorts, reading
+    /// each row's cells with `cell`.
+    pub fn apply<Row: Copy>(
+        &self,
+        screen: Mode,
+        rows: &mut Vec<Row>,
+        cell: impl Fn(Row, Column) -> SharedString,
+    ) {
+        let key_filter = self.active_key_filter();
+        if self.bpm_range.is_some() || key_filter.is_some() {
+            rows.retain(|row| {
+                self.bpm_range
+                    .is_none_or(|range| range.keeps(&cell(*row, Column::Bpm)))
+                    && key_filter.is_none_or(|reference| reference.keeps(&cell(*row, Column::Key)))
+            });
+        }
+        if let Some(sort) = self.sort(screen) {
+            sort.apply(rows, |row| cell(row, sort.column));
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -464,6 +574,62 @@ mod tests {
             }
         );
         assert_eq!(BpmRange::around(Some(300.0)).highest, 220);
+    }
+
+    #[test]
+    fn the_view_narrows_then_sorts_each_screen_its_own_way() {
+        let rows: [(&str, &str); 4] = [
+            ("122.00", "8A"),
+            ("113.00", "8A"),
+            ("121.00", "3B"),
+            ("", "9A"),
+        ];
+        let cell = |row: usize, column: Column| -> SharedString {
+            match column {
+                Column::Bpm => rows[row].0.into(),
+                Column::Key => rows[row].1.into(),
+                _ => SharedString::default(),
+            }
+        };
+        let mut view = LibraryView::default();
+        view.set_sort(
+            Mode::Prepare,
+            Some(Sort {
+                column: Column::Bpm,
+                direction: SortDirection::Ascending,
+            }),
+        );
+        let mut prepared: Vec<usize> = (0..rows.len()).collect();
+        view.apply(Mode::Prepare, &mut prepared, cell);
+        assert_eq!(prepared, [1, 2, 0, 3]);
+        let mut performed: Vec<usize> = (0..rows.len()).collect();
+        view.apply(Mode::Perform, &mut performed, cell);
+        assert_eq!(performed, [0, 1, 2, 3], "Perform keeps the crate's order");
+
+        view.toggle_key_filter();
+        assert!(!view.is_filtered(), "no key to start from yet");
+        let reference = FilterReference {
+            title: "Uthando".into(),
+            key: Key::parse_file_key("8A").map(KeyFit::new),
+            bpm: Some(120.0),
+        };
+        assert!(view.set_reference(Some(reference.clone())));
+        assert!(
+            !view.set_reference(None),
+            "a stopped deck keeps the last reference"
+        );
+        assert_eq!(view.reference(), Some(&reference));
+        view.toggle_bpm_range(None);
+        assert_eq!(
+            view.bpm_range(),
+            Some(BpmRange {
+                lowest: 117,
+                highest: 123
+            })
+        );
+        let mut narrowed: Vec<usize> = (0..rows.len()).collect();
+        view.apply(Mode::Perform, &mut narrowed, cell);
+        assert_eq!(narrowed, [0]);
     }
 
     #[test]

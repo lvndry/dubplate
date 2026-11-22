@@ -158,9 +158,9 @@ impl Settings {
         Ok(data_folder()?.sets())
     }
 
-    /// Where the tracks' energy ratings are kept between launches.
-    pub fn energy_cache_path() -> Result<PathBuf, SettingsError> {
-        Ok(data_folder()?.energy_cache())
+    /// Where what Dubplate's analysis found in each track is kept between launches.
+    pub fn analysis_cache_path() -> Result<PathBuf, SettingsError> {
+        Ok(data_folder()?.analysis_cache())
     }
 
     /// Where the scans of the music folders are kept between launches.

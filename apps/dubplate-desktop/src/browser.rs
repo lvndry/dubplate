@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use dubplate_engine::DeckId;
+use dubplate_prep::AudioAnalysis;
 use gpui::component::input::{Input, InputEvent, InputState};
 use gpui::prelude::*;
 use gpui::{
@@ -15,12 +16,15 @@ use gpui::{
     Window, div, px, svg, uniform_list,
 };
 
+use crate::analysis::{AnalysisState, bpm_cell, energy_cell, key_cell};
 use crate::assets::{ARROW_DOWN_PATH, ARROW_UP_PATH, CLOSE_ICON_PATH, SEARCH_ICON_PATH};
 use crate::collection::{Collection, CollectionTrack, CrateIndex, CrateKind, TrackIndex};
 use crate::commands::{Direction, Mode};
 use crate::deck::deck_letter;
 use crate::fonts::MONO_FAMILY;
-use crate::library_view::{BpmRange, Column, FilterReference, RangeEnd, Sort, SortDirection};
+use crate::library_view::{
+    BpmRange, Column, FilterReference, LibraryView, RangeEnd, Sort, SortDirection,
+};
 use crate::search::{SearchQuery, filter_tracks};
 use crate::theme;
 use crate::widgets::{Emphasis, button, tooltip};
@@ -130,14 +134,10 @@ pub struct Browser {
     pane: BrowserPane,
     in_set: Arc<HashSet<TrackIndex>>,
     screen: Mode,
-    prepare_sort: Option<Sort>,
-    perform_sort: Option<Sort>,
-    bpm_range: Option<BpmRange>,
-    key_filter: bool,
-    reference: Option<FilterReference>,
+    view: LibraryView,
     missing: Arc<HashSet<TrackIndex>>,
     relinking: bool,
-    energies: HashMap<PathBuf, Option<u8>>,
+    analyses: HashMap<PathBuf, Option<Arc<AudioAnalysis>>>,
     search_input: Entity<InputState>,
     table_focus: FocusHandle,
     scroll: UniformListScrollHandle,
@@ -172,14 +172,10 @@ impl Browser {
             pane: BrowserPane::default(),
             in_set: Arc::default(),
             screen: Mode::Perform,
-            prepare_sort: None,
-            perform_sort: None,
-            bpm_range: None,
-            key_filter: false,
-            reference: None,
+            view: LibraryView::default(),
             missing: Arc::default(),
             relinking: false,
-            energies: HashMap::new(),
+            analyses: HashMap::new(),
             search_input,
             table_focus: cx.focus_handle(),
             scroll: UniformListScrollHandle::new(),
@@ -221,20 +217,31 @@ impl Browser {
         cx.notify();
     }
 
-    /// Shows the energies just rated, `None` for a track that has none or could not be read.
-    pub fn add_energies(
+    /// Shows what the analyses just made found, `None` for a track that could not be analysed.
+    pub fn add_analyses(
         &mut self,
-        ratings: Vec<(PathBuf, Option<u8>)>,
+        analyses: Vec<(PathBuf, Option<Arc<AudioAnalysis>>)>,
         cx: &mut Context<'_, Self>,
     ) {
-        self.energies.extend(ratings);
-        if self
-            .sort()
-            .is_some_and(|sort| sort.column == Column::Energy)
-        {
+        self.analyses.extend(analyses);
+        let reads_analysis = |column| matches!(column, Column::Bpm | Column::Key | Column::Energy);
+        if self.sort().is_some_and(|sort| reads_analysis(sort.column)) || self.view.is_filtered() {
             self.refilter(cx);
         }
         cx.notify();
+    }
+
+    /// What the analyser has said about `entry` so far.
+    fn analysis_state(&self, entry: &CollectionTrack) -> AnalysisState<'_> {
+        match entry
+            .track
+            .file_path
+            .as_ref()
+            .and_then(|path| self.analyses.get(path))
+        {
+            Some(answer) => AnalysisState::of_answer(answer.as_ref()),
+            None => AnalysisState::Waiting,
+        }
     }
 
     /// Marks the rekordbox tracks whose files are not where rekordbox says, and whether their
@@ -262,7 +269,7 @@ impl Browser {
         if self.screen == screen {
             return;
         }
-        let resort = self.sort() != self.sort_of(screen);
+        let resort = self.view.sort(self.screen) != self.view.sort(screen);
         self.screen = screen;
         if resort {
             self.refilter(cx);
@@ -273,54 +280,34 @@ impl Browser {
 
     /// Sorts `screen`'s tracks by `sort`, as the DJ left them.
     pub fn restore_sort(&mut self, screen: Mode, sort: Option<Sort>, cx: &mut Context<'_, Self>) {
-        self.set_sort_of(screen, sort);
+        self.view.set_sort(screen, sort);
         if screen == self.screen {
             self.refilter(cx);
         }
     }
 
-    /// The track the quick filters start from, when there is one; without one they keep the
-    /// last, so the tracks shown do not jump when a deck stops.
+    /// The track the quick filters start from, when there is one.
     pub fn set_filter_reference(
         &mut self,
         reference: Option<FilterReference>,
         cx: &mut Context<'_, Self>,
     ) {
-        let Some(reference) = reference else {
-            return;
-        };
-        if self.reference.as_ref() == Some(&reference) {
+        if reference.is_none() || self.view.reference() == reference.as_ref() {
             return;
         }
-        let key_changed = self.reference.as_ref().map(|current| current.key) != Some(reference.key);
-        self.reference = Some(reference);
-        if self.key_filter && key_changed {
+        if self.view.set_reference(reference) {
             self.refilter(cx);
         }
         cx.notify();
     }
 
     fn sort(&self) -> Option<Sort> {
-        self.sort_of(self.screen)
-    }
-
-    fn sort_of(&self, screen: Mode) -> Option<Sort> {
-        match screen {
-            Mode::Prepare => self.prepare_sort,
-            Mode::Perform => self.perform_sort,
-        }
-    }
-
-    fn set_sort_of(&mut self, screen: Mode, sort: Option<Sort>) {
-        match screen {
-            Mode::Prepare => self.prepare_sort = sort,
-            Mode::Perform => self.perform_sort = sort,
-        }
+        self.view.sort(self.screen)
     }
 
     fn click_header(&mut self, column: Column, cx: &mut Context<'_, Self>) {
         let sort = Sort::after_click(self.sort(), column);
-        self.set_sort_of(self.screen, sort);
+        self.view.set_sort(self.screen, sort);
         cx.emit(BrowserEvent::Sorted {
             screen: self.screen,
             sort,
@@ -330,51 +317,31 @@ impl Browser {
     }
 
     fn toggle_bpm_filter(&mut self, cx: &mut Context<'_, Self>) {
-        self.bpm_range = match self.bpm_range {
-            Some(_) => None,
-            None => Some(BpmRange::around(self.reference_bpm())),
-        };
+        let selected_bpm = self.selected_bpm();
+        self.view.toggle_bpm_range(selected_bpm);
         self.refilter(cx);
         self.reveal_selection();
     }
 
-    /// The tempo a new BPM range centres on: the reference's, else the selected track's.
-    fn reference_bpm(&self) -> Option<f64> {
+    /// The selected track's tempo, where a BPM range starts when there is no reference.
+    fn selected_bpm(&self) -> Option<f64> {
         let LibraryStatus::Ready(collection) = &self.library else {
             return None;
         };
-        self.reference
-            .as_ref()
-            .and_then(|reference| reference.bpm)
-            .or_else(|| {
-                let track = self.selected?;
-                BpmRange::tempo_of(&self.cell_text(collection.track(track), track, Column::Bpm))
-            })
+        let track = self.selected?;
+        BpmRange::tempo_of(&self.cell_text(collection.track(track), track, Column::Bpm))
     }
 
     fn step_bpm_range(&mut self, end: RangeEnd, direction: Direction, cx: &mut Context<'_, Self>) {
-        if let Some(range) = self.bpm_range {
-            self.bpm_range = Some(range.step(end, direction));
-            self.refilter(cx);
-            self.reveal_selection();
-        }
-    }
-
-    fn toggle_key_filter(&mut self, cx: &mut Context<'_, Self>) {
-        self.key_filter = !self.key_filter;
+        self.view.step_bpm_range(end, direction);
         self.refilter(cx);
         self.reveal_selection();
     }
 
-    /// The key filter, when it is on and has a key to start from.
-    fn active_key_filter(&self) -> Option<&FilterReference> {
-        self.reference
-            .as_ref()
-            .filter(|reference| self.key_filter && reference.key.is_some())
-    }
-
-    fn is_filtered(&self) -> bool {
-        self.bpm_range.is_some() || self.active_key_filter().is_some()
+    fn toggle_key_filter(&mut self, cx: &mut Context<'_, Self>) {
+        self.view.toggle_key_filter();
+        self.refilter(cx);
+        self.reveal_selection();
     }
 
     /// What a track's cell in `column` says. Sorting and the quick filters read the same text,
@@ -390,18 +357,9 @@ impl Browser {
             Column::Title => row.title.clone(),
             Column::Artist => row.artist.clone(),
             Column::Genre => row.genre.clone(),
-            Column::Bpm => row.bpm.clone(),
-            Column::Key => row.key.clone(),
-            Column::Energy => match entry
-                .track
-                .file_path
-                .as_ref()
-                .and_then(|path| self.energies.get(path))
-            {
-                Some(Some(rating)) => rating.to_string().into(),
-                Some(None) => "\u{2013}".into(),
-                None => SharedString::default(),
-            },
+            Column::Bpm => bpm_cell(entry, self.analysis_state(entry)),
+            Column::Key => key_cell(entry, self.analysis_state(entry)),
+            Column::Energy => energy_cell(self.analysis_state(entry)),
             Column::Time => row.time.clone(),
             Column::Source => {
                 if self.missing.contains(&track) {
@@ -543,23 +501,9 @@ impl Browser {
         };
         let mut rows = filter_tracks(&collection, self.crate_index, &self.query);
         self.searched_count = rows.len();
-        let bpm_range = self.bpm_range;
-        let key_filter = self.active_key_filter();
-        if bpm_range.is_some() || key_filter.is_some() {
-            rows.retain(|track| {
-                let entry = collection.track(*track);
-                bpm_range
-                    .is_none_or(|range| range.keeps(&self.cell_text(entry, *track, Column::Bpm)))
-                    && key_filter.is_none_or(|reference| {
-                        reference.keeps(&self.cell_text(entry, *track, Column::Key))
-                    })
-            });
-        }
-        if let Some(sort) = self.sort() {
-            sort.apply(&mut rows, |track| {
-                self.cell_text(collection.track(track), track, sort.column)
-            });
-        }
+        self.view.apply(self.screen, &mut rows, |track, column| {
+            self.cell_text(collection.track(track), track, column)
+        });
         self.rows = rows;
         if self
             .selected
@@ -697,7 +641,7 @@ impl Browser {
 
     /// The quick filters above the tracks, and how many tracks they leave.
     fn render_filters(&self, cx: &mut Context<'_, Self>) -> impl IntoElement + use<> {
-        let count = if self.is_filtered() {
+        let count = if self.view.is_filtered() {
             format!("{} of {}", self.rows.len(), self.searched_count)
         } else {
             let count = self.rows.len();
@@ -727,14 +671,15 @@ impl Browser {
 
     /// BPM, which turns on a range around the reference track, then its two ends to step.
     fn bpm_filter(&self, cx: &mut Context<'_, Self>) -> impl IntoElement + use<> {
-        let toggle = filter_chip("bpm-filter", "BPM", self.bpm_range.is_some())
-            .tooltip(tooltip(if self.bpm_range.is_some() {
+        let range = self.view.bpm_range();
+        let toggle = filter_chip("bpm-filter", "BPM", range.is_some())
+            .tooltip(tooltip(if range.is_some() {
                 "Show every tempo"
             } else {
                 "Only tracks in a tempo range, a few BPM either side of the selected track"
             }))
             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.toggle_bpm_filter(cx)));
-        let Some(range) = self.bpm_range else {
+        let Some(range) = range else {
             return toggle.into_any_element();
         };
         div()
@@ -763,10 +708,10 @@ impl Browser {
     /// suggestions would have it.
     fn key_filter(&self, cx: &mut Context<'_, Self>) -> impl IntoElement + use<> {
         let reference_key = self
-            .reference
-            .as_ref()
+            .view
+            .reference()
             .and_then(|reference| Some((reference, reference.key?.reference())));
-        let on = self.key_filter && reference_key.is_some();
+        let on = self.view.key_filter_on() && reference_key.is_some();
         let explanation: SharedString = match reference_key {
             Some((reference, key)) => format!(
                 "Only tracks whose key mixes well after {} ({}): the same key, one step on \

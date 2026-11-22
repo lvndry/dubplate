@@ -6,9 +6,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use dubplate_engine::DeckId;
 use dubplate_library::{FolderScan, LibraryCache};
-use dubplate_prep::{ExportLibrary, Key, KeyFit};
+use dubplate_prep::ExportLibrary;
 use gpui::{Context, PathPromptOptions};
 
 use super::{DubplateApp, NoticePlace, error_chain};
@@ -16,7 +15,6 @@ use crate::browser::LibraryStatus;
 use crate::collection::{Collection, RekordboxLibrary, folder_name};
 use crate::commands::Mode;
 use crate::library::{RekordboxSource, ScanRequest};
-use crate::library_view::FilterReference;
 use crate::prep;
 use crate::relink::missing_tracks;
 use crate::settings::Settings;
@@ -34,64 +32,6 @@ impl DubplateApp {
                 browser.restore_sort(screen, sort, cx);
             }
         });
-    }
-
-    /// The track the library's quick filters start from: in Prepare the selected set track,
-    /// else the deck the room hears; in Perform the other way round.
-    pub(super) fn filter_reference(&self) -> Option<FilterReference> {
-        match self.mode {
-            Mode::Prepare => self
-                .set_track_reference()
-                .or_else(|| self.on_air_reference()),
-            Mode::Perform => self
-                .on_air_reference()
-                .or_else(|| self.set_track_reference()),
-        }
-    }
-
-    /// The selected set track, or the last one, as the Next suggestions follow it.
-    fn set_track_reference(&self) -> Option<FilterReference> {
-        let tracks = self.set_editor.as_ref()?.tracks();
-        let position = self.set_selection.or_else(|| tracks.len().checked_sub(1))?;
-        let track = self.catalogue.get(&tracks.get(position)?.track_path)?;
-        Some(FilterReference {
-            title: track.title.clone().into(),
-            key: track.key.map(KeyFit::new),
-            bpm: track.bpm.map(f64::from),
-        })
-    }
-
-    /// The playing deck the room hears most, deck A when they are level.
-    fn on_air_reference(&self) -> Option<FilterReference> {
-        let deck = DeckId::ALL
-            .into_iter()
-            .filter(|deck| self.deck_state(*deck).playing)
-            .reduce(|loudest, deck| {
-                if self.on_air_level(deck) > self.on_air_level(loudest) {
-                    deck
-                } else {
-                    loudest
-                }
-            })?;
-        let track = self.deck(deck).track.as_ref()?;
-        Some(FilterReference {
-            title: track.row.title.clone(),
-            key: Key::parse_file_key(&track.row.key).map(KeyFit::new),
-            bpm: self
-                .tempo_state(deck)
-                .and_then(|state| state.bpm)
-                .or(track.track.bpm),
-        })
-    }
-
-    /// How much of a deck the room hears from its channel fader and the crossfader, which
-    /// lets both decks through in its middle half.
-    fn on_air_level(&self, deck: DeckId) -> f32 {
-        let crossfader_side = match deck {
-            DeckId::A => 1.0 - self.mixer.crossfader,
-            DeckId::B => self.mixer.crossfader,
-        };
-        self.mixer.channel_faders[deck.index()] * crossfader_side.min(0.5)
     }
 
     /// Opens the library the DJ chose: the last scans from the cache at once, then rekordbox and
@@ -332,12 +272,12 @@ impl DubplateApp {
                 if this.library_generation == generation {
                     this.follow_moved_set_files(&moved_files, cx);
                     this.catalogue = Arc::new(catalogue);
-                    this.restore_energy();
+                    this.restore_analyses();
                     this.show_library(LibraryStatus::Ready(Arc::new(collection)), cx);
                     this.show_missing(missing, cx);
                     this.forget_track_checks();
                     this.set_changed(cx);
-                    this.request_library_energy(cx);
+                    this.request_library_analysis(cx);
                 }
             })
             .ok();

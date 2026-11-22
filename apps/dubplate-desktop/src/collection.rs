@@ -359,6 +359,12 @@ impl CollectionTrack {
         )
     }
 
+    /// A track from `origin` with no cues, for tests elsewhere in the app.
+    #[cfg(test)]
+    pub fn for_tests(track: Track, origin: TrackOrigin) -> Self {
+        Self::new(track, &[], origin, "", None)
+    }
+
     fn new(
         track: Track,
         cues: &[&Cue],
