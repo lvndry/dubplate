@@ -61,6 +61,19 @@ pub enum EngineError {
         slot_count: usize,
     },
 
+    /// The stems are not as long as the track, so they are not this track's.
+    #[error("the stems last {stems_seconds:.2} s but the track lasts {track_seconds:.2} s")]
+    StemsDoNotMatch {
+        /// Length of the track in seconds, or of what is decoded of it so far.
+        track_seconds: f64,
+        /// Length of the stems in seconds.
+        stems_seconds: f64,
+    },
+
+    /// The track has its stems already.
+    #[error("the track has its stems already")]
+    StemsAlreadyAttached,
+
     /// No audio output device is available.
     #[error("no audio output device is available")]
     NoOutputDevice,

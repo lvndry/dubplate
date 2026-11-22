@@ -5,6 +5,7 @@ use crate::mixer::RetireQueue;
 use crate::processor::StereoBlock;
 use crate::sync::{MasterBeat, sync_multiple};
 use crate::track::TrackBuffer;
+use crate::voice::UNITY_STEM_GAINS;
 use crate::voice::Voice;
 
 /// Number of sampler slots: the DDJ-FLX4's left pads play slots 1 to 8, its right pads 9 to 16.
@@ -247,7 +248,9 @@ impl Sampler {
             let gain = slot.settings.gain;
             for (left, right) in left_bus.iter_mut().zip(right_bus.iter_mut()) {
                 let playhead_gain = slot.voice.transport.next_value() * gain;
-                let (slot_left, slot_right) = slot.voice.next_frame(playhead_gain, retire, starved);
+                let (slot_left, slot_right) = slot
+                    .voice
+                    .next_frame(playhead_gain, &UNITY_STEM_GAINS, retire, starved);
                 *left += slot_left;
                 *right += slot_right;
                 if !slot.playing {

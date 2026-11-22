@@ -3,7 +3,7 @@
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use dubplate_engine::{Controller, DecodeStatus, Renderer, Track};
+use dubplate_engine::{Controller, DecodeStatus, Renderer, Stem, StemTracks, Track};
 
 pub const SAMPLE_RATE: u32 = 48_000;
 pub const DECLICK_FRAMES: usize = 240;
@@ -113,6 +113,51 @@ pub fn sine_track(
             let phase = std::f64::consts::TAU * frequency * index as f64 / f64::from(sample_rate);
             let value = phase.sin() as f32;
             [value * left_amplitude, value * right_amplitude]
+        })
+        .collect();
+    Track::from_interleaved_stereo(&samples, sample_rate).expect("valid test track")
+}
+
+/// The frequency of the tone each synthetic stem holds, in the order of [`Stem::ALL`].
+pub const STEM_TONES: [f64; Stem::COUNT] = [150.0, 60.0, 700.0, 1_000.0];
+/// The level of every synthetic stem's tone.
+pub const STEM_AMPLITUDE: f64 = 0.2;
+
+/// One synthetic stem at `sample_rate`: a tone of its own, the same on both sides, quantized to
+/// 16 bits as the separation writes stems.
+pub fn stem_samples(stem: Stem, seconds: f64, sample_rate: u32) -> Vec<i16> {
+    let frame_count = (seconds * f64::from(sample_rate)).round() as usize;
+    (0..frame_count)
+        .flat_map(|index| {
+            let time = index as f64 / f64::from(sample_rate);
+            let value = (std::f64::consts::TAU * STEM_TONES[stem.index()] * time).sin()
+                * STEM_AMPLITUDE;
+            let quantized = (value * 32_768.0).round() as i16;
+            [quantized, quantized]
+        })
+        .collect()
+}
+
+/// Four synthetic stems lasting `seconds` at `sample_rate`.
+pub fn stems_like(seconds: f64, sample_rate: u32) -> StemTracks {
+    let stems = Stem::ALL.map(|stem| stem_samples(stem, seconds, sample_rate));
+    StemTracks::from_interleaved_stereo(
+        std::array::from_fn(|index| stems[index].as_slice()),
+        sample_rate,
+    )
+    .expect("valid stems")
+}
+
+/// The track the synthetic stems were separated from: the four of them summed, exactly, at
+/// `sample_rate`.
+pub fn mix_of_stems(seconds: f64, sample_rate: u32) -> Track {
+    let stems = Stem::ALL.map(|stem| stem_samples(stem, seconds, sample_rate));
+    let samples: Vec<f32> = (0..stems[0].len())
+        .map(|index| {
+            stems
+                .iter()
+                .map(|stem| f32::from(stem[index]) / 32_768.0)
+                .sum()
         })
         .collect();
     Track::from_interleaved_stereo(&samples, sample_rate).expect("valid test track")
