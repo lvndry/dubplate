@@ -1,5 +1,5 @@
-//! The library's settings, over the window: the music folders with their tracks and last scan,
-//! and rekordbox's collection as a separate choice.
+//! The settings, over the window: the music folders with their tracks and last scan,
+//! rekordbox's collection as a separate choice, and the sound card Dubplate plays on.
 
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -13,8 +13,13 @@ use crate::commands::Command;
 use crate::library::RekordboxSource;
 use crate::theme;
 use crate::widgets::{Emphasis, button};
+use dubplate_engine::OutputDevice;
 
 pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoElement {
+    let mut output_rows = Vec::new();
+    for (position, device) in app.output_devices().iter().enumerate() {
+        output_rows.push(output_row(app, position, device, cx));
+    }
     let mut folder_rows = Vec::new();
     for (position, folder) in app.sources.folders().iter().enumerate() {
         folder_rows.push(folder_row(app, position, folder, cx));
@@ -55,7 +60,7 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
                             div()
                                 .text_size(px(15.0))
                                 .font_weight(FontWeight::MEDIUM)
-                                .child("Library"),
+                                .child("Settings"),
                         )
                         .child(
                             div()
@@ -81,7 +86,9 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
                     ),
                 ))
                 .child(section_title("rekordbox"))
-                .child(rekordbox_row(app, cx)),
+                .child(rekordbox_row(app, cx))
+                .child(section_title("Sound card"))
+                .children(output_rows),
         )
 }
 
@@ -233,6 +240,69 @@ fn rekordbox_row(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl I
                     this.set_rekordbox_import(import, cx);
                 },
             )),
+        )
+}
+
+/// A sound card: its name, its outputs, and whether Dubplate plays on it. A card with four or
+/// more outputs, such as a DDJ-FLX4, carries the headphones on outputs 3 and 4.
+fn output_row(
+    app: &DubplateApp,
+    position: usize,
+    device: &OutputDevice,
+    cx: &mut Context<'_, DubplateApp>,
+) -> impl IntoElement + use<> {
+    let current = app.current_output() == Some(device.name.as_str());
+    let mut detail = format!(
+        "{} outputs \u{b7} {:.1} kHz",
+        device.channel_count,
+        f64::from(device.sample_rate) / 1000.0
+    );
+    if device.has_headphone_output() {
+        detail.push_str(" \u{b7} headphones on 3 and 4");
+    }
+    if device.is_default {
+        detail.push_str(" \u{b7} system default");
+    }
+    let name = device.name.clone();
+    div()
+        .id(("sound-card", position))
+        .flex()
+        .items_center()
+        .gap(px(10.0))
+        .py(px(6.0))
+        .px(px(6.0))
+        .rounded(theme::SMALL_RADIUS)
+        .cursor_pointer()
+        .hover(|row| row.bg(theme::RAISED))
+        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+            this.choose_output(name.clone(), cx);
+        }))
+        .child(
+            div()
+                .size(px(8.0))
+                .flex_none()
+                .rounded_full()
+                .border_1()
+                .border_color(if current { theme::OK } else { theme::LINE })
+                .when(current, |dot| dot.bg(theme::OK)),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .min_w_0()
+                .child(
+                    div()
+                        .truncate()
+                        .when(current, |name| name.font_weight(FontWeight::MEDIUM))
+                        .child(device.name.clone()),
+                )
+                .child(
+                    div()
+                        .text_size(theme::SMALL_TEXT_SIZE)
+                        .text_color(theme::MUTED)
+                        .child(detail),
+                ),
         )
 }
 

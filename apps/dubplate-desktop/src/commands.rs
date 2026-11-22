@@ -154,6 +154,10 @@ pub enum Command {
     CyclePadMode(DeckId),
     /// A loop button.
     Loop(DeckId, LoopAction),
+    /// A channel's headphone CUE button: hear the channel in the headphones, before its fader.
+    ToggleHeadphoneCue(DeckId),
+    /// MASTER CUE: hear the master in the headphones too.
+    ToggleMasterCue,
     /// Load the track selected in the browser.
     LoadSelected(DeckId),
     /// Load the track playing on the other deck at the same place, as pressing LOAD twice does.
