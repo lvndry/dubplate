@@ -9,7 +9,7 @@ use crate::curves::Ramp;
 use crate::grid::BeatGrid;
 use crate::jog::{BlockStart, JogInput, Platter};
 use crate::keylock::{KeyLock, KeyLockBlock};
-use crate::looping::{LoopRegion, Looping};
+use crate::looping::{BoundFrame, LoopRegion, Looping, advance_and_bound};
 use crate::mixer::RetireQueue;
 use crate::pad_effects::{PadEffect, PadEffects};
 use crate::processor::{AudioProcessor, ProcessContext, StereoBlock};
@@ -270,6 +270,10 @@ impl Deck {
         self.playing = false;
         self.voice.position = 0.0;
         self.cue_point = 0.0;
+        // The phase bend is the previous track's beat-sync offset, and the new track's beat
+        // grid has nothing to do with it, so it dies with the track, and the rate runs off
+        // the clean phase.
+        self.phase_bend = 0.0;
         self.looping.clear();
         self.slip.clear();
         self.slipping_loop = false;
@@ -1100,23 +1104,33 @@ impl Deck {
                 voice.next_tails(&stem_gains, retire, &mut result.starved);
             if step != 0.0 {
                 let previous = voice.position;
-                voice.position = (previous + step).max(0.0);
-                if let Some(wrapped) =
-                    active_loop.and_then(|active| active.wrap(previous, voice.position))
-                {
+                // The playhead clamps and bounds here, as one frame may cross a loop's end or
+                // the track's end; a scratch back over the end, with a hand on the platter,
+                // clamps but does not stop the transport.
+                let bound = advance_and_bound(
+                    voice,
+                    previous,
+                    step,
+                    active_loop.as_ref(),
+                    end_frame,
+                    self.playing && !holding,
+                    retire,
+                );
+                if bound == BoundFrame::Wrapped {
+                    // The deck wraps where the playhead crossed to, as far into the loop as it
+                    // was, and jumps with a fade unless key lock stretches it out fully.
+                    let crossed = (previous + step).max(0.0);
+                    let wrapped = active_loop
+                        .and_then(|active| active.wrap(previous, crossed))
+                        .expect("the helper reported the deck's wrap");
                     if fully_stretched {
                         voice.position = wrapped;
                     } else {
                         voice.jump(wrapped, step, retire);
                     }
-                } else if let Some(end) = end_frame
-                    && voice.position >= end
-                {
-                    voice.position = end;
-                    if self.playing && !holding {
-                        self.playing = false;
-                        voice.transport.jump_to(0.0);
-                    }
+                } else if bound == BoundFrame::ReachedEnd && self.playing && !holding {
+                    // The helper already started the declick tail and stopped the transport.
+                    self.playing = false;
                 }
             }
             let trim = trim.next_value();
