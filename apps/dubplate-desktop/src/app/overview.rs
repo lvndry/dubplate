@@ -608,7 +608,7 @@ mod tests {
             bars: None,
             track: Arc::new(CollectionTrack::from_file(std::path::Path::new("a.mp3"))),
             phrases: Arc::default(),
-            hot_cues: HotCues::default(),
+            cues: Arc::default(),
             mix_in: None,
             mix_out: None,
             duration: 300.0,
