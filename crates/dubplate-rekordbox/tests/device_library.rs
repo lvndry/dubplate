@@ -174,6 +174,41 @@ fn normalized(mut library: DeviceLibrary) -> DeviceLibrary {
 }
 
 #[test]
+fn the_creation_date_survives_a_round_trip() {
+    let library = small_library();
+    let bytes = library.to_export_pdb().unwrap();
+    let read = DeviceLibrary::parse_export_pdb(&bytes).unwrap();
+    assert_eq!(read.created, library.created);
+}
+
+#[test]
+fn a_track_row_stamped_with_another_library_id_is_refused() {
+    let bytes = small_library().to_export_pdb().unwrap();
+    // The track table's data page is the third page of the file, and the library id sits at
+    // offset 0x18 of every track row: the only places it can appear.
+    let mut file = bytes.clone();
+    let page = &mut file[2 * 4096..3 * 4096];
+    let stamp = 0x0dd0_b1a7_u32.to_le_bytes();
+    let mut at = 0;
+    let mut occurrences = 0;
+    while at + 4 <= page.len() {
+        if &page[at..at + 4] == &stamp {
+            occurrences += 1;
+            if occurrences == 2 {
+                page[at..at + 4].copy_from_slice(&1_u32.to_le_bytes());
+                break;
+            }
+        }
+        at += 1;
+    }
+    assert_eq!(occurrences, 2, "both track rows carry the library id");
+    assert!(matches!(
+        DeviceLibrary::parse_export_pdb(&file),
+        Err(DeviceLibraryError::DanglingReference(_))
+    ));
+}
+
+#[test]
 fn every_field_reads_back() {
     let library = small_library();
     let bytes = library.to_export_pdb().unwrap();

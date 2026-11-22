@@ -82,16 +82,13 @@ pub fn export_ext_pdb(library_id: LibraryId) -> Result<Vec<u8>, DeviceLibraryErr
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let tables: Vec<TableRows> = (0..TABLE_COUNT)
+    let mut tables: Vec<TableRows> = (0..TABLE_COUNT)
         .map(|type_number| TableRows {
             type_number,
-            rows: match type_number {
-                TAGS_TABLE => tags.clone(),
-                SETTINGS_TABLE => vec![settings_row(library_id)],
-                _ => Vec::new(),
-            },
+            rows: Vec::new(),
         })
         .collect();
+    tables[usize::try_from(TAGS_TABLE).unwrap()].rows = tags;
     write_database(&tables)
 }
 
