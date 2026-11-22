@@ -11,6 +11,7 @@ use crate::grid::BeatGrid;
 use crate::headphones::Headphones;
 use crate::jog::JogInput;
 use crate::processor::{AudioProcessor, ProcessContext, StereoBlock};
+use crate::recording::RecordingSink;
 use crate::state::{GapDetector, SharedState, encode_loop_length, raise_peak};
 use crate::sync::SyncMode;
 use crate::tempo::{DeckLevel, MasterTempo, TempoMaster, TempoRange};
@@ -138,6 +139,7 @@ pub(crate) enum Command {
         deck: DeckId,
         enabled: bool,
     },
+    SetRecording(Option<RecordingSink>),
 }
 
 /// Something the audio thread no longer needs. It goes back to the control side to be dropped,
@@ -146,6 +148,7 @@ pub(crate) enum Retired {
     Track(#[allow(dead_code)] Arc<TrackBuffer>),
     Processor(#[allow(dead_code)] Box<dyn AudioProcessor>),
     BeatGrid(#[allow(dead_code)] BeatGrid),
+    Recording(#[allow(dead_code)] RecordingSink),
 }
 
 /// The audio thread's end of the queue of retired objects.
@@ -164,6 +167,10 @@ impl RetireQueue {
 
     pub(crate) fn beat_grid(&mut self, beat_grid: BeatGrid) {
         self.retire(Retired::BeatGrid(beat_grid));
+    }
+
+    fn recording(&mut self, sink: RecordingSink) {
+        self.retire(Retired::Recording(sink));
     }
 
     fn processor(&mut self, processor: Box<dyn AudioProcessor>) {
@@ -192,6 +199,7 @@ pub struct Renderer {
     master_gain: Ramp,
     headphones: Headphones,
     master_limiter: Limiter,
+    recording: Option<RecordingSink>,
     headphone_limiter: Limiter,
     crossfader: f32,
     sync_half_and_double: bool,
@@ -221,6 +229,7 @@ impl Renderer {
             master_gain: Ramp::new(1.0, declick_frames),
             headphones: Headphones::new(MAX_BLOCK_FRAMES, declick_frames),
             master_limiter: Limiter::new(sample_rate as f32),
+            recording: None,
             headphone_limiter: Limiter::new(sample_rate as f32),
             crossfader: 0.5,
             sync_half_and_double: true,
@@ -364,6 +373,9 @@ impl Renderer {
             *right *= gain;
         }
         self.master_limiter.process(left_channel, right_channel);
+        if let Some(recording) = &mut self.recording {
+            recording.write(&self.master_block);
+        }
         raise_peak(&self.shared.master_peak, self.master_block.peak());
         raise_peak(
             &self.shared.master_limiting,
@@ -494,6 +506,11 @@ impl Renderer {
             Command::SetHeadphoneLevel(level) => self.headphones.set_level(level),
             Command::SetKeyLock { deck, enabled } => {
                 self.decks[deck.index()].set_key_lock(enabled);
+            }
+            Command::SetRecording(sink) => {
+                if let Some(previous) = std::mem::replace(&mut self.recording, sink) {
+                    self.retire.recording(previous);
+                }
             }
             Command::SetMasterTempo(source) => self.tempo_master.set_source(source),
             Command::ChangeEffect { unit, change } => self.effects.change(unit, change),

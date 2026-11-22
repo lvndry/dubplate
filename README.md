@@ -116,6 +116,10 @@ Key lock, the MASTER TEMPO button of a CDJ, changes a deck's tempo without chang
 
 The stretcher needs to hear about 140 ms of music ahead of what it plays. The track is fully decoded, so the deck reads ahead by that much, round loops as the playhead will, and the stretched beats land within a millisecond of the playhead. After a jump, hot cue or beat jump the stretcher starts again at the new place at once. Scratching, and a record held still, play without key lock, as on a CDJ; at the track's own tempo the deck plays the track untouched. Turning key lock on or off crossfades over 20 ms. In the play example, a switches key lock on the selected deck.
 
+## Recording
+
+`Controller::start_recording` returns a `RecordingTap`: the master output exactly as it goes to the speakers, after the master level and the limiter, as interleaved stereo frames at the engine's sample rate. The audio thread copies each block into the tap's buffer without allocating or waiting. Frames that do not fit, because the tap was not read in time, are dropped and counted in `RecordingTap::dropped_frames`. Reading it on a thread of your own and writing a WAV file records the set.
+
 ## Master limiter
 
 The master and the headphones each end in a look-ahead limiter, so however hard the decks are pushed no sample passes -0.3 dBFS. It sees peaks 1.5 ms ahead and turns down smoothly before they arrive, holds the gain for 20 ms so a bass note is turned down without distortion, and lets go over 120 ms. Music under the ceiling passes untouched, only delayed by the look-ahead. `Meters::master_limiter_gain` shows how far the master was pushed into it, for a LIMIT light.
