@@ -274,8 +274,7 @@ impl DubplateApp {
                     this.follow_moved_set_files(&moved_files, cx);
                     this.catalogue = Arc::new(catalogue);
                     this.analyses.refresh();
-                    this.browser
-                        .update(cx, |browser, cx| browser.clear_analyses(cx));
+                    this.restore_analyses();
                     this.show_library(LibraryStatus::Ready(Arc::new(collection)), cx);
                     this.show_missing(missing, cx);
                     this.forget_track_checks();
