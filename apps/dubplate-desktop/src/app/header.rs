@@ -126,7 +126,14 @@ fn status(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoElem
             (None, LibraryStatus::Reading) => (theme::MUTED, "Opening library\u{2026}".into()),
             (None, LibraryStatus::Ready(collection)) => (
                 theme::OK,
-                format!("{} tracks", collection.track_count()).into(),
+                match app.energy_waiting() {
+                    0 => format!("{} tracks", collection.track_count()),
+                    waiting => format!(
+                        "{} tracks \u{b7} {waiting} to rate",
+                        collection.track_count()
+                    ),
+                }
+                .into(),
             ),
             (None, LibraryStatus::Unchosen) => (theme::MUTED, "No music yet".into()),
         };

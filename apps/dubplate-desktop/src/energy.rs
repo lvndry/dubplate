@@ -71,7 +71,6 @@ pub struct EnergyRatings {
     readings: HashMap<PathBuf, EnergyReading>,
     waiting: HashMap<PathBuf, EnergyPriority>,
     unrated: HashSet<PathBuf>,
-    failed: usize,
 }
 
 impl EnergyRatings {
@@ -123,11 +122,6 @@ impl EnergyRatings {
         analyser.request(wanted, priority);
     }
 
-    /// How many tracks could not be read to rate them.
-    pub fn failed(&self) -> usize {
-        self.failed
-    }
-
     /// Takes the answers that have arrived: each track with its energy, or `None` when it has
     /// none or could not be read.
     pub fn collect(&mut self) -> Vec<(PathBuf, Option<EnergyReading>)> {
@@ -137,13 +131,7 @@ impl EnergyRatings {
         };
         while let Some(answer) = analyser.next_result() {
             self.waiting.remove(&answer.path);
-            let reading = match answer.outcome {
-                Ok(reading) => reading,
-                Err(_) => {
-                    self.failed += 1;
-                    None
-                }
-            };
+            let reading = answer.outcome.ok().flatten();
             match reading {
                 Some(reading) => self.readings.insert(answer.path.clone(), reading),
                 None => {
@@ -315,7 +303,6 @@ mod tests {
                 (PathBuf::from("/c.mp3"), None),
             ]
         );
-        assert_eq!(ratings.failed(), 1);
         assert_eq!(ratings.waiting(), 0);
         assert_eq!(
             ratings.readings().collect::<Vec<_>>(),

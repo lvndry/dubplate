@@ -113,8 +113,6 @@ pub struct Browser {
     missing: Arc<HashSet<TrackIndex>>,
     relinking: bool,
     energies: HashMap<PathBuf, Option<u8>>,
-    energy_waiting: usize,
-    energy_failed: usize,
     search_input: Entity<InputState>,
     table_focus: FocusHandle,
     scroll: UniformListScrollHandle,
@@ -151,8 +149,6 @@ impl Browser {
             missing: Arc::default(),
             relinking: false,
             energies: HashMap::new(),
-            energy_waiting: 0,
-            energy_failed: 0,
             search_input,
             table_focus: cx.focus_handle(),
             scroll: UniformListScrollHandle::new(),
@@ -202,20 +198,6 @@ impl Browser {
     ) {
         self.energies.extend(ratings);
         cx.notify();
-    }
-
-    /// Shows how many tracks are waiting for their energy and how many could not be read.
-    pub fn show_energy_waiting(
-        &mut self,
-        waiting: usize,
-        failed: usize,
-        cx: &mut Context<'_, Self>,
-    ) {
-        if (self.energy_waiting, self.energy_failed) != (waiting, failed) {
-            self.energy_waiting = waiting;
-            self.energy_failed = failed;
-            cx.notify();
-        }
     }
 
     /// Marks the rekordbox tracks whose files are not where rekordbox says, and whether their
@@ -440,10 +422,7 @@ impl Browser {
             .when(!self.missing.is_empty(), |table| {
                 table.child(missing_bar(self.missing.len(), self.relinking, cx))
             })
-            .child(header_row(energy_status(
-                self.energy_waiting,
-                self.energy_failed,
-            )))
+            .child(header_row())
             .map(|table| match empty_message {
                 Some(message) => table.child(
                     div()
@@ -597,16 +576,7 @@ fn offset(position: usize, steps: i32, count: usize) -> Option<usize> {
     Some(usize::try_from(moved.max(0)).ok()?.min(last))
 }
 
-/// What the table header says about the energy ratings still to come, quietly.
-fn energy_status(waiting: usize, failed: usize) -> Option<SharedString> {
-    match (waiting, failed) {
-        (0, 0) => None,
-        (0, failed) => Some(format!("energy: {failed} unreadable").into()),
-        (waiting, _) => Some(format!("analysing {waiting}").into()),
-    }
-}
-
-fn header_row(energy_status: Option<SharedString>) -> impl IntoElement {
+fn header_row() -> impl IntoElement {
     let header = |label: &'static str| {
         div()
             .flex()
@@ -623,22 +593,7 @@ fn header_row(energy_status: Option<SharedString>) -> impl IntoElement {
         .text_size(theme::SMALL_TEXT_SIZE)
         .text_color(theme::MUTED)
         .font_weight(gpui::FontWeight::MEDIUM)
-        .child(
-            header("Title")
-                .flex_1()
-                .min_w_0()
-                .overflow_hidden()
-                .gap(px(8.0))
-                .pl(px(22.0))
-                .pr(theme::GUTTER)
-                .children(energy_status.map(|status| {
-                    div()
-                        .text_size(theme::TINY_TEXT_SIZE)
-                        .font_weight(gpui::FontWeight::NORMAL)
-                        .text_color(theme::faded(theme::MUTED, 0.7))
-                        .child(status)
-                })),
-        )
+        .child(header("Title").flex_1().pl(px(22.0)).pr(theme::GUTTER))
         .child(header("Artist").w(relative(0.3)).flex_none().px(px(8.0)))
         .child(
             header("BPM")
