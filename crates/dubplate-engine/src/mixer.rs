@@ -4,7 +4,8 @@ use std::time::{Duration, Instant};
 
 use rtrb::{Consumer, Producer};
 
-use crate::curves::{Ramp, channel_fader_gain, crossfader_gains};
+use crate::crossfader::{ChannelFaderCurve, Crossfader, CrossfaderAssign, CrossfaderCurve};
+use crate::curves::Ramp;
 use crate::deck::{Deck, DeckId};
 use crate::denormals::FlushDenormals;
 use crate::effects::{Bus, EffectChange, EffectRack, EffectUnitId};
@@ -80,6 +81,13 @@ pub(crate) enum Command {
         position: f32,
     },
     SetCrossfader(f32),
+    SetCrossfaderCurve(CrossfaderCurve),
+    SetCrossfaderEnabled(bool),
+    SetCrossfaderAssign {
+        deck: DeckId,
+        assign: CrossfaderAssign,
+    },
+    SetChannelFaderCurve(ChannelFaderCurve),
     SetMasterGain(f32),
     SetDeckInsert {
         deck: DeckId,
@@ -278,7 +286,8 @@ pub struct Renderer {
     master_limiter: Limiter,
     recording: Option<RecordingSink>,
     headphone_limiter: Limiter,
-    crossfader: f32,
+    crossfader: Crossfader,
+    channel_fader_curve: ChannelFaderCurve,
     sync_half_and_double: bool,
     smart_fader: bool,
     smart_bpm: Option<f64>,
@@ -313,7 +322,8 @@ impl Renderer {
             master_limiter: Limiter::new(sample_rate as f32),
             recording: None,
             headphone_limiter: Limiter::new(sample_rate as f32),
-            crossfader: 0.5,
+            crossfader: Crossfader::default(),
+            channel_fader_curve: ChannelFaderCurve::default(),
             sync_half_and_double: true,
             smart_fader: false,
             smart_bpm: None,
@@ -323,9 +333,7 @@ impl Renderer {
             sample_rate,
             gap_detector: GapDetector::default(),
         };
-        for deck in DeckId::ALL {
-            renderer.update_channel_gain(deck);
-        }
+        renderer.update_channel_gains();
         for deck in &mut renderer.decks {
             deck.settle_gains();
         }
@@ -488,37 +496,39 @@ impl Renderer {
     }
 
     fn choose_tempo_master(&mut self) -> Option<DeckId> {
-        let (a_gain, b_gain) = crossfader_gains(self.crossfader);
         let levels = DeckId::ALL.map(|deck_id| {
             let deck = &self.decks[deck_id.index()];
-            let crossfader_gain = if deck_id == DeckId::A { a_gain } else { b_gain };
             DeckLevel {
                 deck: deck_id,
                 has_beat_grid: deck.has_beat_grid(),
-                level: deck.level(crossfader_gain),
+                level: deck.level(self.channel_fader_curve, self.crossfader.gain(deck_id)),
                 playing: deck.is_playing(),
             }
         });
         self.tempo_master.update(&levels)
     }
 
-    /// Brings every synced deck other than the tempo master to the master's tempo, and with
-    /// beat sync to its beats, for the next block.
     /// Smart Fader: the tempo master plays the tempo the crossfader puts between the two
     /// decks' own tempos, gliding there, and the LOW knobs swap across the middle of the fader.
+    /// It needs one deck on each side of the crossfader; with a deck on THRU, or both on one
+    /// side, it rests and the decks keep their own tempo and LOW knobs.
     fn drive_smart_fader(&mut self, master: Option<DeckId>, frame_count: usize) {
         if !self.smart_fader {
             return;
         }
-        let lows = bass_swap(self.crossfader);
-        for (deck, low) in self.decks.iter_mut().zip(lows) {
-            deck.set_automatic_low(Some(low));
-        }
-        let own = self.decks.each_ref().map(Deck::own_bpm);
-        let (Some(master), [Some(bpm_a), Some(bpm_b)]) = (master, own) else {
+        let Some(sides) = self.crossfader.sides() else {
+            self.rest_smart_fader();
             return;
         };
-        let target = shared_bpm(self.crossfader, bpm_a, bpm_b);
+        let lows = bass_swap(self.crossfader.position);
+        for (deck, low) in sides.into_iter().zip(lows) {
+            self.decks[deck.index()].set_automatic_low(Some(low));
+        }
+        let own = sides.map(|deck| self.decks[deck.index()].own_bpm());
+        let (Some(master), [Some(left_bpm), Some(right_bpm)]) = (master, own) else {
+            return;
+        };
+        let target = shared_bpm(self.crossfader.position, left_bpm, right_bpm);
         let glide = 1.0
             - (-(frame_count as f64) / (TEMPO_GLIDE_SECONDS * f64::from(self.sample_rate))).exp();
         let bpm = match self.smart_bpm {
@@ -535,17 +545,24 @@ impl Renderer {
     fn set_smart_fader(&mut self, enabled: bool) {
         self.smart_fader = enabled;
         if !enabled {
-            self.smart_bpm = None;
-            for deck in &mut self.decks {
-                deck.set_automatic_low(None);
-                deck.set_smart_bpm(None);
-            }
+            self.rest_smart_fader();
         }
     }
 
+    /// Gives the decks back their own tempo and LOW knobs.
+    fn rest_smart_fader(&mut self) {
+        self.smart_bpm = None;
+        for deck in &mut self.decks {
+            deck.set_automatic_low(None);
+            deck.set_smart_bpm(None);
+        }
+    }
+
+    /// Brings every synced deck other than the tempo master to the master's tempo, and with
+    /// beat sync to its beats, for the next block.
     fn follow_tempo_master(&mut self, master: Option<DeckId>) {
         let master_beat = master.and_then(|deck| self.decks[deck.index()].master_beat(deck));
-        let smart = self.smart_fader;
+        let smart = self.smart_fader && self.crossfader.sides().is_some();
         for deck_id in DeckId::ALL {
             let deck = &mut self.decks[deck_id.index()];
             match master_beat {
@@ -611,10 +628,24 @@ impl Renderer {
                 self.update_channel_gain(deck);
             }
             Command::SetCrossfader(position) => {
-                self.crossfader = position;
-                for deck in DeckId::ALL {
-                    self.update_channel_gain(deck);
-                }
+                self.crossfader.position = position;
+                self.update_channel_gains();
+            }
+            Command::SetCrossfaderCurve(curve) => {
+                self.crossfader.curve = curve;
+                self.update_channel_gains();
+            }
+            Command::SetCrossfaderEnabled(enabled) => {
+                self.crossfader.enabled = enabled;
+                self.update_channel_gains();
+            }
+            Command::SetCrossfaderAssign { deck, assign } => {
+                self.crossfader.assign[deck.index()] = assign;
+                self.update_channel_gain(deck);
+            }
+            Command::SetChannelFaderCurve(curve) => {
+                self.channel_fader_curve = curve;
+                self.update_channel_gains();
             }
             Command::SetMasterGain(gain) => self.master_gain.set_target(gain),
             Command::SetDeckInsert {
@@ -775,14 +806,18 @@ impl Renderer {
         }
     }
 
-    fn update_channel_gain(&mut self, deck: DeckId) {
-        let (left_gain, right_gain) = crossfader_gains(self.crossfader);
-        let side_gain = match deck {
-            DeckId::A => left_gain,
-            DeckId::B => right_gain,
-        };
-        let deck = &mut self.decks[deck.index()];
-        deck.set_channel_gain(channel_fader_gain(deck.fader_position()) * side_gain);
+    fn update_channel_gain(&mut self, deck_id: DeckId) {
+        let crossfader_gain = self.crossfader.gain(deck_id);
+        let deck = &mut self.decks[deck_id.index()];
+        deck.set_channel_gain(
+            self.channel_fader_curve.gain(deck.fader_position()) * crossfader_gain,
+        );
+    }
+
+    fn update_channel_gains(&mut self) {
+        for deck in DeckId::ALL {
+            self.update_channel_gain(deck);
+        }
     }
 
     fn publish_state(&self) {

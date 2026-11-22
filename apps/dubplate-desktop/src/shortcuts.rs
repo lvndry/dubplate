@@ -108,6 +108,9 @@ pub const SHORTCUTS: &[Shortcut] = &[
     outside_text("=", Command::NudgeTempo(DeckId::A, Direction::Up)),
     outside_text("shift--", Command::NudgeTempo(DeckId::B, Direction::Down)),
     outside_text("shift-=", Command::NudgeTempo(DeckId::B, Direction::Up)),
+    outside_text("alt-x", Command::ToggleCrossfader),
+    outside_text("x", Command::CycleCrossfaderAssign(DeckId::A)),
+    outside_text("shift-x", Command::CycleCrossfaderAssign(DeckId::B)),
     outside_text("left", Command::MoveCrossfader(Direction::Down)),
     outside_text("right", Command::MoveCrossfader(Direction::Up)),
     outside_text("shift-left", Command::LoadSelected(DeckId::A)),
@@ -409,6 +412,11 @@ pub fn help_sections() -> Vec<HelpSection> {
                     "Tap the tempo of a track without a grid, deck A / deck B",
                 ),
                 line(&["left", "right"], "Crossfader towards deck A / deck B"),
+                line(
+                    &["x", "shift-x"],
+                    "Crossfader assign A, THRU or B, deck A / deck B",
+                ),
+                line(&["alt-x"], "Crossfader on or off"),
             ],
         },
         HelpSection {
@@ -540,6 +548,9 @@ mod tests {
                 }),
                 Command::CyclePadMode(DeckId::A) => Command::CyclePadMode(DeckId::B),
                 Command::ToggleKeyLock(DeckId::A) => Command::ToggleKeyLock(DeckId::B),
+                Command::CycleCrossfaderAssign(DeckId::A) => {
+                    Command::CycleCrossfaderAssign(DeckId::B)
+                }
                 Command::Stems(DeckId::A, action) => Command::Stems(DeckId::B, action),
                 Command::ToggleGridBar(DeckId::A) => Command::ToggleGridBar(DeckId::B),
                 Command::TapTempo(DeckId::A) => Command::TapTempo(DeckId::B),
