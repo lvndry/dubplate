@@ -22,6 +22,7 @@ mod pads;
 mod playhead;
 mod prep;
 mod recording;
+mod relink;
 mod search;
 mod set;
 mod settings;
