@@ -20,6 +20,7 @@ use crate::recording::{RecordingTap, recording_tap};
 use crate::sampler::{
     DEFAULT_SAMPLER_VOLUME, SAMPLER_SLOTS, SampleSettings, SamplerState, SlotState,
 };
+use crate::smart_cfx::SmartCfx;
 use crate::state::{
     DeckState, EngineStats, LoopState, Meters, PlatterState, SharedState, SlipState, TempoState,
     decode_loop_length, take_peak,
@@ -61,6 +62,7 @@ pub fn offline_engine(sample_rate: u32) -> (Controller, Renderer) {
         samples: std::array::from_fn(|_| None),
         sampler_volume: DEFAULT_SAMPLER_VOLUME,
         sampler_cue: false,
+        smart_cfx: [None; DECK_COUNT],
     };
     let renderer = Renderer::new(
         sample_rate,
@@ -91,6 +93,7 @@ pub struct Controller {
     samples: [Option<(Track, SampleSettings)>; SAMPLER_SLOTS],
     sampler_volume: f32,
     sampler_cue: bool,
+    smart_cfx: [Option<SmartCfx>; DECK_COUNT],
 }
 
 impl Controller {
@@ -238,6 +241,24 @@ impl Controller {
         self.send(Command::SetFilterResonance { deck, resonance })?;
         self.channels[deck.index()].filter_resonance = resonance;
         Ok(())
+    }
+
+    /// Turns Smart CFX on a channel with `preset`, or back to the plain filter with `None`. The
+    /// filter knob then drives the filter and the preset's effect together; the centre still
+    /// leaves the music untouched. A preset switched off rings out.
+    pub fn set_smart_cfx(
+        &mut self,
+        deck: DeckId,
+        preset: Option<SmartCfx>,
+    ) -> Result<(), EngineError> {
+        self.send(Command::SetSmartCfx { deck, preset })?;
+        self.smart_cfx[deck.index()] = preset;
+        Ok(())
+    }
+
+    /// A channel's Smart CFX preset, `None` for the plain filter.
+    pub fn smart_cfx(&self, deck: DeckId) -> Option<SmartCfx> {
+        self.smart_cfx[deck.index()]
     }
 
     /// A channel's EQ and filter knobs, as last set.
@@ -490,7 +511,6 @@ impl Controller {
     pub fn stop_recording(&mut self) -> Result<(), EngineError> {
         self.send(Command::SetRecording(None))
     }
-
     /// The SLIP button: with it on, scratching and loops slip as well as rolls. While an action
     /// slips, the track keeps playing silently underneath and the deck lands back on it, in
     /// rhythm, when the action ends.

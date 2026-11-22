@@ -13,6 +13,7 @@ use crate::mixer::RetireQueue;
 use crate::pad_effects::{PadEffect, PadEffects};
 use crate::processor::{AudioProcessor, ProcessContext, StereoBlock};
 use crate::slip::Slip;
+use crate::smart_cfx::SmartCfx;
 use crate::sync::{MasterBeat, PhaseAction, SyncFollow, SyncMode, phase_action, sync_multiple};
 use crate::tempo::{BeatClock, TempoFader, TempoRange};
 use crate::track::{MAX_TRACK_SECONDS, TrackBuffer};
@@ -782,6 +783,10 @@ impl Deck {
         self.strip.set_filter(position);
     }
 
+    pub(crate) fn set_smart_cfx(&mut self, preset: Option<SmartCfx>) {
+        self.strip.set_smart_cfx(preset);
+    }
+
     pub(crate) fn set_filter_resonance(&mut self, resonance: f32) {
         self.strip.set_filter_resonance(resonance);
     }
@@ -928,7 +933,7 @@ impl Deck {
             *left = (playhead_left * gain + tail_left) * trim;
             *right = (playhead_right * gain + tail_right) * trim;
         }
-        self.strip.process(&mut self.block);
+        self.strip.process(&mut self.block, context);
         self.pad_effects.process(&mut self.block, context);
         for processor in self.inserts.iter_mut().flatten() {
             processor.process(&mut self.block, context);
