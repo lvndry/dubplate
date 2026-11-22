@@ -21,9 +21,16 @@ use crate::fonts::MONO_FAMILY;
 use crate::frame_stats::FrameStats;
 use crate::shortcuts::printed_keys;
 use crate::theme;
-use crate::waveform::{BandLevels, BeatMarks, LaneLoop, LaneView, LoopLook, Zoom, ZoomedWaveform};
+use crate::waveform::{
+    BandLevels, BeatMarks, BeatPosition, LaneLoop, LaneView, LoopLook, Zoom, ZoomedWaveform,
+};
 
 const LANE_HEIGHT: Pixels = px(74.0);
+/// The phase meter's track, in pixels: half of it is half a beat early or late.
+const PHASE_TRACK_WIDTH: f32 = 44.0;
+/// How close two decks' beats are, in beats, for the phase meter to call them in phase: about
+/// 8 ms at 120 BPM, under what an ear hears as a flam.
+const IN_PHASE_BEATS: f64 = 0.016;
 const PLAYHEAD_WIDTH: Pixels = px(2.0);
 const FLAG_WIDTH: f32 = 14.0;
 /// The quietest band still drawn, in pixels of half height.
@@ -91,8 +98,11 @@ pub(super) fn render(
         .on_pinch(cx.listener(|this, event: &PinchEvent, _, cx| {
             this.pinch_lanes(event.delta, cx);
         }))
-        .child(lane(app, DeckId::A, &frames[0], cx))
-        .child(lane(app, DeckId::B, &frames[1], cx))
+        .children({
+            let readings = beat_readings(app, frames);
+            DeckId::ALL
+                .map(|deck| lane(app, deck, &frames[deck.index()], readings[deck.index()], cx))
+        })
         .child(zoom_label(app.lane_zoom))
         .child(
             div()
@@ -135,10 +145,131 @@ fn zoom_label(zoom: Zoom) -> impl IntoElement {
         }))
 }
 
+/// What the beat counter and the phase meter read for one deck in this frame.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct BeatReading {
+    /// Where the deck is in its bars.
+    position: BeatPosition,
+    /// How far its beats are from the deck it follows, when it has one to follow.
+    phase: Option<Phase>,
+}
+
+/// How a deck's beats sit against the deck it is mixed against.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Phase {
+    /// In beats, from -0.5 to 0.5, positive when early.
+    beats: f64,
+    /// Whole beats between the downbeats, from -2 to 2.
+    bar_offset: i32,
+}
+
+/// The beat counters of both decks, and a phase meter on the deck that is not the tempo
+/// master (deck B when neither is), measured against the other deck, as the CDJ-3000 and
+/// rekordbox show over their waveforms.
+fn beat_readings(app: &DubplateApp, frames: &[DeckFrame; 2]) -> [Option<BeatReading>; 2] {
+    let positions = DeckId::ALL.map(|deck| {
+        app.deck(deck).visuals().and_then(|visuals| {
+            visuals
+                .beats
+                .position(frames[deck.index()].playhead_seconds)
+        })
+    });
+    let master = DeckId::ALL
+        .into_iter()
+        .find(|deck| app.tempo_state(*deck).is_some_and(|state| state.is_master))
+        .unwrap_or(DeckId::A);
+    DeckId::ALL.map(|deck| {
+        let position = positions[deck.index()]?;
+        let against = positions[master.index()].filter(|_| deck != master);
+        Some(BeatReading {
+            position,
+            phase: against.map(|master_position| Phase {
+                beats: position.phase_offset(master_position),
+                bar_offset: position.bar_offset(master_position),
+            }),
+        })
+    })
+}
+
+/// The beat counter, `17.3` for bar 17 beat 3, and the phase meter beside it: a short track
+/// with a centre line and a mark that sits on it when the beats land together, green then,
+/// with the beats between the downbeats when the bars do not line up.
+fn beat_counter(reading: BeatReading) -> impl IntoElement {
+    let in_phase = reading
+        .phase
+        .is_some_and(|phase| phase.beats.abs() <= IN_PHASE_BEATS);
+    div()
+        .absolute()
+        .top(px(2.0))
+        .left(px(4.0))
+        .flex()
+        .items_center()
+        .gap(px(6.0))
+        .px(px(4.0))
+        .py(px(1.0))
+        .rounded(px(3.0))
+        .bg(theme::faded(theme::BACKGROUND, 0.7))
+        .font_family(MONO_FAMILY)
+        .text_size(px(10.0))
+        .text_color(theme::MUTED)
+        .child(SharedString::from(format!(
+            "{}.{}",
+            reading.position.bar, reading.position.beat
+        )))
+        .children(reading.phase.map(|phase| {
+            let colour = if in_phase {
+                theme::OK
+            } else {
+                theme::ATTENTION
+            };
+            let offset = (phase.beats as f32 * 2.0).clamp(-1.0, 1.0) * PHASE_TRACK_WIDTH / 2.0;
+            div()
+                .flex()
+                .items_center()
+                .gap(px(4.0))
+                .child(
+                    div()
+                        .relative()
+                        .w(px(PHASE_TRACK_WIDTH))
+                        .h(px(6.0))
+                        .rounded(px(3.0))
+                        .bg(theme::TRACK)
+                        .child(
+                            div()
+                                .absolute()
+                                .top_0()
+                                .bottom_0()
+                                .left(px(PHASE_TRACK_WIDTH / 2.0))
+                                .w(px(1.0))
+                                .bg(theme::MUTED),
+                        )
+                        .child(
+                            div()
+                                .absolute()
+                                .top_0()
+                                .size(px(6.0))
+                                .rounded_full()
+                                .left(px(PHASE_TRACK_WIDTH / 2.0 - 3.0 + offset))
+                                .bg(colour),
+                        ),
+                )
+                .when(phase.bar_offset != 0, |meter| {
+                    meter.child(div().text_color(theme::ATTENTION).child(SharedString::from(
+                        format!(
+                            "{:+} beat{}",
+                            phase.bar_offset,
+                            if phase.bar_offset.abs() == 1 { "" } else { "s" }
+                        ),
+                    )))
+                })
+        }))
+}
+
 fn lane(
     app: &DubplateApp,
     deck: DeckId,
     frame: &DeckFrame,
+    reading: Option<BeatReading>,
     cx: &mut Context<'_, DubplateApp>,
 ) -> impl IntoElement {
     let content = &app.deck(deck).content;
@@ -299,7 +430,8 @@ fn lane(
                 .text_size(px(10.0))
                 .font_weight(FontWeight::SEMIBOLD)
                 .child(deck_letter(deck)),
-        );
+        )
+        .children(reading.map(beat_counter));
     accept_drops(lane, deck, cx)
 }
 
