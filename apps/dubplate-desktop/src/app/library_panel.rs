@@ -4,6 +4,7 @@
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use gpui::base::FocusTrapElement;
 use gpui::prelude::*;
 use gpui::{ClickEvent, Context, FontWeight, MouseButton, Rgba, SharedString, div, px};
 
@@ -12,6 +13,7 @@ use crate::collection::folder_name;
 use crate::commands::Command;
 use crate::library::RekordboxSource;
 use crate::theme;
+use crate::widgets::InteractiveControl;
 use crate::widgets::{Emphasis, button};
 use dubplate_engine::OutputDevice;
 
@@ -38,6 +40,12 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
         .child(
             div()
                 .id("library-card")
+                .role(gpui::Role::Dialog)
+                .aria_label("Music and audio settings")
+                .key_context("Modal")
+                .track_focus(&app.modal_focus)
+                .tab_group()
+                .tab_stop(false)
                 .flex()
                 .flex_col()
                 .gap(px(14.0))
@@ -61,6 +69,13 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
                                 .text_size(px(15.0))
                                 .font_weight(FontWeight::MEDIUM)
                                 .child("Settings"),
+                        )
+                        .child(
+                            button("close-settings", "Close", Emphasis::Secondary).on_click(
+                                cx.listener(|this, _: &ClickEvent, window, cx| {
+                                    this.perform(Command::ToggleLibrary, window, cx)
+                                }),
+                            ),
                         )
                         .child(
                             div()
@@ -88,7 +103,8 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
                 .child(section_title("rekordbox"))
                 .child(rekordbox_row(app, cx))
                 .child(section_title("Sound card"))
-                .children(output_rows),
+                .children(output_rows)
+                .focus_trap("settings-focus-trap", &app.modal_focus),
         )
 }
 
@@ -130,6 +146,9 @@ fn folder_row(
     let rescanned = folder.to_path_buf();
     let removed = folder.to_path_buf();
     div()
+        .id(("music-folder-settings", position))
+        .role(gpui::Role::Group)
+        .aria_label(format!("Music folder {}. {detail}", folder.display()))
         .flex()
         .items_center()
         .gap(px(12.0))
@@ -165,18 +184,18 @@ fn folder_row(
                 ),
         )
         .child(
-            button(("rescan-folder", position), "Rescan", Emphasis::Secondary).on_click(
-                cx.listener(move |this, _: &ClickEvent, _, cx| {
+            button(("rescan-folder", position), "Rescan", Emphasis::Secondary)
+                .aria_label(format!("Rescan {}", folder_name(folder)))
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     this.rescan_music_folder(rescanned.clone(), cx);
-                }),
-            ),
+                })),
         )
         .child(
-            button(("remove-folder", position), "Remove", Emphasis::Secondary).on_click(
-                cx.listener(move |this, _: &ClickEvent, _, cx| {
+            button(("remove-folder", position), "Remove", Emphasis::Secondary)
+                .aria_label(format!("Remove {}", folder_name(folder)))
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     this.remove_music_folder(&removed, cx);
-                }),
-            ),
+                })),
         )
 }
 
@@ -209,6 +228,9 @@ fn rekordbox_row(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl I
         }
     };
     div()
+        .id("rekordbox-settings")
+        .role(gpui::Role::Group)
+        .aria_label(format!("rekordbox collection. {detail}"))
         .flex()
         .items_center()
         .gap(px(12.0))
@@ -235,11 +257,11 @@ fn rekordbox_row(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl I
                 ),
         )
         .child(
-            button("rekordbox-import", action, Emphasis::Secondary).on_click(cx.listener(
-                move |this, _: &ClickEvent, _, cx| {
+            button("rekordbox-import", action, Emphasis::Secondary)
+                .aria_label(format!("{action} rekordbox collection"))
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     this.set_rekordbox_import(import, cx);
-                },
-            )),
+                })),
         )
 }
 
@@ -266,6 +288,7 @@ fn output_row(
     let name = device.name.clone();
     div()
         .id(("sound-card", position))
+        .accessible_toggle(format!("{name}. {detail}"), current)
         .flex()
         .items_center()
         .gap(px(10.0))
