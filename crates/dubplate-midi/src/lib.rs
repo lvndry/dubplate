@@ -25,7 +25,7 @@ pub use action::{
 pub use decoder::Decoder;
 pub use device::{
     ControllerInput, ControllerOutput, InputEvents, MidiError, MidiEvent, PortDirection,
-    find_input_port, input_ports, output_ports,
+    STARTUP_DELAY, find_input_port, input_ports, output_ports,
 };
 pub use mapping::{Feedback, Mapping, MappingError};
 pub use message::RawMessage;

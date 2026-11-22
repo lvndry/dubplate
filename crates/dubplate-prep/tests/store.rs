@@ -4,9 +4,11 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use std::time::{Duration, UNIX_EPOCH};
+
 use dubplate_prep::{
-    CueSource, EqIntent, GridCorrection, Seam, SeamStatus, Set, SetEntry, SetId, SetList, SetStore,
-    StoreError, TrackGrid,
+    CueSource, EqIntent, GridCorrection, Play, PlayDeck, Seam, SeamStatus, Set, SetEntry, SetId,
+    SetList, SetStore, StoreError, TrackGrid,
 };
 use rusqlite::Connection;
 use tempfile::TempDir;
@@ -36,6 +38,21 @@ fn seam(from_path: &str, to_path: &str, eq_intent: EqIntent) -> Seam {
         eq_intent,
         status: SeamStatus::Planned,
         note: String::new(),
+    }
+}
+
+/// A play of `track_path` on the deck with `letter`, started `minute` minutes into 2026.
+#[allow(clippy::unwrap_used)]
+fn play(track_path: &str, letter: char, minute: u64) -> Play {
+    Play {
+        set: None,
+        track_path: PathBuf::from(track_path),
+        rekordbox_id: None,
+        title: format!("{track_path} title"),
+        artist: format!("{track_path} artist"),
+        started_at: UNIX_EPOCH + Duration::from_secs(1_767_225_600 + minute * 60),
+        played: Duration::from_secs(60),
+        deck: PlayDeck::new(letter).unwrap(),
     }
 }
 
@@ -112,7 +129,7 @@ fn refuses_a_database_newer_than_this_build() {
         result,
         Err(StoreError::NewerSchema {
             found: 99,
-            known: 3
+            known: 5
         })
     ));
 }
@@ -165,7 +182,7 @@ fn a_migration_on_an_existing_file_leaves_a_backup() {
 }
 
 #[test]
-fn deleting_a_set_removes_its_entries_and_seams() {
+fn deleting_a_set_removes_its_entries_and_seams_and_keeps_its_plays() {
     let root = tempfile::tempdir().unwrap();
     let (_directory_holder, database_path, mut store) = open_store(root.path());
 
@@ -191,20 +208,20 @@ fn deleting_a_set_removes_its_entries_and_seams() {
         .unwrap();
     store.snapshot(set_id, "lock").unwrap();
     store
-        .record_play(
-            set_id,
-            Path::new("track-a"),
-            Some("rekordbox-a"),
-            "A",
-            false,
-        )
+        .record_play(&Play {
+            set: Some(set_id),
+            rekordbox_id: Some("rekordbox-a".to_owned()),
+            ..play("track-a", 'A', 0)
+        })
         .unwrap();
     store.delete_set(set_id).unwrap();
 
     assert_eq!(row_count(&database_path, "set_entry"), 0);
     assert_eq!(row_count(&database_path, "seam"), 0);
     assert_eq!(row_count(&database_path, "set_revision"), 0);
-    assert_eq!(row_count(&database_path, "play_history"), 0);
+    let history = store.play_history().unwrap();
+    assert_eq!(history.len(), 1, "a play outlives its set");
+    assert_eq!(history[0].play.set, None);
     assert!(matches!(
         store.load_set(set_id),
         Err(StoreError::SetNotFound(_))
@@ -333,7 +350,10 @@ fn a_folder_track_without_a_rekordbox_id_round_trips() {
         )
         .unwrap();
     store
-        .record_play(set_id, &folder_path, None, "B", false)
+        .record_play(&Play {
+            set: Some(set_id),
+            ..play(folder_path.to_str().unwrap(), 'B', 0)
+        })
         .unwrap();
     drop(store);
 
@@ -343,16 +363,9 @@ fn a_folder_track_without_a_rekordbox_id_round_trips() {
     assert_eq!(loaded.entries[0].rekordbox_id, None);
     assert_eq!(loaded.seam_after(0).unwrap().from_track_path, folder_path);
 
-    let play_history = Connection::open(&database_path).unwrap();
-    let (stored_path, stored_id): (String, Option<String>) = play_history
-        .query_row(
-            "SELECT track_path, rekordbox_id FROM play_history",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .unwrap();
-    assert_eq!(PathBuf::from(stored_path), folder_path);
-    assert_eq!(stored_id, None);
+    let history = reopened.play_history().unwrap();
+    assert_eq!(history[0].play.track_path, folder_path);
+    assert_eq!(history[0].play.rekordbox_id, None);
 }
 
 #[test]
@@ -427,12 +440,12 @@ fn updated_at_grows_after_removal_and_seam_edits() {
         .unwrap();
 
     let before_removal = store.load_set(set_id).unwrap().updated_at;
-    std::thread::sleep(std::time::Duration::from_millis(2));
+    std::thread::sleep(Duration::from_millis(2));
     store.remove_entry(set_id, SetList::Main, 0).unwrap();
     let after_removal = store.load_set(set_id).unwrap().updated_at;
     assert!(after_removal > before_removal);
 
-    std::thread::sleep(std::time::Duration::from_millis(2));
+    std::thread::sleep(Duration::from_millis(2));
     store
         .set_seam(
             set_id,
@@ -528,6 +541,158 @@ fn a_version_one_file_gains_the_grid_corrections_and_keeps_its_entries() {
         (corrected.grid_offset_ms, corrected.downbeat_shift),
         (-12, 1)
     );
+}
+
+/// A version 2 file, with the play history table every earlier build made and never wrote.
+#[allow(clippy::unwrap_used)]
+fn version_two_file(database_path: &Path, play_rows: &str) {
+    let connection = Connection::open(database_path).unwrap();
+    connection
+        .execute_batch(&format!(
+            "CREATE TABLE sets (id INTEGER PRIMARY KEY, name TEXT NOT NULL,
+                target_minutes INTEGER NOT NULL, created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL);
+             CREATE TABLE set_entry (set_id INTEGER NOT NULL REFERENCES sets(id) ON DELETE CASCADE,
+                position INTEGER NOT NULL, track_path TEXT NOT NULL, rekordbox_id TEXT,
+                mix_in_ms INTEGER, mix_out_ms INTEGER, cue_source TEXT,
+                grid_confirmed INTEGER NOT NULL DEFAULT 0, energy_override REAL,
+                vocal_in_ms INTEGER, vocal_out_ms INTEGER, note TEXT NOT NULL DEFAULT '',
+                is_backup INTEGER NOT NULL DEFAULT 0,
+                grid_offset_ms INTEGER NOT NULL DEFAULT 0,
+                downbeat_shift INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (set_id, is_backup, position));
+             CREATE TABLE seam (set_id INTEGER NOT NULL REFERENCES sets(id) ON DELETE CASCADE,
+                from_track_path TEXT NOT NULL, to_track_path TEXT NOT NULL,
+                overlap_bars INTEGER NOT NULL, eq_intent TEXT NOT NULL, status TEXT NOT NULL,
+                note TEXT NOT NULL DEFAULT '',
+                PRIMARY KEY (set_id, from_track_path, to_track_path));
+             CREATE TABLE set_revision (id INTEGER PRIMARY KEY,
+                set_id INTEGER NOT NULL REFERENCES sets(id) ON DELETE CASCADE,
+                saved_at INTEGER NOT NULL, reason TEXT NOT NULL, json TEXT NOT NULL);
+             CREATE TABLE play_history (
+                set_id INTEGER NOT NULL REFERENCES sets(id) ON DELETE CASCADE,
+                track_path TEXT NOT NULL, rekordbox_id TEXT, played_at INTEGER NOT NULL,
+                deck TEXT NOT NULL, off_plan INTEGER NOT NULL DEFAULT 0);
+             INSERT INTO sets VALUES (1, 'Friday', 120, 0, 0);
+             INSERT INTO set_entry (set_id, position, track_path) VALUES (1, 0, '/a.mp3');
+             {play_rows}
+             PRAGMA user_version = 2;"
+        ))
+        .unwrap();
+}
+
+#[test]
+fn a_version_two_file_keeps_its_plays_and_records_plays_outside_a_set() {
+    let root = tempfile::tempdir().unwrap();
+    let directory_holder = TempDir::new_in(root.path()).unwrap();
+    let database_path = directory_holder.path().join("dubplate.db");
+    version_two_file(
+        &database_path,
+        "INSERT INTO play_history VALUES (1, '/a.mp3', 'rb-1', 1767225600000, 'A', 0);
+         INSERT INTO play_history VALUES (1, '/b.mp3', NULL, 1767225900000, 'B', 1);",
+    );
+
+    let mut store = SetStore::open(&database_path).unwrap();
+    assert_eq!(store.load_set(SetId(1)).unwrap().entries.len(), 1);
+    let history = store.play_history().unwrap();
+    let kept: Vec<(PathBuf, Option<SetId>, char, Option<String>)> = history
+        .iter()
+        .map(|recorded| {
+            (
+                recorded.play.track_path.clone(),
+                recorded.play.set,
+                recorded.play.deck.letter(),
+                recorded.play.rekordbox_id.clone(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        kept,
+        [
+            (PathBuf::from("/b.mp3"), None, 'B', None),
+            (
+                PathBuf::from("/a.mp3"),
+                Some(SetId(1)),
+                'A',
+                Some("rb-1".to_owned())
+            ),
+        ],
+        "newest first; an off-plan play is not a set track"
+    );
+    assert_eq!(
+        history[1].play.started_at,
+        UNIX_EPOCH + Duration::from_secs(1_767_225_600)
+    );
+    assert_eq!(history[1].play.played, Duration::ZERO);
+
+    let outside = store.record_play(&play("/c.mp3", 'A', 30)).unwrap();
+    store
+        .set_play_length(outside, Duration::from_secs(312))
+        .unwrap();
+    drop(store);
+
+    let reopened = SetStore::open(&database_path).unwrap();
+    let newest = reopened.play_history().unwrap()[0].clone();
+    assert_eq!(newest.id, outside);
+    assert_eq!(newest.play.set, None);
+    assert_eq!(newest.play.played, Duration::from_secs(312));
+    assert_eq!(newest.play.title, "/c.mp3 title");
+}
+
+#[test]
+fn an_empty_version_two_history_upgrades_and_keeps_a_backup() {
+    let root = tempfile::tempdir().unwrap();
+    let directory_holder = TempDir::new_in(root.path()).unwrap();
+    let database_path = directory_holder.path().join("dubplate.db");
+    version_two_file(&database_path, "");
+
+    let store = SetStore::open(&database_path).unwrap();
+    assert!(store.play_history().unwrap().is_empty());
+    let backups = fs::read_dir(database_path.parent().unwrap().join("backups"))
+        .unwrap()
+        .count();
+    assert_eq!(backups, 1);
+}
+
+#[test]
+fn a_failed_migration_rolls_back_alone() {
+    let root = tempfile::tempdir().unwrap();
+    let directory_holder = TempDir::new_in(root.path()).unwrap();
+    let database_path = directory_holder.path().join("dubplate.db");
+    version_two_file(
+        &database_path,
+        "INSERT INTO play_history VALUES (1, '/a.mp3', NULL, 1767225600000, 'A', 0);",
+    );
+    Connection::open(&database_path)
+        .unwrap()
+        .execute_batch("CREATE TABLE play_history_v4 (id INTEGER);")
+        .unwrap();
+
+    assert!(SetStore::open(&database_path).is_err());
+    let connection = Connection::open(&database_path).unwrap();
+    let user_version: i64 = connection
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(user_version, 4, "the migration before it stays applied");
+    let off_plan: i64 = connection
+        .query_row("SELECT off_plan FROM play_history", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(off_plan, 0, "the old play history is untouched");
+}
+
+#[test]
+fn updating_the_length_of_an_unknown_play_says_so() {
+    let root = tempfile::tempdir().unwrap();
+    let (_directory_holder, database_path, mut store) = open_store(root.path());
+    let recorded = store.record_play(&play("/a.mp3", 'A', 0)).unwrap();
+    Connection::open(&database_path)
+        .unwrap()
+        .execute_batch("DELETE FROM play_history;")
+        .unwrap();
+    assert!(matches!(
+        store.set_play_length(recorded, Duration::from_secs(90)),
+        Err(StoreError::PlayNotFound(id)) if id == recorded
+    ));
 }
 
 #[test]

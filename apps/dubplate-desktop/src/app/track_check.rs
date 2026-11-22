@@ -320,18 +320,24 @@ fn lane(
             canvas(
                 |_, _, _| {},
                 move |bounds, (), window, _| {
-                    lanes::paint_lane(
-                        bounds,
-                        zoomed.as_deref(),
-                        Some(&marks),
-                        playhead,
-                        1.0,
-                        None,
-                        window,
-                    );
                     let zoom = zoomed
                         .as_deref()
                         .map_or(crate::waveform::Zoom::DEFAULT, |waveform| waveform.zoom());
+                    lanes::paint_lane(
+                        bounds,
+                        lanes::LaneContent {
+                            zoomed: zoomed.as_deref(),
+                            beats: Some(&marks),
+                            marks: None,
+                        },
+                        crate::waveform::LaneView {
+                            width: f32::from(bounds.size.width),
+                            playhead_seconds: playhead,
+                            zoom,
+                            tempo: 1.0,
+                        },
+                        window,
+                    );
                     let centre = f32::from(bounds.size.width) / 2.0;
                     for (_, seconds) in &cues {
                         let x = centre + ((seconds - playhead) * zoom.pixels_per_second()) as f32;

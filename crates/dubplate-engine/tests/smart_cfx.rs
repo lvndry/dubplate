@@ -91,7 +91,8 @@ fn back_at_the_centre_the_effect_rings_out_and_the_music_returns_exactly() {
         assert_eq!(*sample, expected);
     }
     assert_eq!(controller.smart_cfx(DeckId::A), Some(SmartCfx::DubEcho));
-    assert_eq!(SmartCfx::Phase.next(), SmartCfx::Space);
+    assert_eq!(SmartCfx::Phase.next(), SmartCfx::Pitch);
+    assert_eq!(SmartCfx::Pitch.next(), SmartCfx::Space);
 }
 
 fn rms(samples: &[f32]) -> f32 {

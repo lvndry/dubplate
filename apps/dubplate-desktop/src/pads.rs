@@ -2,10 +2,8 @@
 //! the DDJ-FLX4: hot cues, beat jumps, beat loops, pad effects and rolls, the keyboard and key
 //! shift, and the sampler that waits for the engine.
 
-use dubplate_engine::{BeatLength, EffectKind, PadEffect};
+use dubplate_engine::{BeatLength, PadEffect};
 use dubplate_midi::PadMode;
-
-use crate::effects::effect_pad_label;
 
 /// Pads on a deck.
 pub const PAD_COUNT: usize = 8;
@@ -26,6 +24,10 @@ pub const PAD_MODES: [PadMode; 8] = [
 /// The beats each beat jump pad moves by at the base size: back and forward by 1, 2, 4 and 8,
 /// pad 1 first, as rekordbox lays them out.
 const BEAT_JUMP_BEATS: [f64; PAD_COUNT] = [-1.0, 1.0, -2.0, 2.0, -4.0, 4.0, -8.0, 8.0];
+/// SHIFT with this beat jump pad, pad 7, makes the jumps shorter, as rekordbox's Beat down.
+pub const SHORTER_JUMPS_PAD: usize = 6;
+/// SHIFT with this beat jump pad, pad 8, makes the jumps longer, as rekordbox's Beat up.
+pub const LONGER_JUMPS_PAD: usize = 7;
 /// How many halvings and doublings SHIFT + pads 7 and 8 allow from the base size.
 pub const BEAT_JUMP_SCALE_RANGE: i32 = 3;
 
@@ -58,7 +60,7 @@ pub fn mode_label(mode: PadMode) -> &'static str {
     }
 }
 
-/// What a Pad FX pad plays while it is held.
+/// What a Pad FX pad plays while it is held or latched.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PadFx {
     /// A loop roll of this length: the beat just passed repeats while the track plays on
@@ -66,87 +68,6 @@ pub enum PadFx {
     Roll(BeatLength),
     /// A beat effect on the deck.
     Effect(PadEffect),
-}
-
-impl PadFx {
-    /// Its name and beat length, as its pad shows them.
-    pub fn label(self) -> (&'static str, String) {
-        match self {
-            PadFx::Roll(length) => ("Roll", length.to_string()),
-            PadFx::Effect(effect) => (effect_pad_label(effect.kind), effect.beat.to_string()),
-        }
-    }
-}
-
-/// Depth for the echoes and reverbs: the trail as loud as the track, on top of it.
-const WASH_DEPTH: f32 = 0.5;
-/// Depth for the other effects, which take the track over.
-const FULL_DEPTH: f32 = 0.85;
-
-const fn effect(kind: EffectKind, beat: BeatLength) -> PadFx {
-    let depth = match kind {
-        EffectKind::Echo | EffectKind::PingPong | EffectKind::Reverb => WASH_DEPTH,
-        _ => FULL_DEPTH,
-    };
-    PadFx::Effect(PadEffect { kind, beat, depth })
-}
-
-/// The 32 pad effects of the FLX4's PAD FX1 and PAD FX2 modes, each with and without SHIFT,
-/// pad 1 first: rolls and echoes to build, filters and modulations to colour, brakes and
-/// backspins to end on.
-const PAD_FX_BANKS: [[PadFx; PAD_COUNT]; 4] = [
-    [
-        PadFx::Roll(BeatLength::QUARTER),
-        PadFx::Roll(BeatLength::HALF),
-        PadFx::Roll(BeatLength::ONE),
-        PadFx::Roll(BeatLength::TWO),
-        effect(EffectKind::Echo, BeatLength::HALF),
-        effect(EffectKind::Echo, BeatLength::THREE_QUARTERS),
-        effect(EffectKind::Reverb, BeatLength::ONE),
-        effect(EffectKind::Brake, BeatLength::ONE),
-    ],
-    [
-        PadFx::Roll(BeatLength::SIXTEENTH),
-        PadFx::Roll(BeatLength::EIGHTH),
-        effect(EffectKind::Gate, BeatLength::QUARTER),
-        effect(EffectKind::Gate, BeatLength::EIGHTH),
-        effect(EffectKind::PingPong, BeatLength::HALF),
-        effect(EffectKind::Echo, BeatLength::ONE),
-        effect(EffectKind::Crusher, BeatLength::ONE),
-        effect(EffectKind::Backspin, BeatLength::ONE),
-    ],
-    [
-        effect(EffectKind::Filter, BeatLength::FOUR),
-        effect(EffectKind::HighPass, BeatLength::ONE),
-        effect(EffectKind::LowPass, BeatLength::ONE),
-        effect(EffectKind::BandPass, BeatLength::ONE),
-        effect(EffectKind::Flanger, BeatLength::FOUR),
-        effect(EffectKind::Phaser, BeatLength::FOUR),
-        effect(EffectKind::Gate, BeatLength::HALF),
-        effect(EffectKind::Crusher, BeatLength::HALF),
-    ],
-    [
-        PadFx::Roll(BeatLength::FOUR),
-        PadFx::Roll(BeatLength::EIGHT),
-        effect(EffectKind::Echo, BeatLength::QUARTER),
-        effect(EffectKind::PingPong, BeatLength::THREE_QUARTERS),
-        effect(EffectKind::Reverb, BeatLength::TWO),
-        effect(EffectKind::Filter, BeatLength::EIGHT),
-        effect(EffectKind::Brake, BeatLength::TWO),
-        effect(EffectKind::Backspin, BeatLength::TWO),
-    ],
-];
-
-/// What pad `pad` plays in a Pad FX mode, with or without SHIFT.
-pub fn pad_fx(mode: PadMode, pad: usize, shift: bool) -> Option<PadFx> {
-    let bank = match (mode, shift) {
-        (PadMode::PadFx1, false) => 0,
-        (PadMode::PadFx1, true) => 1,
-        (PadMode::PadFx2, false) => 2,
-        (PadMode::PadFx2, true) => 3,
-        _ => return None,
-    };
-    PAD_FX_BANKS[bank].get(pad).copied()
 }
 
 /// The semitones of the Keyboard and Key Shift pads before SHIFT moves them, pad 1 first: +4 to
@@ -250,25 +171,6 @@ mod tests {
         );
         assert_eq!(next_mode(PadMode::KeyShift), PadMode::HotCue);
         assert_eq!(next_mode(PadMode::HotCue), PadMode::Keyboard);
-    }
-
-    #[test]
-    fn every_pad_fx_pad_plays_something_and_rolls_build_from_short_to_long() {
-        for mode in [PadMode::PadFx1, PadMode::PadFx2] {
-            for shift in [false, true] {
-                for pad in 0..PAD_COUNT {
-                    assert!(pad_fx(mode, pad, shift).is_some(), "{mode:?} {shift} {pad}");
-                }
-            }
-        }
-        assert_eq!(
-            pad_fx(PadMode::PadFx1, 0, false),
-            Some(PadFx::Roll(BeatLength::QUARTER))
-        );
-        assert_eq!(pad_fx(PadMode::HotCue, 0, false), None);
-        assert_eq!(pad_fx(PadMode::PadFx1, 8, false), None);
-        let (name, beats) = pad_fx(PadMode::PadFx1, 4, false).unwrap().label();
-        assert_eq!((name, beats.as_str()), ("Echo", "1/2"));
     }
 
     #[test]

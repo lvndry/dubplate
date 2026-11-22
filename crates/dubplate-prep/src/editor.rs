@@ -7,9 +7,11 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use dubplate_rekordbox::TrackCues;
+
 use crate::{
-    CueSource, EqIntent, GridEdit, Seam, SeamStatus, Set, SetEntry, SetId, SetList, SetStore,
-    StoreError, TrackGrid,
+    CueSource, EqIntent, GridEdit, Play, PlayId, RecordedPlay, Seam, SeamStatus, Set, SetEntry,
+    SetId, SetList, SetStore, StoreError, TrackGrid, TrackIdentity,
 };
 
 /// The name of the set made on first launch.
@@ -249,11 +251,12 @@ impl SetEditor {
         self.follow_files(&HashMap::from([(from.to_path_buf(), to.to_path_buf())]))
     }
 
-    /// Points the set's entries and seams at the new places of files that moved, each keyed by
-    /// its old place. Where a file lives is not an edit to undo, so this is no step of its own,
+    /// Points the set's entries and seams, and the cues kept for each file, at the new places of
+    /// files that moved, each keyed by its old place. Where a file lives is not an edit to undo, so this is no step of its own,
     /// and the sets kept for undo follow the files too: undoing an edit never sends a track
     /// back to a place its file left.
     pub fn follow_files(&mut self, moves: &HashMap<PathBuf, PathBuf>) -> Result<(), StoreError> {
+        self.store.follow_cue_files(moves)?;
         let moved = |path: &PathBuf| moves.get(path).cloned();
         let mut followed = self.set.clone();
         for entry in &mut followed.entries {
@@ -279,6 +282,22 @@ impl SetEditor {
             }
         }
         Ok(())
+    }
+
+    /// The cues the DJ made in Dubplate, by track.
+    pub fn track_cues(&self) -> Result<HashMap<TrackIdentity, TrackCues>, StoreError> {
+        self.store.track_cues()
+    }
+
+    /// Keeps `cues` as the whole list of the track `identity`, whose file is at `track_path`.
+    /// Cues are no edit of the set, so this is no step to undo.
+    pub fn save_track_cues(
+        &mut self,
+        identity: &TrackIdentity,
+        track_path: Option<&Path>,
+        cues: &TrackCues,
+    ) -> Result<(), StoreError> {
+        self.store.save_track_cues(identity, track_path, cues)
     }
 
     /// Keeps a track as a backup, or stops keeping it.
@@ -308,6 +327,22 @@ impl SetEditor {
         self.set = self.store.replace_set(previous)?;
         self.undo.pop();
         Ok(true)
+    }
+
+    /// Records a play in the history kept beside the set. Plays are not set edits: undo
+    /// never takes one back.
+    pub fn record_play(&mut self, play: &Play) -> Result<PlayId, StoreError> {
+        self.store.record_play(play)
+    }
+
+    /// Sets how long a recorded play has played in all.
+    pub fn set_play_length(&mut self, id: PlayId, played: Duration) -> Result<(), StoreError> {
+        self.store.set_play_length(id, played)
+    }
+
+    /// Every recorded play, newest first.
+    pub fn play_history(&self) -> Result<Vec<RecordedPlay>, StoreError> {
+        self.store.play_history()
     }
 
     /// Carries out one change on the store, then reads the set back, keeping what it was for

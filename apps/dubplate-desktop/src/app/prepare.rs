@@ -12,7 +12,8 @@ use dubplate_prep::{
     AudioAnalysis, EnergyDirection, GridCorrection, PrepTrack, ReadyProblem, ReadyReport, SetEntry,
     SetTrack, SetWarning, StoreError, WarningPosition, set_warnings, suggest_next,
 };
-use gpui::{App, Context};
+use dubplate_stems::VocalPresence;
+use gpui::{App, Context, SharedString};
 
 use super::DubplateApp;
 use super::notice::NoticePlace;
@@ -25,6 +26,7 @@ use crate::prep::{
     SeamSummary, TrackCheck, accept_proposal, check_track, nearest_bar_ms, readiness,
 };
 use crate::set::{SetEditor, SetTrackRef};
+use crate::stems::stems_cell;
 
 /// How many tracks the Next panel suggests.
 const SUGGESTIONS: usize = 5;
@@ -67,6 +69,10 @@ pub(super) struct SetRow {
     pub has_proposal: bool,
     /// Whether the seam into the next track is left to the moment.
     pub free_into_next: bool,
+    /// Where its stems stand, as the Stems column says it.
+    pub stems: SharedString,
+    /// Where the vocals sound near its start and end, known once it has stems.
+    pub vocals: Option<VocalPresence>,
 }
 
 /// How long the suggestions wait for the selection to settle before ranking the library again,
@@ -564,6 +570,7 @@ impl DubplateApp {
         self.refresh_filter_reference(cx);
         self.ensure_track_detail(cx);
         self.request_set_analysis(cx);
+        self.request_set_stems();
         self.refresh_prepare_view(cx);
         cx.notify();
     }
@@ -668,6 +675,8 @@ impl DubplateApp {
                     ready,
                     has_proposal: check.is_some_and(|check| can_propose(entry, check)),
                     free_into_next: editor.is_free_after(position),
+                    stems: stems_cell(self.stems.status(&entry.track_path)),
+                    vocals: self.stems.vocals(&entry.track_path),
                 }
             })
             .collect()
@@ -686,17 +695,17 @@ impl DubplateApp {
     /// The set's warnings: key clashes, tempo gaps, energy drops and duplicates, at the
     /// positions the panel shows.
     pub(super) fn warnings(rows: &[SetRow]) -> Vec<SetWarning> {
-        let known: Vec<(usize, &PrepTrack, bool)> = rows
+        let known: Vec<(usize, &PrepTrack, &SetRow)> = rows
             .iter()
-            .filter_map(|row| Some((row.position, row.track.as_ref()?, row.free_into_next)))
+            .filter_map(|row| Some((row.position, row.track.as_ref()?, row)))
             .collect();
         let entries: Vec<SetTrack<'_>> = known
             .iter()
-            .map(|(_, track, free)| SetTrack {
+            .map(|(_, track, row)| SetTrack {
                 track,
-                vocals_at_start: false,
-                vocals_at_end: false,
-                free_into_next: *free,
+                vocals_at_start: row.vocals.is_some_and(|vocals| vocals.at_start),
+                vocals_at_end: row.vocals.is_some_and(|vocals| vocals.at_end),
+                free_into_next: row.free_into_next,
             })
             .collect();
         set_warnings(&entries)

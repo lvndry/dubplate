@@ -5,6 +5,8 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use dubplate_engine::DeckId;
+use dubplate_rekordbox::{HotCue, HotCuePad, MemoryCue, Rgb};
+use dubplate_rekordbox::{HotCue, HotCuePad, MemoryCue, Rgb};
 use gpui::component::{Theme as ComponentTheme, ThemeMode};
 use gpui::{App, Pixels, Rgba, px};
 
@@ -62,7 +64,6 @@ struct Palette {
     saved_loop: u32,
     phrase_intro: u32,
     phrase_breakdown: u32,
-    hot_cues: [u32; 8],
 }
 
 /// Every colour the views draw with, in one theme.
@@ -118,10 +119,16 @@ pub struct Theme {
     pub meter_hot: Rgba,
     /// Behind the selected browser row.
     pub selected_row: Rgba,
+    /// The title of a track played this session, dimmed as rekordbox dims played tracks.
+    pub played_title: Rgba,
+    /// A key that follows smoothly in the library's Match column: same key, one step, relative.
+    pub key_smooth: Rgba,
+    /// A key move that lifts the energy, such as an energy boost.
+    pub key_lift: Rgba,
+    /// Keys that clash.
+    pub key_clash: Rgba,
     /// Between browser rows.
     pub row_line: Rgba,
-    /// Behind the cue letters on the zoomed waveforms.
-    pub cue_flag: Rgba,
     /// Behind the help overlay.
     pub scrim: Rgba,
     /// The CUE button's point on the lanes and the overview, orange as on CDJs.
@@ -152,8 +159,6 @@ pub struct Theme {
     pub phrase_outro: Rgba,
     /// The phrase strip's unnamed sections.
     pub phrase_other: Rgba,
-    /// The colours of the hot cue pads A to H.
-    pub hot_cue_tints: [Rgba; 8],
     decks: [Rgba; 2],
 }
 
@@ -187,8 +192,11 @@ impl Theme {
             meter_off: with_alpha(palette.ink, 0.07 * lines),
             meter_hot: hex(palette.decks[0]),
             selected_row: with_alpha(palette.ink, 0.05 * lines),
+            played_title: with_alpha(palette.text, 0.45),
+            key_smooth: hex(palette.ok),
+            key_lift: hex(palette.bands[0]),
+            key_clash: hex(palette.alert),
             row_line: with_alpha(palette.ink, 0.045 * lines),
-            cue_flag: hex(palette.text),
             scrim: with_alpha(0x000000, 0.55),
             cue_point: hex(palette.cue_point),
             memory_cue: hex(palette.alert),
@@ -204,29 +212,10 @@ impl Theme {
             phrase_breakdown: hex(palette.phrase_breakdown),
             phrase_outro: hex(palette.muted),
             phrase_other: with_alpha(palette.ink, 0.2),
-            hot_cue_tints: [
-                hex(palette.hot_cues[0]),
-                hex(palette.hot_cues[1]),
-                hex(palette.hot_cues[2]),
-                hex(palette.hot_cues[3]),
-                hex(palette.hot_cues[4]),
-                hex(palette.hot_cues[5]),
-                hex(palette.hot_cues[6]),
-                hex(palette.hot_cues[7]),
-            ],
             decks: [hex(palette.decks[0]), hex(palette.decks[1])],
         }
     }
 }
-
-/// The pastel hot cue colours of the dark themes.
-const SOFT_HOT_CUES: [u32; 8] = [
-    0xF5B78E, 0xF2D48A, 0xB9DE9E, 0xA3B6FF, 0x8FD3C8, 0xC7B1F5, 0xF0A8C8, 0xD7D9DD,
-];
-/// Deeper hot cue colours that read on the light themes.
-const DEEP_HOT_CUES: [u32; 8] = [
-    0xD9480F, 0xA77A00, 0x3E8E3E, 0x2B59C3, 0x1F8A80, 0x6A4BC4, 0xC2337A, 0x5A5A5A,
-];
 
 /// A theme the DJ can choose.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -374,9 +363,6 @@ static GRAPHITE: Theme = Theme::new(&Palette {
     saved_loop: 0xF2D48A,
     phrase_intro: 0x5E6B8C,
     phrase_breakdown: 0x8FD3C8,
-    hot_cues: [
-        0xF5B78E, 0xF2D48A, 0xB9DE9E, 0x8FD3C8, 0xA3B6FF, 0xC7B1F5, 0xF0A8C8, 0xD7D9DD,
-    ],
 });
 
 static BOOTH: Theme = Theme::new(&Palette {
@@ -399,7 +385,6 @@ static BOOTH: Theme = Theme::new(&Palette {
     saved_loop: 0xF2D48A,
     phrase_intro: 0x5E6B8C,
     phrase_breakdown: 0x8FD3C8,
-    hot_cues: SOFT_HOT_CUES,
 });
 
 static CLUB: Theme = Theme::new(&Palette {
@@ -422,7 +407,6 @@ static CLUB: Theme = Theme::new(&Palette {
     saved_loop: 0xF5D33C,
     phrase_intro: 0x5A5A7A,
     phrase_breakdown: 0x6EE7D0,
-    hot_cues: SOFT_HOT_CUES,
 });
 
 static CONSOLE: Theme = Theme::new(&Palette {
@@ -445,7 +429,6 @@ static CONSOLE: Theme = Theme::new(&Palette {
     saved_loop: 0xF2D48A,
     phrase_intro: 0x5E6478,
     phrase_breakdown: 0x8FD3C8,
-    hot_cues: SOFT_HOT_CUES,
 });
 
 static GLASS: Theme = Theme::new(&Palette {
@@ -468,7 +451,6 @@ static GLASS: Theme = Theme::new(&Palette {
     saved_loop: 0xFFD98A,
     phrase_intro: 0x5E6B8C,
     phrase_breakdown: 0x7FD8E0,
-    hot_cues: SOFT_HOT_CUES,
 });
 
 static GROOVE: Theme = Theme::new(&Palette {
@@ -491,9 +473,6 @@ static GROOVE: Theme = Theme::new(&Palette {
     saved_loop: 0xE8C97A,
     phrase_intro: 0x6E675E,
     phrase_breakdown: 0x8EC5C0,
-    hot_cues: [
-        0xFF8A5C, 0xE8C97A, 0x9CCB8A, 0x8EC5C0, 0x9DB4E8, 0xC9A8E0, 0xE8A0B8, 0xC9C2B8,
-    ],
 });
 
 static PLATTER: Theme = Theme::new(&Palette {
@@ -516,7 +495,6 @@ static PLATTER: Theme = Theme::new(&Palette {
     saved_loop: 0xF2D48A,
     phrase_intro: 0x5E6470,
     phrase_breakdown: 0x8FD3C8,
-    hot_cues: SOFT_HOT_CUES,
 });
 
 static SPECTRAL: Theme = Theme::new(&Palette {
@@ -539,9 +517,6 @@ static SPECTRAL: Theme = Theme::new(&Palette {
     saved_loop: 0xFFF3C4,
     phrase_intro: 0x3B4560,
     phrase_breakdown: 0x3ED6E8,
-    hot_cues: [
-        0xF2A33A, 0xFFF3C4, 0xB9E04A, 0x3ED6E8, 0x7FA8FF, 0xB58CFF, 0xE04CC8, 0xDCE3F2,
-    ],
 });
 
 static COBALT: Theme = Theme::new(&Palette {
@@ -564,9 +539,6 @@ static COBALT: Theme = Theme::new(&Palette {
     saved_loop: 0xFFE27A,
     phrase_intro: 0x6F84E8,
     phrase_breakdown: 0x9FF0E0,
-    hot_cues: [
-        0xFFC069, 0xFFE27A, 0xC8F5A0, 0x9FF0E0, 0xC0D0FF, 0xF0C8FF, 0xFFC0DC, 0xFFFFFF,
-    ],
 });
 
 static MIDNIGHT: Theme = Theme::new(&Palette {
@@ -589,9 +561,6 @@ static MIDNIGHT: Theme = Theme::new(&Palette {
     saved_loop: 0xF2DD3A,
     phrase_intro: 0x4A5568,
     phrase_breakdown: 0x28D2C9,
-    hot_cues: [
-        0x3FD16B, 0x3FA9F5, 0xF5A623, 0xF2656B, 0xB46CF0, 0x28D2C9, 0xF2DD3A, 0xE0E0E0,
-    ],
 });
 
 static EMBER: Theme = Theme::new(&Palette {
@@ -614,9 +583,6 @@ static EMBER: Theme = Theme::new(&Palette {
     saved_loop: 0xFFD966,
     phrase_intro: 0x4D5566,
     phrase_breakdown: 0x4DD2C2,
-    hot_cues: [
-        0x3FA7FF, 0x6CCF6C, 0xFF8C1A, 0xFFD966, 0xFF6161, 0xB98CFF, 0x4DD2C2, 0xD0D0D0,
-    ],
 });
 
 static CHASSIS: Theme = Theme::new(&Palette {
@@ -639,7 +605,6 @@ static CHASSIS: Theme = Theme::new(&Palette {
     saved_loop: 0x8F6A00,
     phrase_intro: 0x8A93AA,
     phrase_breakdown: 0x2C8C80,
-    hot_cues: DEEP_HOT_CUES,
 });
 
 static INSTRUMENT: Theme = Theme::new(&Palette {
@@ -662,7 +627,6 @@ static INSTRUMENT: Theme = Theme::new(&Palette {
     saved_loop: 0x8F6A00,
     phrase_intro: 0x8F8A82,
     phrase_breakdown: 0x2C8C80,
-    hot_cues: DEEP_HOT_CUES,
 });
 
 static PAPER: Theme = Theme::new(&Palette {
@@ -685,7 +649,6 @@ static PAPER: Theme = Theme::new(&Palette {
     saved_loop: 0x8A6A00,
     phrase_intro: 0x9A958C,
     phrase_breakdown: 0x2C8C80,
-    hot_cues: DEEP_HOT_CUES,
 });
 
 /// The theme the views draw with now, as its place in [`ThemeId::ALL`].
@@ -710,6 +673,33 @@ pub fn wear(theme: ThemeId, cx: &mut App) {
     ACTIVE.store(theme.position(), Ordering::Relaxed);
     apply_to_components(cx);
     cx.refresh_windows();
+}
+
+/// A colour rekordbox gave a cue, from its hot cue palette or its memory colours, drawn as
+/// rekordbox draws it, whatever the theme.
+pub const fn rekordbox_colour(rgb: Rgb) -> Rgba {
+    Rgba {
+        r: rgb.red as f32 / 255.0,
+        g: rgb.green as f32 / 255.0,
+        b: rgb.blue as f32 / 255.0,
+        a: 1.0,
+    }
+}
+
+/// The colour of the hot cue on `pad`: its own, else rekordbox's default for the pad, or
+/// orange for a hot loop.
+pub fn hot_cue_colour(pad: HotCuePad, cue: &HotCue) -> Rgba {
+    rekordbox_colour(cue.display_color(pad).rgb())
+}
+
+/// The colour of a memory cue's mark: its own, else the theme's memory cue colour, or its
+/// saved loop colour for a memory loop without one.
+pub fn memory_cue_colour(cue: &MemoryCue) -> Rgba {
+    match (cue.color, cue.loop_end_ms) {
+        (Some(color), _) => rekordbox_colour(color.rgb()),
+        (None, Some(_)) => active().saved_loop,
+        (None, None) => active().memory_cue,
+    }
 }
 
 /// The colour that marks everything belonging to a deck.
