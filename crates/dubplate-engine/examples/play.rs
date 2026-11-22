@@ -1,8 +1,12 @@
 //! Plays one or two tracks on the default sound card and prints latency and dropouts.
 //!
 //! ```text
-//! cargo run --release -p dubplate-engine --example play -- <file-a> [file-b] [--bpm BPM]... [--buffer FRAMES] [--seconds N] [--volume DB]
+//! cargo run --release -p dubplate-engine --example play -- <file-a> [file-b] [--bpm BPM]... [--buffer FRAMES] [--seconds N] [--volume DB] [--device NAME]
+//! cargo run --release -p dubplate-engine --example play -- --devices
 //! ```
+//!
+//! `--device` plays on the output device with that name, such as `DDJ-FLX4`; on a device with
+//! four channels the headphones play on outputs 3 and 4. `--devices` lists the devices.
 //!
 //! `--bpm` gives a track's tempo so effects follow its beat: the first one is deck A's, the
 //! second deck B's.
@@ -14,7 +18,8 @@
 //! jog: , and . nudge the selected deck back and forward, n and m search back and forward. s
 //! switches beat sync on the selected deck, p makes it the tempo master and r steps through the
 //! tempo ranges. Loops: 4 sets a 4-beat loop, i and o are loop in and out, 9 and 0 halve and
-//! double the loop, u is reloop/exit, and ; and ' jump 4 beats back and forward. For
+//! double the loop, u is reloop/exit, and ; and ' jump 4 beats back and forward. Headphones: v
+//! cues the selected deck, f and g turn the headphone mix towards the cue and the master. For
 //! the effects: 1, 2 and 3 switch effect units 1 to 3 on and off, e selects the next effect on
 //! unit 1, t moves unit 1 to the next target (deck A, deck B, master), [ and ] shorten and
 //! lengthen its beat, and - and = turn its depth down and up.
@@ -30,8 +35,8 @@ use dubplate_engine::{
     decibels_to_gain, gain_to_decibels,
 };
 
-const USAGE: &str =
-    "usage: play <file-a> [file-b] [--bpm BPM]... [--buffer FRAMES] [--seconds N] [--volume DB]";
+const USAGE: &str = "usage: play <file-a> [file-b] [--bpm BPM]... [--buffer FRAMES] [--seconds N] [--volume DB] [--device NAME] | play --devices";
+const MIX_STEP: f32 = 0.1;
 const DEPTH_STEP: f32 = 0.1;
 const FILTER_STEP: f32 = 0.05;
 const NUDGE_TICKS: i32 = 30;
@@ -43,6 +48,8 @@ struct Options {
     buffer_frames: Option<u32>,
     seconds: Option<f64>,
     volume_db: f32,
+    device: Option<String>,
+    list_devices: bool,
 }
 
 fn parse_options() -> Result<Options, String> {
@@ -52,6 +59,8 @@ fn parse_options() -> Result<Options, String> {
         buffer_frames: None,
         seconds: None,
         volume_db: 0.0,
+        device: None,
+        list_devices: false,
     };
     let mut arguments = std::env::args().skip(1);
     while let Some(argument) = arguments.next() {
@@ -73,11 +82,16 @@ fn parse_options() -> Result<Options, String> {
                     .bpms
                     .push(value("--bpm")?.parse().map_err(|_| "bad --bpm")?);
             }
+            "--device" => options.device = Some(value("--device")?),
+            "--devices" => options.list_devices = true,
             "--volume" => {
                 options.volume_db = value("--volume")?.parse().map_err(|_| "bad --volume")?;
             }
             _ => options.files.push(PathBuf::from(argument)),
         }
+    }
+    if options.list_devices {
+        return Ok(options);
     }
     if options.files.is_empty() || options.files.len() > 2 || options.bpms.len() > 2 {
         return Err(USAGE.to_owned());
@@ -87,14 +101,40 @@ fn parse_options() -> Result<Options, String> {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let options = parse_options()?;
-    let (mut controller, output) = AudioOutput::start(&OutputConfig {
+    if options.list_devices {
+        for device in AudioOutput::output_devices()? {
+            println!(
+                "{}{}: {} channels, {} Hz{}",
+                device.name,
+                if device.is_default { " (default)" } else { "" },
+                device.channel_count,
+                device.sample_rate,
+                if device.has_headphone_output() {
+                    ", headphones on 3 and 4"
+                } else {
+                    ""
+                }
+            );
+        }
+        return Ok(());
+    }
+    let config = OutputConfig {
         buffer_frames: options.buffer_frames,
-    })?;
+    };
+    let (mut controller, output) = match &options.device {
+        Some(name) => AudioOutput::start_on(name, &config)?,
+        None => AudioOutput::start(&config)?,
+    };
     println!(
-        "Output: {} ({} channels, {} Hz)",
+        "Output: {} ({} channels, {} Hz{})",
         output.device_name(),
         output.channel_count(),
-        controller.stats().sample_rate
+        controller.stats().sample_rate,
+        if output.has_headphone_output() {
+            ", headphones on 3 and 4"
+        } else {
+            ""
+        }
     );
 
     let mut tracks = Vec::new();
@@ -114,7 +154,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for track in &tracks {
         wait_for_first_seconds(track);
     }
-    controller.set_master_gain(decibels_to_gain(options.volume_db))?;
+    let volume = decibels_to_gain(options.volume_db);
+    controller.set_master_gain(volume)?;
+    controller.set_headphone_level(volume.min(1.0).sqrt())?;
     controller.set_crossfader(if tracks.len() == 2 { 0.5 } else { 0.0 })?;
     for deck in DeckId::ALL.into_iter().take(tracks.len()) {
         controller.play(deck)?;
@@ -126,6 +168,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "space play/pause, tab switch deck, c cue, up/down tempo, left/right crossfader, x throw crossfader, q quit\r\n\
              k/h kill low/high, j/l filter, ,/. nudge, n/m search, s sync, p master, r tempo range\r\n\
              4 loop, i/o loop in/out, 9/0 halve/double, u reloop/exit, ;/' beat jump\r\n\
+             v headphone cue, f/g headphone mix\r\n\
              1/2/3 effect units on/off, e next effect, t next target, [/] beat, -/= depth (unit 1)"
         );
         crossterm::terminal::enable_raw_mode()?;
@@ -246,6 +289,12 @@ fn control_channel(
         }
         'p' => controller.set_master_tempo(MasterTempo::Deck(deck)),
         '4' => controller.beat_loop(deck, BeatLength::FOUR),
+        'v' => {
+            let cued = controller.headphones().is_cued(deck);
+            controller.set_headphone_cue(deck, !cued)
+        }
+        'f' => controller.set_headphone_mix((controller.headphones().mix - MIX_STEP).max(0.0)),
+        'g' => controller.set_headphone_mix((controller.headphones().mix + MIX_STEP).min(1.0)),
         'i' => controller.loop_in(deck),
         'o' => controller.loop_out(deck),
         '9' => controller.halve_loop(deck),

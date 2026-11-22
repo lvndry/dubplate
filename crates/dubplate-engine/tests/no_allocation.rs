@@ -181,7 +181,11 @@ fn run_session(
     controller.set_sync(DeckId::A, SyncMode::Beat)?;
     render_armed(renderer, &mut output[..9600], 2);
 
-    let steps: [Step; 44] = [
+    let steps: [Step; 48] = [
+        |controller| controller.set_headphone_cue(DeckId::A, true),
+        |controller| controller.set_master_cue(true),
+        |controller| controller.set_headphone_mix(0.2),
+        |controller| controller.set_headphone_level(0.8),
         |controller| controller.beat_loop(DeckId::A, BeatLength::FOUR),
         |controller| controller.halve_loop(DeckId::A),
         |controller| controller.double_loop(DeckId::A),
@@ -234,6 +238,8 @@ fn run_session(
     render_armed(renderer, &mut output, 2);
     let mut odd_sized = vec![0.0_f32; 1999 * 3];
     render_armed(renderer, &mut odd_sized, 3);
+    let mut four_channels = vec![0.0_f32; 2048 * 4];
+    render_armed(renderer, &mut four_channels, 4);
     Ok(())
 }
 

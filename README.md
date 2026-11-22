@@ -104,6 +104,12 @@ SYNC follows the tempo master, the deck chosen with the MASTER button or, by def
 
 Beat grids can change tempo: built from every beat rekordbox stores, with its BPM, a grid follows a live drummer, and sync and effects follow it beat by beat.
 
+## Headphones
+
+Each channel has a CUE button that sends its sound to the headphones before its fader, after its EQ and filter, so a track can be prepared with its fader closed. MASTER CUE adds the master. The MIXING knob blends the cue with the master, at -3 dB each in the middle, and the LEVEL knob sets the volume. On a device with four or more outputs, such as the DDJ-FLX4's sound card, the master plays on outputs 1 and 2 and the headphones on 3 and 4. A stereo device plays only the master.
+
+`AudioOutput::output_devices` lists the outputs and `AudioOutput::start_on` opens one by name. The play example takes `--device "DDJ-FLX4"`, and `--devices` lists them; v cues the selected deck and f and g turn the headphone mix. `--volume` sets the headphones' level too. The channel meters (`Meters::channel_peaks`) show each channel before its fader, like a DJ mixer's.
+
 ## Loops, beat jump and quantize
 
 Beat loops run from a sixteenth of a beat to 32 beats on the beat grid, so a loop on a track whose tempo changes still holds whole beats. LOOP IN and LOOP OUT set a loop by hand, halving and doubling work from the loop's start, and RELOOP/EXIT leaves the loop or goes back to it. Beat jump moves any number of beats either way and takes a loop that is on along with it. Every jump and every turn of a loop crossfades over 5 ms, so none of them clicks.

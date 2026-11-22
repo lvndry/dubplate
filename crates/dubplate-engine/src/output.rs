@@ -22,6 +22,37 @@ pub struct OutputConfig {
     pub buffer_frames: Option<u32>,
 }
 
+/// The fewest output channels that carry the headphones, on outputs 3 and 4.
+const HEADPHONE_CHANNEL_COUNT: u16 = 4;
+
+/// An output device the engine can play on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OutputDevice {
+    /// The device's name, to pass to [`AudioOutput::start_on`].
+    pub name: String,
+    /// Output channels at the device's default settings. Four or more carry the headphones.
+    pub channel_count: u16,
+    /// The device's default sample rate in hertz.
+    pub sample_rate: u32,
+    /// Whether the system plays through this device by default.
+    pub is_default: bool,
+}
+
+impl OutputDevice {
+    /// Whether the device has outputs 3 and 4 for the headphones, like a DJ controller's sound
+    /// card.
+    pub fn has_headphone_output(&self) -> bool {
+        self.channel_count >= HEADPHONE_CHANNEL_COUNT
+    }
+}
+
+fn device_name(device: &cpal::Device) -> String {
+    device
+        .description()
+        .map(|description| description.name().to_owned())
+        .unwrap_or_else(|_| "unnamed output".to_owned())
+}
+
 /// The sound card output. Audio plays until this is dropped.
 pub struct AudioOutput {
     _stream: cpal::Stream,
@@ -44,14 +75,55 @@ impl std::fmt::Debug for AudioOutput {
 impl AudioOutput {
     /// Opens the default output device at its default sample rate and starts the engine on it.
     pub fn start(config: &OutputConfig) -> Result<(Controller, AudioOutput), EngineError> {
-        let host = cpal::default_host();
-        let device = host
+        let device = cpal::default_host()
             .default_output_device()
             .ok_or(EngineError::NoOutputDevice)?;
-        let device_name = device
-            .description()
-            .map(|description| description.name().to_owned())
-            .unwrap_or_else(|_| "default output".to_owned());
+        Self::start_device(device, config)
+    }
+
+    /// Opens the output device called `name`, as [`AudioOutput::output_devices`] lists it, and
+    /// starts the engine on it. On a device with four or more channels, such as a DDJ-FLX4's
+    /// sound card, the master plays on outputs 1 and 2 and the headphones on 3 and 4.
+    pub fn start_on(
+        name: &str,
+        config: &OutputConfig,
+    ) -> Result<(Controller, AudioOutput), EngineError> {
+        let device = cpal::default_host()
+            .output_devices()
+            .map_err(|error| EngineError::Output(error.to_string()))?
+            .find(|device| device_name(device) == name)
+            .ok_or_else(|| EngineError::OutputDeviceNotFound(name.to_owned()))?;
+        Self::start_device(device, config)
+    }
+
+    /// Every output device, with its channel count at its default settings.
+    pub fn output_devices() -> Result<Vec<OutputDevice>, EngineError> {
+        let host = cpal::default_host();
+        let default_name = host
+            .default_output_device()
+            .map(|device| device_name(&device));
+        let devices = host
+            .output_devices()
+            .map_err(|error| EngineError::Output(error.to_string()))?;
+        Ok(devices
+            .filter_map(|device| {
+                let config = device.default_output_config().ok()?;
+                let name = device_name(&device);
+                Some(OutputDevice {
+                    is_default: default_name.as_deref() == Some(name.as_str()),
+                    name,
+                    channel_count: config.channels(),
+                    sample_rate: config.sample_rate(),
+                })
+            })
+            .collect())
+    }
+
+    fn start_device(
+        device: cpal::Device,
+        config: &OutputConfig,
+    ) -> Result<(Controller, AudioOutput), EngineError> {
+        let device_name = device_name(&device);
         let supported = device
             .default_output_config()
             .map_err(|error| EngineError::Output(error.to_string()))?;
@@ -108,9 +180,14 @@ impl AudioOutput {
         &self.device_name
     }
 
-    /// Number of output channels. The mix goes to the first two.
+    /// Number of output channels. The master goes to the first two.
     pub fn channel_count(&self) -> u16 {
         self.channel_count
+    }
+
+    /// Whether the device has outputs 3 and 4 for the headphones.
+    pub fn has_headphone_output(&self) -> bool {
+        self.channel_count >= HEADPHONE_CHANNEL_COUNT
     }
 }
 

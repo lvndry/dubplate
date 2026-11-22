@@ -61,6 +61,19 @@ impl StereoBlock {
         right.fill(0.0);
     }
 
+    /// Adds `other` into this block, frame by frame, over the frames both have in use.
+    pub fn add(&mut self, other: &StereoBlock) {
+        let (left, right) = self.channels_mut();
+        for ((left, right), (other_left, other_right)) in left
+            .iter_mut()
+            .zip(right.iter_mut())
+            .zip(other.left().iter().zip(other.right()))
+        {
+            *left += other_left;
+            *right += other_right;
+        }
+    }
+
     /// Largest absolute sample value in use, across both channels.
     pub fn peak(&self) -> f32 {
         self.left()
