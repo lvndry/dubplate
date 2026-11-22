@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
+use crate::command::SamplerCommand;
 use crate::curves::{Ramp, channel_fader_gain};
-use crate::mixer::RetireQueue;
 use crate::processor::StereoBlock;
+use crate::retire::RetireQueue;
 use crate::sync::{MasterBeat, sync_multiple};
 use crate::track::TrackBuffer;
 use crate::voice::Voice;
@@ -103,8 +104,31 @@ impl Sampler {
         }
     }
 
+    /// Makes the change `command` asks for. A synced loop starts in phase with `master`, the
+    /// tempo master's beat.
+    pub(crate) fn apply(
+        &mut self,
+        command: SamplerCommand,
+        master: Option<MasterBeat>,
+        retire: &mut RetireQueue,
+    ) {
+        match command {
+            SamplerCommand::Load {
+                slot,
+                track,
+                settings,
+            } => self.load(slot, track, settings, retire),
+            SamplerCommand::SetSettings { slot, settings } => self.set_settings(slot, settings),
+            SamplerCommand::Trigger(slot) => self.trigger(slot, master, retire),
+            SamplerCommand::Release(slot) => self.release(slot, retire),
+            SamplerCommand::Stop(slot) => self.stop(slot, retire),
+            SamplerCommand::SetVolume(position) => self.set_volume(position),
+            SamplerCommand::SetCue(enabled) => self.set_cue(enabled),
+        }
+    }
+
     /// Puts a sample in a slot, or empties it, stopping what it played.
-    pub(crate) fn load(
+    fn load(
         &mut self,
         slot: usize,
         track: Option<Arc<TrackBuffer>>,
@@ -122,7 +146,7 @@ impl Sampler {
         slot.settings = settings;
     }
 
-    pub(crate) fn set_settings(&mut self, slot: usize, settings: SampleSettings) {
+    fn set_settings(&mut self, slot: usize, settings: SampleSettings) {
         if let Some(slot) = self.slots.get_mut(slot) {
             slot.settings = settings;
         }
@@ -130,12 +154,7 @@ impl Sampler {
 
     /// Plays a slot, from the start or, for a synced loop, in phase with the master; a slot
     /// already playing starts again with a crossfade.
-    pub(crate) fn trigger(
-        &mut self,
-        index: usize,
-        master: Option<MasterBeat>,
-        retire: &mut RetireQueue,
-    ) {
+    fn trigger(&mut self, index: usize, master: Option<MasterBeat>, retire: &mut RetireQueue) {
         let output_rate = self.output_rate;
         let Some(slot) = self.slots.get_mut(index) else {
             return;
@@ -176,14 +195,14 @@ impl Sampler {
     }
 
     /// The pad came up: a gate slot stops.
-    pub(crate) fn release(&mut self, index: usize, retire: &mut RetireQueue) {
+    fn release(&mut self, index: usize, retire: &mut RetireQueue) {
         if self.slots.get(index).is_some_and(|slot| slot.settings.gate) {
             self.stop(index, retire);
         }
     }
 
     /// Stops a slot with a short fade.
-    pub(crate) fn stop(&mut self, index: usize, retire: &mut RetireQueue) {
+    fn stop(&mut self, index: usize, retire: &mut RetireQueue) {
         if let Some(slot) = self.slots.get_mut(index)
             && slot.playing
         {
@@ -192,11 +211,11 @@ impl Sampler {
         }
     }
 
-    pub(crate) fn set_volume(&mut self, position: f32) {
+    fn set_volume(&mut self, position: f32) {
         self.volume.set_target(channel_fader_gain(position));
     }
 
-    pub(crate) fn set_cue(&mut self, enabled: bool) {
+    fn set_cue(&mut self, enabled: bool) {
         self.cue = enabled;
     }
 

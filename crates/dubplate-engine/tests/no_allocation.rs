@@ -187,7 +187,7 @@ fn run_session(
     controller.set_sync(DeckId::A, SyncMode::Beat)?;
     render_armed(renderer, &mut output[..9600], 2);
 
-    let steps: [Step; 75] = [
+    let steps: &[Step] = &[
         |controller| controller.set_smart_fader(true),
         |controller| controller.set_crossfader(0.6),
         |controller| controller.set_crossfader(0.9),
@@ -214,6 +214,20 @@ fn run_session(
         },
         |controller| controller.trigger_sample(2),
         |controller| controller.trigger_sample(2),
+        |controller| {
+            controller.set_sample_settings(
+                2,
+                SampleSettings {
+                    mode: SampleMode::OneShot,
+                    gate: true,
+                    gain: 0.8,
+                    ..SampleSettings::default()
+                },
+            )
+        },
+        |controller| controller.release_sample(2),
+        |controller| controller.trigger_sample(2),
+        |controller| controller.set_sampler_volume(0.7),
         |controller| controller.set_sampler_cue(true),
         |controller| controller.stop_sample(2),
         |controller| controller.eject_sample(2),
@@ -299,6 +313,12 @@ fn run_session(
         |controller| controller.set_crossfader(0.1),
         |controller| controller.set_channel_fader(DeckId::B, 0.4),
         |controller| controller.set_gain(DeckId::A, 1.4),
+        |controller| controller.set_master_gain(0.8),
+        |controller| controller.set_cue_point(DeckId::A, 0.25),
+        |controller| controller.pause(DeckId::A),
+        |controller| controller.play(DeckId::A),
+        |controller| controller.toggle_play(DeckId::B),
+        |controller| controller.toggle_play(DeckId::B),
         |controller| controller.seek(DeckId::A, 0.75),
         |controller| controller.cue(DeckId::B),
         |controller| controller.set_deck_insert(DeckId::A, 0, Some(echo())),

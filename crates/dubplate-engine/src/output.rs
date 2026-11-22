@@ -11,7 +11,7 @@ use cpal::{
 use crate::MAX_BLOCK_FRAMES;
 use crate::controller::{Controller, offline_engine};
 use crate::error::EngineError;
-use crate::mixer::Renderer;
+use crate::renderer::Renderer;
 
 /// How to open the audio output.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

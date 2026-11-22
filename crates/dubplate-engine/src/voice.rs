@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::curves::Ramp;
-use crate::mixer::RetireQueue;
+use crate::retire::RetireQueue;
 use crate::track::{FrameRead, TrackBuffer};
 
 /// Fades that can overlap on one deck, for jumps that come faster than a fade lasts.

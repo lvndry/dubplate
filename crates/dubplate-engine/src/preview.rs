@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use crate::keylock::{KeyLock, KeyLockBlock};
-use crate::mixer::RetireQueue;
 use crate::processor::StereoBlock;
+use crate::retire::RetireQueue;
 use crate::track::{Track, TrackBuffer};
 use crate::voice::Voice;
 

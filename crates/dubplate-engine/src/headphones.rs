@@ -1,4 +1,5 @@
 use crate::DECK_COUNT;
+use crate::command::HeadphoneCommand;
 use crate::curves::{Ramp, channel_fader_gain, crossfader_gains};
 use crate::deck::DeckId;
 use crate::processor::StereoBlock;
@@ -62,22 +63,31 @@ impl Headphones {
         }
     }
 
-    pub(crate) fn set_cue(&mut self, deck: DeckId, enabled: bool) {
+    pub(crate) fn apply(&mut self, command: HeadphoneCommand) {
+        match command {
+            HeadphoneCommand::Cue { deck, enabled } => self.set_cue(deck, enabled),
+            HeadphoneCommand::MasterCue(enabled) => self.set_master_cue(enabled),
+            HeadphoneCommand::Mix(mix) => self.set_mix(mix),
+            HeadphoneCommand::Level(level) => self.set_level(level),
+        }
+    }
+
+    fn set_cue(&mut self, deck: DeckId, enabled: bool) {
         self.settings.cue[deck.index()] = enabled;
     }
 
-    pub(crate) fn set_master_cue(&mut self, enabled: bool) {
+    fn set_master_cue(&mut self, enabled: bool) {
         self.settings.master_cue = enabled;
     }
 
-    pub(crate) fn set_mix(&mut self, mix: f32) {
+    fn set_mix(&mut self, mix: f32) {
         self.settings.mix = mix;
         let (cue_gain, master_gain) = crossfader_gains(mix);
         self.cue_gain.set_target(cue_gain);
         self.master_gain.set_target(master_gain);
     }
 
-    pub(crate) fn set_level(&mut self, level: f32) {
+    fn set_level(&mut self, level: f32) {
         self.settings.level = level;
         self.level.set_target(channel_fader_gain(level));
     }

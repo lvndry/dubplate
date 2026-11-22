@@ -5,7 +5,7 @@ use signalsmith_stretch::Stretch;
 use crate::MAX_BLOCK_FRAMES;
 use crate::curves::Ramp;
 use crate::looping::LoopRegion;
-use crate::mixer::RetireQueue;
+use crate::retire::RetireQueue;
 use crate::track::TrackBuffer;
 use crate::voice::Voice;
 

@@ -22,6 +22,7 @@
 //! the same engine without one, for tests and offline rendering.
 
 mod channel;
+mod command;
 mod controller;
 mod curves;
 mod deck;
@@ -33,12 +34,13 @@ mod headphones;
 mod jog;
 mod keylock;
 mod looping;
-mod mixer;
 mod output;
 mod pad_effects;
 mod preview;
 mod processor;
 mod recording;
+mod renderer;
+mod retire;
 mod sampler;
 mod slip;
 mod smart_cfx;
@@ -63,12 +65,12 @@ pub use error::EngineError;
 pub use grid::{BeatGrid, GridBeat};
 pub use headphones::HeadphoneSettings;
 pub use jog::DEFAULT_JOG_TICKS_PER_REVOLUTION;
-pub use mixer::Renderer;
 pub use output::{AudioOutput, OutputConfig, OutputDevice};
 pub use pad_effects::PadEffect;
 pub use preview::{MAX_PREVIEW_SECONDS, Preview, PreviewState, PreviewTrack};
 pub use processor::{AudioProcessor, ProcessContext, StereoBlock};
 pub use recording::RecordingTap;
+pub use renderer::Renderer;
 pub use sampler::{SAMPLER_SLOTS, SampleMode, SampleSettings, SamplerState, SlotState};
 pub use smart_cfx::SmartCfx;
 pub use state::{DeckState, EngineStats, LoopState, Meters, PlatterState, SlipState, TempoState};
