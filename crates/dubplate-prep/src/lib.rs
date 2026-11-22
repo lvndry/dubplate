@@ -46,7 +46,8 @@ pub use identity::TrackIdentity;
 pub use ready::{ReadyProblem, ReadyReport, Severity, TrackReadiness, ready_report};
 pub use session::{SetCompletion, SetJob, SetSession, SetSessionError};
 pub use store::{
-    CueSource, EqIntent, Seam, SeamStatus, Set, SetEntry, SetId, SetList, SetStore, StoreError,
+    CueSource, EqIntent, Play, PlayDeck, PlayId, RecordedPlay, Seam, SeamStatus, Set, SetEntry,
+    SetId, SetList, SetStore, StoreError,
 };
 pub use suggestion::{KeyFit, Suggestion, suggest_next};
 pub use track::PrepTrack;

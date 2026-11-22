@@ -5,9 +5,12 @@ use std::sync::atomic::Ordering;
 use rtrb::{Consumer, Producer, RingBuffer};
 
 use crate::channel::ChannelSettings;
+use crate::crossfader::{ChannelFaderCurve, CrossfaderAssign, CrossfaderCurve};
 use crate::deck::DeckId;
 use crate::decode::decode_file;
-use crate::effects::{EffectChange, EffectSettings, EffectTarget, EffectUnitId, EffectUnitState};
+use crate::effects::{
+    EffectChange, EffectSettings, EffectTarget, EffectUnitId, EffectUnitState, ReleaseFx,
+};
 use crate::error::{EngineError, check_range};
 use crate::grid::BeatGrid;
 use crate::headphones::HeadphoneSettings;
@@ -29,7 +32,9 @@ use crate::stems::StemSettings;
 use crate::sync::SyncMode;
 use crate::tempo::{MasterTempo, TempoRange};
 use crate::track::{MAX_TRACK_SECONDS, Track};
-use crate::{BeatLength, DECK_COUNT, EFFECT_UNIT_COUNT, EffectKind, EqBand, INSERT_SLOTS};
+use crate::{
+    BeatLength, DECK_COUNT, EFFECT_UNIT_COUNT, EffectKind, EqBand, INSERT_SLOTS, ParameterValue,
+};
 use dubplate_fx::{MAX_TEMPO_BPM, MIN_TEMPO_BPM};
 
 const COMMAND_CAPACITY: usize = 1024;
@@ -68,6 +73,10 @@ pub fn offline_engine(sample_rate: u32) -> (Controller, Renderer) {
         sampler_cue: false,
         smart_cfx: [None; DECK_COUNT],
         smart_fader: false,
+        crossfader_curve: CrossfaderCurve::default(),
+        crossfader_enabled: true,
+        crossfader_assign: DeckId::ALL.map(CrossfaderAssign::default_for),
+        channel_fader_curve: ChannelFaderCurve::default(),
         jog_ticks_per_revolution: DEFAULT_JOG_TICKS_PER_REVOLUTION,
     };
     let renderer = Renderer::new(
@@ -104,6 +113,10 @@ pub struct Controller {
     sampler_cue: bool,
     smart_cfx: [Option<SmartCfx>; DECK_COUNT],
     smart_fader: bool,
+    crossfader_curve: CrossfaderCurve,
+    crossfader_enabled: bool,
+    crossfader_assign: [CrossfaderAssign; DECK_COUNT],
+    channel_fader_curve: ChannelFaderCurve,
     jog_ticks_per_revolution: u32,
 }
 
@@ -362,6 +375,59 @@ impl Controller {
         self.send(Command::SetCrossfader(position))
     }
 
+    /// Puts the crossfader in or out of use. Out of use, both channels play as if on THRU,
+    /// whatever its position, and Smart Fader rests.
+    pub fn set_crossfader_enabled(&mut self, enabled: bool) -> Result<(), EngineError> {
+        self.send(Command::SetCrossfaderEnabled(enabled))?;
+        self.crossfader_enabled = enabled;
+        Ok(())
+    }
+
+    /// Whether the crossfader is in use.
+    pub fn crossfader_enabled(&self) -> bool {
+        self.crossfader_enabled
+    }
+
+    /// Sets how the crossfader shares the level between its sides.
+    pub fn set_crossfader_curve(&mut self, curve: CrossfaderCurve) -> Result<(), EngineError> {
+        self.send(Command::SetCrossfaderCurve(curve))?;
+        self.crossfader_curve = curve;
+        Ok(())
+    }
+
+    /// How the crossfader shares the level between its sides.
+    pub fn crossfader_curve(&self) -> CrossfaderCurve {
+        self.crossfader_curve
+    }
+
+    /// Puts a deck's channel on side A or B of the crossfader, or THRU, off the crossfader.
+    pub fn set_crossfader_assign(
+        &mut self,
+        deck: DeckId,
+        assign: CrossfaderAssign,
+    ) -> Result<(), EngineError> {
+        self.send(Command::SetCrossfaderAssign { deck, assign })?;
+        self.crossfader_assign[deck.index()] = assign;
+        Ok(())
+    }
+
+    /// The crossfader side a deck's channel is on.
+    pub fn crossfader_assign(&self, deck: DeckId) -> CrossfaderAssign {
+        self.crossfader_assign[deck.index()]
+    }
+
+    /// Sets how the channel faders' positions become their levels.
+    pub fn set_channel_fader_curve(&mut self, curve: ChannelFaderCurve) -> Result<(), EngineError> {
+        self.send(Command::SetChannelFaderCurve(curve))?;
+        self.channel_fader_curve = curve;
+        Ok(())
+    }
+
+    /// How the channel faders' positions become their levels.
+    pub fn channel_fader_curve(&self) -> ChannelFaderCurve {
+        self.channel_fader_curve
+    }
+
     /// Sets the master gain, a linear factor where 1.0 leaves the level unchanged.
     pub fn set_master_gain(&mut self, gain: f32) -> Result<(), EngineError> {
         check_range("master gain", f64::from(gain), 0.0, f64::from(MAX_GAIN))?;
@@ -408,7 +474,9 @@ impl Controller {
     /// there, with the decks' beats locked together, and the LOW knobs swap across the middle
     /// third of the crossfader, the outgoing bass turning down as the incoming bass comes up. A
     /// LOW knob turned away from its centre takes over from the swap. Switching it off gives
-    /// the tempo back to the faders, which take over once moved through the playing tempo.
+    /// the tempo back to the faders, which take over once moved through the playing tempo. It
+    /// rests while a deck is on THRU or both decks are on one side of the crossfader, and
+    /// follows the sides when deck A is on B and deck B on A.
     pub fn set_smart_fader(&mut self, enabled: bool) -> Result<(), EngineError> {
         self.send(Command::SetSmartFader(enabled))?;
         self.smart_fader = enabled;
@@ -897,6 +965,29 @@ impl Controller {
         self.send(Command::HotCue { deck, seconds })
     }
 
+    /// A hot loop from `start_seconds` to `end_seconds`: the loop goes on and the deck goes to
+    /// its start as [`Controller::hot_cue`] does, in rhythm while playing, playing from it when
+    /// stopped.
+    pub fn hot_loop(
+        &mut self,
+        deck: DeckId,
+        start_seconds: f64,
+        end_seconds: f64,
+    ) -> Result<(), EngineError> {
+        check_range(
+            "hot loop start",
+            start_seconds,
+            0.0,
+            MAX_TRACK_SECONDS as f64,
+        )?;
+        check_range("hot loop end", end_seconds, 0.0, MAX_TRACK_SECONDS as f64)?;
+        self.send(Command::HotLoop {
+            deck,
+            start_seconds,
+            end_seconds,
+        })
+    }
+
     /// Jumps by `beats` beats on the beat grid, forwards when positive, keeping the place in
     /// the beat. With a loop on, the loop moves with the playhead. Without a grid, beats count
     /// at 120 BPM.
@@ -1014,14 +1105,18 @@ impl Controller {
         self.change_effect(unit, EffectChange::Target(target))
     }
 
-    /// Sets an effect unit's beat length, like a mixer's beat buttons. Step through the
-    /// buttons' lengths with [`BeatLength::longer`] and [`BeatLength::shorter`].
-    pub fn set_effect_beat(
+    /// Sets the parameter of an effect unit's selected effect, like a mixer's BEAT buttons: a
+    /// beat length for time-based effects, a percentage or a pitch for the others. Step through
+    /// the buttons' values with [`dubplate_fx::ParameterSpec::step`] on the effect's
+    /// [`EffectKind::parameter`]. A value in another unit than the effect's is ignored. Each
+    /// effect of the unit keeps its own parameter, so choosing another effect and coming back
+    /// finds it where it was.
+    pub fn set_effect_parameter(
         &mut self,
         unit: EffectUnitId,
-        beat: BeatLength,
+        value: ParameterValue,
     ) -> Result<(), EngineError> {
-        self.change_effect(unit, EffectChange::Beat(beat))
+        self.change_effect(unit, EffectChange::Parameter(value))
     }
 
     /// Turns an effect unit's level and depth knob, from 0 to 1.
@@ -1037,6 +1132,24 @@ impl Controller {
         enabled: bool,
     ) -> Result<(), EngineError> {
         self.change_effect(unit, EffectChange::Enabled(enabled))
+    }
+
+    /// Chooses the Release FX a unit plays while it is held: an echo out, a back spin or a vinyl
+    /// brake. A release already held keeps playing the one it started with.
+    pub fn set_release_fx(
+        &mut self,
+        unit: EffectUnitId,
+        release: ReleaseFx,
+    ) -> Result<(), EngineError> {
+        self.change_effect(unit, EffectChange::ChooseRelease(release))
+    }
+
+    /// Holds or lets go of a unit's Release FX, like SHIFT + BEAT FX ON on rekordbox: holding
+    /// it switches the beat effect off and plays the release on the unit's target, which cuts
+    /// the music out with an echo, a back spin or a brake; letting go brings the music back and
+    /// leaves the beat effect off.
+    pub fn hold_release_fx(&mut self, unit: EffectUnitId, held: bool) -> Result<(), EngineError> {
+        self.change_effect(unit, EffectChange::Release(held))
     }
 
     /// The effect on button: switches a unit on when it is off and off when it is on.

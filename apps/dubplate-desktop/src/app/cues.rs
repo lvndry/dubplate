@@ -8,12 +8,21 @@ use std::sync::Arc;
 
 use dubplate_engine::DeckId;
 use dubplate_prep::TrackIdentity;
-use dubplate_rekordbox::TrackCues;
+use dubplate_rekordbox::{TrackCues, cue_milliseconds};
 use gpui::Context;
 
 use super::DubplateApp;
 use super::notice::NoticePlace;
 use crate::collection::CollectionTrack;
+
+/// Where a cue set now goes, in milliseconds, with its loop end: the loop that is on, as a
+/// saved loop, else a cue point at `seconds`.
+pub(super) fn new_cue_span(active_loop: Option<(f64, f64)>, seconds: f64) -> (u32, Option<u32>) {
+    match active_loop {
+        Some((start, end)) => (cue_milliseconds(start), Some(cue_milliseconds(end))),
+        None => (cue_milliseconds(seconds), None),
+    }
+}
 
 impl DubplateApp {
     /// The cues `track` loads with: the ones the DJ made in Dubplate, else rekordbox's.
@@ -137,5 +146,16 @@ impl DubplateApp {
             format!("A cue was not saved: {error}"),
             cx,
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_cue_set_during_a_loop_keeps_the_loop_and_otherwise_the_point() {
+        assert_eq!(new_cue_span(Some((8.0, 10.0)), 3.0), (8_000, Some(10_000)));
+        assert_eq!(new_cue_span(None, 3.0004), (3_000, None));
     }
 }

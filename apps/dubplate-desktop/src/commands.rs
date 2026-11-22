@@ -3,12 +3,14 @@
 //! one place.
 
 use dubplate_engine::{
-    DeckId, EffectKind, EffectTarget, EffectUnitId, SmartCfx, Stem, StemSettings,
+    ChannelFaderCurve, CrossfaderAssign, CrossfaderCurve, DeckId, EffectKind, EffectTarget,
+    EffectUnitId, SmartCfx, Stem, StemSettings,
 };
 use dubplate_midi::PadMode;
 use dubplate_prep::GridEdit;
 
 use crate::controls::Control;
+use crate::pad_fx::{PadFxLayer, PadFxPreset};
 
 /// Which way a control moves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,6 +41,31 @@ pub enum Press {
     Up,
     /// The button went down and up.
     Tap,
+}
+
+/// A change in the Pad FX editor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PadFxEdit {
+    /// Open the editor on pad 1 of a layer, or close it when it is open.
+    Toggle(PadFxLayer),
+    /// Close the editor.
+    Close,
+    /// Edit pad `1` of layer `0`, pad 0 first.
+    Select(PadFxLayer, usize),
+    /// Step the pad's sound through the list.
+    Sound(i32),
+    /// Step the pad's beat or parameter.
+    Parameter(i32),
+    /// Step the pad's depth by 5%.
+    Depth(i32),
+    /// Switch the pad between held and latched.
+    Trigger,
+    /// Switch what letting go does to the pad's trail.
+    Release,
+    /// Put the pad back as its preset has it.
+    ResetPad,
+    /// Replace all 32 pads with a preset's.
+    Preset(PadFxPreset),
 }
 
 /// The two screens: preparing a set, and playing it.
@@ -80,6 +107,15 @@ pub enum SetEdit {
     MixOutAtPlayhead,
 }
 
+/// One of the two Auto Cue settings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AutoCueChoice {
+    /// Cue at the earliest memory or hot cue.
+    SavedCuesFirst,
+    /// Cue at the first sound.
+    FirstSound,
+}
+
 /// A press on one of a deck's performance pads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PadPress {
@@ -105,10 +141,6 @@ pub enum LoopAction {
     Out,
     /// 4 BEAT/EXIT: a four-beat loop, or leave the loop that is on.
     FourBeatOrExit,
-    /// Halve the loop that is on.
-    Halve,
-    /// Double the loop that is on.
-    Double,
 }
 
 /// What turning a jog wheel does to the track.
@@ -129,14 +161,19 @@ pub enum EffectEdit {
     Kind(EffectKind),
     /// Move through the effects in the picker's order, as FX SELECT does; negative goes back.
     StepKind(i32),
-    /// The next longer ([`Direction::Up`]) or shorter beat length.
-    Beat(Direction),
+    /// Step the effect's parameter up or down, as the BEAT buttons do: the next beat length,
+    /// percentage or pitch the effect offers.
+    Parameter(Direction),
     /// Put the unit on a deck or the master.
     Target(EffectTarget),
     /// Turn the level and depth knob, from 0.0 to 1.0.
     Depth(f32),
     /// Switch the unit on or off.
     Toggle,
+    /// Hold (`true`) or let go of the unit's Release FX, as SHIFT + BEAT FX ON does.
+    Release(bool),
+    /// Choose the next Release FX: echo, back spin, vinyl brake.
+    NextRelease,
 }
 
 /// What a stems control does on a deck.
@@ -203,8 +240,22 @@ pub enum Command {
     CyclePadMode(DeckId),
     /// SLIP: scratches and loops let the track play on underneath, and the deck lands back on it.
     ToggleSlip(DeckId),
+    /// Lock playing deck: a playing deck refuses a new track, as rekordbox's Eject/Load Lock.
+    ToggleLockPlayingDeck,
+    /// QUANTIZE: cues, loops, hot cues and beat jumps land on the beat grid, for both decks.
+    ToggleQuantize,
+    /// VINYL: the jog's top holds the record to scratch, or, off, only nudges as in CDJ mode.
+    ToggleVinylMode(DeckId),
     /// A loop button.
     Loop(DeckId, LoopAction),
+    /// CUE/LOOP CALL ◀ ([`Direction::Down`]) or ▶: halve or double the loop that is on, else
+    /// call the memory cue before or after the playhead, pausing on it as its cue point.
+    CueLoopCall(DeckId, Direction),
+    /// MEMORY, as SHIFT + CUE/LOOP CALL ▶: keep the cue point, or the loop that is on, as a
+    /// memory cue of the track.
+    StoreMemoryCue(DeckId),
+    /// DELETE, as SHIFT + CUE/LOOP CALL ◀: delete the memory cue at the cue point.
+    DeleteMemoryCue(DeckId),
     /// A channel's headphone CUE button: hear the channel in the headphones, before its fader.
     ToggleHeadphoneCue(DeckId),
     /// MASTER CUE: hear the master in the headphones too.
@@ -251,6 +302,20 @@ pub enum Command {
     SetControl(Control, f32),
     /// Move the crossfader one step towards deck A ([`Direction::Down`]) or deck B.
     MoveCrossfader(Direction),
+    /// Zoom the scrolling waveforms in ([`Direction::Up`]) or out by one level.
+    ZoomLanes(Direction),
+    /// Put the scrolling waveforms back at their default zoom.
+    ResetLaneZoom,
+    /// Put the crossfader in or out of use: out of use, both channels play as if on THRU.
+    ToggleCrossfader,
+    /// Put a deck's channel on side A or B of the crossfader, or THRU, off it.
+    SetCrossfaderAssign(DeckId, CrossfaderAssign),
+    /// Move a deck's crossfader assign switch to its next position: A, THRU, B.
+    CycleCrossfaderAssign(DeckId),
+    /// Choose how the crossfader blends its sides.
+    SetCrossfaderCurve(CrossfaderCurve),
+    /// Choose how the channel faders' positions become their levels.
+    SetChannelFaderCurve(ChannelFaderCurve),
     /// Select the row above or below in the browser.
     MoveSelection(Direction),
     /// Move the browser's cursor by a number of rows, in the crates or the tracks, whichever
@@ -284,8 +349,21 @@ pub enum Command {
     ExportSetToUsb,
     /// Show or hide the list of shortcuts.
     ToggleHelp,
+    /// Switch one of the Auto Cue settings on or off.
+    ToggleAutoCue(AutoCueChoice),
+    /// A deck's SHIFT on the controller went down (`true`) or up.
+    ShiftHeld(DeckId, bool),
+    /// Show the pads of a deck's Pad FX mode with or without SHIFT on screen, so a click plays
+    /// that layer.
+    TogglePadLayer(DeckId),
+    /// Open, change or close the Pad FX editor.
+    PadFx(PadFxEdit),
     /// Show or hide the library's settings: the music folders and rekordbox.
     ToggleLibrary,
+    /// Bring the rekordbox collection into the library.
+    ImportRekordbox,
+    /// Look for the files of the tracks that moved, in the music folders.
+    RelinkMissingFiles,
     /// Open the folder picker to add music folders to the library.
     AddMusicFolders,
     /// Close the help or leave the search field.
