@@ -396,7 +396,8 @@ impl SetStore {
     }
 
     /// Inserts an entry into the list's order at `position`, shifting every
-    /// later position of that list up by one.
+    /// later position of that list up by one. An entry that carries a grid fix
+    /// keeps it for its track; one without leaves the track's fix as it was.
     pub fn insert_entry(
         &mut self,
         set: SetId,
@@ -408,6 +409,10 @@ impl SetStore {
         touch_set(&mut transaction, set)?;
         shift_entry_positions(&mut transaction, set, list, position, usize::MAX, 1)?;
         insert_entry_row(&mut transaction, set, list, position, &entry)?;
+        let grid = TrackGrid::of(&entry);
+        if grid != TrackGrid::default() {
+            upsert_track_grid(&mut transaction, &entry.track_path, grid)?;
+        }
         transaction.commit()?;
         Ok(())
     }
