@@ -282,7 +282,8 @@ fn noise_rises_over_silence() {
 fn helix_fully_right_holds_its_loop_without_fading() {
     let mut helix = effect(EffectKind::Helix, 1.0);
     let frames = BEAT_FRAMES * 12;
-    let mut audio = Stereo::mono(sine(330.0, 0.3, frames));
+    // 80 cycles fit the half-beat loop, so every pass lands in phase with the last.
+    let mut audio = Stereo::mono(sine(320.0, 0.3, frames));
     let mut deck = Deck::new(TEMPO_BPM);
     let freeze_at = BEAT_FRAMES * 2;
     helix.set_depth(0.5);
@@ -297,7 +298,11 @@ fn helix_fully_right_holds_its_loop_without_fading() {
     deck.play_range(helix.as_mut(), &mut audio, freeze_at, frames);
     let early = rms(&audio.left[BEAT_FRAMES * 4..BEAT_FRAMES * 5]);
     let late = rms(&audio.left[BEAT_FRAMES * 11..BEAT_FRAMES * 12]);
-    assert!(early > 0.05, "the frozen loop is silent");
+    let before = rms(&audio.left[BEAT_FRAMES..BEAT_FRAMES * 2]);
+    assert!(
+        early > 0.05,
+        "the frozen loop is silent: {early}, {before} before freezing"
+    );
     assert!(
         late > early * 0.9,
         "the frozen loop faded from {early} to {late}"

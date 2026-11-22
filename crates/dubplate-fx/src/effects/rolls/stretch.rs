@@ -111,11 +111,11 @@ impl Kernel for StretchKernel {
         self.grain_phase = (self.grain_phase + 1.0 / self.grain_samples).rem_euclid(1.0);
         let lag = self.lag();
         if self.grain_phase < previous_phase {
-            self.grain_delays[0] = lag + self.grain_samples;
+            self.grain_delays[0] = lag;
         }
         let second_phase = (self.grain_phase + 0.5).rem_euclid(1.0);
         if second_phase < (previous_phase + 0.5).rem_euclid(1.0) {
-            self.grain_delays[1] = lag + self.grain_samples;
+            self.grain_delays[1] = lag;
         }
         let heads = [
             (self.grain_phase, self.grain_delays[0]),
@@ -125,9 +125,8 @@ impl Kernel for StretchKernel {
         for (line, (channel_input, channel_output)) in
             self.lines.iter_mut().zip(input.iter().zip(&mut output))
         {
-            for (phase, start_delay) in heads {
+            for (phase, delay) in heads {
                 let gain = (PI * phase).sin();
-                let delay = start_delay - phase * self.grain_samples;
                 *channel_output += line.read_linear(delay) * gain * gain;
             }
             line.write(*channel_input);

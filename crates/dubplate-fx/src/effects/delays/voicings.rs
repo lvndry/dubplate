@@ -97,9 +97,11 @@ const SMALLEST_STEP_SEMITONES: f32 = 1.0;
 const LARGEST_STEP_SEMITONES: f32 = 5.0;
 const SHIFT_WINDOW_SECONDS: f32 = 0.04;
 
-/// Shifts every repeat's pitch by the same interval, so the trail climbs, or falls, a step on
-/// each pass: Up Echo and Down Echo. The knob also widens the step, from 1 to 5 semitones.
+/// Shifts the music into the loop and every repeat on its way round by the same interval, so
+/// each repeat sounds a step higher, or lower, than the one before: Up Echo and Down Echo. The
+/// knob also widens the step, from 1 to 5 semitones.
 pub(crate) struct Climbing {
+    input_shifter: PitchShifter,
     shifter: PitchShifter,
     tape: Tape,
     rising: bool,
@@ -109,6 +111,7 @@ pub(crate) struct Climbing {
 impl Climbing {
     pub(crate) fn new(config: &EffectConfig, rising: bool) -> Self {
         Self {
+            input_shifter: PitchShifter::new(config.samples_for(SHIFT_WINDOW_SECONDS)),
             shifter: PitchShifter::new(config.samples_for(SHIFT_WINDOW_SECONDS)),
             tape: Tape::default(),
             rising,
@@ -132,8 +135,9 @@ impl Voicing for Climbing {
 
     fn prepare(&mut self, sample_rate: f32) {
         self.tape.prepare(sample_rate);
-        self.shifter
-            .set_window_samples(SHIFT_WINDOW_SECONDS * sample_rate);
+        for shifter in [&mut self.input_shifter, &mut self.shifter] {
+            shifter.set_window_samples(SHIFT_WINDOW_SECONDS * sample_rate);
+        }
     }
 
     fn set_depth(&mut self, depth: f32) {
@@ -144,12 +148,18 @@ impl Voicing for Climbing {
     }
 
     #[inline]
+    fn send(&mut self, input: Frame) -> Frame {
+        self.input_shifter.tick(input, self.ratio)
+    }
+
+    #[inline]
     fn shape(&mut self, repeat: Frame) -> Frame {
         self.shifter.tick(self.tape.shape(repeat), self.ratio)
     }
 
     fn reset(&mut self) {
         self.tape.reset();
+        self.input_shifter.clear();
         self.shifter.clear();
     }
 }
@@ -487,6 +497,7 @@ pub(crate) struct Diffused {
 
 /// The pitch step of a Spiral Up or Spiral Down.
 struct Shift {
+    input_shifter: PitchShifter,
     shifter: PitchShifter,
     rising: bool,
     ratio: f32,
@@ -510,6 +521,7 @@ impl Diffused {
     pub(crate) fn climbing(config: &EffectConfig, rising: bool) -> Self {
         Self {
             shift: Some(Shift {
+                input_shifter: PitchShifter::new(config.samples_for(SHIFT_WINDOW_SECONDS)),
                 shifter: PitchShifter::new(config.samples_for(SHIFT_WINDOW_SECONDS)),
                 rising,
                 ratio: 1.0,
@@ -542,9 +554,9 @@ impl Voicing for Diffused {
             }
         }
         if let Some(shift) = &mut self.shift {
-            shift
-                .shifter
-                .set_window_samples(SHIFT_WINDOW_SECONDS * sample_rate);
+            for shifter in [&mut shift.input_shifter, &mut shift.shifter] {
+                shifter.set_window_samples(SHIFT_WINDOW_SECONDS * sample_rate);
+            }
         }
     }
 
@@ -554,6 +566,14 @@ impl Voicing for Diffused {
                 + (SPIRAL_LARGEST_STEP_SEMITONES - SPIRAL_SMALLEST_STEP_SEMITONES) * depth;
             let signed = if shift.rising { semitones } else { -semitones };
             shift.ratio = (signed / 12.0).exp2();
+        }
+    }
+
+    #[inline]
+    fn send(&mut self, input: Frame) -> Frame {
+        match &mut self.shift {
+            Some(shift) => shift.input_shifter.tick(input, shift.ratio),
+            None => input,
         }
     }
 
@@ -577,6 +597,7 @@ impl Voicing for Diffused {
         }
         self.tape.reset();
         if let Some(shift) = &mut self.shift {
+            shift.input_shifter.clear();
             shift.shifter.clear();
         }
     }
