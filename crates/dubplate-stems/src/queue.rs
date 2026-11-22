@@ -398,7 +398,7 @@ impl Scheduler {
         let outcome = match (exit, running.ready.take()) {
             (Ok(status), Some(entry)) if status.success() => {
                 let directory = self.location.cache_directory().join(&entry);
-                match StemFiles::complete_in(directory) {
+                match StemFiles::in_folder(directory) {
                     Some(files) => Outcome::Ready(files),
                     None => Outcome::Failed(format!(
                         "the separation finished but the stems are not all in {entry}"
