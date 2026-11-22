@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use dubplate_engine::{BeatLength, DeckId};
-use dubplate_rekordbox::{TrackCues, cue_milliseconds};
+use dubplate_rekordbox::{HotCue, HotCuePad, TrackCues, cue_milliseconds};
 use gpui::prelude::*;
 use gpui::{
     Bounds, Context, FontWeight, MouseButton, MouseDownEvent, PathBuilder, Pixels, Point, Rgba,
@@ -183,7 +183,11 @@ fn lane(
             .hot_cues()
             .map(|(pad, cue)| {
                 let offset = (cue.start_seconds() - playhead_seconds) * pixels_per_track_second;
-                (pad.letter(), offset as f32)
+                (
+                    flag_label(pad, cue),
+                    theme::hot_cue_colour(pad, cue),
+                    offset as f32,
+                )
             })
             .collect(),
         DeckContent::Empty | DeckContent::Loading | DeckContent::Failed(_) => Vec::new(),
@@ -232,7 +236,7 @@ fn lane(
             .absolute()
             .size_full(),
         )
-        .children(flags.into_iter().map(|(letter, offset)| {
+        .children(flags.into_iter().map(|(label, colour, offset)| {
             div()
                 .absolute()
                 .top_0()
@@ -241,7 +245,7 @@ fn lane(
                 .min_w(px(FLAG_WIDTH))
                 .px(px(3.0))
                 .rounded(px(3.0))
-                .bg(theme::CUE_FLAG)
+                .bg(colour)
                 .text_color(theme::ON_DECK)
                 .font_family(MONO_FAMILY)
                 .text_size(px(10.0))
@@ -249,7 +253,8 @@ fn lane(
                 .font_weight(FontWeight::SEMIBOLD)
                 .flex()
                 .justify_center()
-                .child(letter.to_string())
+                .whitespace_nowrap()
+                .child(label)
         }))
         .children(loop_label.map(|(label, offset)| {
             div()
@@ -404,8 +409,20 @@ pub(super) fn paint_cue_point(bounds: Bounds<Pixels>, x: f32, window: &mut Windo
     }
 }
 
-/// Where each memory cue on screen goes across the lane, and its colour: red for a memory
-/// cue, the saved loop colour for a memory loop.
+/// What a hot cue's flag reads: its pad's letter, and its name when it has one.
+fn flag_label(pad: HotCuePad, cue: &HotCue) -> SharedString {
+    if cue.name.is_empty() {
+        SharedString::new_static(PAD_LETTERS[pad.index()])
+    } else {
+        format!("{} {}", pad.letter(), cue.name).into()
+    }
+}
+
+/// The pad letters as text, so a flag without a name never allocates.
+const PAD_LETTERS: [&str; HotCuePad::ALL.len()] = ["A", "B", "C", "D", "E", "F", "G", "H"];
+
+/// Where each memory cue on screen goes across the lane, and its colour: its own, else red for
+/// a memory cue and the saved loop colour for a memory loop.
 fn memory_cue_marks<'a>(
     cues: &'a TrackCues,
     view: &'a LaneView,
@@ -417,11 +434,10 @@ fn memory_cue_marks<'a>(
     )
     .iter()
     .map(|cue| {
-        let colour = match cue.loop_end_ms {
-            Some(_) => theme::SAVED_LOOP,
-            None => theme::MEMORY_CUE,
-        };
-        (view.x_of(cue.start_seconds()), colour)
+        (
+            view.x_of(cue.start_seconds()),
+            theme::memory_cue_colour(cue),
+        )
     })
 }
 
@@ -590,7 +606,7 @@ impl BandArea {
 
 #[cfg(test)]
 mod tests {
-    use dubplate_rekordbox::MemoryCue;
+    use dubplate_rekordbox::{MemoryCue, MemoryCueColor, PaletteColor};
 
     use super::*;
 
@@ -619,6 +635,37 @@ mod tests {
             marks,
             [(600.0, theme::MEMORY_CUE), (800.0, theme::SAVED_LOOP)],
             "five seconds either side of the playhead fit; a memory loop takes the loop colour"
+        );
+        let mut coloured = cues.clone();
+        coloured.insert_memory_cue(MemoryCue {
+            color: Some(MemoryCueColor::Blue),
+            ..MemoryCue::at(29_000)
+        });
+        let blue = memory_cue_marks(&coloured, &view).next().unwrap();
+        assert_eq!(
+            blue,
+            (400.0, theme::rekordbox_colour(MemoryCueColor::Blue.rgb()))
+        );
+    }
+
+    #[test]
+    fn a_flag_reads_its_letter_and_its_name_in_the_cue_s_colour() {
+        let plain = HotCue::at(1_000);
+        assert_eq!(flag_label(HotCuePad::C, &plain).as_ref(), "C");
+        let named = HotCue {
+            name: "Vocal".to_owned(),
+            color: PaletteColor::from_index(42),
+            ..HotCue::at(1_000)
+        };
+        assert_eq!(flag_label(HotCuePad::C, &named).as_ref(), "C Vocal");
+        assert_eq!(
+            theme::hot_cue_colour(HotCuePad::C, &named),
+            theme::rekordbox_colour(PaletteColor::from_index(42).unwrap().rgb())
+        );
+        assert_eq!(
+            theme::hot_cue_colour(HotCuePad::A, &plain),
+            theme::rekordbox_colour(PaletteColor::pad_default(HotCuePad::A).rgb()),
+            "a cue set in Dubplate takes rekordbox's default for its pad"
         );
     }
 }

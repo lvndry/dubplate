@@ -9,6 +9,7 @@ use dubplate_rekordbox::{MEMORY_CUE_LIMIT, MemoryCue, TrackCues, cue_millisecond
 use gpui::Context;
 
 use super::DubplateApp;
+use super::cues::new_cue_span;
 use super::notice::NoticePlace;
 use crate::commands::Direction;
 use crate::transport;
@@ -53,16 +54,11 @@ impl DubplateApp {
         if self.deck(deck).visuals().is_none() {
             return;
         }
-        let active_loop = self
-            .loop_state(deck)
-            .filter(|state| state.active)
-            .and_then(|state| Some((state.start_seconds?, state.end_seconds?)));
-        let cue = match active_loop {
-            Some((start, end)) => MemoryCue {
-                loop_end_ms: Some(cue_milliseconds(end)),
-                ..MemoryCue::at(cue_milliseconds(start))
-            },
-            None => MemoryCue::at(cue_milliseconds(self.deck_state(deck).cue_point_seconds)),
+        let cue_point = self.deck_state(deck).cue_point_seconds;
+        let (start_ms, loop_end_ms) = new_cue_span(self.active_loop(deck), cue_point);
+        let cue = MemoryCue {
+            loop_end_ms,
+            ..MemoryCue::at(start_ms)
         };
         let cues = &self.deck(deck).cues;
         if cues

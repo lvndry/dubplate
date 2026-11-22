@@ -52,6 +52,11 @@ impl HotCue {
         seconds(self.start_ms)
     }
 
+    /// Where its loop ends, in seconds, for a hot loop.
+    pub fn loop_end_seconds(&self) -> Option<f64> {
+        self.loop_end_ms.map(seconds)
+    }
+
     /// The colour it is drawn in: its own, else the default rekordbox draws for a hot loop or
     /// for a hot cue on `pad`.
     pub fn display_color(&self, pad: HotCuePad) -> PaletteColor {

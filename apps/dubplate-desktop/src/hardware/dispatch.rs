@@ -503,10 +503,10 @@ mod tests {
 
     #[test]
     fn the_flx4_cue_loop_call_arrows_call_store_and_delete_memory_cues() {
-        let mapping = dubplate_midi::Mapping::built_in_for_port("DDJ-FLX4")
+        let mapping = Mapping::built_in_for_port("DDJ-FLX4")
             .expect("the built-in mappings parse")
             .expect("the FLX4 has a built-in mapping");
-        let mut decoder = dubplate_midi::Decoder::new(std::sync::Arc::new(mapping));
+        let mut decoder = Decoder::new(Arc::new(mapping));
         let mut dispatcher = Dispatcher::default();
         let surface = Surface::default();
         let messages: [[u8; 3]; 8] = [

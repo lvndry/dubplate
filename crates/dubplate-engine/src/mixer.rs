@@ -143,6 +143,11 @@ pub(crate) enum Command {
         deck: DeckId,
         seconds: f64,
     },
+    HotLoop {
+        deck: DeckId,
+        start_seconds: f64,
+        end_seconds: f64,
+    },
     BeatJump {
         deck: DeckId,
         beats: f64,
@@ -648,6 +653,13 @@ impl Renderer {
             }
             Command::HotCue { deck, seconds } => {
                 self.decks[deck.index()].hot_cue(seconds, &mut self.retire);
+            }
+            Command::HotLoop {
+                deck,
+                start_seconds,
+                end_seconds,
+            } => {
+                self.decks[deck.index()].hot_loop(start_seconds, end_seconds, &mut self.retire);
             }
             Command::BeatJump { deck, beats } => {
                 self.decks[deck.index()].beat_jump(beats, &mut self.retire);
