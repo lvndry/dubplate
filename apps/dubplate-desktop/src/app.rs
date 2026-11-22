@@ -47,7 +47,7 @@ use gpui::component::input::{InputEvent, InputState};
 use gpui::prelude::*;
 use gpui::{
     Bounds, Context, Entity, FocusHandle, MouseButton, MouseMoveEvent, MouseUpEvent, Pixels, Point,
-    SharedString, StyleRefinement, Subscription, Task, Window, div, px,
+    ScrollHandle, SharedString, StyleRefinement, Subscription, Task, Window, div, px,
 };
 
 use crate::analysis::{AnalysisPriority, TrackAnalyser, TrackAnalyses};
@@ -189,6 +189,8 @@ pub struct DubplateApp {
     set_editor: Option<SetEditor>,
     set_selection: Option<usize>,
     prepare_focus: PrepareFocus,
+    next_cursor: usize,
+    set_scroll: ScrollHandle,
     track_checks: HashMap<PathBuf, TrackCheck>,
     checks_pending: HashSet<PathBuf>,
     check_generation: u64,
@@ -346,6 +348,8 @@ impl DubplateApp {
             set_editor,
             set_selection: None,
             prepare_focus: PrepareFocus::Library,
+            next_cursor: 0,
+            set_scroll: ScrollHandle::new(),
             track_checks: HashMap::new(),
             checks_pending: HashSet::new(),
             check_generation: 0,
@@ -696,26 +700,25 @@ impl DubplateApp {
                 let position = self.mixer.crossfader + CROSSFADER_STEP * direction.sign() as f32;
                 self.set_control(Control::Crossfader, position.clamp(0.0, 1.0), cx);
             }
-            Command::MoveSelection(direction) => {
-                if self.mode == Mode::Prepare && self.prepare_focus == PrepareFocus::Set {
+            Command::MoveSelection(direction) => match (self.mode, self.prepare_focus) {
+                (Mode::Prepare, PrepareFocus::Set) => {
                     self.move_set_selection(direction);
                     self.ensure_track_detail(cx);
-                } else {
-                    self.browser
-                        .update(cx, |browser, cx| browser.move_selection(direction, cx));
                 }
-            }
+                (Mode::Prepare, PrepareFocus::Next) => self.move_next_cursor(direction),
+                _ => self
+                    .browser
+                    .update(cx, |browser, cx| browser.move_selection(direction, cx)),
+            },
             Command::SwitchMode(mode) => {
                 self.mode = mode;
                 self.browser
                     .update(cx, |browser, cx| browser.show_screen(mode, cx));
             }
             Command::EditSet(edit) => self.edit_set(edit, cx),
-            Command::SwitchPrepareFocus => {
-                self.prepare_focus = match self.prepare_focus {
-                    PrepareFocus::Library => PrepareFocus::Set,
-                    PrepareFocus::Set => PrepareFocus::Library,
-                };
+            Command::SwitchPrepareFocus(direction) => {
+                self.prepare_focus = self.prepare_focus.step(direction);
+                self.next_cursor = 0;
             }
             Command::LoadSet => self.load_set(cx),
             Command::ExportSet => self.export_set(cx),
