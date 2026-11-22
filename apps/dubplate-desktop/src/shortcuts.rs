@@ -59,6 +59,7 @@ const fn anywhere(keystroke: &'static str, command: Command) -> Shortcut {
             | Command::SwitchMode(_)
             | Command::LoadSet
             | Command::ExportSet
+            | Command::ExportSetToUsb
             | Command::AddMusicFolders => Scope::OutsideModal,
             _ => Scope::Window,
         },
@@ -176,6 +177,7 @@ pub const SHORTCUTS: &[Shortcut] = &[
     suggestion("alt-5", 4),
     anywhere("cmd-l", Command::LoadSet),
     anywhere("cmd-e", Command::ExportSet),
+    anywhere("cmd-shift-e", Command::ExportSetToUsb),
     outside_text("s", Command::AuditionSeam),
     anywhere("cmd-shift-r", Command::ToggleRecording),
     outside_text("t", Command::TapTempo(DeckId::A)),
@@ -487,6 +489,7 @@ pub fn help_sections() -> Vec<HelpSection> {
                 ),
                 line(&["cmd-l"], "Load the set's first two tracks on the decks"),
                 line(&["cmd-e"], "Export the set to rekordbox"),
+                line(&["cmd-shift-e"], "Export the set to a USB stick for CDJs"),
             ],
         },
         HelpSection {

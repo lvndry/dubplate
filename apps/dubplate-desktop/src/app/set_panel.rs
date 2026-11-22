@@ -202,7 +202,9 @@ fn summary(
                     if rows.len() == 1 { "" } else { "s" },
                     rows.len()
                 )))
-                .when(!rows.is_empty(), |line| line.child(export_button(cx))),
+                .when(!rows.is_empty(), |line| {
+                    line.child(export_button(cx)).child(usb_button(cx))
+                }),
         )
         .when(!rows.is_empty(), |summary| {
             let range = app.prepare_view.energy_range;
@@ -226,6 +228,24 @@ fn export_button(cx: &mut Context<'_, DubplateApp>) -> impl IntoElement + use<> 
         })
         .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.export_set(cx)))
         .child("Export to rekordbox\u{2026}")
+}
+
+/// Exports the set to a USB stick for CDJs, as Command-Shift-E does.
+fn usb_button(cx: &mut Context<'_, DubplateApp>) -> impl IntoElement + use<> {
+    div()
+        .id("export-set-usb")
+        .accessible_button("Export to USB")
+        .flex_none()
+        .px(px(6.0))
+        .rounded(theme::SMALL_RADIUS)
+        .cursor_pointer()
+        .hover(|button| {
+            button
+                .bg(theme::active().raised)
+                .text_color(theme::active().text)
+        })
+        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.export_set_to_usb(cx)))
+        .child("USB\u{2026}")
 }
 
 /// The set's energy track by track as steps, over the target it should follow, across the

@@ -12,7 +12,7 @@ use dubplate_engine::{
 use dubplate_midi::PadMode;
 use serde::{Deserialize, Serialize};
 
-use crate::effects::{effect_label, effect_pad_label};
+use crate::effects::{effect_label, effect_order, effect_pad_label};
 use crate::pads::{PAD_COUNT, PadFx};
 
 /// The four layers of eight pads: PAD FX1, PAD FX1 with SHIFT, PAD FX2, PAD FX2 with SHIFT.
@@ -105,9 +105,9 @@ pub enum PadSound {
 }
 
 impl PadSound {
-    /// Every sound in the editor's order: the loop roll, then the effects in FX SELECT order.
+    /// Every sound in the editor's order: the loop roll, then the effects in the picker's order.
     pub fn all() -> impl Iterator<Item = Self> {
-        std::iter::once(Self::LoopRoll).chain(EffectKind::ALL.into_iter().map(Self::Effect))
+        std::iter::once(Self::LoopRoll).chain(effect_order().map(Self::Effect))
     }
 
     /// The sound `steps` places from this one in the editor's order, wrapping around.
