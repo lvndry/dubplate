@@ -9,6 +9,7 @@ mod deck_panel;
 mod drop_target;
 mod effects_strip;
 mod export;
+mod faders;
 mod filter_reference;
 mod header;
 mod help;
@@ -408,6 +409,7 @@ impl DubplateApp {
         app.browser
             .update(cx, |browser, cx| browser.show_screen(mode, cx));
         app.restore_effect_units(cx);
+        app.restore_mixer_switches(cx);
         app.restore_sampler(cx);
         app.restore_library_sorts(cx);
         app.start_library(cx);
@@ -879,6 +881,12 @@ impl DubplateApp {
                 let position = self.mixer.crossfader + CROSSFADER_STEP * direction.sign() as f32;
                 self.set_control(Control::Crossfader, position.clamp(0.0, 1.0), cx);
             }
+            Command::SetCrossfaderAssign(deck, assign) => {
+                self.set_crossfader_assign(deck, assign, cx);
+            }
+            Command::CycleCrossfaderAssign(deck) => self.cycle_crossfader_assign(deck, cx),
+            Command::SetCrossfaderCurve(curve) => self.set_crossfader_curve(curve, cx),
+            Command::SetChannelFaderCurve(curve) => self.set_channel_fader_curve(curve, cx),
             Command::MoveSelection(direction) => match (self.mode, self.prepare_focus) {
                 (Mode::Prepare, PrepareFocus::Set) => {
                     self.move_set_selection(direction, cx);

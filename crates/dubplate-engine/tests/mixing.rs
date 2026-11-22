@@ -11,8 +11,8 @@ use common::{
     mixer_latency_frames, ramp_track, render_frames, right_channel,
 };
 use dubplate_engine::{
-    AudioProcessor, DeckId, EngineError, MAX_BLOCK_FRAMES, ProcessContext, StereoBlock,
-    offline_engine,
+    AudioProcessor, ChannelFaderCurve, CrossfaderAssign, CrossfaderCurve, DeckId, EngineError,
+    MAX_BLOCK_FRAMES, ProcessContext, StereoBlock, offline_engine,
 };
 
 const BLOCK: usize = 480;
@@ -84,6 +84,60 @@ fn crossfader_follows_a_constant_power_curve() {
             1e-5,
         );
     }
+}
+
+#[test]
+fn thru_takes_a_channel_off_the_crossfader_and_the_curves_shape_both_faders() {
+    let (mut controller, mut renderer) = offline_engine(SAMPLE_RATE);
+    controller
+        .load_track(DeckId::A, constant_track(0.5, 0.0, 10.0, SAMPLE_RATE))
+        .unwrap();
+    controller
+        .load_track(DeckId::B, constant_track(0.0, 0.5, 10.0, SAMPLE_RATE))
+        .unwrap();
+    controller.play(DeckId::A).unwrap();
+    controller.play(DeckId::B).unwrap();
+    let mut gains = || {
+        let output = render_frames(&mut renderer, BLOCK * 2, BLOCK);
+        [output[output.len() - 2] / 0.5, output[output.len() - 1] / 0.5]
+    };
+    controller
+        .set_crossfader_assign(DeckId::B, CrossfaderAssign::Thru)
+        .unwrap();
+    assert_eq!(controller.crossfader_assign(DeckId::B), CrossfaderAssign::Thru);
+    controller.set_crossfader(0.0).unwrap();
+    let [deck_a, deck_b] = gains();
+    assert_close(f64::from(deck_a), 1.0, 1e-5);
+    assert_close(f64::from(deck_b), 1.0, 1e-5);
+    controller.set_crossfader(1.0).unwrap();
+    let [deck_a, deck_b] = gains();
+    assert_close(f64::from(deck_a), 0.0, 1e-5);
+    assert_close(f64::from(deck_b), 1.0, 1e-5);
+
+    controller
+        .set_crossfader_assign(DeckId::B, CrossfaderAssign::B)
+        .unwrap();
+    controller
+        .set_crossfader_curve(CrossfaderCurve::Scratch)
+        .unwrap();
+    controller.set_crossfader(0.02).unwrap();
+    let [deck_a, deck_b] = gains();
+    assert_close(f64::from(deck_a), 1.0, 1e-5);
+    assert!(deck_b > 0.6, "the scratch curve opens deck B at once: {deck_b}");
+    controller
+        .set_crossfader_curve(CrossfaderCurve::Constant)
+        .unwrap();
+    controller.set_crossfader(0.5).unwrap();
+    let [deck_a, deck_b] = gains();
+    assert_close(f64::from(deck_a), 1.0, 1e-5);
+    assert_close(f64::from(deck_b), 1.0, 1e-5);
+
+    controller
+        .set_channel_fader_curve(ChannelFaderCurve::Fast)
+        .unwrap();
+    controller.set_channel_fader(DeckId::A, 0.5).unwrap();
+    let [deck_a, _] = gains();
+    assert_close(f64::from(deck_a), 0.75, 1e-5);
 }
 
 #[test]

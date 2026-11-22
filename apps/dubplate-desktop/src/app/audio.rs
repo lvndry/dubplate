@@ -113,6 +113,11 @@ fn carry_over(source: &Controller, target: &mut Controller) -> Result<(), Engine
         target.set_smart_cfx(deck, source.smart_cfx(deck))?;
     }
     target.set_smart_fader(source.smart_fader())?;
+    target.set_crossfader_curve(source.crossfader_curve())?;
+    target.set_channel_fader_curve(source.channel_fader_curve())?;
+    for deck in DeckId::ALL {
+        target.set_crossfader_assign(deck, source.crossfader_assign(deck))?;
+    }
     target.set_quantize(source.quantize())
 }
 
@@ -212,7 +217,8 @@ impl DubplateApp {
 #[cfg(test)]
 mod tests {
     use dubplate_engine::{
-        BeatLength, EffectKind, EffectTarget, Renderer, SyncMode, TempoRange, Track, offline_engine,
+        BeatLength, ChannelFaderCurve, CrossfaderAssign, CrossfaderCurve, EffectKind,
+        EffectTarget, Renderer, SyncMode, TempoRange, Track, offline_engine,
     };
 
     use super::*;
@@ -244,12 +250,25 @@ mod tests {
             .unwrap();
         source.set_effect_beat(unit, BeatLength::HALF).unwrap();
         source.set_effect_depth(unit, 0.8).unwrap();
+        source
+            .set_crossfader_assign(DeckId::A, CrossfaderAssign::Thru)
+            .unwrap();
+        source
+            .set_crossfader_curve(CrossfaderCurve::Scratch)
+            .unwrap();
+        source
+            .set_channel_fader_curve(ChannelFaderCurve::Fast)
+            .unwrap();
         render(&mut source_renderer);
 
         let (mut target, mut target_renderer) = offline_engine(SAMPLE_RATE);
         carry_over(&source, &mut target).unwrap();
         render(&mut target_renderer);
 
+        assert_eq!(target.crossfader_assign(DeckId::A), CrossfaderAssign::Thru);
+        assert_eq!(target.crossfader_assign(DeckId::B), CrossfaderAssign::B);
+        assert_eq!(target.crossfader_curve(), CrossfaderCurve::Scratch);
+        assert_eq!(target.channel_fader_curve(), ChannelFaderCurve::Fast);
         let deck = target.deck_state(DeckId::B);
         assert!(deck.loaded && !deck.playing);
         assert!((deck.position_seconds - 4.5).abs() < 1e-6, "{deck:?}");

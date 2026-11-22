@@ -6,16 +6,20 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use gpui::base::FocusTrapElement;
 use gpui::prelude::*;
-use gpui::{ClickEvent, Context, FontWeight, MouseButton, Rgba, SharedString, div, px};
+use gpui::{
+    Bounds, ClickEvent, Context, FontWeight, MouseButton, Pixels, Rgba, SharedString, Window,
+    canvas, div, fill, point, px, size,
+};
 
 use super::DubplateApp;
+use super::faders::{channel_fader_curve_label, crossfader_curve_label};
 use crate::collection::folder_name;
 use crate::commands::Command;
 use crate::library::RekordboxSource;
 use crate::theme;
 use crate::widgets::InteractiveControl;
 use crate::widgets::{Emphasis, button};
-use dubplate_engine::OutputDevice;
+use dubplate_engine::{ChannelFaderCurve, CrossfaderCurve, OutputDevice};
 
 pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoElement {
     let mut output_rows = Vec::new();
@@ -104,8 +108,160 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
                 .child(rekordbox_row(app, cx))
                 .child(section_title("Sound card"))
                 .children(output_rows)
+                .child(section_title("Mixer"))
+                .child(curve_row(
+                    "Crossfader curve",
+                    CrossfaderCurve::ALL.map(|curve| CurveChoice {
+                        name: crossfader_curve_label(curve),
+                        chosen: curve == app.crossfader().curve,
+                        picture: CurvePicture::Crossfader(curve),
+                        command: Command::SetCrossfaderCurve(curve),
+                    }),
+                    cx,
+                ))
+                .child(curve_row(
+                    "Channel fader curve",
+                    ChannelFaderCurve::ALL.map(|curve| CurveChoice {
+                        name: channel_fader_curve_label(curve),
+                        chosen: curve == app.channel_fader_curve(),
+                        picture: CurvePicture::ChannelFader(curve),
+                        command: Command::SetChannelFaderCurve(curve),
+                    }),
+                    cx,
+                ))
+                .child(
+                    div()
+                        .text_size(theme::SMALL_TEXT_SIZE)
+                        .text_color(theme::MUTED)
+                        .child(
+                            "Each channel's A, THRU, B switch is under its fader. THRU takes the channel off the crossfader.",
+                        ),
+                )
                 .focus_trap("settings-focus-trap", &app.modal_focus),
         )
+}
+
+/// The points a curve picture is drawn from, across its width.
+const CURVE_SAMPLES: usize = 28;
+const CURVE_PICTURE_WIDTH: Pixels = px(30.0);
+const CURVE_PICTURE_HEIGHT: Pixels = px(14.0);
+const CURVE_DOT: Pixels = px(1.5);
+
+/// What a curve option draws.
+#[derive(Clone, Copy)]
+enum CurvePicture {
+    /// Both sides of the crossfader, A falling and B rising.
+    Crossfader(CrossfaderCurve),
+    /// A channel fader's level rising with its position.
+    ChannelFader(ChannelFaderCurve),
+}
+
+impl CurvePicture {
+    /// The levels drawn at `position`, each from 0.0 to 1.0.
+    fn levels(self, position: f32) -> [Option<f32>; 2] {
+        match self {
+            Self::Crossfader(curve) => {
+                let (left, right) = curve.gains(position);
+                [Some(left), Some(right)]
+            }
+            Self::ChannelFader(curve) => [Some(curve.gain(position)), None],
+        }
+    }
+}
+
+/// One option of a curve setting.
+struct CurveChoice {
+    name: &'static str,
+    chosen: bool,
+    picture: CurvePicture,
+    command: Command,
+}
+
+/// A curve setting: its name, then its options side by side, each a small drawing of the curve
+/// above its name, the chosen one raised.
+fn curve_row(
+    title: &'static str,
+    choices: [CurveChoice; 3],
+    cx: &mut Context<'_, DubplateApp>,
+) -> impl IntoElement + use<> {
+    div()
+        .role(gpui::Role::RadioGroup)
+        .aria_label(title)
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap(px(12.0))
+        .py(px(6.0))
+        .border_t_1()
+        .border_color(theme::ROW_LINE)
+        .child(div().text_size(theme::SMALL_TEXT_SIZE).child(title))
+        .child(
+            div()
+                .flex()
+                .gap(px(4.0))
+                .children(choices.into_iter().map(|choice| {
+                    let command = choice.command;
+                    let picture = choice.picture;
+                    let colour = if choice.chosen {
+                        theme::TEXT
+                    } else {
+                        theme::MUTED
+                    };
+                    div()
+                        .id(SharedString::from(format!("curve-{title}-{}", choice.name)))
+                        .accessible_toggle(format!("{title}: {}", choice.name), choice.chosen)
+                        .flex()
+                        .flex_col()
+                        .items_center()
+                        .gap(px(3.0))
+                        .w(px(64.0))
+                        .py(px(5.0))
+                        .rounded(theme::SMALL_RADIUS)
+                        .border_1()
+                        .cursor_pointer()
+                        .map(|option| {
+                            if choice.chosen {
+                                option.border_color(theme::LINE).bg(theme::RAISED)
+                            } else {
+                                option
+                                    .border_color(gpui::transparent_black())
+                                    .hover(|option| option.bg(theme::RAISED))
+                            }
+                        })
+                        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                            this.perform(command, window, cx);
+                        }))
+                        .child(
+                            canvas(
+                                |_, _, _| {},
+                                move |bounds, (), window, _| {
+                                    paint_curve(bounds, picture, colour, window);
+                                },
+                            )
+                            .w(CURVE_PICTURE_WIDTH)
+                            .h(CURVE_PICTURE_HEIGHT),
+                        )
+                        .child(
+                            div()
+                                .text_size(theme::TINY_TEXT_SIZE)
+                                .text_color(colour)
+                                .child(choice.name),
+                        )
+                })),
+        )
+}
+
+/// Draws a curve as a row of small dots, level up, position across.
+fn paint_curve(bounds: Bounds<Pixels>, picture: CurvePicture, colour: Rgba, window: &mut Window) {
+    let travel_x = bounds.size.width - CURVE_DOT;
+    let travel_y = bounds.size.height - CURVE_DOT;
+    for sample in 0..CURVE_SAMPLES {
+        let position = sample as f32 / (CURVE_SAMPLES - 1) as f32;
+        for level in picture.levels(position).into_iter().flatten() {
+            let origin = bounds.origin + point(travel_x * position, travel_y * (1.0 - level));
+            window.paint_quad(fill(Bounds::new(origin, size(CURVE_DOT, CURVE_DOT)), colour));
+        }
+    }
 }
 
 fn section_title(text: &'static str) -> impl IntoElement {

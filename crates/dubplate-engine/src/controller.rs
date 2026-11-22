@@ -5,6 +5,7 @@ use std::sync::atomic::Ordering;
 use rtrb::{Consumer, Producer, RingBuffer};
 
 use crate::channel::ChannelSettings;
+use crate::crossfader::{ChannelFaderCurve, CrossfaderAssign, CrossfaderCurve};
 use crate::deck::DeckId;
 use crate::decode::decode_file;
 use crate::effects::{EffectChange, EffectSettings, EffectTarget, EffectUnitId, EffectUnitState};
@@ -65,6 +66,9 @@ pub fn offline_engine(sample_rate: u32) -> (Controller, Renderer) {
         sampler_cue: false,
         smart_cfx: [None; DECK_COUNT],
         smart_fader: false,
+        crossfader_curve: CrossfaderCurve::default(),
+        crossfader_assign: DeckId::ALL.map(CrossfaderAssign::default_for),
+        channel_fader_curve: ChannelFaderCurve::default(),
     };
     let renderer = Renderer::new(
         sample_rate,
@@ -98,6 +102,9 @@ pub struct Controller {
     sampler_cue: bool,
     smart_cfx: [Option<SmartCfx>; DECK_COUNT],
     smart_fader: bool,
+    crossfader_curve: CrossfaderCurve,
+    crossfader_assign: [CrossfaderAssign; DECK_COUNT],
+    channel_fader_curve: ChannelFaderCurve,
 }
 
 /// A deck's track, grid and playback state, captured to put back on a new engine after a change
@@ -355,6 +362,46 @@ impl Controller {
         self.send(Command::SetCrossfader(position))
     }
 
+    /// Sets how the crossfader shares the level between its sides.
+    pub fn set_crossfader_curve(&mut self, curve: CrossfaderCurve) -> Result<(), EngineError> {
+        self.send(Command::SetCrossfaderCurve(curve))?;
+        self.crossfader_curve = curve;
+        Ok(())
+    }
+
+    /// How the crossfader shares the level between its sides.
+    pub fn crossfader_curve(&self) -> CrossfaderCurve {
+        self.crossfader_curve
+    }
+
+    /// Puts a deck's channel on side A or B of the crossfader, or THRU, off the crossfader.
+    pub fn set_crossfader_assign(
+        &mut self,
+        deck: DeckId,
+        assign: CrossfaderAssign,
+    ) -> Result<(), EngineError> {
+        self.send(Command::SetCrossfaderAssign { deck, assign })?;
+        self.crossfader_assign[deck.index()] = assign;
+        Ok(())
+    }
+
+    /// The crossfader side a deck's channel is on.
+    pub fn crossfader_assign(&self, deck: DeckId) -> CrossfaderAssign {
+        self.crossfader_assign[deck.index()]
+    }
+
+    /// Sets how the channel faders' positions become their levels.
+    pub fn set_channel_fader_curve(&mut self, curve: ChannelFaderCurve) -> Result<(), EngineError> {
+        self.send(Command::SetChannelFaderCurve(curve))?;
+        self.channel_fader_curve = curve;
+        Ok(())
+    }
+
+    /// How the channel faders' positions become their levels.
+    pub fn channel_fader_curve(&self) -> ChannelFaderCurve {
+        self.channel_fader_curve
+    }
+
     /// Sets the master gain, a linear factor where 1.0 leaves the level unchanged.
     pub fn set_master_gain(&mut self, gain: f32) -> Result<(), EngineError> {
         check_range("master gain", f64::from(gain), 0.0, f64::from(MAX_GAIN))?;
@@ -401,7 +448,9 @@ impl Controller {
     /// there, with the decks' beats locked together, and the LOW knobs swap across the middle
     /// third of the crossfader, the outgoing bass turning down as the incoming bass comes up. A
     /// LOW knob turned away from its centre takes over from the swap. Switching it off gives
-    /// the tempo back to the faders, which take over once moved through the playing tempo.
+    /// the tempo back to the faders, which take over once moved through the playing tempo. It
+    /// rests while a deck is on THRU or both decks are on one side of the crossfader, and
+    /// follows the sides when deck A is on B and deck B on A.
     pub fn set_smart_fader(&mut self, enabled: bool) -> Result<(), EngineError> {
         self.send(Command::SetSmartFader(enabled))?;
         self.smart_fader = enabled;

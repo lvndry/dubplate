@@ -3,6 +3,9 @@
 
 use std::path::{Path, PathBuf};
 
+use dubplate_engine::{
+    ChannelFaderCurve, CrossfaderAssign, CrossfaderCurve, DECK_COUNT, DeckId,
+};
 use dubplate_library::{DataFolder, LibrarySettings};
 use serde::{Deserialize, Serialize};
 
@@ -63,8 +66,77 @@ pub struct Settings {
     pub screen: Option<String>,
     /// The master and headphone levels.
     pub levels: LevelsSetting,
+    /// The fader curves and the crossfader assign switches.
+    pub mixer: MixerSetting,
     /// How the library's tracks are sorted on each screen.
     pub library_sort: LibrarySortSetting,
+}
+
+/// The mixer's curves and switches as the DJ left them, by name: `blend`, `constant` or
+/// `scratch` for the crossfader curve, `slow`, `standard` or `fast` for the channel faders,
+/// and `A`, `THRU` or `B` for each deck's crossfader assign, deck A first. A name this
+/// version does not know takes the default.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MixerSetting {
+    /// The crossfader curve.
+    pub crossfader_curve: String,
+    /// The channel fader curve.
+    pub channel_fader_curve: String,
+    /// Each deck's side of the crossfader.
+    pub crossfader_assign: [String; DECK_COUNT],
+}
+
+impl Default for MixerSetting {
+    fn default() -> Self {
+        Self::of(
+            CrossfaderCurve::default(),
+            ChannelFaderCurve::default(),
+            DeckId::ALL.map(CrossfaderAssign::default_for),
+        )
+    }
+}
+
+impl MixerSetting {
+    /// The setting that keeps these curves and switches.
+    pub fn of(
+        crossfader_curve: CrossfaderCurve,
+        channel_fader_curve: ChannelFaderCurve,
+        crossfader_assign: [CrossfaderAssign; DECK_COUNT],
+    ) -> Self {
+        Self {
+            crossfader_curve: crossfader_curve.to_string(),
+            channel_fader_curve: channel_fader_curve.to_string(),
+            crossfader_assign: crossfader_assign.map(|assign| assign.to_string()),
+        }
+    }
+
+    /// The crossfader curve kept, or the default.
+    pub fn crossfader_curve(&self) -> CrossfaderCurve {
+        named(&CrossfaderCurve::ALL, &self.crossfader_curve).unwrap_or_default()
+    }
+
+    /// The channel fader curve kept, or the default.
+    pub fn channel_fader_curve(&self) -> ChannelFaderCurve {
+        named(&ChannelFaderCurve::ALL, &self.channel_fader_curve).unwrap_or_default()
+    }
+
+    /// The side kept for `deck`, or its default side.
+    pub fn crossfader_assign(&self, deck: DeckId) -> CrossfaderAssign {
+        named(
+            &CrossfaderAssign::ALL,
+            &self.crossfader_assign[deck.index()],
+        )
+        .unwrap_or_else(|| CrossfaderAssign::default_for(deck))
+    }
+}
+
+/// The value of `values` written as `name`.
+fn named<T: Copy + std::fmt::Display>(values: &[T], name: &str) -> Option<T> {
+    values
+        .iter()
+        .copied()
+        .find(|value| value.to_string() == name)
 }
 
 /// The output levels as the DJ left them, so Dubplate never opens louder than it closed.
@@ -215,6 +287,7 @@ impl Default for Settings {
             sampler: SamplerSetting::default(),
             screen: None,
             levels: LevelsSetting::default(),
+            mixer: MixerSetting::default(),
             library_sort: LibrarySortSetting::default(),
         }
     }
@@ -348,6 +421,11 @@ mod tests {
                 headphones: 0.3,
                 headphone_mix: 0.7,
             },
+            mixer: MixerSetting::of(
+                CrossfaderCurve::Scratch,
+                ChannelFaderCurve::Fast,
+                [CrossfaderAssign::Thru, CrossfaderAssign::A],
+            ),
             library_sort: LibrarySortSetting {
                 prepare: Some(SortSetting {
                     column: "bpm".to_owned(),
@@ -388,6 +466,28 @@ mod tests {
         assert_eq!(settings.library.relinks.len(), 1);
         assert_eq!(settings.effect_units.len(), 1);
         assert_eq!(settings.sampler.volume, 0.6);
+    }
+
+    #[test]
+    fn mixer_switches_come_back_by_name_and_unknown_names_take_the_default() {
+        let kept = MixerSetting::of(
+            CrossfaderCurve::Constant,
+            ChannelFaderCurve::Slow,
+            [CrossfaderAssign::B, CrossfaderAssign::Thru],
+        );
+        assert_eq!(kept.crossfader_curve(), CrossfaderCurve::Constant);
+        assert_eq!(kept.channel_fader_curve(), ChannelFaderCurve::Slow);
+        assert_eq!(kept.crossfader_assign(DeckId::A), CrossfaderAssign::B);
+        assert_eq!(kept.crossfader_assign(DeckId::B), CrossfaderAssign::Thru);
+        let unknown = MixerSetting {
+            crossfader_curve: "wobbly".to_owned(),
+            channel_fader_curve: String::new(),
+            crossfader_assign: ["left".to_owned(), "right".to_owned()],
+        };
+        assert_eq!(unknown.crossfader_curve(), CrossfaderCurve::Blend);
+        assert_eq!(unknown.channel_fader_curve(), ChannelFaderCurve::Standard);
+        assert_eq!(unknown.crossfader_assign(DeckId::A), CrossfaderAssign::A);
+        assert_eq!(unknown.crossfader_assign(DeckId::B), CrossfaderAssign::B);
     }
 
     #[test]

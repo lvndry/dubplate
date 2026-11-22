@@ -101,6 +101,8 @@ When Smart Fader or sync has moved a deck's tempo away from where its TEMPO slid
 
 On screen, each deck also has Sync, Master, Key lock and Slip, and the compact effects strip drives the three effect units. Press ? for every keyboard shortcut.
 
+Under the channel faders, each channel has a crossfader assign switch, as on a DJM and in rekordbox's mixer: **A**, **THRU** or **B** (X and Shift+X step deck A's and deck B's). THRU takes the channel off the crossfader, so only its own fader sets its level; it is outlined in amber, the crossfader's ends show which decks are on each side, and with both channels on THRU the crossfader dims. Smart Fader needs one deck on each side and rests otherwise. Settings > Mixer has the crossfader curve (Blend, a smooth constant-power mix; Constant, no dip in the middle; Scratch, a sharp cut) and the channel fader curve (Slow, Standard, Fast), as rekordbox's Preferences > Controller > Mixer. Dubplate remembers them.
+
 ## 5. Record
 
 Cmd+Shift+R (or REC in the header) records what the room hears, after the limiter, as a 24-bit WAV in Music/Dubplate Recordings. The header shows the time in red.

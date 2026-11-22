@@ -23,6 +23,7 @@
 
 mod channel;
 mod controller;
+mod crossfader;
 mod curves;
 mod deck;
 mod decode;
@@ -51,6 +52,7 @@ mod track;
 mod voice;
 
 pub use channel::ChannelSettings;
+pub use crossfader::{ChannelFaderCurve, Crossfader, CrossfaderAssign, CrossfaderCurve};
 pub use controller::{Controller, DeckSnapshot, offline_engine};
 pub use cpal;
 pub use curves::{

@@ -4,7 +4,8 @@ use dubplate_fx::{BeatLength, EqBand};
 
 use crate::INSERT_SLOTS;
 use crate::channel::ChannelStrip;
-use crate::curves::{Ramp, channel_fader_gain};
+use crate::crossfader::ChannelFaderCurve;
+use crate::curves::Ramp;
 use crate::grid::BeatGrid;
 use crate::jog::{BlockStart, JogInput, Platter};
 use crate::keylock::{KeyLock, KeyLockBlock};
@@ -190,12 +191,12 @@ impl Deck {
     }
 
     /// The deck's gain to the master while it plays, 0 when it is stopped. Counts the trim,
-    /// the channel fader and the crossfader side gain `crossfader_gain`, the same way the
+    /// the channel fader on `curve` and the crossfader gain `crossfader_gain`, the same way the
     /// louder-deck rule hears the deck. The channel fader is not read from `channel_gain`
     /// because that gain already carries the crossfader.
-    pub(crate) fn level(&self, crossfader_gain: f32) -> f32 {
+    pub(crate) fn level(&self, curve: ChannelFaderCurve, crossfader_gain: f32) -> f32 {
         if self.playing {
-            self.trim.target() * channel_fader_gain(self.fader_position()) * crossfader_gain
+            self.trim.target() * curve.gain(self.fader_position()) * crossfader_gain
         } else {
             0.0
         }
@@ -1033,33 +1034,25 @@ impl Deck {
 
 #[cfg(test)]
 mod tests {
-    use std::f32::consts::FRAC_PI_2;
-
-    use crate::curves::channel_fader_gain;
-
     use super::*;
 
     #[test]
-    fn the_louder_deck_level_counts_the_crossfader_gain() {
+    fn the_louder_deck_level_counts_the_fader_curve_and_the_crossfader_gain() {
         let track = crate::track::Track::from_interleaved_stereo(&[0.1, 0.1], 48_000).unwrap();
         let (producer, _consumer) = rtrb::RingBuffer::new(16);
         let mut retire = RetireQueue::new(producer);
         let mut deck = Deck::new(48_000, 512, 240);
+        let standard = ChannelFaderCurve::Standard;
         deck.load(Some(Arc::clone(track.buffer())), &mut retire);
-        assert_eq!(deck.level(1.0), 0.0);
+        assert_eq!(deck.level(standard, 1.0), 0.0);
         deck.play();
         deck.set_trim(2.0);
         assert_eq!(deck.fader_position(), 1.0);
-        // Crossfader fully to this deck: the trim stands alone.
-        assert_eq!(deck.level(1.0), 2.0);
-        // Half-open fader, -3 dB crossfader: both count.
-        let crossfader_gain = FRAC_PI_2.cos();
-        let half_fader = channel_fader_gain(0.5);
-        assert_eq!(deck.level(0.5 * 1.0), 2.0 * 1.0 * 0.5);
-        assert_eq!(deck.level(1.0) * half_fader, 2.0 * half_fader);
-        assert_eq!(deck.level(0.5), 2.0 * 1.0 * 0.5);
-        let _ = crossfader_gain;
-        // Crossfader fully to the other deck: the level goes to zero while the deck still plays.
-        assert_eq!(deck.level(0.0), 0.0);
+        assert_eq!(deck.level(standard, 1.0), 2.0, "the trim stands alone");
+        assert_eq!(deck.level(standard, 0.5), 1.0, "the crossfader counts");
+        deck.set_fader_position(0.5);
+        assert_eq!(deck.level(standard, 1.0), 2.0 * 0.25);
+        assert_eq!(deck.level(ChannelFaderCurve::Fast, 1.0), 2.0 * 0.75);
+        assert_eq!(deck.level(standard, 0.0), 0.0, "the crossfader cuts a playing deck");
     }
 }

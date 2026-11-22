@@ -2,7 +2,10 @@
 //! controller. Every input turns into a [`Command`], and the window carries each one out in
 //! one place.
 
-use dubplate_engine::{DeckId, EffectKind, EffectTarget, EffectUnitId, SmartCfx};
+use dubplate_engine::{
+    ChannelFaderCurve, CrossfaderAssign, CrossfaderCurve, DeckId, EffectKind, EffectTarget,
+    EffectUnitId, SmartCfx,
+};
 use dubplate_midi::PadMode;
 
 use crate::controls::Control;
@@ -196,6 +199,14 @@ pub enum Command {
     SetControl(Control, f32),
     /// Move the crossfader one step towards deck A ([`Direction::Down`]) or deck B.
     MoveCrossfader(Direction),
+    /// Put a deck's channel on side A or B of the crossfader, or THRU, off it.
+    SetCrossfaderAssign(DeckId, CrossfaderAssign),
+    /// Move a deck's crossfader assign switch to its next position: A, THRU, B.
+    CycleCrossfaderAssign(DeckId),
+    /// Choose how the crossfader blends its sides.
+    SetCrossfaderCurve(CrossfaderCurve),
+    /// Choose how the channel faders' positions become their levels.
+    SetChannelFaderCurve(ChannelFaderCurve),
     /// Select the row above or below in the browser.
     MoveSelection(Direction),
     /// Move the browser's cursor by a number of rows, in the crates or the tracks, whichever

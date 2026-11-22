@@ -84,6 +84,7 @@ impl DubplateApp {
     pub(super) fn toggle_smart_fader(&mut self, cx: &mut Context<'_, Self>) {
         let enabled = !self.smart_fader_on();
         self.engine_command(cx, |controller| controller.set_smart_fader(enabled));
+        self.explain_resting_smart_fader(cx);
         cx.notify();
     }
 
