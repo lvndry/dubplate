@@ -4,8 +4,8 @@ mod common;
 
 use common::{SAMPLE_RATE, assert_close, left_channel, render_frames, sine_track};
 use dubplate_engine::{
-    BeatGrid, BeatLength, Controller, DeckId, EffectKind, MasterTempo, PadEffect, Renderer,
-    SyncMode, offline_engine,
+    BeatGrid, BeatLength, Controller, DeckId, EffectKind, MasterTempo, PadEffect, ParameterValue,
+    Renderer, SyncMode, offline_engine,
 };
 
 const BLOCK: usize = 256;
@@ -105,7 +105,7 @@ fn a_held_echo_rings_out_after_release_and_a_brake_gives_the_live_track_back() {
     seconds(&mut renderer, 0.5);
     let echo = PadEffect {
         kind: EffectKind::Echo,
-        beat: BeatLength::HALF,
+        parameter: Some(ParameterValue::Beats(BeatLength::HALF)),
         depth: 0.8,
     };
     controller.hold_pad_effect(DeckId::A, echo).unwrap();
@@ -120,7 +120,7 @@ fn a_held_echo_rings_out_after_release_and_a_brake_gives_the_live_track_back() {
             DeckId::A,
             PadEffect {
                 kind: EffectKind::Brake,
-                beat: BeatLength::HALF,
+                parameter: Some(ParameterValue::Beats(BeatLength::HALF)),
                 depth: 1.0,
             },
         )

@@ -1,6 +1,6 @@
 use std::fmt;
 
-use dubplate_fx::{BeatLength, Effect, EffectKind, create};
+use dubplate_fx::{BeatLength, Effect, EffectKind, ParameterValue, create};
 
 use crate::effects::{effect_config, effect_context};
 use crate::processor::{ProcessContext, StereoBlock};
@@ -53,15 +53,16 @@ impl SmartCfx {
             .unwrap_or(0)
     }
 
-    /// The effect, its beat length and the most depth the knob gives it.
-    fn recipe(self) -> (EffectKind, BeatLength, f32) {
+    /// The effect, its parameter and the most depth the knob gives it.
+    fn recipe(self) -> (EffectKind, Option<ParameterValue>, f32) {
+        let beats = |length| Some(ParameterValue::Beats(length));
         match self {
-            SmartCfx::Space => (EffectKind::Reverb, BeatLength::ONE, 0.6),
-            SmartCfx::DubEcho => (EffectKind::Echo, BeatLength::THREE_QUARTERS, 0.6),
-            SmartCfx::Crush => (EffectKind::Crusher, BeatLength::ONE, 0.7),
-            SmartCfx::Chop => (EffectKind::Gate, BeatLength::EIGHTH, 1.0),
-            SmartCfx::Jet => (EffectKind::Flanger, BeatLength::FOUR, 1.0),
-            SmartCfx::Phase => (EffectKind::Phaser, BeatLength::TWO, 1.0),
+            SmartCfx::Space => (EffectKind::Reverb, Some(ParameterValue::Percent(60)), 0.6),
+            SmartCfx::DubEcho => (EffectKind::Echo, beats(BeatLength::THREE_QUARTERS), 0.6),
+            SmartCfx::Crush => (EffectKind::Crusher, None, 0.7),
+            SmartCfx::Chop => (EffectKind::Gate, beats(BeatLength::EIGHTH), 1.0),
+            SmartCfx::Jet => (EffectKind::Flanger, beats(BeatLength::FOUR), 1.0),
+            SmartCfx::Phase => (EffectKind::Phaser, beats(BeatLength::TWO), 1.0),
         }
     }
 
@@ -98,9 +99,11 @@ impl SmartCfxRack {
         let config = effect_config(sample_rate);
         Self {
             effects: SmartCfx::ALL.map(|preset| {
-                let (kind, beat, _) = preset.recipe();
+                let (kind, parameter, _) = preset.recipe();
                 let mut effect = create(kind, &config);
-                effect.set_beat(beat);
+                if let Some(value) = parameter {
+                    effect.set_parameter(value);
+                }
                 effect
             }),
             selected: None,

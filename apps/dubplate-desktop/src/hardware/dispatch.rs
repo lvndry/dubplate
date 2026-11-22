@@ -205,7 +205,7 @@ impl Dispatcher {
                 };
                 Some(Command::Effect(
                     surface.focused_effect?,
-                    EffectEdit::Beat(direction),
+                    EffectEdit::Parameter(direction),
                 ))
             }
             (Button::BeatFxBeat(arrow), Layer::Shift) if pressed => {
@@ -695,8 +695,8 @@ mod tests {
             [
                 Command::Effect(unit, EffectEdit::StepKind(1)),
                 Command::Effect(unit, EffectEdit::StepKind(-1)),
-                Command::Effect(unit, EffectEdit::Beat(Direction::Up)),
-                Command::Effect(unit, EffectEdit::Beat(Direction::Down)),
+                Command::Effect(unit, EffectEdit::Parameter(Direction::Up)),
+                Command::Effect(unit, EffectEdit::Parameter(Direction::Down)),
                 Command::FocusEffectUnit(1),
                 Command::Effect(unit, EffectEdit::Target(EffectTarget::Deck(DeckId::A))),
                 Command::Effect(unit, EffectEdit::Target(EffectTarget::Master)),

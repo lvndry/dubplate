@@ -88,7 +88,9 @@ fn run(arguments: Vec<String>) -> Result<(), String> {
         }
     }
     if tracks.is_empty() {
-        return Err("usage: loudness <bpm>:<track>... [--start s] [--seconds s] [--effects a,b]".into());
+        return Err(
+            "usage: loudness <bpm>:<track>... [--start s] [--seconds s] [--effects a,b]".into(),
+        );
     }
 
     println!(
@@ -181,13 +183,7 @@ fn measure(
     };
     let mut effect = create(kind, &config);
     effect.set_depth(depth);
-    play(
-        effect.as_mut(),
-        track,
-        section,
-        &mut left,
-        &mut right,
-    );
+    play(effect.as_mut(), track, section, &mut left, &mut right);
     let effect_peak = decibels(peak(&left).max(peak(&right)));
     let mut limited_left = left.clone();
     let mut limited_right = right.clone();

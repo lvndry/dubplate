@@ -83,7 +83,10 @@ fn frames(seconds: f64) -> usize {
 }
 
 fn rms(samples: &[f32]) -> f64 {
-    let energy: f64 = samples.iter().map(|sample| f64::from(*sample).powi(2)).sum();
+    let energy: f64 = samples
+        .iter()
+        .map(|sample| f64::from(*sample).powi(2))
+        .sum();
     (energy / samples.len().max(1) as f64).sqrt()
 }
 
@@ -107,7 +110,9 @@ struct Change {
 fn change(track: &Track, kind: EffectKind, target: EffectTarget, depth: Option<f32>) -> Change {
     let (_reference_controller, mut reference) = playing(track, deck_for(target));
     let (mut controller, mut renderer) = playing(track, deck_for(target));
-    controller.set_effect_kind(UNIT, kind).expect("choose the effect");
+    controller
+        .set_effect_kind(UNIT, kind)
+        .expect("choose the effect");
     controller
         .set_effect_target(UNIT, target)
         .expect("choose the target");
@@ -117,10 +122,14 @@ fn change(track: &Track, kind: EffectKind, target: EffectTarget, depth: Option<f
     let lead_in = frames(LEAD_IN_SECONDS);
     render_frames(&mut reference, lead_in, BLOCK);
     render_frames(&mut renderer, lead_in, BLOCK);
-    controller.set_effect_enabled(UNIT, true).expect("switch on");
+    controller
+        .set_effect_enabled(UNIT, true)
+        .expect("switch on");
     let dry = render_frames(&mut reference, frames(ON_SECONDS), BLOCK);
     let wet = render_frames(&mut renderer, frames(ON_SECONDS), BLOCK);
-    controller.set_effect_enabled(UNIT, false).expect("switch off");
+    controller
+        .set_effect_enabled(UNIT, false)
+        .expect("switch off");
     let dry_trail = render_frames(&mut reference, frames(TRAIL_SECONDS), BLOCK);
     let wet_trail = render_frames(&mut renderer, frames(TRAIL_SECONDS), BLOCK);
 
@@ -134,9 +143,7 @@ fn change(track: &Track, kind: EffectKind, target: EffectTarget, depth: Option<f
     Change {
         difference_decibels: decibels(both(&difference(&wet, &dry)) / dry_level),
         level_decibels: decibels(both(&wet) / dry_level),
-        trail_decibels: decibels(
-            both(&difference(&wet_trail, &dry_trail)) / both(&dry_trail),
-        ),
+        trail_decibels: decibels(both(&difference(&wet_trail, &dry_trail)) / both(&dry_trail)),
     }
 }
 

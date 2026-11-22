@@ -4,6 +4,7 @@ use crate::context::BlockTiming;
 use crate::dsp::filters::{Svf, SvfCoefficients, SvfOutput};
 use crate::dsp::smoothing::Smoothed;
 use crate::effect::EffectKind;
+use crate::parameter::ParameterValue;
 use crate::unit::{Controls, Frame, Kernel, MixLaw, Unit, implement_effect, knob};
 
 const MIN_CUTOFF_HZ: f32 = 20.0;
@@ -15,8 +16,7 @@ const RESONANCE_OCTAVES: f32 = 4.0;
 const FIRST_STAGE_QUALITY: f32 = 0.541_196_1;
 const SECOND_STAGE_QUALITY: f32 = 1.306_563;
 const DEFAULT_CUTOFF_HZ: f32 = 1_000.0;
-const DEFAULT_RESONANCE: f32 = 0.25;
-const DEPTH_RESONANCE: f32 = 0.3;
+const DEFAULT_RESONANCE_PERCENT: i16 = 30;
 const SWEEP_CURVE: f32 = 0.7;
 
 /// What a [`Filter`] lets through.
@@ -45,7 +45,8 @@ pub enum FilterSlope {
 /// without clicks, and a high resonance sings without blowing up. Changing the mode crossfades
 /// between the two shapes.
 ///
-/// The depth knob sweeps the cutoff and raises the resonance: a low-pass closes from 20 kHz
+/// The parameter is the resonance, from 0% (flat) to 100% (a strong, singing peak). The depth
+/// knob sweeps the cutoff: a low-pass closes from 20 kHz
 /// down to 40 Hz, a high-pass opens from 20 Hz up to 12 kHz, a band-pass moves its band from
 /// 100 Hz to 8 kHz. The sweep moves fastest at the start of the knob, so a quarter of the way
 /// a low-pass is already at 1.9 kHz and a high-pass at 230 Hz.
@@ -54,7 +55,7 @@ pub struct Filter {
 }
 
 impl Filter {
-    /// Builds a filter at 1 kHz, 12 dB per octave, with a little resonance, switched off.
+    /// Builds a filter at 1 kHz, 12 dB per octave, with 30% resonance, switched off.
     pub fn new(mode: FilterMode) -> Self {
         let mut kernel = FilterKernel::new();
         kernel.set_mode(mode);
@@ -88,8 +89,10 @@ impl Filter {
 
     /// Sets the resonance, from 0 (flat) to 1 (a strong, singing peak at the cutoff).
     pub fn set_resonance(&mut self, resonance: f32) {
-        let current = &mut self.unit.kernel.resonance;
-        current.set_target(knob(resonance, 0.0, 1.0, current.target()));
+        let kernel = &mut self.unit.kernel;
+        let resonance = knob(resonance, 0.0, 1.0, kernel.resonance.target());
+        kernel.resonance.set_target(resonance);
+        kernel.resonance_percent = (resonance * 100.0).round() as i16;
     }
 
     /// Sets how steeply the filter cuts.
@@ -118,7 +121,16 @@ impl Controls for Filter {
         let travel = depth.powf(SWEEP_CURVE);
         let octaves = open_hz.log2() + (closed_hz.log2() - open_hz.log2()) * travel;
         self.set_cutoff_hz(octaves.exp2());
-        self.set_resonance(DEFAULT_RESONANCE + DEPTH_RESONANCE * depth);
+    }
+
+    fn apply_parameter(&mut self, value: ParameterValue) {
+        if let ParameterValue::Percent(percent) = value {
+            self.set_resonance(f32::from(percent.clamp(0, 100)) / 100.0);
+        }
+    }
+
+    fn current_parameter(&self) -> Option<ParameterValue> {
+        Some(ParameterValue::Percent(self.unit.kernel.resonance_percent))
     }
 }
 
@@ -217,6 +229,7 @@ impl FilterStages {
 }
 
 pub(crate) struct FilterKernel {
+    resonance_percent: i16,
     mode: FilterMode,
     slope: FilterSlope,
     weights: ModeWeights,
@@ -235,7 +248,11 @@ impl FilterKernel {
             slope: FilterSlope::TwelveDecibels,
             weights: ModeWeights::new(),
             cutoff_octaves: Smoothed::new(DEFAULT_CUTOFF_HZ.log2(), CUTOFF_SMOOTHING_SECONDS),
-            resonance: Smoothed::new(DEFAULT_RESONANCE, RESONANCE_SMOOTHING_SECONDS),
+            resonance_percent: DEFAULT_RESONANCE_PERCENT,
+            resonance: Smoothed::new(
+                f32::from(DEFAULT_RESONANCE_PERCENT) / 100.0,
+                RESONANCE_SMOOTHING_SECONDS,
+            ),
             stages: FilterStages::default(),
             coefficients: (
                 SvfCoefficients::new(DEFAULT_CUTOFF_HZ, FRAC_1_SQRT_2, 48_000.0),

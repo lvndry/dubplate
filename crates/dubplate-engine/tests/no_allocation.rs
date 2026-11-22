@@ -12,9 +12,9 @@ use common::{SAMPLE_RATE, constant_track, wait_until_decoded, write_wav};
 use dubplate_engine::cpal::{OutputCallbackInfo, OutputStreamTimestamp, StreamInstant};
 use dubplate_engine::{
     AudioProcessor, BeatGrid, BeatLength, Controller, DeckId, EffectKind, EffectTarget,
-    EffectUnitId, EngineError, EqBand, GridBeat, MasterTempo, PadEffect, Preview, PreviewTrack,
-    ProcessContext, Renderer, SampleMode, SampleSettings, SmartCfx, StereoBlock, SyncMode,
-    TempoRange, offline_engine,
+    EffectUnitId, EngineError, EqBand, GridBeat, MasterTempo, PadEffect, ParameterValue, Preview,
+    PreviewTrack, ProcessContext, Renderer, SampleMode, SampleSettings, SmartCfx, StereoBlock,
+    SyncMode, TempoRange, offline_engine,
 };
 
 struct CountingAllocator;
@@ -206,7 +206,7 @@ fn run_session(
         let beat = BeatLength::STANDARD[step % BeatLength::STANDARD.len()];
         controller.set_effect_kind(unit, kind)?;
         controller.set_effect_target(unit, target)?;
-        controller.set_effect_beat(unit, beat)?;
+        controller.set_effect_parameter(unit, ParameterValue::Beats(beat))?;
         controller.set_effect_depth(unit, step as f32 / EffectKind::ALL.len() as f32)?;
         if step % 4 == 3 {
             controller.toggle_effect(unit)?;
@@ -286,7 +286,7 @@ fn run_session(
                 DeckId::B,
                 PadEffect {
                     kind: EffectKind::Brake,
-                    beat: BeatLength::HALF,
+                    parameter: Some(ParameterValue::Beats(BeatLength::HALF)),
                     depth: 1.0,
                 },
             )

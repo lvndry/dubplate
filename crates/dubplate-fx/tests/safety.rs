@@ -4,8 +4,8 @@ mod common;
 
 use common::{Deck, Stereo, largest_kink, peak, seconds_to_frames, sine};
 use dubplate_fx::{
-    Backspin, BeatFilter, BeatLength, Brake, Crusher, Echo, Effect, EffectConfig, EffectKind, Filter,
-    FilterMode, FilterSlope, Flanger, Gate, Phaser, PingPong, Reverb, create,
+    Backspin, BeatFilter, BeatLength, Brake, Crusher, Echo, Effect, EffectConfig, EffectKind,
+    Filter, FilterMode, FilterSlope, Flanger, Gate, Phaser, PingPong, Reverb, create,
 };
 
 const OUTPUT_CEILING: f32 = 4.0;
