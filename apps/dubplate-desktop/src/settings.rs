@@ -59,6 +59,8 @@ pub struct Settings {
     pub effect_units: Vec<EffectUnitSetting>,
     /// The Smart CFX preset SMART CFX turns on, by name.
     pub smart_cfx_preset: Option<String>,
+    /// Whether SMART CFX was on, so the channels' CFX knobs play the preset from launch.
+    pub smart_cfx_on: bool,
     /// The sampler's volume and the sample in each slot.
     pub sampler: SamplerSetting,
     /// The screen Dubplate was on, `prepare` or `perform`.
@@ -215,6 +217,7 @@ impl Default for Settings {
             library: LibrarySettings::default(),
             effect_units: Vec::new(),
             smart_cfx_preset: None,
+            smart_cfx_on: false,
             sampler: SamplerSetting::default(),
             screen: None,
             levels: LevelsSetting::default(),
@@ -335,6 +338,7 @@ mod tests {
                 depth: 0.25,
             }],
             smart_cfx_preset: Some("dub echo".to_owned()),
+            smart_cfx_on: true,
             sampler: SamplerSetting {
                 volume: 0.6,
                 slots: vec![SampleSlotSetting {
