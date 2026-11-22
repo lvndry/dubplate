@@ -161,6 +161,8 @@ pub enum Command {
     /// A tap on the beat, as SHIFT + a channel's CUE does: enough taps give a track without a
     /// beat grid its tempo and beats.
     TapTempo(DeckId),
+    /// Start recording the mix to a file, or stop and close it.
+    ToggleRecording,
     /// Load the track selected in the browser.
     LoadSelected(DeckId),
     /// Load the track playing on the other deck at the same place, as pressing LOAD twice does.

@@ -12,6 +12,7 @@ use crate::assets::LOGO_PATH;
 use crate::browser::{LibraryStatus, search_field};
 use crate::commands::{Command, Mode};
 use crate::fonts::MONO_FAMILY;
+use crate::set::running_time;
 use crate::theme;
 
 /// Room for the window's close, minimise and zoom buttons, which sit over the header.
@@ -205,6 +206,7 @@ fn status(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoElem
                     )),
             )
         })
+        .child(record_button(app, cx))
         .child(
             div()
                 .id("lock-playing-deck")
@@ -262,6 +264,55 @@ fn status(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoElem
                         .child("?"),
                 ),
         )
+}
+
+/// REC: a red dot and the running time while recording, amber once audio was skipped.
+fn record_button(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoElement {
+    let status = app.recording_status();
+    let (colour, label): (Rgba, SharedString) = match &status {
+        Some(status) if !status.skipped.is_zero() => (
+            theme::ATTENTION,
+            format!(
+                "REC {} \u{b7} {:.1} s skipped",
+                running_time(status.elapsed),
+                status.skipped.as_secs_f64()
+            )
+            .into(),
+        ),
+        Some(status) => (
+            theme::ALERT,
+            format!("REC {}", running_time(status.elapsed)).into(),
+        ),
+        None => (theme::MUTED, "Rec".into()),
+    };
+    div()
+        .id("record")
+        .flex()
+        .items_center()
+        .gap(px(6.0))
+        .h(px(28.0))
+        .px(px(10.0))
+        .rounded(theme::CONTROL_RADIUS)
+        .border_1()
+        .border_color(if status.is_some() {
+            theme::faded(colour, 0.6)
+        } else {
+            theme::LINE
+        })
+        .text_color(if status.is_some() {
+            colour
+        } else {
+            theme::MUTED
+        })
+        .when(status.is_some(), |button| button.font_family(MONO_FAMILY))
+        .cursor_pointer()
+        .hover(|button| button.bg(theme::RAISED))
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+            this.perform(Command::ToggleRecording, window, cx);
+        }))
+        .child(dot(colour))
+        .child(label)
 }
 
 fn dot(colour: Rgba) -> impl IntoElement {
