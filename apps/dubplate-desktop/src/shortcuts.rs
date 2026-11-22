@@ -83,7 +83,7 @@ const fn pad(keystroke: &'static str, deck: DeckId, pad: usize) -> Shortcut {
 
 /// Every keyboard shortcut.
 pub const SHORTCUTS: [Shortcut; 76] = [
-    outside_text("space", Command::TogglePlay(DeckId::A)),
+    outside_text("space", Command::TogglePlayOnAir),
     outside_text("shift-space", Command::TogglePlay(DeckId::B)),
     outside_text("c", Command::Cue(DeckId::A, Press::Tap)),
     outside_text("shift-c", Command::Cue(DeckId::B, Press::Tap)),
@@ -283,7 +283,10 @@ pub fn help_sections() -> Vec<HelpSection> {
         HelpSection {
             title: "Decks",
             lines: vec![
-                line(&["space", "shift-space"], "Play or pause deck A / deck B"),
+                line(
+                    &["space", "shift-space"],
+                    "Play or pause the deck you can hear (A when neither) / deck B",
+                ),
                 line(&["c", "shift-c"], "Cue deck A / deck B"),
                 line(
                     &["1", "shift-1"],
