@@ -44,7 +44,7 @@ impl StemTracks {
     ) -> Result<Self, EngineError> {
         check_sample_rate(sample_rate)?;
         let samples = stems[0].len();
-        if stems.iter().any(|stem| stem.len() != samples) || samples % 2 != 0 {
+        if stems.iter().any(|stem| stem.len() != samples) || !samples.is_multiple_of(2) {
             return Err(EngineError::InvalidParameter {
                 name: "stem length in samples",
                 value: samples as f64,
