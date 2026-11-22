@@ -56,6 +56,25 @@ Select a set track to open its track check: the waveform with the beat grid, rek
 
 A Free seam never warns: it means you will feel it live. Grids on amapiano are often off by a beat or a few milliseconds; the nudge keys fix that, and the fix follows the track onto the decks.
 
+## Play the set in rekordbox
+
+**Export to rekordbox…** at the top of the Set panel, or Cmd+E, saves the set as a rekordbox XML file, by default in Music/Dubplate Exports. The file holds the set as a playlist in its order (and a second playlist with the backups), and each track with:
+
+- its beat grid, with your nudges and downbeat moves;
+- your mix-in and mix-out as memory cues named "Mix in" and "Mix out";
+- the hot cues and memory cues it already had in rekordbox.
+
+Tracks from your own folders go in too, so rekordbox adds them; relinked files point at their new place. Dubplate writes only this file, never rekordbox's library.
+
+To bring it in, in rekordbox:
+
+1. Preferences > Advanced > Database > rekordbox xml: choose the file. If the rekordbox xml tree is hidden, turn it on in Preferences > View > Layout.
+2. In the sidebar, open rekordbox xml and the set's playlist.
+3. Select all its tracks and choose **Import To Collection**. rekordbox only updates tracks it already has this way; importing just the playlist would keep their old grids and cues.
+4. Right-click the playlist and choose **Import Playlist**.
+
+From then on the set is an ordinary rekordbox playlist, ready to export to a USB stick for CDJs.
+
 ## 4. Mix
 
 Cmd+L loads the set's first two tracks onto deck A and deck B at their mix-in cues; Cmd+2 opens Perform.

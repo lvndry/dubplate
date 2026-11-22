@@ -10,10 +10,13 @@
 //! - [`find_relocations`] finds, for a rekordbox track whose file was moved, the file again by
 //!   its name, confirmed by size or length; [`search_folders_for`] and [`candidates_from_paths`]
 //!   gather the candidates from a folder the DJ points at.
+//! - [`DataFolder`] says where Dubplate keeps its own files, and [`LibrarySettings`] reads what
+//!   the library is made of from the settings, relinks included.
 
 mod cache;
 mod relocate;
 mod scan;
+mod settings;
 
 pub use cache::{CacheError, LibraryCache};
 pub use relocate::{
@@ -23,3 +26,4 @@ pub use relocate::{
 pub use scan::{
     AUDIO_EXTENSIONS, FolderScan, LibraryTrack, ScanError, ScanProblem, is_audio_file, scan_folder,
 };
+pub use settings::{DataFolder, LibrarySettings, LibrarySettingsError, Relink};

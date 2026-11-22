@@ -133,6 +133,20 @@ impl HotCuePad {
         }
     }
 
+    /// The pad's place from 0 for A to 7 for H, as rekordbox XML numbers hot cues.
+    pub fn index(self) -> usize {
+        match self {
+            Self::A => 0,
+            Self::B => 1,
+            Self::C => 2,
+            Self::D => 3,
+            Self::E => 4,
+            Self::F => 5,
+            Self::G => 6,
+            Self::H => 7,
+        }
+    }
+
     /// The pad's letter.
     pub fn letter(self) -> char {
         match self {

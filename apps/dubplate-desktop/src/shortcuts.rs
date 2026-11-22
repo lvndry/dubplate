@@ -68,7 +68,7 @@ const fn pad(keystroke: &'static str, deck: DeckId, pad: usize) -> Shortcut {
 }
 
 /// Every keyboard shortcut.
-pub const SHORTCUTS: [Shortcut; 69] = [
+pub const SHORTCUTS: [Shortcut; 70] = [
     outside_text("space", Command::TogglePlay(DeckId::A)),
     outside_text("shift-space", Command::TogglePlay(DeckId::B)),
     outside_text("c", Command::Cue(DeckId::A, Press::Tap)),
@@ -122,6 +122,7 @@ pub const SHORTCUTS: [Shortcut; 69] = [
     outside_text("cmd-z", Command::EditSet(SetEdit::Undo)),
     outside_text("tab", Command::SwitchPrepareFocus),
     anywhere("cmd-l", Command::LoadSet),
+    anywhere("cmd-e", Command::ExportSet),
     outside_text("s", Command::AuditionSeam),
     anywhere("cmd-shift-r", Command::ToggleRecording),
     outside_text("t", Command::TapTempo(DeckId::A)),
@@ -253,6 +254,7 @@ pub fn help_lines() -> Vec<HelpLine> {
             "Keep as a backup / move between library and set",
         ),
         line(&["cmd-l"], "Load the set's first two tracks on the decks"),
+        line(&["cmd-e"], "Export the set to rekordbox"),
         line(&["cmd-o"], "Add music folders to the library"),
         line(&["cmd-,"], "Settings: music folders, rekordbox, sound card"),
         line(&["?", "escape"], "Show / close this help"),
