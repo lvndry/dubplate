@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::own_files::is_inside_rekordbox;
 use crate::scan::FolderScan;
 
 /// The cache format; a cache of another version is ignored and the folders scanned again.
@@ -20,6 +21,9 @@ pub enum CacheError {
         /// What went wrong.
         source: std::io::Error,
     },
+    /// The path is inside one of rekordbox's folders, where Dubplate never writes.
+    #[error("{0} is inside a rekordbox folder; Dubplate's library cache must live elsewhere")]
+    InsideRekordbox(PathBuf),
     /// The cache could not be written as JSON.
     #[error("the library cache could not be written: {0}")]
     Serialize(#[from] serde_json::Error),
@@ -53,7 +57,11 @@ impl LibraryCache {
     }
 
     /// Writes the cache to `path`, through a temporary file so a crash never leaves half of it.
+    /// Refuses a path inside one of rekordbox's folders.
     pub fn save(&self, path: &Path) -> Result<(), CacheError> {
+        if is_inside_rekordbox(path) {
+            return Err(CacheError::InsideRekordbox(path.to_path_buf()));
+        }
         let bytes = serde_json::to_vec(self)?;
         let io_error = |source| CacheError::Io {
             path: path.to_path_buf(),
@@ -84,6 +92,15 @@ mod tests {
             problems: Vec::new(),
             scanned_at_ms: 42,
         }
+    }
+
+    #[test]
+    fn a_cache_is_never_written_inside_rekordbox() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("Pioneer/rekordbox/library.json");
+        let saved = LibraryCache::new(vec![scan("/Music/House")]).save(&path);
+        assert!(matches!(saved, Err(CacheError::InsideRekordbox(_))));
+        assert!(!path.exists());
     }
 
     #[test]

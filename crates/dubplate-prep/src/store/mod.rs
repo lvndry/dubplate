@@ -14,7 +14,7 @@ use thiserror::Error;
 
 mod types;
 
-use crate::sql::{execute_cached, query_row_cached};
+use crate::sql::{execute_cached, now_unix_millis, query_row_cached};
 
 pub use types::{CueSource, EqIntent, Seam, SeamStatus, Set, SetEntry, SetId, SetList};
 
@@ -93,22 +93,9 @@ const MOVE_SENTINEL_POSITION: i64 = 1 << 62;
 /// How many pre-migration backups to keep in the `backups` folder.
 const MAX_BACKUPS: usize = 7;
 
-/// A path component that marks a folder as belonging to rekordbox.
-const REKORDBOX_FOLDER_NAMES: &[&str] = &["Pioneer", "rekordbox"];
-
-/// Whether any component of `path` is a rekordbox folder, as every
-/// Dubplate-owned file is refused inside one.
-pub(crate) fn is_inside_rekordbox(path: &Path) -> bool {
-    path.components().any(|component| {
-        matches!(
-            component,
-            std::path::Component::Normal(name)
-                if REKORDBOX_FOLDER_NAMES
-                    .iter()
-                    .any(|known| name.eq_ignore_ascii_case(known))
-        )
-    })
-}
+/// The one check that keeps every file Dubplate writes out of rekordbox's folders, here for
+/// the set store, the analysis cache and the XML export.
+pub(crate) use dubplate_library::is_inside_rekordbox;
 
 /// Errors opening or using Dubplate's own set database.
 #[derive(Debug, Error)]
@@ -539,14 +526,6 @@ impl SetStore {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?)
     }
-}
-
-/// The current time as Unix milliseconds.
-fn now_unix_millis() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_millis().min(i64::MAX as u128) as i64)
-        .unwrap_or(0)
 }
 
 /// Keeps only the newest `max_backups` files in the backups folder, deleting
