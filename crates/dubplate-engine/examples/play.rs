@@ -1,9 +1,13 @@
 //! Plays one or two tracks on the default sound card and prints latency and dropouts.
 //!
 //! ```text
-//! cargo run --release -p dubplate-engine --example play -- <file-a> [file-b] [--bpm BPM]... [--buffer FRAMES] [--seconds N] [--volume DB] [--device NAME]
+//! cargo run --release -p dubplate-engine --example play -- <file-a> [file-b] [--bpm BPM]... [--buffer FRAMES] [--seconds N] [--volume DB] [--device NAME] [--key-lock] [--tempo PERCENT] [--sync] [--fx]
 //! cargo run --release -p dubplate-engine --example play -- --devices
 //! ```
+//!
+//! `--key-lock` switches key lock on both decks, `--tempo PERCENT` sets deck A's tempo,
+//! `--sync` beat-syncs deck B to deck A and `--fx` switches the three effect units on, for
+//! listening to or timing the whole engine at once.
 //!
 //! `--device` plays on the output device with that name, such as `DDJ-FLX4`; on a device with
 //! four channels the headphones play on outputs 3 and 4. `--devices` lists the devices.
@@ -19,7 +23,8 @@
 //! switches beat sync on the selected deck, p makes it the tempo master and r steps through the
 //! tempo ranges. Loops: 4 sets a 4-beat loop, i and o are loop in and out, 9 and 0 halve and
 //! double the loop, u is reloop/exit, and ; and ' jump 4 beats back and forward. Headphones: v
-//! cues the selected deck, f and g turn the headphone mix towards the cue and the master. For
+//! cues the selected deck, f and g turn the headphone mix towards the cue and the master, and
+//! a switches key lock on the selected deck. For
 //! the effects: 1, 2 and 3 switch effect units 1 to 3 on and off, e selects the next effect on
 //! unit 1, t moves unit 1 to the next target (deck A, deck B, master), [ and ] shorten and
 //! lengthen its beat, and - and = turn its depth down and up.
@@ -35,7 +40,7 @@ use dubplate_engine::{
     decibels_to_gain, gain_to_decibels,
 };
 
-const USAGE: &str = "usage: play <file-a> [file-b] [--bpm BPM]... [--buffer FRAMES] [--seconds N] [--volume DB] [--device NAME] | play --devices";
+const USAGE: &str = "usage: play <file-a> [file-b] [--bpm BPM]... [--buffer FRAMES] [--seconds N] [--volume DB] [--device NAME] [--key-lock] [--tempo PERCENT] [--sync] [--fx] | play --devices";
 const MIX_STEP: f32 = 0.1;
 const DEPTH_STEP: f32 = 0.1;
 const FILTER_STEP: f32 = 0.05;
@@ -48,6 +53,10 @@ struct Options {
     buffer_frames: Option<u32>,
     seconds: Option<f64>,
     volume_db: f32,
+    key_lock: bool,
+    tempo_percent: f64,
+    sync: bool,
+    effects: bool,
     device: Option<String>,
     list_devices: bool,
 }
@@ -59,6 +68,10 @@ fn parse_options() -> Result<Options, String> {
         buffer_frames: None,
         seconds: None,
         volume_db: 0.0,
+        key_lock: false,
+        tempo_percent: 0.0,
+        sync: false,
+        effects: false,
         device: None,
         list_devices: false,
     };
@@ -84,6 +97,12 @@ fn parse_options() -> Result<Options, String> {
             }
             "--device" => options.device = Some(value("--device")?),
             "--devices" => options.list_devices = true,
+            "--key-lock" => options.key_lock = true,
+            "--sync" => options.sync = true,
+            "--fx" => options.effects = true,
+            "--tempo" => {
+                options.tempo_percent = value("--tempo")?.parse().map_err(|_| "bad --tempo")?;
+            }
             "--volume" => {
                 options.volume_db = value("--volume")?.parse().map_err(|_| "bad --volume")?;
             }
@@ -158,6 +177,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     controller.set_master_gain(volume)?;
     controller.set_headphone_level(volume.min(1.0).sqrt())?;
     controller.set_crossfader(if tracks.len() == 2 { 0.5 } else { 0.0 })?;
+    controller.set_tempo(DeckId::A, 1.0 + options.tempo_percent / 100.0)?;
+    controller.set_master_tempo(MasterTempo::Deck(DeckId::A))?;
+    for deck in DeckId::ALL {
+        controller.set_key_lock(deck, options.key_lock)?;
+        if options.sync && deck == DeckId::B {
+            controller.set_sync(deck, SyncMode::Beat)?;
+        }
+    }
+    if options.effects {
+        for unit in EffectUnitId::ALL {
+            controller.set_effect_enabled(unit, true)?;
+        }
+    }
     for deck in DeckId::ALL.into_iter().take(tracks.len()) {
         controller.play(deck)?;
     }
@@ -168,7 +200,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "space play/pause, tab switch deck, c cue, up/down tempo, left/right crossfader, x throw crossfader, q quit\r\n\
              k/h kill low/high, j/l filter, ,/. nudge, n/m search, s sync, p master, r tempo range\r\n\
              4 loop, i/o loop in/out, 9/0 halve/double, u reloop/exit, ;/' beat jump\r\n\
-             v headphone cue, f/g headphone mix\r\n\
+             v headphone cue, f/g headphone mix, a key lock\r\n\
              1/2/3 effect units on/off, e next effect, t next target, [/] beat, -/= depth (unit 1)"
         );
         crossterm::terminal::enable_raw_mode()?;
@@ -292,6 +324,10 @@ fn control_channel(
         'v' => {
             let cued = controller.headphones().is_cued(deck);
             controller.set_headphone_cue(deck, !cued)
+        }
+        'a' => {
+            let locked = controller.key_lock(deck);
+            controller.set_key_lock(deck, !locked)
         }
         'f' => controller.set_headphone_mix((controller.headphones().mix - MIX_STEP).max(0.0)),
         'g' => controller.set_headphone_mix((controller.headphones().mix + MIX_STEP).min(1.0)),

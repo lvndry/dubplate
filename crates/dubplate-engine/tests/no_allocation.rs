@@ -151,6 +151,10 @@ fn run_session(
         controller.set_effect_target(unit, target)?;
         controller.set_effect_enabled(unit, true)?;
     }
+    controller.set_key_lock(DeckId::A, true)?;
+    controller.set_key_lock(DeckId::B, true)?;
+    controller.set_tempo(DeckId::A, 1.07)?;
+    controller.set_tempo(DeckId::B, 0.9)?;
     controller.play(DeckId::A)?;
     controller.play(DeckId::B)?;
     render_armed(renderer, &mut output, 2);
@@ -181,7 +185,9 @@ fn run_session(
     controller.set_sync(DeckId::A, SyncMode::Beat)?;
     render_armed(renderer, &mut output[..9600], 2);
 
-    let steps: [Step; 48] = [
+    let steps: [Step; 50] = [
+        |controller| controller.set_key_lock(DeckId::B, false),
+        |controller| controller.set_key_lock(DeckId::B, true),
         |controller| controller.set_headphone_cue(DeckId::A, true),
         |controller| controller.set_master_cue(true),
         |controller| controller.set_headphone_mix(0.2),

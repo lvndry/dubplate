@@ -110,6 +110,12 @@ Each channel has a CUE button that sends its sound to the headphones before its 
 
 `AudioOutput::output_devices` lists the outputs and `AudioOutput::start_on` opens one by name. The play example takes `--device "DDJ-FLX4"`, and `--devices` lists them; v cues the selected deck and f and g turn the headphone mix. `--volume` sets the headphones' level too. The channel meters (`Meters::channel_peaks`) show each channel before its fader, like a DJ mixer's.
 
+## Key lock
+
+Key lock, the MASTER TEMPO button of a CDJ, changes a deck's tempo without changing its pitch. It runs the Signalsmith Stretch time-stretcher, chosen after comparing it with Rubber Band's R2 and R3 engines on real music at ±8% and ±16%. It kept the music's spectrum closest to the original, kept the stereo image, held a 1 kHz tone to the cent and cost about 0.2 µs per stereo frame, half of R2 and a tenth of R3. Its preset that spreads each spectral frame's work over the frame interval keeps every audio callback close to the average: its slowest 256-frame block took 70 µs, against 350 µs without spreading.
+
+The stretcher needs to hear about 140 ms of music ahead of what it plays. The track is fully decoded, so the deck reads ahead by that much, round loops as the playhead will, and the stretched beats land within a millisecond of the playhead. After a jump, hot cue or beat jump the stretcher starts again at the new place at once. Scratching, and a record held still, play without key lock, as on a CDJ; at the track's own tempo the deck plays the track untouched. Turning key lock on or off crossfades over 20 ms. In the play example, a switches key lock on the selected deck.
+
 ## Loops, beat jump and quantize
 
 Beat loops run from a sixteenth of a beat to 32 beats on the beat grid, so a loop on a track whose tempo changes still holds whole beats. LOOP IN and LOOP OUT set a loop by hand, halving and doubling work from the loop's start, and RELOOP/EXIT leaves the loop or goes back to it. Beat jump moves any number of beats either way and takes a loop that is on along with it. Every jump and every turn of a loop crossfades over 5 ms, so none of them clicks.

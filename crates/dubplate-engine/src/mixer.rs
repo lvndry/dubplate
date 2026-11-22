@@ -134,6 +134,10 @@ pub(crate) enum Command {
     SetMasterCue(bool),
     SetHeadphoneMix(f32),
     SetHeadphoneLevel(f32),
+    SetKeyLock {
+        deck: DeckId,
+        enabled: bool,
+    },
 }
 
 /// Something the audio thread no longer needs. It goes back to the control side to be dropped,
@@ -477,6 +481,9 @@ impl Renderer {
             Command::SetMasterCue(enabled) => self.headphones.set_master_cue(enabled),
             Command::SetHeadphoneMix(mix) => self.headphones.set_mix(mix),
             Command::SetHeadphoneLevel(level) => self.headphones.set_level(level),
+            Command::SetKeyLock { deck, enabled } => {
+                self.decks[deck.index()].set_key_lock(enabled);
+            }
             Command::SetMasterTempo(source) => self.tempo_master.set_source(source),
             Command::ChangeEffect { unit, change } => self.effects.change(unit, change),
             Command::SetEq {
