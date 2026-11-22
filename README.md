@@ -130,6 +130,12 @@ The DDJ-FLX4's pad modes map onto the engine:
 
 While a deck slips, beat sync leaves it alone, because its shadow stays in phase.
 
+## Smart CFX
+
+`Controller::set_smart_cfx` turns a channel's filter knob into a one-knob macro: the filter and a second effect move together, and the knob's centre still leaves the music untouched. There are six presets: Space (reverb), Dub Echo (a 3/4-beat echo), Crush (bit crusher), Chop (a 1/8-beat gate), Jet (a 4-beat flanger) and Phase (a 2-beat phaser). All of them are the effects of the beat FX, with no second copy of their DSP.
+
+The effect grows with the square of the knob's travel. An A/B on real music against linear and smoothstep curves showed the square curve kept the first moves under 0.3 dB, had the smallest loudness steps along the sweep and the least boost. Reverb, echo, flanger and phaser sit before the filter, so a closing low-pass darkens their tails; crusher and gate sit after it. A preset switched off rings out.
+
 ## Sampler
 
 Sixteen sampler slots, eight on each side of the DDJ-FLX4's pads, each one-shot or loop, with an optional gate that plays only while the pad is held and a gain of its own. A synced slot with a BPM plays at the tempo master's tempo, half or double when closer, and a synced loop starts in phase with the master's beats, as beat sync would put it. Pressing a playing slot starts it again with a crossfade; loops go round sample-accurately. The sampler has its own bus to the master after the channel faders, with a volume and a CUE button for the headphones.

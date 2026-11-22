@@ -13,6 +13,7 @@ use crate::jog::JogInput;
 use crate::pad_effects::PadEffect;
 use crate::processor::{AudioProcessor, ProcessContext, StereoBlock};
 use crate::sampler::{SampleSettings, Sampler};
+use crate::smart_cfx::SmartCfx;
 use crate::state::{GapDetector, SharedState, encode_loop_length, raise_peak};
 use crate::sync::SyncMode;
 use crate::tempo::{DeckLevel, MasterTempo, TempoMaster, TempoRange};
@@ -171,6 +172,10 @@ pub(crate) enum Command {
     StopSample(usize),
     SetSamplerVolume(f32),
     SetSamplerCue(bool),
+    SetSmartCfx {
+        deck: DeckId,
+        preset: Option<SmartCfx>,
+    },
 }
 
 /// Something the audio thread no longer needs. It goes back to the control side to be dropped,
@@ -537,6 +542,9 @@ impl Renderer {
             Command::SetHeadphoneLevel(level) => self.headphones.set_level(level),
             Command::SetKeyLock { deck, enabled } => {
                 self.decks[deck.index()].set_key_lock(enabled);
+            }
+            Command::SetSmartCfx { deck, preset } => {
+                self.decks[deck.index()].set_smart_cfx(preset);
             }
             Command::LoadSample {
                 slot,

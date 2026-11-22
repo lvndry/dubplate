@@ -14,7 +14,7 @@ use dubplate_engine::cpal::{OutputCallbackInfo, OutputStreamTimestamp, StreamIns
 use dubplate_engine::{
     AudioProcessor, BeatGrid, BeatLength, Controller, DeckId, EffectKind, EffectTarget,
     EffectUnitId, EngineError, EqBand, GridBeat, MasterTempo, PadEffect, ProcessContext, Renderer,
-    SampleMode, SampleSettings, StereoBlock, SyncMode, TempoRange, offline_engine,
+    SampleMode, SampleSettings, SmartCfx, StereoBlock, SyncMode, TempoRange, offline_engine,
 };
 
 struct CountingAllocator;
@@ -185,7 +185,11 @@ fn run_session(
     controller.set_sync(DeckId::A, SyncMode::Beat)?;
     render_armed(renderer, &mut output[..9600], 2);
 
-    let steps: [Step; 65] = [
+    let steps: [Step; 69] = [
+        |controller| controller.set_smart_cfx(DeckId::A, Some(SmartCfx::DubEcho)),
+        |controller| controller.set_filter(DeckId::A, 0.9),
+        |controller| controller.set_smart_cfx(DeckId::A, Some(SmartCfx::Space)),
+        |controller| controller.set_smart_cfx(DeckId::A, None),
         |controller| {
             let track = controller
                 .track(DeckId::B)
