@@ -168,6 +168,7 @@ fn crossfader_row(on: bool, cx: &mut Context<'_, DubplateApp>) -> impl IntoEleme
         )
         .child(
             div()
+                .id("crossfader-switch")
                 .role(gpui::Role::RadioGroup)
                 .aria_label("Crossfader")
                 .flex()
@@ -250,6 +251,7 @@ fn curve_row(
     cx: &mut Context<'_, DubplateApp>,
 ) -> impl IntoElement + use<> {
     div()
+        .id(title)
         .role(gpui::Role::RadioGroup)
         .aria_label(title)
         .flex()

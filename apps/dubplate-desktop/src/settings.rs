@@ -3,7 +3,9 @@
 
 use std::path::{Path, PathBuf};
 
-use dubplate_engine::{ChannelFaderCurve, CrossfaderAssign, CrossfaderCurve, DECK_COUNT, DeckId};
+use dubplate_engine::{
+    ChannelFaderCurve, Crossfader, CrossfaderAssign, CrossfaderCurve, DECK_COUNT, DeckId,
+};
 use dubplate_library::{DataFolder, LibrarySettings};
 use serde::{Deserialize, Serialize};
 
