@@ -24,7 +24,7 @@ Dubplate analyses every track in the background and keeps what it found for the 
 
 ## 2. Pick the sound card
 
-In Settings, choose **DDJ-FLX4** as the sound card so the master goes to the FLX4's master output and the headphones to its headphone jack. Turn the master down before the first track, then check the headphones with the channel CUE buttons.
+In Settings, choose **DDJ-FLX4** as the sound card so the master goes to the FLX4's master output and the headphones to its headphone jack. Turn the master down before the first track, then check the headphones with the channel CUE buttons. Dubplate remembers the master and headphone levels and the screen you were on, and opens no louder than it closed: if the FLX4's MASTER LEVEL knob reports a louder level when it connects, it waits until you turn it down through the level on screen, while turning it down always works at once.
 
 ## 3. Prepare the set
 
@@ -41,7 +41,7 @@ Cmd+1 opens Prepare: the library on the left, your set on the right.
 
 The **Next** panel suggests what to play after the selected set track, with the reason ("One step on the wheel · +1.6% · energy +2"), steered by the set's energy curve against its target. The target climbs from your library's calmer tracks to its most intense, so it fits how your music is rated. Each suggestion shows its Option key. Use Ctrl+Tab to reach Next, choose with the arrows and press Enter to insert one. When the refreshed suggestions arrive, they follow the track you just placed. Tab and Shift+Tab move through individual controls.
 
-Each set track has a **ready badge**: Ready, or what is missing (Grid unconfirmed, No mix-in cue, No mix-out cue, File missing, Key unknown). Each seam between two tracks shows the key move, the tempo step and any warning: key clash, a tempo gap over 6%, vocals meeting, an energy drop, or the same track twice.
+Each set track has a **ready badge**: Ready, or what is missing (Grid unconfirmed, No mix-in cue, No mix-out cue, File missing, Key unknown), the most urgent first, such as "File missing, and 3 more"; hover it to see every problem. A small **Y** beside it means Dubplate can propose the missing mix cues from the phrases: press Y to accept them. Each seam between two tracks shows the key move, the tempo step and any warning: key clash, a tempo gap over 6%, vocals meeting, an energy drop, or the same track twice.
 
 ### Dig through the library
 
@@ -52,7 +52,7 @@ Each set track has a **ready badge**: Ready, or what is missing (Grid unconfirme
 
 ### Check each track
 
-Select a set track to open its track check: the waveform with the beat grid, rekordbox's phrases and the mix cues. A track rekordbox never analysed shows Dubplate's grid, with no waveform or phrases under it, and its proposed cues come from the grid alone.
+Select a set track to open its track check: the waveform with the beat grid, rekordbox's phrases and the mix cues. A track rekordbox never analysed shows Dubplate's grid over a waveform drawn from its audio (a few seconds the first time; the deck and the track check share it, so each track is drawn once), with no phrases, and its proposed cues come from the grid alone.
 
 | Do | Key |
 | --- | --- |

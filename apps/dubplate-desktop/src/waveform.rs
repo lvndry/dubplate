@@ -64,9 +64,17 @@ impl Zoom {
         }
     }
 
-    /// Screen pixels per second of the track.
+    /// Screen pixels per second of real time, the same for both lanes whatever their tempo,
+    /// and the columns the waveforms are made with per second of a track played at its own
+    /// tempo.
     pub fn pixels_per_second(self) -> f64 {
         self.pixels_per_second
+    }
+
+    /// Screen pixels per second of a track played at `tempo`, where 1.0 is its own tempo: the
+    /// shared real-time scale divided by how fast the track plays.
+    pub fn pixels_per_track_second(self, tempo: f64) -> f64 {
+        self.pixels_per_second / tempo.max(SLOWEST_DRAWN_TEMPO)
     }
 }
 
@@ -234,16 +242,25 @@ fn resample(columns: &[BandLevels], source_rate: f64, target_rate: f64) -> Vec<B
         .collect()
 }
 
+/// The slowest playback speed the lanes scale for, so a stopped or nearly stopped tempo never
+/// stretches a waveform without bound.
+const SLOWEST_DRAWN_TEMPO: f64 = 0.05;
+
 /// Where the zoomed waveform of one lane sits on screen for one frame: the playhead position
-/// is drawn at the centre of the lane.
+/// is drawn at the centre of the lane. The lanes share one real-time axis, as on CDJs and in
+/// rekordbox: a pixel is the same span of time in both, so a track played faster has its
+/// waveform and beats drawn closer together, and two tracks at the same BPM scroll at the same
+/// speed with the same beat spacing.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LaneView {
     /// The lane's width in pixels.
     pub width: f32,
-    /// The playhead position in seconds.
+    /// The playhead position in seconds of the track.
     pub playhead_seconds: f64,
     /// The horizontal scale.
     pub zoom: Zoom,
+    /// The playback speed, where 1.0 is the track's own tempo.
+    pub tempo: f64,
 }
 
 /// The columns a lane shows in one frame.
@@ -253,6 +270,9 @@ pub struct VisibleColumns {
     pub range: Range<usize>,
     /// The x position of the first column's left edge, relative to the lane.
     pub first_x: f32,
+    /// How wide each column is drawn: narrower than a pixel when the track plays faster than
+    /// its own tempo.
+    pub column_width: f32,
 }
 
 impl LaneView {
@@ -260,27 +280,36 @@ impl LaneView {
         f64::from(self.width) / 2.0
     }
 
+    /// Screen pixels per second of the track.
+    pub fn pixels_per_track_second(&self) -> f64 {
+        self.zoom.pixels_per_track_second(self.tempo)
+    }
+
     /// The x position, relative to the lane, of a moment in the track.
     pub fn x_of(&self, seconds: f64) -> f32 {
-        (self.centre() + (seconds - self.playhead_seconds) * self.zoom.pixels_per_second()) as f32
+        (self.centre() + (seconds - self.playhead_seconds) * self.pixels_per_track_second()) as f32
     }
 
     /// The moments of the track at the left and right edges of the lane.
     pub fn seconds_on_screen(&self) -> Range<f64> {
-        let half_span = self.centre() / self.zoom.pixels_per_second();
+        let half_span = self.centre() / self.pixels_per_track_second();
         self.playhead_seconds - half_span..self.playhead_seconds + half_span
     }
 
-    /// The columns of a waveform with `column_count` one-pixel columns that fall on screen.
+    /// The columns of a waveform made at this view's zoom (one column per pixel at the
+    /// track's own tempo) that fall on screen, and where they go.
     pub fn visible_columns(&self, column_count: usize) -> VisibleColumns {
-        let left_column = self.playhead_seconds * self.zoom.pixels_per_second() - self.centre();
+        let column_width = self.pixels_per_track_second() / self.zoom.pixels_per_second();
+        let left_column = self.seconds_on_screen().start * self.zoom.pixels_per_second();
+        let columns_across = f64::from(self.width) / column_width;
         let first = left_column.floor().max(0.0);
-        let last = (left_column + f64::from(self.width)).ceil().max(0.0);
+        let last = (left_column + columns_across).ceil().max(0.0);
         let start = (first as usize).min(column_count);
         let end = (last as usize).clamp(start, column_count);
         VisibleColumns {
             range: start..end,
-            first_x: (first - left_column) as f32,
+            first_x: ((first - left_column) * column_width) as f32,
+            column_width: column_width as f32,
         }
     }
 }
@@ -449,6 +478,7 @@ mod tests {
             width: 100.0,
             playhead_seconds: 1.0,
             zoom: Zoom::new(100.0),
+            tempo: 1.0,
         };
         let visible = view.visible_columns(1000);
         assert_eq!(visible.range, 50..150);
@@ -464,6 +494,7 @@ mod tests {
             width: 100.0,
             playhead_seconds: 1.0025,
             zoom: Zoom::new(100.0),
+            tempo: 1.0,
         };
         let visible = view.visible_columns(1000);
         assert_eq!(visible.range, 50..151);
@@ -476,6 +507,7 @@ mod tests {
             width: 100.0,
             playhead_seconds: 0.0,
             zoom: Zoom::new(100.0),
+            tempo: 1.0,
         };
         let visible = start.visible_columns(1000);
         assert_eq!(visible.range, 0..50);
@@ -491,6 +523,53 @@ mod tests {
             ..start
         };
         assert!(past_the_end.visible_columns(1000).range.is_empty());
+    }
+
+    /// The pixels between two beats of a grid at `bpm` played at `tempo`.
+    fn beat_spacing(bpm: f64, tempo: f64) -> f32 {
+        let view = LaneView {
+            width: 600.0,
+            playhead_seconds: 10.0,
+            zoom: Zoom::DEFAULT,
+            tempo,
+        };
+        let beat_seconds = 60.0 / bpm;
+        view.x_of(10.0 + beat_seconds) - view.x_of(10.0)
+    }
+
+    #[test]
+    fn two_decks_at_the_same_bpm_space_their_beats_alike() {
+        let at_own_tempo = beat_spacing(120.0, 1.0);
+        let pitched_down = beat_spacing(125.0, 120.0 / 125.0);
+        assert!((at_own_tempo - 75.0).abs() < 1e-3, "{at_own_tempo}");
+        assert!(
+            (pitched_down - at_own_tempo).abs() < 1e-3,
+            "a 125 BPM track slowed to 120 lines up with a 120 BPM one: {pitched_down}"
+        );
+    }
+
+    #[test]
+    fn a_faster_tempo_draws_the_beats_closer_together() {
+        let own = beat_spacing(122.0, 1.0);
+        let faster = beat_spacing(122.0, 1.08);
+        assert!((faster / own - 1.0 / 1.08).abs() < 1e-5, "{own} {faster}");
+    }
+
+    #[test]
+    fn columns_shrink_with_the_tempo_and_still_span_the_lane() {
+        let view = LaneView {
+            width: 100.0,
+            playhead_seconds: 1.0,
+            zoom: Zoom::new(100.0),
+            tempo: 1.25,
+        };
+        let visible = view.visible_columns(1000);
+        assert!((visible.column_width - 0.8).abs() < 1e-6);
+        assert_eq!(visible.range, 37..163);
+        let right_edge = visible.first_x + visible.range.len() as f32 * visible.column_width;
+        assert!(right_edge >= 100.0, "{right_edge}");
+        assert_eq!(view.x_of(1.0), 50.0);
+        assert_eq!(view.seconds_on_screen(), 0.375..1.625);
     }
 
     #[test]
@@ -509,6 +588,7 @@ mod tests {
             width: 300.0,
             playhead_seconds: 2.0,
             zoom: Zoom::new(100.0),
+            tempo: 1.0,
         };
         let shown = marks.within(view.seconds_on_screen());
         let seconds: Vec<f64> = shown.iter().map(|mark| mark.seconds).collect();
