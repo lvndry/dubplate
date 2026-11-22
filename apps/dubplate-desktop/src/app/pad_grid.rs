@@ -526,9 +526,7 @@ fn faces(app: &DubplateApp, deck: DeckId) -> Vec<PadFace> {
                         .into(),
                     detail: match (cue, shifted) {
                         (Some(_), true) => "delete".to_owned(),
-                        (cue, _) => cue
-                            .map(|(_, cue)| hot_cue_detail(cue))
-                            .unwrap_or_default(),
+                        (cue, _) => cue.map(|(_, cue)| hot_cue_detail(cue)).unwrap_or_default(),
                     }
                     .into(),
                     dot: cue.map(|(letter, cue)| theme::hot_cue_colour(letter, cue)),
