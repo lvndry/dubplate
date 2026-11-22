@@ -7,13 +7,15 @@ use dubplate_rekordbox::HotCuePad;
 use gpui::prelude::*;
 use gpui::{ClickEvent, Context, FontWeight, MouseButton, Pixels, Rgba, SharedString, div, px};
 
-use super::DubplateApp;
+use super::sampler::{SampleOption, sampler_slot};
+use super::{DubplateApp, knob};
 use crate::collection::clock;
 use crate::commands::{Command, LoopAction, PadPress, Press};
+use crate::controls::Control;
 use crate::fonts::MONO_FAMILY;
 use crate::pads::{
     BEAT_LOOP_LENGTHS, PAD_COUNT, beat_jump_beats, beats_label, key_pad_semitones, mode_buttons,
-    mode_is_playable, mode_label, pad_fx, semitones_label,
+    mode_label, pad_fx, semitones_label,
 };
 use crate::theme;
 
@@ -47,7 +49,13 @@ pub(super) fn render(
                 .justify_between()
                 .items_center()
                 .child(mode_tabs(app, deck, cx))
-                .child(loop_buttons(app, deck, cx)),
+                .map(|row| {
+                    if app.pad_modes[deck.index()] == PadMode::Sampler {
+                        row.child(sampler_controls(app, deck, cx))
+                    } else {
+                        row.child(loop_buttons(app, deck, cx))
+                    }
+                }),
         )
         .child(pads(app, deck, cx))
 }
@@ -106,6 +114,86 @@ fn mode_tabs(
         )
 }
 
+/// In Sampler mode: Loop, Gate and Sync for the slot last pressed, the sampler's CUE and its
+/// volume.
+fn sampler_controls(
+    app: &DubplateApp,
+    deck: DeckId,
+    cx: &mut Context<'_, DubplateApp>,
+) -> impl IntoElement + use<> {
+    let colour = theme::deck_colour(deck);
+    let selected = app.selected_sample(deck);
+    let cued = app.sampler_state().is_some_and(|state| state.cue);
+    let toggle = |id: &'static str, label: &'static str, on: bool, enabled: bool| {
+        div()
+            .id((id, deck.index()))
+            .flex()
+            .items_center()
+            .h(TAB_HEIGHT)
+            .px(px(8.0))
+            .rounded(px(5.0))
+            .font_family(MONO_FAMILY)
+            .text_size(theme::TINY_TEXT_SIZE)
+            .border_1()
+            .map(|button| {
+                if on {
+                    button.border_color(colour).text_color(theme::TEXT)
+                } else if enabled {
+                    button
+                        .border_color(theme::LINE)
+                        .text_color(theme::MUTED)
+                        .hover(|button| button.text_color(theme::TEXT))
+                } else {
+                    button
+                        .border_dashed()
+                        .border_color(theme::LINE)
+                        .text_color(theme::MUTED)
+                }
+            })
+            .when(enabled, |button| button.cursor_pointer())
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .child(label)
+    };
+    let option = |id, label, on: bool, option: SampleOption| {
+        toggle(id, label, on, selected.is_some()).on_click(cx.listener(
+            move |this, _: &ClickEvent, _, cx| this.toggle_sample_option(deck, option, cx),
+        ))
+    };
+    div()
+        .flex()
+        .items_center()
+        .gap(px(4.0))
+        .child(option(
+            "sample-loop",
+            "Loop",
+            selected.is_some_and(|setting| setting.looped),
+            SampleOption::Loop,
+        ))
+        .child(option(
+            "sample-gate",
+            "Gate",
+            selected.is_some_and(|setting| setting.gate),
+            SampleOption::Gate,
+        ))
+        .child(option(
+            "sample-sync",
+            "Sync",
+            selected.is_some_and(|setting| setting.sync && setting.bpm.is_some()),
+            SampleOption::Sync,
+        ))
+        .child(
+            toggle("sampler-cue", "Cue", cued, true)
+                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.toggle_sampler_cue(cx))),
+        )
+        .child(knob::render(
+            app,
+            Control::SamplerVolume,
+            TAB_HEIGHT,
+            colour,
+            cx,
+        ))
+}
+
 /// IN, OUT and the four-beat loop, lit while a loop is on.
 fn loop_buttons(
     app: &DubplateApp,
@@ -159,7 +247,8 @@ fn pads(
     deck: DeckId,
     cx: &mut Context<'_, DubplateApp>,
 ) -> impl IntoElement + use<> {
-    let loaded = app.deck(deck).visuals().is_some();
+    let loaded =
+        app.deck(deck).visuals().is_some() || app.pad_modes[deck.index()] == PadMode::Sampler;
     let faces = faces(app, deck);
     div()
         .flex()
@@ -238,6 +327,7 @@ fn faces(app: &DubplateApp, deck: DeckId) -> Vec<PadFace> {
         .loop_state(deck)
         .filter(|state| state.active)
         .and_then(|state| state.length);
+    let sampler = app.sampler_state();
     (0..PAD_COUNT)
         .map(|pad| match mode {
             PadMode::HotCue => {
@@ -309,18 +399,29 @@ fn faces(app: &DubplateApp, deck: DeckId) -> Vec<PadFace> {
                     playable: semitones.is_some(),
                 }
             }
-            PadMode::Sampler => PadFace {
-                title: (pad + 1).to_string().into(),
-                detail: if pad == 0 && !mode_is_playable(mode) {
-                    "coming soon"
-                } else {
-                    ""
+            PadMode::Sampler => {
+                let slot = sampler_slot(deck, pad);
+                let playing = sampler
+                    .as_ref()
+                    .and_then(|state| state.slots.get(slot).copied().flatten())
+                    .is_some_and(|slot_state| slot_state.playing);
+                match app.sample_title(slot) {
+                    Some(title) => PadFace {
+                        title,
+                        detail: format!("slot {}", slot + 1).into(),
+                        dot: playing.then(|| theme::deck_colour(deck)),
+                        lit: playing,
+                        playable: true,
+                    },
+                    None => PadFace {
+                        title: format!("Slot {}", slot + 1).into(),
+                        detail: "empty".into(),
+                        dot: None,
+                        lit: false,
+                        playable: true,
+                    },
                 }
-                .into(),
-                dot: None,
-                lit: false,
-                playable: false,
-            },
+            }
         })
         .collect()
 }
