@@ -307,6 +307,8 @@ pub enum Command {
     ChooseCfxColour(Option<SmartCfx>),
     /// SMART FADER: the crossfader moves a shared tempo and swaps the bass.
     ToggleSmartFader,
+    /// Play the track selected in the browser in the headphones, or stop it.
+    PreviewSelected,
     /// Load the track selected in the browser.
     LoadSelected(DeckId),
     /// Load the track playing on the other deck at the same place, as pressing LOAD twice does.

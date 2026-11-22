@@ -219,6 +219,7 @@ fn status(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoElem
                         )
                 })
         })
+        .children(preview_pill(app, cx))
         .child(record_button(app, cx))
         .child(header_switch(
             "quantize",
@@ -313,6 +314,35 @@ fn record_button(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl I
         }))
         .child(dot(colour))
         .child(label)
+}
+
+/// The track playing in the headphones from the library, with a click to stop it.
+fn preview_pill(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> Option<impl IntoElement> {
+    let index = app.previewed_track()?;
+    let title = app.collection()?.track(index).row.title.clone();
+    Some(
+        div()
+            .id("track-preview")
+            .accessible_button(format!("Stop previewing {title}"))
+            .flex()
+            .items_center()
+            .gap(px(6.0))
+            .max_w(px(220.0))
+            .h(px(28.0))
+            .px(px(10.0))
+            .rounded(theme::CONTROL_RADIUS)
+            .border_1()
+            .border_color(theme::LINE)
+            .cursor_pointer()
+            .hover(|pill| pill.bg(theme::RAISED))
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                this.stop_track_preview(cx);
+            }))
+            .child(dot(theme::OK))
+            .child(div().flex_none().text_color(theme::MUTED).child("Preview"))
+            .child(div().min_w_0().truncate().child(title)),
+    )
 }
 
 /// A switch in the header that applies to both decks, with a dot that is green while it is on.

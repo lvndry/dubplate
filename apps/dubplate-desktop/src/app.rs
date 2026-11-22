@@ -44,6 +44,7 @@ mod smart;
 mod stems;
 mod stems_strip;
 mod track_check;
+mod track_preview;
 mod waveforms;
 
 use std::cell::{Cell, RefCell};
@@ -122,6 +123,7 @@ use pad_fx_editor::PadFxEditing;
 use pads::{HeldPad, PadNote};
 use prepare::PrepareFocus;
 use relink::RelinkReview;
+use track_preview::TrackPreview;
 
 /// How far a pinch goes to zoom the lanes one level: a quarter more or less.
 const PINCH_STEP: f32 = 0.25;
@@ -259,6 +261,9 @@ pub struct DubplateApp {
     relink_review: Option<RelinkReview>,
     audition: Option<Audition>,
     audition_generation: u64,
+    /// The library track playing in the headphones.
+    track_preview: Option<TrackPreview>,
+    preview_generation: u64,
     analyses: TrackAnalyses,
     analysis_collecting: bool,
     stems: TrackStems,
@@ -524,6 +529,8 @@ impl DubplateApp {
             relink_review: None,
             audition: None,
             audition_generation: 0,
+            track_preview: None,
+            preview_generation: 0,
             analyses: TrackAnalyses::new(
                 analysis_queue.map(|queue| Box::new(queue) as Box<dyn TrackAnalyser>),
             ),
@@ -1083,6 +1090,7 @@ impl DubplateApp {
                     .is_some_and(|headphones| headphones.master_cue);
                 self.engine_command(cx, |controller| controller.set_master_cue(!cued));
             }
+            Command::PreviewSelected => self.toggle_track_preview(cx),
             Command::LoadSelected(deck) => {
                 if let Some(track) = self.browser.read(cx).selected() {
                     self.load(deck, LoadSource::Collection(track), cx);
