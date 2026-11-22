@@ -63,8 +63,29 @@ pub struct Settings {
     pub screen: Option<String>,
     /// The master and headphone levels.
     pub levels: LevelsSetting,
+    /// Where a track is cued when it loads.
+    pub auto_cue: AutoCueSetting,
     /// How the library's tracks are sorted on each screen.
     pub library_sort: LibrarySortSetting,
+}
+
+/// Where a track is cued when it loads, as rekordbox's Preferences > Controller > Deck.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AutoCueSetting {
+    /// Load Setting: cue at the track's earliest memory or hot cue when it has one.
+    pub saved_cues_first: bool,
+    /// Auto Cue: otherwise cue at the first sound, on the beat it starts with.
+    pub first_sound: bool,
+}
+
+impl Default for AutoCueSetting {
+    fn default() -> Self {
+        Self {
+            saved_cues_first: true,
+            first_sound: true,
+        }
+    }
 }
 
 /// The output levels as the DJ left them, so Dubplate never opens louder than it closed.
@@ -215,6 +236,7 @@ impl Default for Settings {
             sampler: SamplerSetting::default(),
             screen: None,
             levels: LevelsSetting::default(),
+            auto_cue: AutoCueSetting::default(),
             library_sort: LibrarySortSetting::default(),
         }
     }
@@ -347,6 +369,10 @@ mod tests {
                 master: 0.4,
                 headphones: 0.3,
                 headphone_mix: 0.7,
+            },
+            auto_cue: AutoCueSetting {
+                saved_cues_first: false,
+                first_sound: true,
             },
             library_sort: LibrarySortSetting {
                 prepare: Some(SortSetting {

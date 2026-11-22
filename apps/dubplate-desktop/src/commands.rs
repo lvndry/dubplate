@@ -80,6 +80,15 @@ pub enum SetEdit {
     MixOutAtPlayhead,
 }
 
+/// One of the two Auto Cue settings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AutoCueChoice {
+    /// Cue at the earliest memory or hot cue.
+    SavedCuesFirst,
+    /// Cue at the first sound.
+    FirstSound,
+}
+
 /// A press on one of a deck's performance pads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PadPress {
@@ -227,6 +236,8 @@ pub enum Command {
     ExportSet,
     /// Show or hide the list of shortcuts.
     ToggleHelp,
+    /// Switch one of the Auto Cue settings on or off.
+    ToggleAutoCue(AutoCueChoice),
     /// Show or hide the library's settings: the music folders and rekordbox.
     ToggleLibrary,
     /// Open the folder picker to add music folders to the library.

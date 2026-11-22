@@ -89,6 +89,8 @@ From then on the set is an ordinary rekordbox playlist, ready to export to a USB
 
 Cmd+L loads the set's first two tracks onto deck A and deck B at their mix-in cues; Cmd+2 opens Perform. A set track whose file is missing is never loaded: its deck keeps what it had, and a notice names the track with a **Relink** button that looks for the file. The same goes for any track loaded from the library.
 
+A track loaded from the library waits at its earliest memory or hot cue, or, when it has none, at its first sound on the beat it starts with, never at 0:00 in silence, as rekordbox's Auto Cue does. Settings > Decks switches either off.
+
 On the FLX4, everything works as in rekordbox's FLX4 layout:
 
 - PLAY, CUE (CDJ style), hot cue pads, TEMPO, BEAT SYNC (hold for tempo master, SHIFT for the tempo range), the jogs (touch to scratch, side to nudge, SHIFT to search).
