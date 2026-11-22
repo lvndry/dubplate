@@ -10,6 +10,7 @@ repository.workspace = true
 dubplate-engine = { version = "0.1.0", path = "../dubplate-engine" }
 dubplate-library = { version = "0.1.0", path = "../dubplate-library" }
 euphoria-core = { workspace = true, features = ["stems"] }
+hound = "3.5.1"
 libc = "0.2.191"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
