@@ -163,6 +163,11 @@ impl Settings {
         Ok(data_folder()?.analysis_cache())
     }
 
+    /// The file that keeps a second Dubplate from starting beside this one.
+    pub fn instance_lock_path() -> Result<PathBuf, SettingsError> {
+        Ok(data_folder()?.instance_lock())
+    }
+
     /// Where the scans of the music folders are kept between launches.
     pub fn library_cache_path() -> Result<PathBuf, SettingsError> {
         Ok(data_folder()?.library_cache())
