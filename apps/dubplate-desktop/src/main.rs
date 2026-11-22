@@ -3,6 +3,7 @@
 mod analysis;
 mod app;
 mod assets;
+mod audio_waveform;
 mod audition;
 mod browser;
 mod collection;
