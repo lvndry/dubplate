@@ -13,6 +13,7 @@ use gpui::{
 
 use super::DubplateApp;
 use super::prepare::{NextSuggestions, PrepareFocus, SetRow};
+use crate::audition::AUDITION_LENGTH;
 use crate::browser::DraggedTrack;
 use crate::energy::{HIGHEST_ENERGY, LOWEST_ENERGY, set_curve, target_energy};
 use crate::fonts::MONO_FAMILY;
@@ -78,7 +79,12 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
         let selected = app.set_selection == Some(row.position);
         list = list.child(track_row(row, selected, focused, &warnings, cx));
         if let Some(seam) = seams.get(row.position) {
-            list = list.child(seam_row(row, seam.as_ref(), &warnings));
+            let audition = app
+                .audition
+                .as_ref()
+                .filter(|audition| audition.after == row.position)
+                .map(|audition| audition.started.map(|started| started.elapsed()));
+            list = list.child(seam_row(row, seam.as_ref(), &warnings, audition, cx));
         }
     }
     div()
@@ -389,11 +395,17 @@ fn ready_badge(row: &SetRow) -> (String, Rgba) {
     (badge, colour)
 }
 
+/// The thin row between two set tracks: the key move and tempo step, the warnings, and the
+/// button that plays the seam in the headphones. `audition` is set while this seam is heard:
+/// `None` while its tracks open, then how long it has played.
 fn seam_row(
     row: &SetRow,
     seam: Option<&SeamSummary>,
     warnings: &[SetWarning],
+    audition: Option<Option<Duration>>,
+    cx: &mut Context<'_, DubplateApp>,
 ) -> impl IntoElement + use<> {
+    let position = row.position;
     let free = row.free_into_next;
     let shown: Vec<&SetWarning> = warnings
         .iter()
@@ -441,6 +453,35 @@ fn seam_row(
                 )
             }
         })
+        .child(
+            div()
+                .id(("seam-audition", position))
+                .flex_none()
+                .px(px(6.0))
+                .rounded(theme::SMALL_RADIUS)
+                .cursor_pointer()
+                .font_family(MONO_FAMILY)
+                .text_color(if audition.is_some() {
+                    theme::TEXT
+                } else {
+                    theme::MUTED
+                })
+                .when(audition.is_some(), |button| button.bg(theme::RAISED))
+                .hover(|button| button.bg(theme::RAISED).text_color(theme::TEXT))
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    this.toggle_audition_of(position, cx);
+                }))
+                .child(match audition {
+                    None => "\u{25b6} Listen".to_owned(),
+                    Some(None) => "Opening\u{2026}".to_owned(),
+                    Some(Some(elapsed)) => format!(
+                        "\u{25a0} {}/{}",
+                        running_time(elapsed),
+                        running_time(AUDITION_LENGTH)
+                    ),
+                }),
+        )
 }
 
 fn backups(app: &DubplateApp) -> impl IntoElement {
