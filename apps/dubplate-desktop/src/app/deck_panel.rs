@@ -4,7 +4,6 @@
 use std::rc::Rc;
 
 use dubplate_engine::{DeckId, SyncMode};
-
 use gpui::prelude::*;
 use gpui::{
     ClickEvent, Context, FontWeight, MouseButton, MouseDownEvent, Pixels, SharedString, canvas,
