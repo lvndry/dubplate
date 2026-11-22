@@ -17,6 +17,7 @@ mod mixer;
 mod pad_grid;
 mod pads;
 mod prepare;
+mod recording;
 mod set_panel;
 mod slider;
 mod track_check;
@@ -65,6 +66,7 @@ use crate::loading::{LoadRefusal, LoadSource, check_deck_free, check_file};
 use crate::meter::PeakMeter;
 use crate::pads::next_mode;
 use crate::prep::{Catalogue, GridCorrection, TrackCheck, TrackDetail};
+use crate::recording::Recording;
 use crate::set::SetEditor;
 use crate::settings::Settings;
 use crate::shortcuts::{Perform, WINDOW_CONTEXT};
@@ -179,6 +181,8 @@ pub struct DubplateApp {
     catalogue: Arc<Catalogue>,
     energy: EnergyRatings,
     energy_collecting: bool,
+    recording: Option<Recording>,
+    recording_skip_reported: bool,
     effect_menu: Option<EffectUnitId>,
     refocus_window: bool,
     effect_search: Entity<InputState>,
@@ -214,6 +218,10 @@ impl DubplateApp {
             });
         let mixer = MixerPositions::default();
         let effect_search = cx.new(|cx| InputState::new(window, cx).placeholder("Find an effect"));
+        let quit_subscription = cx.on_app_quit(|this: &mut Self, _| {
+            this.finish_recording_on_quit();
+            async {}
+        });
         let search_subscription = cx.subscribe(
             &effect_search,
             |this, input, event: &InputEvent, cx| match event {
@@ -309,6 +317,8 @@ impl DubplateApp {
                 energy_queue.map(|queue| Box::new(queue) as Box<dyn EnergyAnalyser>),
             ),
             energy_collecting: false,
+            recording: None,
+            recording_skip_reported: false,
             effect_menu: None,
             refocus_window: false,
             effect_search,
@@ -322,7 +332,7 @@ impl DubplateApp {
             focus_handle,
             last_frame: Instant::now(),
             frame_stats: FrameStats::from_environment().map(|stats| Rc::new(RefCell::new(stats))),
-            _subscriptions: vec![subscription, search_subscription],
+            _subscriptions: vec![subscription, search_subscription, quit_subscription],
         };
         app.restore_effect_units(cx);
         app.start_library(cx);
@@ -561,6 +571,7 @@ impl DubplateApp {
                 self.engine_command(cx, |controller| controller.set_headphone_cue(deck, !cued));
             }
             Command::TapTempo(deck) => self.tap_tempo(deck, cx),
+            Command::ToggleRecording => self.toggle_recording(cx),
             Command::ToggleMasterCue => {
                 let cued = self
                     .headphones()

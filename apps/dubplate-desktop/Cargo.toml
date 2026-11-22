@@ -20,6 +20,8 @@ dubplate-midi = { version = "0.1.0", path = "../../crates/dubplate-midi" }
 dubplate-prep = { version = "0.1.0", path = "../../crates/dubplate-prep" }
 dubplate-rekordbox = { version = "0.1.0", path = "../../crates/dubplate-rekordbox" }
 gpui = { version = "=0.9.1", package = "gpui-kit" }
+hound = "3.5.1"
+jiff = "1.0.2"
 serde = { version = "1.0.229", features = ["derive"] }
 thiserror = "2.0.21"
 toml = "1.2.2"
