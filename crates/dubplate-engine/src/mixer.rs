@@ -6,6 +6,7 @@ use rtrb::{Consumer, Producer};
 
 use crate::curves::{Ramp, channel_fader_gain, crossfader_gains};
 use crate::deck::{Deck, DeckId};
+use crate::denormals::FlushDenormals;
 use crate::effects::{EffectChange, EffectRack, EffectTarget, EffectUnitId};
 use crate::grid::BeatGrid;
 use crate::headphones::Headphones;
@@ -341,8 +342,10 @@ impl Renderer {
     /// Fills `output`, interleaved with `channel_count` channels, with the next frames of the
     /// mix. The master goes to the first two channels and, with four or more channels, the
     /// headphones to the third and fourth; any further channels are silent and a mono output
-    /// gets the sum of both sides at half level.
+    /// gets the sum of both sides at half level. Denormal numbers are flushed to zero while it
+    /// renders.
     pub fn render(&mut self, output: &mut [f32], channel_count: usize) {
+        let _denormals = FlushDenormals::new();
         let callback = self.begin_callback();
         let starved = self.render_frames(output, channel_count);
         self.end_callback(callback, output.len() / channel_count.max(1), starved);
