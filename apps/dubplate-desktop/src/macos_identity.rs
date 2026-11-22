@@ -6,7 +6,10 @@
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2::{AnyThread, ClassType, MainThreadMarker};
-use objc2_app_kit::{NSApplication, NSApplicationActivationOptions, NSImage, NSRunningApplication};
+use objc2_app_kit::{
+    NSApplication, NSApplicationActivationOptions, NSApplicationActivationPolicy, NSImage,
+    NSRunningApplication,
+};
 use objc2_foundation::{
     NSActivityOptions, NSBundle, NSData, NSMutableDictionary, NSObjectProtocol, NSProcessInfo,
     NSString,
@@ -60,6 +63,17 @@ pub fn show_dock_icon() {
     let application = NSApplication::sharedApplication(main_thread);
     // SAFETY: the image is a valid, retained `NSImage`, which is what the setter requires.
     unsafe { application.setApplicationIconImage(Some(&image)) };
+}
+
+/// Keeps this Dubplate out of the Dock, the app switcher and the menu bar, and never in front,
+/// for a copy running with offline devices beside the DJ's own. Does nothing off the main
+/// thread.
+pub fn stay_in_background() {
+    let Some(main_thread) = MainThreadMarker::new() else {
+        return;
+    };
+    NSApplication::sharedApplication(main_thread)
+        .setActivationPolicy(NSApplicationActivationPolicy::Accessory);
 }
 
 /// Brings the Dubplate running as `process_id` to the front, for a second launch that quits.
