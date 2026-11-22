@@ -2,7 +2,7 @@
 //! background analyser, and which tempo and key a track shows: rekordbox's for its own tracks,
 //! the analysis for the others.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -88,6 +88,7 @@ pub struct TrackAnalyses {
     found: HashMap<PathBuf, Arc<AudioAnalysis>>,
     waiting: HashMap<PathBuf, AnalysisPriority>,
     failed: HashMap<PathBuf, String>,
+    unconfirmed: HashSet<PathBuf>,
     revision: u64,
 }
 
@@ -96,12 +97,21 @@ pub type AnalysisAnswer = (PathBuf, Result<Arc<AudioAnalysis>, String>);
 
 impl TrackAnalyses {
     /// A source rescan asks the backend cache to validate file fingerprints again. Pending
-    /// answers from the old library are ignored, including answers already in flight.
+    /// answers from the old library are ignored, including answers already in flight. What was
+    /// found stays shown until its file's new answer replaces it, so the library's tempos and
+    /// keys never blank out while the cache confirms them.
     pub fn refresh(&mut self) {
         self.revision = self.revision.wrapping_add(1);
-        self.found.clear();
+        self.unconfirmed = self.found.keys().cloned().collect();
         self.failed.clear();
         self.waiting.clear();
+    }
+
+    /// Every analysis that has arrived, including those a rescan has yet to confirm.
+    pub fn found(&self) -> impl Iterator<Item = (&Path, &Arc<AudioAnalysis>)> {
+        self.found
+            .iter()
+            .map(|(path, analysis)| (path.as_path(), analysis))
     }
 
     /// An explicit load may retry a file repaired since its previous failure.
@@ -152,7 +162,8 @@ impl TrackAnalyses {
                 .waiting
                 .get(path)
                 .is_some_and(|waiting| *waiting <= priority);
-            if asked || self.found.contains_key(path) || self.failed.contains_key(path) {
+            let confirmed = self.found.contains_key(path) && !self.unconfirmed.contains(path);
+            if asked || confirmed || self.failed.contains_key(path) {
                 continue;
             }
             self.waiting.insert(path.to_path_buf(), priority);
@@ -175,6 +186,7 @@ impl TrackAnalyses {
                 continue;
             }
             self.waiting.remove(&answer.path);
+            self.unconfirmed.remove(&answer.path);
             let analysis = answer.outcome.map(Arc::new);
             match &analysis {
                 Ok(analysis) => {
@@ -377,6 +389,8 @@ mod tests {
         analyses.collect();
         analyser.requests.borrow_mut().clear();
         analyses.refresh();
+        assert_eq!(analyses.get(paths[0]).unwrap().bpm, Some(122.0));
+        assert_eq!(analyses.state(paths[1]), AnalysisState::Waiting);
         analyses.request(paths, AnalysisPriority::Library);
         assert_eq!(analyser.requests.borrow().len(), 2);
         analyser
@@ -385,11 +399,36 @@ mod tests {
             .push(answer("/a.mp3", Ok(analysis(Some(99.0), None, None))));
         assert!(analyses.collect().is_empty());
         assert_eq!(analyses.waiting(), 2);
+        assert_eq!(analyses.get(paths[0]).unwrap().bpm, Some(122.0));
         let mut fresh = answer("/a.mp3", Ok(analysis(Some(124.0), None, None)));
         fresh.revision = 1;
         analyser.answers.borrow_mut().push(fresh);
         assert_eq!(analyses.collect().len(), 1);
         assert_eq!(analyses.get(paths[0]).unwrap().bpm, Some(124.0));
+        analyser.requests.borrow_mut().clear();
+        analyses.request([paths[0]], AnalysisPriority::Library);
+        assert!(analyser.requests.borrow().is_empty());
+    }
+
+    #[test]
+    fn a_rescan_drops_an_analysis_once_its_file_fails() {
+        let analyser = Rc::new(Analyser::default());
+        let mut analyses = TrackAnalyses::new(Some(Box::new(Rc::clone(&analyser))));
+        let path = Path::new("/a.mp3");
+        analyses.request([path], AnalysisPriority::Library);
+        analyser
+            .answers
+            .borrow_mut()
+            .push(answer("/a.mp3", Ok(analysis(Some(122.0), None, None))));
+        analyses.collect();
+        analyses.refresh();
+        analyses.request([path], AnalysisPriority::Library);
+        let mut gone = answer("/a.mp3", Err("file is gone"));
+        gone.revision = 1;
+        analyser.answers.borrow_mut().push(gone);
+        analyses.collect();
+        assert_eq!(analyses.state(path), AnalysisState::Failed);
+        assert!(analyses.get(path).is_none());
     }
 
     #[test]

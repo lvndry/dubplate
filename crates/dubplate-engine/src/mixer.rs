@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{Ordering, fence};
 use std::time::{Duration, Instant};
 
 use rtrb::{Consumer, Producer};
@@ -451,11 +451,7 @@ impl Renderer {
             .process(headphones_left, headphones_right);
         raise_peak(&self.shared.headphone_peak, self.headphones.block.peak());
         let (left_channel, right_channel) = self.master_block.channels_mut();
-        for (left, right) in left_channel.iter_mut().zip(right_channel.iter_mut()) {
-            let gain = self.master_gain.next_value();
-            *left *= gain;
-            *right *= gain;
-        }
+        self.master_gain.apply(left_channel, right_channel);
         self.master_limiter.process(left_channel, right_channel);
         if let Some(recording) = &mut self.recording {
             recording.write(&self.master_block);
@@ -765,7 +761,8 @@ impl Renderer {
 
     fn publish_state(&self) {
         for (deck, shared) in self.decks.iter().zip(&self.shared.decks) {
-            shared.publication.fetch_add(1, Ordering::AcqRel);
+            shared.publication.fetch_add(1, Ordering::Relaxed);
+            fence(Ordering::Release);
             shared.loaded.store(deck.is_loaded(), Ordering::Relaxed);
             shared.playing.store(deck.is_playing(), Ordering::Relaxed);
             shared.position_seconds.store(deck.position_seconds());

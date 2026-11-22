@@ -24,7 +24,7 @@ Dubplate analyses every track in the background and keeps what it found for the 
 
 ## 2. Pick the sound card
 
-In Settings, choose **DDJ-FLX4** as the sound card so the master goes to the FLX4's master output and the headphones to its headphone jack. Turn the master down before the first track, then check the headphones with the channel CUE buttons.
+In Settings, choose **DDJ-FLX4** as the sound card so the master goes to the FLX4's master output and the headphones to its headphone jack. Turn the master down before the first track, then check the headphones with the channel CUE buttons. Dubplate remembers the master and headphone levels and the screen you were on, and opens no louder than it closed: if the FLX4's MASTER LEVEL knob reports a louder level when it connects, it waits until you turn it down through the level on screen, while turning it down always works at once.
 
 ## 3. Prepare the set
 
@@ -41,7 +41,7 @@ Cmd+1 opens Prepare: the library on the left, your set on the right.
 
 The **Next** panel suggests what to play after the selected set track, with the reason ("One step on the wheel · +1.6% · energy +2"), steered by the set's energy curve against its target. The target climbs from your library's calmer tracks to its most intense, so it fits how your music is rated. Each suggestion shows its Option key. Use Ctrl+Tab to reach Next, choose with the arrows and press Enter to insert one. When the refreshed suggestions arrive, they follow the track you just placed. Tab and Shift+Tab move through individual controls.
 
-Each set track has a **ready badge**: Ready, or what is missing (Grid unconfirmed, No mix-in cue, No mix-out cue, File missing, Key unknown). Each seam between two tracks shows the key move, the tempo step and any warning: key clash, a tempo gap over 6%, vocals meeting, an energy drop, or the same track twice.
+Each set track has a **ready badge**: Ready, or what is missing (Grid unconfirmed, No mix-in cue, No mix-out cue, File missing, Key unknown), the most urgent first, such as "File missing, and 3 more"; hover it to see every problem. A small **Y** beside it means Dubplate can propose the missing mix cues from the phrases: press Y to accept them. Each seam between two tracks shows the key move, the tempo step and any warning: key clash, a tempo gap over 6%, vocals meeting, an energy drop, or the same track twice.
 
 ### Dig through the library
 
@@ -52,7 +52,7 @@ Each set track has a **ready badge**: Ready, or what is missing (Grid unconfirme
 
 ### Check each track
 
-Select a set track to open its track check: the waveform with the beat grid, rekordbox's phrases and the mix cues. A track rekordbox never analysed shows Dubplate's grid, with no waveform or phrases under it, and its proposed cues come from the grid alone.
+Select a set track to open its track check: the waveform with the beat grid, rekordbox's phrases and the mix cues. A track rekordbox never analysed shows Dubplate's grid over a waveform drawn from its audio (a few seconds the first time; the deck and the track check share it, so each track is drawn once), with no phrases, and its proposed cues come from the grid alone.
 
 | Do | Key |
 | --- | --- |
@@ -96,6 +96,8 @@ On the FLX4, everything works as in rekordbox's FLX4 layout:
 - The pad modes: Hot Cue, Pad FX 1 and 2 (hold for rolls and effects), Beat Jump, Beat Loop, Sampler, Keyboard, Key Shift; the loop section IN, OUT, 4 BEAT/EXIT.
 - BEAT FX: FX SELECT, BEAT left and right, the CH SELECT lever, LEVEL/DEPTH and ON/OFF.
 - SMART CFX turns both filter knobs into the chosen preset (Space, Dub echo, Crush, Chop, Jet, Phase; SHIFT + SMART CFX steps through them). SMART FADER makes the crossfader glide a shared tempo and swap the bass for you; a LOW knob you turn takes over.
+
+When Smart Fader or sync has moved a deck's tempo away from where its TEMPO slider sits, the on-screen slider shows the tempo the deck plays, an amber outline where the fader waits, and "Move to take over": move the fader through the playing tempo and it takes over without a jump, as in rekordbox. The BEAT FX LEVEL/DEPTH knob shows an amber mark on the effect's level bar in the same case.
 
 Each deck's **overview** shows the whole track in rekordbox's three bands (lows blue, mids gold, highs white), so drops and breakdowns read at a glance, with the hot cues as coloured letters on top, memory cues as red triangles, the set's mix-in (green) and mix-out (lavender), saved loops in yellow, a tick every minute, and a strip along the bottom coloured by phrase (intro, build, drop, breakdown, outro). The last 30 seconds are tinted and the time left turns amber. Hover it to read the time and phrase under the pointer; click to jump there. The scrolling waveforms above show an active loop as a tinted band with its length, a loop waiting for RELOOP as an outline, and the slip shadow playhead while slipping.
 

@@ -64,6 +64,14 @@ impl DubplateApp {
         self.collect_analyses_while_waiting(cx);
     }
 
+    /// Gives a freshly built catalogue the analyses already made, while a rescan confirms them.
+    pub(super) fn restore_analyses(&mut self) {
+        let catalogue = Arc::make_mut(&mut self.catalogue);
+        for (path, analysis) in self.analyses.found() {
+            catalogue.set_analysis(path, analysis);
+        }
+    }
+
     /// Gives the track on `deck` the beat grid of Dubplate's analysis, when the track has no
     /// grid yet and its analysis has one. A grid from rekordbox or from the DJ's taps stays.
     pub(super) fn give_deck_analysed_grid(&mut self, deck: DeckId, cx: &mut Context<'_, Self>) {

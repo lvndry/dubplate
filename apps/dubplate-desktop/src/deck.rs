@@ -101,8 +101,12 @@ impl TrackVisuals {
     }
 
     /// Draws `zoomed` and `overview`, worked out after the track was loaded.
-    pub fn show_waveforms(&mut self, zoomed: ZoomedWaveform, overview: Option<OverviewWaveform>) {
-        self.zoomed = Some(Arc::new(zoomed));
+    pub fn show_waveforms(
+        &mut self,
+        zoomed: Arc<ZoomedWaveform>,
+        overview: Option<OverviewWaveform>,
+    ) {
+        self.zoomed = Some(zoomed);
         self.overview = overview.map(|waveform| Rc::new(RefCell::new(OverviewBars::new(waveform))));
     }
 }
@@ -212,7 +216,9 @@ pub fn prepare_track(
     })
 }
 
-/// Preserves every tempo segment and anchors beat zero at the first downbeat.
+/// Preserves every tempo segment and anchors beat zero at the first downbeat. A grid the engine
+/// cannot follow beat by beat, such as one with a beat out of order or at an impossible tempo,
+/// still gives the deck a steady grid at the downbeat's tempo rather than none at all.
 fn engine_beat_grid(grid: &BeatGrid) -> Option<dubplate_engine::BeatGrid> {
     let downbeat = grid
         .beats
@@ -227,7 +233,12 @@ fn engine_beat_grid(grid: &BeatGrid) -> Option<dubplate_engine::BeatGrid> {
             bpm: f64::from(beat.tempo_hundredths) / 100.0,
         })
         .collect();
-    dubplate_engine::BeatGrid::from_beats_with_downbeat(&beats, downbeat).ok()
+    dubplate_engine::BeatGrid::from_beats_with_downbeat(&beats, downbeat)
+        .or_else(|_| {
+            let anchor = beats.get(downbeat).ok_or(())?;
+            dubplate_engine::BeatGrid::new(anchor.bpm, anchor.seconds).map_err(|_| ())
+        })
+        .ok()
 }
 
 /// The letter of a deck, as printed on it.
@@ -480,6 +491,34 @@ mod tests {
         assert!((engine.bpm_at(3.0) - 100.0).abs() < 1e-8);
         assert!((engine.beat_at(0.5)).abs() < 1e-8);
         assert!((engine.beat_at(0.0) + 1.0).abs() < 1e-8);
+    }
+
+    #[test]
+    fn a_grid_with_a_beat_out_of_order_still_gives_a_steady_grid_at_the_downbeat() {
+        use dubplate_rekordbox::analysis::Beat;
+        let grid = BeatGrid {
+            beats: vec![
+                Beat {
+                    time_ms: 500,
+                    tempo_hundredths: 12000,
+                    beat_in_bar: 1,
+                },
+                Beat {
+                    time_ms: 1000,
+                    tempo_hundredths: 12000,
+                    beat_in_bar: 2,
+                },
+                Beat {
+                    time_ms: 1000,
+                    tempo_hundredths: 12000,
+                    beat_in_bar: 3,
+                },
+            ],
+        };
+        let engine = engine_beat_grid(&grid).unwrap();
+        assert!(!engine.has_tempo_changes());
+        assert!((engine.bpm() - 120.0).abs() < 1e-8);
+        assert!((engine.beat_at(0.5)).abs() < 1e-8);
     }
 
     #[test]
