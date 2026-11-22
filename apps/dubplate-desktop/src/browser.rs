@@ -17,7 +17,9 @@ use gpui::{
 };
 
 use crate::analysis::{AnalysisAnswer, AnalysisState, bpm_cell, energy_cell, key_cell};
-use crate::assets::{ARROW_DOWN_PATH, ARROW_UP_PATH, CLOSE_ICON_PATH, SEARCH_ICON_PATH};
+use crate::assets::{
+    ARROW_DOWN_PATH, ARROW_UP_PATH, CLOSE_ICON_PATH, PLAYED_ICON_PATH, SEARCH_ICON_PATH,
+};
 use crate::collection::{Collection, CollectionTrack, CrateIndex, CrateKind, TrackIndex};
 use crate::commands::{Direction, Mode};
 use crate::deck::deck_letter;
@@ -27,7 +29,9 @@ use crate::library_view::{
     BpmRange, Column, FilterReference, LibraryView, RangeEnd, Sort, SortDirection,
 };
 use crate::search::{SearchQuery, filter_tracks};
-use crate::search_filter::{SuggestionContext, TrackFacts, complete, suggestions};
+use crate::search_filter::{
+    SuggestionContext, TrackFacts, complete, suggestions, toggle_hide_played,
+};
 use crate::theme;
 use crate::tracklist::TracklistFormat;
 use crate::widgets::{Emphasis, InteractiveControl, button, tooltip};
@@ -564,12 +568,33 @@ impl Browser {
         self.scroll.scroll_to_item(0, ScrollStrategy::Top);
     }
 
-    /// Marks the tracks a deck played this session, which `played:` filters read.
+    /// Marks the tracks played this session, a minute or more on a deck as the history
+    /// counts them, which the rows show and `played:` filters read.
     pub fn set_played(&mut self, played: Arc<HashSet<PathBuf>>, cx: &mut Context<'_, Self>) {
         self.played = played;
         if self.query.has_filters() {
             self.refilter(cx);
         }
+        cx.notify();
+    }
+
+    /// Whether `entry` was played this session.
+    fn was_played(&self, entry: &CollectionTrack) -> bool {
+        entry
+            .track
+            .file_path
+            .as_ref()
+            .is_some_and(|path| self.played.contains(path))
+    }
+
+    /// Hide played: puts `played:no` in the search, or takes it out, so the chip and the
+    /// typed filter are one filter.
+    fn toggle_hide_played(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let text = toggle_hide_played(&self.search_text);
+        self.search_input
+            .update(cx, |input, cx| input.set_value(text.clone(), window, cx));
+        self.set_search_text(text, cx);
+        self.reveal_selection();
     }
 
     /// Puts a suggested filter in place of the word being typed, and keeps typing there.
@@ -595,11 +620,7 @@ impl Browser {
             bpm: BpmRange::tempo_of(&self.cell_text(entry, track, Column::Bpm)),
             key: Key::parse_file_key(&self.cell_text(entry, track, Column::Key)),
             energy: energy.trim().parse().ok(),
-            played: entry
-                .track
-                .file_path
-                .as_ref()
-                .is_some_and(|path| self.played.contains(path)),
+            played: self.was_played(entry),
             rating: entry.track.rating,
         }
     }
@@ -988,6 +1009,21 @@ impl Browser {
     }
 
     /// The quick filters above the tracks, and how many tracks they leave.
+    /// Hide played: only the tracks not played yet this session, as Engine DJ's match filter
+    /// offers; the same filter as typing `played:no`.
+    fn played_filter(&self, cx: &mut Context<'_, Self>) -> impl IntoElement + use<> {
+        let on = self.query.hides_played();
+        filter_chip("played-filter", "Hide played", on)
+            .tooltip(tooltip(if on {
+                "Show the tracks played this session again"
+            } else {
+                "Hide the tracks played for a minute or more this session (played:no)"
+            }))
+            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                this.toggle_hide_played(window, cx);
+            }))
+    }
+
     fn render_filters(&self, cx: &mut Context<'_, Self>) -> impl IntoElement + use<> {
         let count = if self.view.is_filtered() {
             format!("{} of {}", self.rows.len(), self.searched_count)
@@ -1006,6 +1042,7 @@ impl Browser {
             .border_color(theme::LINE)
             .child(self.bpm_filter(cx))
             .child(self.key_filter(cx))
+            .child(self.played_filter(cx))
             .child(div().flex_1())
             .child(
                 div()
@@ -1241,6 +1278,7 @@ impl Browser {
         let selected = self.selected == Some(track);
         let missing = self.missing.contains(&track);
         let in_set = self.in_set.contains(&track);
+        let played = self.was_played(entry);
         let dragged = DraggedTrack {
             track,
             title: entry.row.title.clone(),
@@ -1249,7 +1287,12 @@ impl Browser {
             .id(("track", position))
             .role(gpui::Role::Row)
             .aria_row_index(position + 2)
-            .aria_label(format!("{} by {}", entry.row.title, entry.row.artist))
+            .aria_label(format!(
+                "{} by {}{}",
+                entry.row.title,
+                entry.row.artist,
+                if played { ", played" } else { "" }
+            ))
             .aria_selected(selected)
             .aria_position_in_set(position + 1)
             .aria_size_of_set(self.rows.len())
@@ -1302,9 +1345,19 @@ impl Browser {
                                 .truncate()
                                 .min_w_0()
                                 .font_weight(gpui::FontWeight::MEDIUM)
+                                .when(played, |title| title.text_color(theme::PLAYED_TITLE))
                                 .when(missing, |title| title.text_color(theme::MUTED))
                                 .child(text),
-                        ),
+                        )
+                        .when(played, |cell| {
+                            cell.child(
+                                svg()
+                                    .path(PLAYED_ICON_PATH)
+                                    .size(px(12.0))
+                                    .flex_none()
+                                    .text_color(theme::MUTED),
+                            )
+                        }),
                     Column::Artist => cell
                         .text_color(theme::MUTED)
                         .child(div().truncate().min_w_0().child(text)),
