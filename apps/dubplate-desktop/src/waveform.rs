@@ -436,7 +436,48 @@ pub struct BeatMark {
     pub seconds: f64,
     /// Whether it starts a bar.
     pub downbeat: bool,
+    /// The bar it is in, 1 for the bar of the first downbeat and 0 before it.
+    pub bar: u32,
+    /// Where it falls in its bar, from 1, the downbeat, to 4.
+    pub beat_in_bar: u16,
 }
+
+/// Where a playhead is in the bars of a beat grid, as a CDJ's beat counter reads it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BeatPosition {
+    /// The bar, 1 for the bar of the first downbeat.
+    pub bar: u32,
+    /// The beat in the bar, from 1 to 4.
+    pub beat: u16,
+    /// How far the playhead is from this beat to the next, from 0.0 to 1.0.
+    pub fraction: f64,
+}
+
+impl BeatPosition {
+    /// The beats since the start of the bar, from 0.0 to just under 4.0.
+    fn beats_into_bar(self) -> f64 {
+        f64::from(self.beat.saturating_sub(1)) + self.fraction
+    }
+
+    /// How far these beats are ahead of `master`'s, in beats from -0.5 to 0.5: positive when
+    /// they come early. 0 when the two decks' beats land together.
+    pub fn phase_offset(self, master: Self) -> f64 {
+        let difference = self.fraction - master.fraction;
+        difference - difference.round()
+    }
+
+    /// How many whole beats this deck's downbeat is ahead of `master`'s, from -2 to 2, once
+    /// the beats are in phase: 0 when the bars line up.
+    pub fn bar_offset(self, master: Self) -> i32 {
+        let difference =
+            self.beats_into_bar() - master.beats_into_bar() - self.phase_offset(master);
+        let wrapped = difference - BEATS_PER_BAR * (difference / BEATS_PER_BAR).round();
+        wrapped.round() as i32
+    }
+}
+
+/// The beats in a bar of the grids rekordbox writes.
+const BEATS_PER_BAR: f64 = 4.0;
 
 /// A track's beat grid in seconds, for drawing.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -451,12 +492,37 @@ impl BeatMarks {
             marks: grid
                 .beats
                 .iter()
-                .map(|beat| BeatMark {
-                    seconds: f64::from(beat.time_ms) / 1000.0,
-                    downbeat: beat.is_downbeat(),
+                .scan(0_u32, |bar, beat| {
+                    if beat.is_downbeat() {
+                        *bar += 1;
+                    }
+                    Some(BeatMark {
+                        seconds: f64::from(beat.time_ms) / 1000.0,
+                        downbeat: beat.is_downbeat(),
+                        bar: *bar,
+                        beat_in_bar: beat.beat_in_bar,
+                    })
                 })
                 .collect(),
         }
+    }
+
+    /// Where `seconds` falls in the bars, between the first beat and the last; `None` outside.
+    pub fn position(&self, seconds: f64) -> Option<BeatPosition> {
+        let next = self.marks.partition_point(|mark| mark.seconds <= seconds);
+        let current = self.marks.get(next.checked_sub(1)?)?;
+        let following = self.marks.get(next)?;
+        let span = following.seconds - current.seconds;
+        let fraction = if span > 0.0 {
+            ((seconds - current.seconds) / span).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        Some(BeatPosition {
+            bar: current.bar,
+            beat: current.beat_in_bar,
+            fraction,
+        })
     }
 
     /// The beats between `range.start` and `range.end` seconds.
@@ -498,6 +564,8 @@ mod tests {
                 .map(|seconds| BeatMark {
                     seconds,
                     downbeat: false,
+                    bar: 0,
+                    beat_in_bar: 2,
                 })
                 .to_vec(),
         };
@@ -810,5 +878,64 @@ mod tests {
         let visible = view.visible_columns_of(10_000, Zoom::DEFAULT);
         assert!((visible.column_width - 1.0 / 3.0).abs() < 1e-6);
         assert_eq!(visible.range, 1350..1650);
+    }
+
+    fn grid_marks(bpm: f64, first_beat_ms: u32, beats: u16) -> BeatMarks {
+        let beat_ms = 60_000.0 / bpm;
+        let grid = BeatGrid {
+            beats: (0..beats)
+                .map(|index| Beat {
+                    beat_in_bar: index % 4 + 1,
+                    tempo_hundredths: (bpm * 100.0) as u16,
+                    time_ms: first_beat_ms + (f64::from(index) * beat_ms) as u32,
+                })
+                .collect(),
+        };
+        BeatMarks::from_grid(&grid)
+    }
+
+    #[test]
+    fn the_beat_counter_reads_bar_and_beat() {
+        let marks = grid_marks(120.0, 1000, 64);
+        assert_eq!(marks.position(0.5), None, "before the first beat");
+        let position = marks.position(1.0 + 4.5 * 0.5).unwrap();
+        assert_eq!((position.bar, position.beat), (2, 1));
+        assert!((position.fraction - 0.5).abs() < 1e-3);
+        assert_eq!(marks.position(99.0), None, "after the last beat");
+    }
+
+    #[test]
+    fn the_phase_meter_measures_beats_and_bars_between_two_decks() {
+        let master = BeatPosition {
+            bar: 9,
+            beat: 1,
+            fraction: 0.1,
+        };
+        let early = BeatPosition {
+            bar: 3,
+            beat: 1,
+            fraction: 0.2,
+        };
+        assert!((early.phase_offset(master) - 0.1).abs() < 1e-9);
+        assert_eq!(early.bar_offset(master), 0);
+        let late_across_the_beat = BeatPosition {
+            bar: 3,
+            beat: 4,
+            fraction: 0.95,
+        };
+        assert!((late_across_the_beat.phase_offset(master) + 0.15).abs() < 1e-9);
+        assert_eq!(late_across_the_beat.bar_offset(master), 0);
+        let two_beats_ahead = BeatPosition {
+            bar: 3,
+            beat: 3,
+            fraction: 0.1,
+        };
+        assert_eq!(two_beats_ahead.bar_offset(master).abs(), 2);
+        let one_beat_behind = BeatPosition {
+            bar: 3,
+            beat: 4,
+            fraction: 0.1,
+        };
+        assert_eq!(one_beat_behind.bar_offset(master), -1);
     }
 }
