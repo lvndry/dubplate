@@ -61,6 +61,11 @@ impl SlidingMinimum {
     }
 
     fn push(&mut self, value: f32) -> f32 {
+        // Expire before inserting: a full deque's next slot is its oldest live entry.
+        while self.count > 0 && self.pushed.wrapping_sub(self.indices[self.head]) >= self.length {
+            self.head = (self.head + 1) % self.length;
+            self.count -= 1;
+        }
         while self.count > 0 {
             let last = self.slot(self.count - 1);
             if self.values[last] >= value {
@@ -73,11 +78,7 @@ impl SlidingMinimum {
         self.values[back] = value;
         self.indices[back] = self.pushed;
         self.count += 1;
-        while self.indices[self.head] + self.length <= self.pushed {
-            self.head = (self.head + 1) % self.length;
-            self.count -= 1;
-        }
-        self.pushed += 1;
+        self.pushed = self.pushed.wrapping_add(1);
         self.values[self.head]
     }
 
@@ -237,6 +238,35 @@ mod tests {
         (left, limiter.latency_frames())
     }
 
+    #[test]
+    fn sliding_minimum_matches_a_reference_across_wraps_and_resets() {
+        for length in [1, 2, 3, 16, 73] {
+            let mut queue = SlidingMinimum::new(length);
+            let input: Vec<f32> = (0..1_000)
+                .map(|index| match index / 200 {
+                    0 => index as f32,
+                    1 => -(index as f32),
+                    2 => 0.5,
+                    _ => ((index * 7919) % 997) as f32 / 997.0,
+                })
+                .collect();
+            for _ in 0..2 {
+                for (index, value) in input.iter().copied().enumerate() {
+                    let expected = input[index.saturating_sub(length - 1)..=index]
+                        .iter()
+                        .copied()
+                        .fold(f32::INFINITY, f32::min);
+                    assert_eq!(
+                        queue.push(value),
+                        expected,
+                        "window {length}, frame {index}"
+                    );
+                    assert!(queue.count <= length);
+                }
+                queue.reset();
+            }
+        }
+    }
     #[test]
     fn music_under_the_ceiling_passes_untouched_only_delayed() {
         let input: Vec<f32> = (0..9_600)

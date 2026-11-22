@@ -22,6 +22,7 @@ use crate::prep::{TrackDetail, track_detail};
 use crate::shortcuts::GRID_NUDGE_MS;
 use crate::theme;
 use crate::waveform::BeatMarks;
+use crate::widgets::{InteractiveControl, adjusted_value};
 
 const LANE_HEIGHT: Pixels = px(64.0);
 const OVERVIEW_HEIGHT: Pixels = px(26.0);
@@ -268,6 +269,7 @@ fn controls(
         .child(
             div()
                 .id("confirm-grid")
+                .accessible_button("Confirm beat grid")
                 .flex()
                 .items_center()
                 .justify_center()
@@ -334,6 +336,7 @@ fn key_button(
 ) -> impl IntoElement + use<> {
     div()
         .id(id)
+        .accessible_button(label)
         .flex()
         .items_center()
         .justify_center()
@@ -464,6 +467,24 @@ fn overview(
     let playhead_f32 = playhead as f32;
     div()
         .id("check-overview")
+        .accessible_slider(
+            "Track check position",
+            (playhead / duration.max(1.0)) as f32,
+        )
+        .aria_orientation(gpui::Orientation::Horizontal)
+        .map(|element| {
+            crate::widgets::numeric_actions(element, cx, move |this, change, cx| {
+                let fraction = (this.check_cursor_seconds / duration.max(1.0)) as f32;
+                this.click_check_overview(change.apply(fraction), duration, cx);
+            })
+        })
+        .on_key_down(cx.listener(move |this, event, _, cx| {
+            let current = (playhead / duration.max(1.0)) as f32;
+            if let Some(fraction) = adjusted_value(event, current, 0.0) {
+                this.click_check_overview(fraction, duration, cx);
+                cx.stop_propagation();
+            }
+        }))
         .relative()
         .h(OVERVIEW_HEIGHT)
         .rounded(px(4.0))

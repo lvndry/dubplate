@@ -11,7 +11,8 @@ pub const GRID_NUDGE_MS: i32 = 5;
 
 /// The key context of the window. Keys that type text only count outside the search field.
 pub const WINDOW_CONTEXT: &str = "Dubplate";
-const OUTSIDE_TEXT_CONTEXT: &str = "Dubplate && !Input";
+const OUTSIDE_TEXT_CONTEXT: &str = "Dubplate && !Input && !Modal";
+const OUTSIDE_CONTROL_CONTEXT: &str = "Dubplate && !Input && !Control && !Modal";
 
 /// The action every shortcut sends: one [`Command`].
 #[derive(Debug, Clone, PartialEq, Action)]
@@ -23,6 +24,8 @@ pub struct Perform(pub Command);
 pub enum Scope {
     /// Anywhere in the window.
     Window,
+    /// Anywhere except a modal dialog.
+    OutsideModal,
     /// Outside the search field, where the key would type text.
     OutsideText,
 }
@@ -50,7 +53,14 @@ const fn anywhere(keystroke: &'static str, command: Command) -> Shortcut {
     Shortcut {
         keystroke,
         command,
-        scope: Scope::Window,
+        scope: match command {
+            Command::FocusSearch
+            | Command::SwitchMode(_)
+            | Command::LoadSet
+            | Command::ExportSet
+            | Command::AddMusicFolders => Scope::OutsideModal,
+            _ => Scope::Window,
+        },
     }
 }
 
@@ -124,8 +134,16 @@ pub const SHORTCUTS: [Shortcut; 76] = [
     outside_text(",", Command::EditSet(SetEdit::ShiftDownbeat(-1))),
     outside_text(".", Command::EditSet(SetEdit::ShiftDownbeat(1))),
     outside_text("cmd-z", Command::EditSet(SetEdit::Undo)),
-    outside_text("tab", Command::SwitchPrepareFocus(Direction::Down)),
-    outside_text("shift-tab", Command::SwitchPrepareFocus(Direction::Up)),
+    Shortcut {
+        keystroke: "ctrl-tab",
+        command: Command::SwitchPrepareFocus(Direction::Down),
+        scope: Scope::OutsideModal,
+    },
+    Shortcut {
+        keystroke: "ctrl-shift-tab",
+        command: Command::SwitchPrepareFocus(Direction::Up),
+        scope: Scope::OutsideModal,
+    },
     suggestion("alt-1", 0),
     suggestion("alt-2", 1),
     suggestion("alt-3", 2),
@@ -160,10 +178,7 @@ pub fn key_bindings() -> Vec<KeyBinding> {
     SHORTCUTS
         .iter()
         .flat_map(|shortcut| {
-            let context = match shortcut.scope {
-                Scope::Window => WINDOW_CONTEXT,
-                Scope::OutsideText => OUTSIDE_TEXT_CONTEXT,
-            };
+            let context = binding_context(shortcut);
             [
                 Some(shortcut.keystroke),
                 shifted_character(shortcut.keystroke),
@@ -175,6 +190,39 @@ pub fn key_bindings() -> Vec<KeyBinding> {
             })
         })
         .collect()
+}
+
+/// Focused controls keep their activation and editing keys, while non-conflicting DJ
+/// shortcuts (including pad digits and Option-digit suggestions) remain available.
+fn binding_context(shortcut: &Shortcut) -> &'static str {
+    match shortcut.scope {
+        Scope::Window => WINDOW_CONTEXT,
+        Scope::OutsideModal => "Dubplate && !Modal",
+        Scope::OutsideText => {
+            let key = shortcut
+                .keystroke
+                .rsplit('-')
+                .next()
+                .unwrap_or(shortcut.keystroke);
+            if matches!(
+                key,
+                "space"
+                    | "enter"
+                    | "left"
+                    | "right"
+                    | "up"
+                    | "down"
+                    | "home"
+                    | "end"
+                    | "backspace"
+                    | "tab"
+            ) {
+                OUTSIDE_CONTROL_CONTEXT
+            } else {
+                OUTSIDE_TEXT_CONTEXT
+            }
+        }
+    }
 }
 
 /// The character a shifted digit or symbol types on a US keyboard, which is the keystroke macOS
@@ -251,7 +299,10 @@ pub fn help_sections() -> Vec<HelpSection> {
             title: "Library",
             lines: vec![
                 line(&["up", "down"], "Select the previous / next track"),
-                line(&["/", "cmd-f"], "Search titles and artists"),
+                line(
+                    &["/", "cmd-f"],
+                    "Search titles, artists, genres, folders and comments",
+                ),
                 line(
                     &["shift-left", "shift-right"],
                     "Load the selected track on deck A / deck B",
@@ -272,7 +323,7 @@ pub fn help_sections() -> Vec<HelpSection> {
                 line(&["backspace", "cmd-z"], "Take out of the set / undo"),
                 line(&["b"], "Keep as a backup"),
                 line(
-                    &["tab", "shift-tab"],
+                    &["ctrl-tab", "ctrl-shift-tab"],
                     "Move to the library, the set and Next in turn / back",
                 ),
                 line(
@@ -426,6 +477,29 @@ mod tests {
                 assert_eq!(shortcut.scope, Scope::OutsideText, "{}", shortcut.keystroke);
             }
         }
+    }
+
+    #[test]
+    fn focused_controls_keep_editing_keys_and_leave_dj_shortcuts_available() {
+        for key in ["m", "c", "1", "shift-1", "alt-1"] {
+            let shortcut = SHORTCUTS
+                .iter()
+                .find(|shortcut| shortcut.keystroke == key)
+                .expect("shortcut exists");
+            assert_eq!(binding_context(shortcut), OUTSIDE_TEXT_CONTEXT, "{key}");
+        }
+        for key in ["space", "enter", "left", "shift-right", "up", "backspace"] {
+            let shortcut = SHORTCUTS
+                .iter()
+                .find(|shortcut| shortcut.keystroke == key)
+                .expect("shortcut exists");
+            assert_eq!(binding_context(shortcut), OUTSIDE_CONTROL_CONTEXT, "{key}");
+        }
+        assert!(
+            !SHORTCUTS
+                .iter()
+                .any(|shortcut| matches!(shortcut.keystroke, "tab" | "shift-tab"))
+        );
     }
 
     #[test]

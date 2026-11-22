@@ -1,4 +1,5 @@
-//! Type-to-search over titles and artists: every word typed must appear, in any order and case.
+//! Type-to-search over titles, artists, genres, the folders a track is filed in and comments:
+//! every word typed must appear, in any order and case.
 
 use crate::collection::{Collection, CrateIndex, TrackIndex};
 

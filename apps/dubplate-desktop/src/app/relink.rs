@@ -2,7 +2,7 @@
 //! looking for them among the library's files and then in a folder the DJ points at, applying
 //! sure matches at once and asking about the others, and the review card that does the asking.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -10,10 +10,12 @@ use dubplate_library::{
     LibraryTrack, MissingTrack, Relocation, RelocationConfidence, candidates_from_paths,
     find_relocations, search_folders_for,
 };
+use gpui::base::FocusTrapElement;
 use gpui::prelude::*;
 use gpui::{ClickEvent, Context, FontWeight, MouseButton, PathPromptOptions, div, px};
 
-use super::{DubplateApp, NoticePlace};
+use super::DubplateApp;
+use super::notice::NoticePlace;
 use crate::collection::TrackIndex;
 use crate::folder_picker::open_next_picker_in;
 use crate::relink::{Missing, with_relocations};
@@ -239,21 +241,17 @@ impl DubplateApp {
         }
         self.settings.library.relinks = with_relocations(&self.settings.library.relinks, accepted);
         self.save_settings(cx);
-        let mut problems = Vec::new();
-        if let Some(editor) = &mut self.set_editor {
-            for relocation in accepted {
-                if let Err(error) = editor.relink(&relocation.missing, &relocation.found) {
-                    problems.push(error.to_string());
-                }
-            }
-        }
-        if let Some(problem) = problems.into_iter().next() {
-            self.show_notice(
-                NoticePlace::Window,
-                format!("The set could not follow a relinked file: {problem}"),
-                cx,
-            );
-        }
+        let moves: HashMap<_, _> = accepted
+            .iter()
+            .map(|relocation| (relocation.missing.clone(), relocation.found.clone()))
+            .collect();
+        self.queue_set_edit(
+            move |editor| editor.follow_files(&moves),
+            |this, (), _| {
+                this.forget_track_checks();
+            },
+            cx,
+        );
         self.rebuild_collection(cx);
     }
 }
@@ -266,6 +264,14 @@ pub(super) fn render(
 ) -> impl IntoElement {
     let mut card = div()
         .id("relink-card")
+        .role(gpui::Role::Dialog)
+        .aria_label("Relink moved files")
+        .key_context("Modal")
+        .when(!app.library_open, |card| {
+            card.track_focus(&app.modal_focus)
+                .tab_group()
+                .tab_stop(false)
+        })
         .flex()
         .flex_col()
         .gap(px(12.0))
@@ -376,7 +382,7 @@ pub(super) fn render(
         .justify_center()
         .bg(theme::SCRIM)
         .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.close_relink_review(cx)))
-        .child(card)
+        .child(card.focus_trap("relink-focus-trap", &app.modal_focus))
 }
 
 /// The missing track as the library names it, `Title · Artist`, or its file's name when the

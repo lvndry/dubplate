@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use dubplate_engine::DeckId;
 
-use crate::collection::TrackIndex;
+use crate::collection::{CollectionTrack, TrackIndex};
 use crate::deck::deck_letter;
 
 /// The file types the engine plays.
@@ -32,6 +32,8 @@ pub enum LoadRefusal {
     NotAudio(String),
     /// The rekordbox library has not been read.
     LibraryNotReady,
+    /// The track's audio file is not where the library says, named by the track's title.
+    FileMissing(String),
 }
 
 impl fmt::Display for LoadRefusal {
@@ -47,6 +49,9 @@ impl fmt::Display for LoadRefusal {
                 "{name} is not an audio file Dubplate plays (MP3, M4A, AAC, FLAC, WAV, AIFF or Ogg)."
             ),
             Self::LibraryNotReady => formatter.write_str("The rekordbox library is not read yet."),
+            Self::FileMissing(title) => {
+                write!(formatter, "{title} was not loaded: its file is missing.")
+            }
         }
     }
 }
@@ -72,6 +77,16 @@ pub fn check_file(path: &Path) -> Result<(), LoadRefusal> {
             |name| name.to_string_lossy().into_owned(),
         );
         Err(LoadRefusal::NotAudio(name))
+    }
+}
+
+/// Checks that a library track's audio file is still there, so a deck never takes a track it
+/// cannot play.
+pub fn check_present(track: &CollectionTrack) -> Result<(), LoadRefusal> {
+    if track.track.file_path.as_deref().is_some_and(Path::is_file) {
+        Ok(())
+    } else {
+        Err(LoadRefusal::FileMissing(track.row.title.to_string()))
     }
 }
 
@@ -118,6 +133,21 @@ mod tests {
             refusal
                 .to_string()
                 .starts_with("cover.jpg is not an audio file")
+        );
+    }
+
+    #[test]
+    fn a_track_whose_file_is_gone_is_refused_by_title() {
+        let directory = tempfile::tempdir().unwrap();
+        let present = directory.path().join("Uthando.m4a");
+        std::fs::write(&present, b"audio").unwrap();
+        assert_eq!(check_present(&CollectionTrack::from_file(&present)), Ok(()));
+        let gone = CollectionTrack::from_file(&directory.path().join("Abalele.m4a"));
+        let refusal = check_present(&gone).unwrap_err();
+        assert_eq!(refusal, LoadRefusal::FileMissing("Abalele".to_owned()));
+        assert_eq!(
+            refusal.to_string(),
+            "Abalele was not loaded: its file is missing."
         );
     }
 
