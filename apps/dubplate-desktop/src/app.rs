@@ -26,6 +26,7 @@ mod prepare;
 mod recording;
 mod relink;
 mod sampler;
+mod script;
 mod set_panel;
 mod slider;
 mod smart;
@@ -67,6 +68,7 @@ use crate::deck::{
     Deck, DeckContent, GridSource, HotCues, LoadError, PreparedTrack, TrackVisuals, deck_letter,
     prepare_track,
 };
+use crate::devices::DeviceAccess;
 use crate::effects::{EffectUnitSetting, search, step_beat, step_effect};
 use crate::fonts::UI_FAMILY;
 use crate::frame_stats::FrameStats;
@@ -228,13 +230,15 @@ pub struct DubplateApp {
     focus_handle: FocusHandle,
     last_frame: Instant,
     frame_stats: Option<Rc<RefCell<FrameStats>>>,
+    /// Whether the sound cards and controllers may be opened.
+    devices: DeviceAccess,
     _subscriptions: Vec<Subscription>,
 }
 
 impl DubplateApp {
     /// Starts the audio engine, opens the browser and opens the library the DJ chose in the
     /// background.
-    pub fn new(window: &mut Window, cx: &mut Context<'_, Self>) -> Self {
+    pub fn new(devices: DeviceAccess, window: &mut Window, cx: &mut Context<'_, Self>) -> Self {
         let this = cx.weak_entity();
         window.on_window_should_close(cx, move |_, cx| {
             this.update(cx, |this, cx| this.request_quit(cx)).is_err()
@@ -314,17 +318,26 @@ impl DubplateApp {
             ..MixerPositions::default()
         });
         let mode = settings.screen();
-        let (engine, audio_problem) = audio::start_engine(&mixer, settings.audio_device.as_deref());
+        let (engine, audio_problem) =
+            audio::start_engine(&mixer, settings.audio_device.as_deref(), &devices);
         problems.extend(audio_problem);
-        let hardware = match Hardware::start() {
-            Ok((hardware, events)) => {
-                listen_to_controllers(events, window, cx);
-                Some(hardware)
+        let hardware = match &devices {
+            DeviceAccess::Offline { script } => {
+                if let Some(script) = script {
+                    script::listen(script.clone(), window, cx);
+                }
+                Some(Hardware::offline())
             }
-            Err(error) => {
-                problems.push(format!("Controllers cannot be used: {error}"));
-                None
-            }
+            DeviceAccess::Real => match Hardware::start() {
+                Ok((hardware, events)) => {
+                    listen_to_controllers(events, window, cx);
+                    Some(hardware)
+                }
+                Err(error) => {
+                    problems.push(format!("Controllers cannot be used: {error}"));
+                    None
+                }
+            },
         };
         keep_lights_moving(cx);
         let analysis_queue = Settings::analysis_cache_path()
@@ -417,6 +430,7 @@ impl DubplateApp {
             focus_handle,
             last_frame: Instant::now(),
             frame_stats: FrameStats::from_environment().map(|stats| Rc::new(RefCell::new(stats))),
+            devices,
             _subscriptions: vec![subscription, search_subscription, quit_subscription],
         };
         app.browser
