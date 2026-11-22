@@ -25,6 +25,10 @@ pub enum EngineError {
     #[error("the audio thread is not keeping up with commands; the command was dropped")]
     CommandQueueFull,
 
+    /// The audio thread has not published the latest control changes yet.
+    #[error("the deck is still applying a change; try again in a moment")]
+    DeckStatePending,
+
     /// A parameter was out of range or not a finite number.
     #[error("invalid {name}: {value}")]
     InvalidParameter {
