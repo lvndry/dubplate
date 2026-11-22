@@ -167,10 +167,22 @@ pub struct Collection {
 }
 
 impl Collection {
+    /// The collection without any relinked file.
+    #[cfg(test)]
+    pub fn build(rekordbox: Option<&RekordboxLibrary>, folders: &[FolderScan]) -> Self {
+        Self::build_relinked(rekordbox, folders, &HashMap::new())
+    }
+
     /// Builds the collection from rekordbox, when imported, and the scans of the music folders,
     /// in the order the DJ added them. A file in rekordbox and in a folder is listed once, as
     /// rekordbox's track with its cues and analysis; a file in two folders is listed once too.
-    pub fn build(rekordbox: Option<&RekordboxLibrary>, folders: &[FolderScan]) -> Self {
+    /// A rekordbox track whose file the DJ relinked plays from `relinks`' new place, which
+    /// Dubplate keeps itself: rekordbox's own library is never written.
+    pub fn build_relinked(
+        rekordbox: Option<&RekordboxLibrary>,
+        folders: &[FolderScan],
+        relinks: &HashMap<PathBuf, PathBuf>,
+    ) -> Self {
         let mut tracks: Vec<Arc<CollectionTrack>> = Vec::new();
         let mut crates = vec![Crate {
             name: "Collection".into(),
@@ -185,7 +197,13 @@ impl Collection {
             for cue in &rekordbox.cues {
                 cues_by_track.entry(&cue.track_id).or_default().push(cue);
             }
-            for track in &rekordbox.tracks {
+            for original in &rekordbox.tracks {
+                let mut track = original.clone();
+                if let Some(relinked) = track.file_path.as_ref().and_then(|path| relinks.get(path))
+                {
+                    track.file_path = Some(relinked.clone());
+                }
+                let track = &track;
                 let track_cues = cues_by_track
                     .get(track.id.as_str())
                     .map(Vec::as_slice)

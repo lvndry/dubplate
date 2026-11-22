@@ -60,6 +60,10 @@ pub enum BrowserEvent {
     AddMusicFolders,
     /// Make rekordbox's collection part of the library.
     ImportRekordbox,
+    /// Find the moved files of every missing track.
+    RelinkAll,
+    /// Find the moved file of one missing track.
+    Relink(TrackIndex),
 }
 
 /// Which side of the browser a controller's browse knob moves through, as rekordbox's tree view
@@ -106,6 +110,8 @@ pub struct Browser {
     selected: Option<TrackIndex>,
     pane: BrowserPane,
     in_set: Arc<HashSet<TrackIndex>>,
+    missing: Arc<HashSet<TrackIndex>>,
+    relinking: bool,
     energies: HashMap<PathBuf, Option<u8>>,
     energy_waiting: usize,
     energy_failed: usize,
@@ -142,6 +148,8 @@ impl Browser {
             selected: None,
             pane: BrowserPane::default(),
             in_set: Arc::default(),
+            missing: Arc::default(),
+            relinking: false,
             energies: HashMap::new(),
             energy_waiting: 0,
             energy_failed: 0,
@@ -208,6 +216,19 @@ impl Browser {
             self.energy_failed = failed;
             cx.notify();
         }
+    }
+
+    /// Marks the rekordbox tracks whose files are not where rekordbox says, and whether their
+    /// new places are being looked for.
+    pub fn set_missing(
+        &mut self,
+        missing: Arc<HashSet<TrackIndex>>,
+        relinking: bool,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.missing = missing;
+        self.relinking = relinking;
+        cx.notify();
     }
 
     /// The selected track.
@@ -416,6 +437,9 @@ impl Browser {
                     window.focus(&this.table_focus, cx);
                 }),
             )
+            .when(!self.missing.is_empty(), |table| {
+                table.child(missing_bar(self.missing.len(), self.relinking, cx))
+            })
             .child(header_row(energy_status(
                 self.energy_waiting,
                 self.energy_failed,
@@ -553,7 +577,15 @@ impl Browser {
                             .opacity(0.0)
                             .group_hover(ROW_GROUP, |style| style.opacity(1.0))
                     })
-                    .children(DeckId::ALL.map(|deck| load_button(position, track, deck, cx))),
+                    .map(|buttons| {
+                        if self.missing.contains(&track) {
+                            buttons.child(relink_button(position, track, cx))
+                        } else {
+                            buttons.children(
+                                DeckId::ALL.map(|deck| load_button(position, track, deck, cx)),
+                            )
+                        }
+                    }),
             )
     }
 }
@@ -683,6 +715,73 @@ fn load_button(
             cx.emit(BrowserEvent::Load { deck, track });
         }))
         .child(deck_letter(deck))
+}
+
+/// The quiet line above the tracks when rekordbox tracks have lost their files.
+fn missing_bar(count: usize, relinking: bool, cx: &mut Context<'_, Browser>) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_none()
+        .items_center()
+        .justify_between()
+        .gap(px(12.0))
+        .h(px(34.0))
+        .px(theme::GUTTER)
+        .border_b_1()
+        .border_color(theme::LINE)
+        .bg(theme::PANEL)
+        .text_size(theme::SMALL_TEXT_SIZE)
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(8.0))
+                .child(div().size(px(6.0)).rounded_full().bg(theme::ATTENTION))
+                .child(format!(
+                    "{count} file{} moved or missing since rekordbox last saw {}",
+                    if count == 1 { "" } else { "s" },
+                    if count == 1 { "it" } else { "them" }
+                )),
+        )
+        .child(if relinking {
+            div()
+                .text_color(theme::MUTED)
+                .child("Looking\u{2026}")
+                .into_any_element()
+        } else {
+            button("relink-all", "Relink", Emphasis::Secondary)
+                .on_click(cx.listener(|_, _: &ClickEvent, _, cx| {
+                    cx.emit(BrowserEvent::RelinkAll);
+                }))
+                .into_any_element()
+        })
+}
+
+/// Relink, in place of the load buttons on a track whose file is missing.
+fn relink_button(
+    position: usize,
+    track: TrackIndex,
+    cx: &mut Context<'_, Browser>,
+) -> impl IntoElement + use<> {
+    div()
+        .id(("relink", position))
+        .flex()
+        .items_center()
+        .h(px(22.0))
+        .px(px(6.0))
+        .rounded(px(5.0))
+        .border_1()
+        .border_color(theme::LINE)
+        .text_size(theme::TINY_TEXT_SIZE)
+        .text_color(theme::ATTENTION)
+        .cursor_pointer()
+        .hover(|button| button.bg(theme::RAISED))
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+            this.select(Some(track), cx);
+            cx.emit(BrowserEvent::Relink(track));
+        }))
+        .child("Relink")
 }
 
 /// The search field as drawn in the header.

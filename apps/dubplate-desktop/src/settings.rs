@@ -59,6 +59,19 @@ pub struct Settings {
     pub smart_cfx_preset: Option<String>,
     /// The sampler's volume and the sample in each slot.
     pub sampler: SamplerSetting,
+    /// The new places of rekordbox tracks whose files moved, which the collection plays from
+    /// instead of where rekordbox says. rekordbox itself is never written.
+    pub relinks: Vec<RelinkSetting>,
+}
+
+/// A rekordbox track's file, found at a new place.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RelinkSetting {
+    /// Where rekordbox says the file is.
+    pub from: PathBuf,
+    /// Where it is now.
+    pub to: PathBuf,
 }
 
 /// The sampler as the DJ left it.
@@ -112,6 +125,7 @@ impl Default for Settings {
             effect_units: Vec::new(),
             smart_cfx_preset: None,
             sampler: SamplerSetting::default(),
+            relinks: Vec::new(),
         }
     }
 }
@@ -214,6 +228,10 @@ mod tests {
                     sync: false,
                 }],
             },
+            relinks: vec![RelinkSetting {
+                from: PathBuf::from("/Music/Old/Track.m4a"),
+                to: PathBuf::from("/Music/New/Track.m4a"),
+            }],
         };
         settings.save(&path).unwrap();
         assert_eq!(Settings::load(&path).unwrap(), settings);

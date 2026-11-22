@@ -241,6 +241,74 @@ impl SetEditor {
         Ok(())
     }
 
+    /// Points the set's entries and seams that name the file `from` at its new place `to`, as
+    /// one step to undo.
+    pub fn relink(&mut self, from: &Path, to: &Path) -> Result<(), StoreError> {
+        let renamed = |path: &PathBuf| {
+            if path == from {
+                to.to_path_buf()
+            } else {
+                path.clone()
+            }
+        };
+        let main: Vec<(usize, SetEntry)> = self
+            .tracks()
+            .into_iter()
+            .enumerate()
+            .filter(|(_, entry)| entry.track_path == from)
+            .map(|(position, entry)| {
+                (
+                    position,
+                    SetEntry {
+                        track_path: to.to_path_buf(),
+                        ..entry.clone()
+                    },
+                )
+            })
+            .collect();
+        let backups: Vec<(usize, SetEntry)> = self
+            .backups()
+            .into_iter()
+            .enumerate()
+            .filter(|(_, entry)| entry.track_path == from)
+            .map(|(position, entry)| {
+                (
+                    position,
+                    SetEntry {
+                        track_path: to.to_path_buf(),
+                        ..entry.clone()
+                    },
+                )
+            })
+            .collect();
+        let seams: Vec<Seam> = self
+            .set
+            .seams
+            .iter()
+            .filter(|seam| seam.from_track_path == from || seam.to_track_path == from)
+            .map(|seam| Seam {
+                from_track_path: renamed(&seam.from_track_path),
+                to_track_path: renamed(&seam.to_track_path),
+                ..seam.clone()
+            })
+            .collect();
+        if main.is_empty() && backups.is_empty() && seams.is_empty() {
+            return Ok(());
+        }
+        self.edit(|store, id| {
+            for (position, entry) in main {
+                store.update_entry(id, SetList::Main, position, entry)?;
+            }
+            for (position, entry) in backups {
+                store.update_entry(id, SetList::Backups, position, entry)?;
+            }
+            for seam in seams {
+                store.set_seam(id, seam)?;
+            }
+            Ok(())
+        })
+    }
+
     /// Keeps a track as a backup, or stops keeping it.
     pub fn toggle_backup(&mut self, track: SetTrackRef) -> Result<(), StoreError> {
         let backups = self.backups();
@@ -359,6 +427,25 @@ mod tests {
 
     fn editor(directory: &tempfile::TempDir) -> SetEditor {
         SetEditor::open(&directory.path().join("sets.sqlite")).unwrap()
+    }
+
+    #[test]
+    fn a_relinked_file_keeps_its_place_its_cues_and_its_backup_in_one_undo() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut editor = editor(&directory);
+        editor.add(track("a")).unwrap();
+        editor.add(track("b")).unwrap();
+        editor.set_mix_in(1, 4_000).unwrap();
+        editor.toggle_backup(track("b")).unwrap();
+        let from = PathBuf::from("/Music/b.mp3");
+        let to = PathBuf::from("/Elsewhere/b.mp3");
+        editor.relink(&from, &to).unwrap();
+        assert_eq!(editor.tracks()[1].track_path, to);
+        assert_eq!(editor.tracks()[1].mix_in_ms, Some(4_000));
+        assert_eq!(editor.backups()[0].track_path, to);
+        assert_eq!(editor.position(&to), Some(1));
+        editor.undo().unwrap();
+        assert_eq!(editor.tracks()[1].track_path, from);
     }
 
     #[test]
