@@ -4,7 +4,7 @@ use crate::keylock::{KeyLock, KeyLockBlock};
 use crate::mixer::RetireQueue;
 use crate::processor::StereoBlock;
 use crate::track::{Track, TrackBuffer};
-use crate::voice::Voice;
+use crate::voice::{UNITY_STEM_GAINS, Voice};
 
 /// The longest a preview plays before it stops itself, in seconds.
 pub const MAX_PREVIEW_SECONDS: f64 = 30.0;
@@ -30,14 +30,15 @@ impl std::fmt::Debug for PreviewTrack {
     }
 }
 
-/// A seam to audition in the headphones before playing it: two tracks overlapping as they
-/// will in the mix.
+/// A track or a seam to hear in the headphones before playing it: one track, or two
+/// overlapping as they will in the mix.
 #[derive(Debug, Clone)]
 pub struct Preview {
-    /// The outgoing track, from its own start position.
+    /// The track, or the outgoing track of a seam, from its own start position.
     pub first: PreviewTrack,
-    /// The incoming track, which comes in `second_offset_seconds` after the preview starts.
-    pub second: PreviewTrack,
+    /// The incoming track of a seam, which comes in `second_offset_seconds` after the preview
+    /// starts; `None` to hear the first track alone.
+    pub second: Option<PreviewTrack>,
     /// When the second track comes in, in seconds after the preview starts.
     pub second_offset_seconds: f64,
     /// Plays both tracks at their tempos without changing their pitch, as key lock does.
@@ -55,7 +56,7 @@ pub struct PreviewState {
 
 /// A preview as the audio thread receives it: tracks and positions in frames.
 pub(crate) struct PreviewPlan {
-    pub(crate) tracks: [PlannedTrack; 2],
+    pub(crate) tracks: [Option<PlannedTrack>; 2],
     pub(crate) second_offset_seconds: f64,
     pub(crate) key_lock: bool,
 }
@@ -74,7 +75,10 @@ impl PreviewPlan {
             tempo: preview_track.tempo,
         };
         Self {
-            tracks: [planned(&preview.first), planned(&preview.second)],
+            tracks: [
+                Some(planned(&preview.first)),
+                preview.second.as_ref().map(planned),
+            ],
             second_offset_seconds: preview.second_offset_seconds,
             key_lock: preview.key_lock,
         }
@@ -152,6 +156,13 @@ impl PreviewBus {
         for ((preview_voice, planned), starts_at_frame) in
             self.voices.iter_mut().zip([first, second]).zip(starts)
         {
+            let Some(planned) = planned else {
+                if let Some(previous) = preview_voice.voice.track.take() {
+                    retire.track(previous);
+                }
+                preview_voice.finished = true;
+                continue;
+            };
             let source_rate = f64::from(planned.track.sample_rate());
             let previous = preview_voice.voice.track.replace(planned.track);
             if let Some(previous) = previous {
@@ -206,6 +217,7 @@ impl PreviewBus {
                     frames: active,
                     unit_step,
                     active_loop: None,
+                    stems: false,
                 },
                 retire,
                 starved,
@@ -222,14 +234,20 @@ impl PreviewBus {
                         index,
                         &preview_voice.voice,
                         step,
+                        &UNITY_STEM_GAINS,
                         starved,
                     )
                 } else if gain > 0.0 {
-                    preview_voice.voice.read_playhead(step, starved)
+                    preview_voice
+                        .voice
+                        .read_playhead(step, &UNITY_STEM_GAINS, starved)
                 } else {
                     (0.0, 0.0)
                 };
-                let (tail_left, tail_right) = preview_voice.voice.next_tails(retire, starved);
+                let (tail_left, tail_right) =
+                    preview_voice
+                        .voice
+                        .next_tails(&UNITY_STEM_GAINS, retire, starved);
                 *left += playhead_left * gain + tail_left;
                 *right += playhead_right * gain + tail_right;
                 if running && !preview_voice.finished {

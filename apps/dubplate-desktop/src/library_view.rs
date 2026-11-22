@@ -26,6 +26,10 @@ pub enum Column {
     Key,
     /// The energy, from 1 to 10.
     Energy,
+    /// How the track mixes after the tempo master's, ranked as the Next suggestions are.
+    Match,
+    /// Whether the track's stems are separated, being separated or not asked for.
+    Stems,
     /// The length.
     Time,
     /// rekordbox or the music folder.
@@ -34,13 +38,15 @@ pub enum Column {
 
 impl Column {
     /// Every column, in the table's order.
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 10] = [
         Self::Title,
         Self::Artist,
         Self::Genre,
         Self::Bpm,
         Self::Key,
         Self::Energy,
+        Self::Match,
+        Self::Stems,
         Self::Time,
         Self::Source,
     ];
@@ -54,6 +60,8 @@ impl Column {
             Self::Bpm => "BPM",
             Self::Key => "Key",
             Self::Energy => "Energy",
+            Self::Match => "Match",
+            Self::Stems => "Stems",
             Self::Time => "Time",
             Self::Source => "Source",
         }
@@ -68,6 +76,8 @@ impl Column {
             Self::Bpm => "bpm",
             Self::Key => "key",
             Self::Energy => "energy",
+            Self::Match => "match",
+            Self::Stems => "stems",
             Self::Time => "time",
             Self::Source => "source",
         }
@@ -85,10 +95,10 @@ impl Column {
             return None;
         }
         match self {
-            Self::Title | Self::Artist | Self::Genre | Self::Source => {
+            Self::Title | Self::Artist | Self::Genre | Self::Stems | Self::Source => {
                 Some(CellValue::Text(text.to_lowercase()))
             }
-            Self::Bpm | Self::Energy => text
+            Self::Bpm | Self::Energy | Self::Match => text
                 .parse::<f64>()
                 .ok()
                 .filter(|number| number.is_finite())
@@ -343,6 +353,8 @@ pub struct LibraryView {
     bpm_range: Option<BpmRange>,
     key_filter: bool,
     reference: Option<FilterReference>,
+    match_filter: bool,
+    has_match_reference: bool,
 }
 
 impl LibraryView {
@@ -411,9 +423,28 @@ impl LibraryView {
         self.key_filter && key_changed
     }
 
+    /// Turns the Matches master filter on or off. It only narrows once there is a track to
+    /// match.
+    pub fn toggle_match_filter(&mut self) {
+        self.match_filter = !self.match_filter;
+    }
+
+    /// Whether the Matches master filter narrows the tracks.
+    pub fn match_filter_on(&self) -> bool {
+        self.match_filter && self.has_match_reference
+    }
+
+    /// Says whether the Match column has a track to match against. Returns whether the tracks
+    /// kept may change.
+    pub fn set_match_reference(&mut self, has_reference: bool) -> bool {
+        let changed = self.has_match_reference != has_reference;
+        self.has_match_reference = has_reference;
+        changed && self.match_filter
+    }
+
     /// Whether a filter narrows the tracks.
     pub fn is_filtered(&self) -> bool {
-        self.bpm_range.is_some() || self.active_key_filter().is_some()
+        self.bpm_range.is_some() || self.active_key_filter().is_some() || self.match_filter_on()
     }
 
     fn active_key_filter(&self) -> Option<&FilterReference> {
@@ -431,11 +462,13 @@ impl LibraryView {
         cell: impl Fn(Row, Column) -> SharedString,
     ) {
         let key_filter = self.active_key_filter();
-        if self.bpm_range.is_some() || key_filter.is_some() {
+        let match_filter = self.match_filter_on();
+        if self.is_filtered() {
             rows.retain(|row| {
                 self.bpm_range
                     .is_none_or(|range| range.keeps(&cell(*row, Column::Bpm)))
                     && key_filter.is_none_or(|reference| reference.keeps(&cell(*row, Column::Key)))
+                    && (!match_filter || !cell(*row, Column::Match).is_empty())
             });
         }
         if let Some(sort) = self.sort(screen) {
@@ -574,6 +607,38 @@ mod tests {
             }
         );
         assert_eq!(BpmRange::around(Some(300.0)).highest, 220);
+    }
+
+    #[test]
+    fn sorting_by_match_ranks_the_suggestions_and_the_filter_keeps_only_them() {
+        let ranks = ["", "2", "1", ""];
+        let cell = |row: usize, column: Column| -> SharedString {
+            match column {
+                Column::Match => ranks[row].into(),
+                _ => SharedString::default(),
+            }
+        };
+        let mut view = LibraryView::default();
+        view.set_sort(
+            Mode::Perform,
+            Some(Sort {
+                column: Column::Match,
+                direction: SortDirection::Ascending,
+            }),
+        );
+        let mut ranked: Vec<usize> = (0..ranks.len()).collect();
+        view.apply(Mode::Perform, &mut ranked, cell);
+        assert_eq!(
+            ranked,
+            [2, 1, 0, 3],
+            "best match first, the rest in the crate's order"
+        );
+        view.toggle_match_filter();
+        assert!(!view.is_filtered(), "nothing to match against yet");
+        assert!(view.set_match_reference(true));
+        let mut matching: Vec<usize> = (0..ranks.len()).collect();
+        view.apply(Mode::Perform, &mut matching, cell);
+        assert_eq!(matching, [2, 1]);
     }
 
     #[test]

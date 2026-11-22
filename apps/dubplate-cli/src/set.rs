@@ -1,16 +1,18 @@
 //! `dubplate set`: the sets prepared in Dubplate, and their export to rekordbox as a rekordbox
 //! XML file. rekordbox's own files are only ever read, from a copy.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
 use clap::Subcommand;
 use dubplate_library::{DataFolder, FolderScan, LibraryCache, LibrarySettings};
 use dubplate_prep::{
-    ExportLibrary, REKORDBOX_IMPORT_STEPS, RekordboxCollection, Set, SetStore,
+    ExportLibrary, REKORDBOX_IMPORT_STEPS, RekordboxCollection, Set, SetStore, TrackIdentity,
     default_export_folder, export_file_name,
 };
-use dubplate_rekordbox::{Cue, DatabaseKey, Library, Track};
+use dubplate_rekordbox::{Cue, DatabaseKey, Library, Track, TrackCues};
 
 use crate::master_db_or_default;
 
@@ -19,8 +21,9 @@ pub(crate) enum SetCommand {
     /// List the sets prepared in Dubplate.
     List,
     /// Write a set to a rekordbox XML file for rekordbox to import: the set as a playlist, each
-    /// track with its corrected beat grid, its mix-in and mix-out as memory cues, and the cues
-    /// rekordbox already had. rekordbox's own files are never changed.
+    /// track with its corrected beat grid, its mix-in and mix-out as memory cues, and its cues:
+    /// the ones made in Dubplate, else the ones rekordbox already had. rekordbox's own files are
+    /// never changed.
     Export {
         /// The set's name.
         name: String,
@@ -40,7 +43,7 @@ pub(crate) fn run(command: SetCommand) -> Result<()> {
     }
 }
 
-fn data_folder() -> Result<DataFolder> {
+pub(crate) fn data_folder() -> Result<DataFolder> {
     DataFolder::for_user().context("this system has no configuration directory for Dubplate")
 }
 
@@ -120,29 +123,65 @@ impl RekordboxData {
     }
 }
 
+/// Everything a set's export reads: the set, the cues kept in Dubplate, the music folders'
+/// scans, the relinks and, when the set uses it, rekordbox's collection.
+pub(crate) struct SetSources {
+    pub(crate) set: Set,
+    track_cues: HashMap<TrackIdentity, Arc<TrackCues>>,
+    scans: Vec<FolderScan>,
+    relinks: HashMap<PathBuf, PathBuf>,
+    rekordbox: Option<RekordboxData>,
+}
+
+impl SetSources {
+    /// Reads the set named `name` and what its export needs; `library` is rekordbox's
+    /// master.db, rekordbox's usual one when `None`.
+    pub(crate) fn load(name: &str, library: Option<PathBuf>) -> Result<Self> {
+        let data = data_folder()?;
+        let store = open_sets(&data)?;
+        let set = find_set(&store, name)?;
+        let track_cues = store
+            .track_cues()?
+            .into_iter()
+            .map(|(identity, cues)| (identity, Arc::new(cues)))
+            .collect();
+        let settings = LibrarySettings::load(&data.settings())?;
+        let scans = LibraryCache::load(&data.library_cache())
+            .scans
+            .into_iter()
+            .filter(|scan| settings.music_folders.contains(&scan.folder))
+            .collect();
+        let uses_rekordbox = settings.import_rekordbox
+            || set.entries.iter().any(|entry| entry.rekordbox_id.is_some());
+        let rekordbox = if uses_rekordbox {
+            Some(RekordboxData::read(&master_db_or_default(library)?)?)
+        } else {
+            None
+        };
+        Ok(Self {
+            set,
+            track_cues,
+            scans,
+            relinks: settings.relink_map(),
+            rekordbox,
+        })
+    }
+
+    /// The set's tracks as the exports find them.
+    pub(crate) fn export_library(&self) -> ExportLibrary<'_> {
+        ExportLibrary::new(
+            self.rekordbox.as_ref().map(RekordboxData::collection),
+            &self.scans,
+            &self.relinks,
+        )
+        .with_track_cues(&self.track_cues)
+    }
+}
+
 fn export(name: &str, xml: Option<PathBuf>, library: Option<PathBuf>) -> Result<()> {
-    let data = data_folder()?;
-    let set = find_set(&open_sets(&data)?, name)?;
-    let settings = LibrarySettings::load(&data.settings())?;
-    let scans: Vec<FolderScan> = LibraryCache::load(&data.library_cache())
-        .scans
-        .into_iter()
-        .filter(|scan| settings.music_folders.contains(&scan.folder))
-        .collect();
-    let relinks = settings.relink_map();
-    let uses_rekordbox =
-        settings.import_rekordbox || set.entries.iter().any(|entry| entry.rekordbox_id.is_some());
-    let rekordbox = if uses_rekordbox {
-        Some(RekordboxData::read(&master_db_or_default(library)?)?)
-    } else {
-        None
-    };
-    let export = ExportLibrary::new(
-        rekordbox.as_ref().map(RekordboxData::collection),
-        &scans,
-        &relinks,
-    )
-    .export(&set);
+    let sources = SetSources::load(name, library)?;
+    let set = &sources.set;
+    let export = sources.export_library().export(set);
     let path = match xml {
         Some(path) => path,
         None => default_export_folder()

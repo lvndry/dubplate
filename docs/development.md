@@ -25,12 +25,40 @@ Pick a crate on the left, type in the search field to find a track by title or a
 | Play or pause | Space | ⇧ Space |
 | Cue | C | ⇧ C |
 | Hot cues A to H | 1 to 8 | ⇧ 1 to ⇧ 8 |
+| Previous / next memory cue | H / J | ⇧ H / ⇧ J |
+| Keep / delete a memory cue | N / ⌥ N | ⇧ N / ⇧ ⌥ N |
 | Tempo down / up 0.1% | - / = | ⇧ - / ⇧ = |
 | Load the selected track | ⇧ ← | ⇧ → |
 
 ← and → move the crossfader, ↑ and ↓ select tracks, / or ⌘F searches, Enter goes from the search field back to the tracks, Esc closes the help and ? shows every key. Drag a fader or the crossfader with the mouse, double-click a slider to put it back to its rest position, and click a deck's overview waveform to jump there. With Lock playing deck on (the button in the header, on by default), a deck that is playing keeps its track until it is paused, as on CDJs.
 
 Set `DUBPLATE_FRAME_STATS=1` to print the frame rate and how long each frame took to draw, once a second.
+
+### A second Dubplate beside your own
+
+Two copies of Dubplate on one Mac would both play through the speakers and both answer the controller. To test while your own Dubplate is running, start the second with `DUBPLATE_OFFLINE_DEVICES=1` and a `HOME` of its own:
+
+```
+mkdir -p /tmp/dubplate-test/home/Library/Application\ Support/dubplate
+cp ~/Library/Application\ Support/dubplate/rekordbox.key /tmp/dubplate-test/home/Library/Application\ Support/dubplate/
+ln -s ~/Library/Pioneer /tmp/dubplate-test/home/Library/Pioneer
+HOME=/tmp/dubplate-test/home DUBPLATE_OFFLINE_DEVICES=1 cargo app
+```
+
+That copy renders the decks in real time to a silent output (four channels at 48 kHz, so the headphone cue works as on a DDJ-FLX4) and never opens a MIDI port. Its settings, sets, caches and single-instance lock live under that `HOME`. On macOS it stays out of the Dock and the app switcher and never takes the focus.
+
+Set `DUBPLATE_SCRIPT` to a file or a named pipe to drive it. Each line is a step: controller messages are decoded with the DDJ-FLX4 mapping and go through the same dispatcher as the controller's; keys and clicks go to that window alone, whichever app is in front. A named pipe is read again each time its writer closes, so a test can send a step, wait, and take a screenshot with `screencapture -l <window>`.
+
+```
+# load the selected track on deck A and play it
+midi 96 46 7F
+key space
+press shift
+release shift
+click 400 300
+rightclick 400 300
+drag 400 300 520 300
+```
 
 ## Checks
 

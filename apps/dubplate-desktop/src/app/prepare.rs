@@ -12,7 +12,8 @@ use dubplate_prep::{
     AudioAnalysis, EnergyDirection, GridCorrection, PrepTrack, ReadyProblem, ReadyReport, SetEntry,
     SetTrack, SetWarning, StoreError, WarningPosition, set_warnings, suggest_next,
 };
-use gpui::{App, Context};
+use dubplate_stems::{StemsStatus, VocalPresence};
+use gpui::{App, Context, SharedString};
 
 use super::DubplateApp;
 use super::notice::NoticePlace;
@@ -25,6 +26,8 @@ use crate::prep::{
     SeamSummary, TrackCheck, accept_proposal, check_track, nearest_bar_ms, readiness,
 };
 use crate::set::{SetEditor, SetTrackRef};
+use crate::stems::stems_cell;
+use crate::track_menu::{RowFacts, RowPlace};
 
 /// How many tracks the Next panel suggests.
 const SUGGESTIONS: usize = 5;
@@ -67,7 +70,19 @@ pub(super) struct SetRow {
     pub has_proposal: bool,
     /// Whether the seam into the next track is left to the moment.
     pub free_into_next: bool,
+    /// Where its stems stand, as the Stems column says it.
+    pub stems: SharedString,
+    /// Where the vocals sound near its start and end, known once it has stems.
+    pub vocals: Option<VocalPresence>,
+    /// What its context menu offers.
+    pub menu: RowFacts,
 }
+
+/// How long the suggestions wait for the selection to settle before ranking the library again,
+/// so moving through the set with the arrows ranks once, not at every step.
+const RANKING_DEBOUNCE: Duration = Duration::from_millis(80);
+/// How many suggestion inserts may wait for the set to save and the suggestions to follow.
+const MAX_QUEUED_SUGGESTIONS: usize = 8;
 
 /// A suggestion of the Next panel.
 #[derive(Clone)]
@@ -169,6 +184,7 @@ impl DubplateApp {
                     return;
                 };
                 let invalidated = invalidated_check_paths(session.set(), &completion.set);
+                let before = session.snapshot();
                 let applied = session.apply(&completion);
                 if applied {
                     this.set_selection = selected_path
@@ -192,6 +208,9 @@ impl DubplateApp {
                         }
                     }
                 }
+                if applied {
+                    this.follow_set_grids(&before, &completion.set, cx);
+                }
                 match completion.outcome {
                     Ok(value) => {
                         this.quit_refused = false;
@@ -211,7 +230,7 @@ impl DubplateApp {
         .detach();
     }
 
-    fn selected_set_path(&self) -> Option<PathBuf> {
+    pub(super) fn selected_set_path(&self) -> Option<PathBuf> {
         self.set_editor
             .as_ref()?
             .set()
@@ -230,6 +249,13 @@ impl DubplateApp {
             }
             edit => edit,
         };
+        if let SetEdit::Grid(grid_edit) = edit
+            && self.mode == Mode::Perform
+            && let Some(deck) = self.grid_bar
+        {
+            self.edit_deck_grid(deck, grid_edit, cx);
+            return;
+        }
         if let SetEdit::InsertSuggestion(rank) = edit {
             self.insert_suggestion_ranked(rank, cx);
             return;
@@ -327,13 +353,13 @@ impl DubplateApp {
     }
 
     /// Inserts exactly the suggestion currently shown at this rank, without ranking again.
+    /// While the set saves or the suggestions are ranked again, the insert waits for them and
+    /// then goes in, so Enter, Enter, Enter builds a run however fast it is pressed.
     fn insert_suggestion_ranked(&mut self, rank: usize, cx: &mut Context<'_, Self>) {
         if self.set_edits_pending > 0 || self.prepare_view.next.pending {
-            self.show_notice(
-                NoticePlace::Window,
-                "Updating the set and its suggestions. Try again in a moment.",
-                cx,
-            );
+            if self.queued_suggestions.len() < MAX_QUEUED_SUGGESTIONS {
+                self.queued_suggestions.push_back(rank);
+            }
             return;
         }
         let path = match self.prepare_view.next.suggestion(rank) {
@@ -346,13 +372,9 @@ impl DubplateApp {
         self.insert_suggestion(&path, cx);
     }
 
-    /// Moves through the cached suggestions. Pending rankings have no selectable rows.
+    /// Moves through the suggestions shown, which stay while the next ranking runs.
     pub(super) fn move_next_cursor(&mut self, direction: Direction) {
-        let count = if self.prepare_view.next.pending {
-            0
-        } else {
-            self.prepare_view.next.tracks.len()
-        };
+        let count = self.prepare_view.next.tracks.len();
         if count == 0 {
             self.next_cursor = 0;
             return;
@@ -363,9 +385,20 @@ impl DubplateApp {
         };
     }
 
+    /// Inserts the next queued suggestion, once the set is saved and the suggestions follow
+    /// the track inserted before it.
+    fn insert_queued_suggestion(&mut self, cx: &mut Context<'_, Self>) {
+        if self.set_edits_pending > 0 || self.prepare_view.next.pending {
+            return;
+        }
+        if let Some(rank) = self.queued_suggestions.pop_front() {
+            self.insert_suggestion_ranked(rank, cx);
+        }
+    }
+
     /// Inserts a suggestion right after the selected set track, or the last one.
     pub(super) fn insert_suggestion(&mut self, path: &Path, cx: &mut Context<'_, Self>) {
-        if self.prepare_view.next.pending || self.set_edits_pending > 0 {
+        if self.set_edits_pending > 0 {
             self.show_notice(
                 NoticePlace::Window,
                 "Updating the set and its suggestions. Try again in a moment.",
@@ -398,6 +431,7 @@ impl DubplateApp {
         self.set_selection_generation += 1;
         self.set_selection = Some(position);
         self.prepare_focus = PrepareFocus::Set;
+        self.queued_suggestions.clear();
         self.next_cursor = 0;
         self.refresh_prepare_view(cx);
         self.refresh_filter_reference(cx);
@@ -419,6 +453,7 @@ impl DubplateApp {
         self.set_selection_generation += 1;
         self.set_selection = Some(next);
         self.next_cursor = 0;
+        self.queued_suggestions.clear();
         self.reveal_set_selection();
         self.refresh_prepare_view(cx);
         self.refresh_filter_reference(cx);
@@ -538,6 +573,7 @@ impl DubplateApp {
         self.refresh_filter_reference(cx);
         self.ensure_track_detail(cx);
         self.request_set_analysis(cx);
+        self.request_set_stems();
         self.refresh_prepare_view(cx);
         cx.notify();
     }
@@ -635,6 +671,19 @@ impl DubplateApp {
                     })
                     .and_then(|track| track.track.length_seconds)
                     .map(|seconds| Duration::from_secs(u64::from(seconds)));
+                let file_present = !ready
+                    .problems
+                    .iter()
+                    .any(|problem| matches!(problem, ReadyProblem::FileMissing));
+                let menu = RowFacts {
+                    place: RowPlace::Set,
+                    file_present,
+                    has_path: true,
+                    can_separate: matches!(
+                        self.stems.status(&entry.track_path),
+                        StemsStatus::None | StemsStatus::Failed(_)
+                    ),
+                };
                 SetRow {
                     position,
                     track,
@@ -642,6 +691,9 @@ impl DubplateApp {
                     ready,
                     has_proposal: check.is_some_and(|check| can_propose(entry, check)),
                     free_into_next: editor.is_free_after(position),
+                    stems: stems_cell(self.stems.status(&entry.track_path)),
+                    vocals: self.stems.vocals(&entry.track_path),
+                    menu,
                 }
             })
             .collect()
@@ -660,17 +712,17 @@ impl DubplateApp {
     /// The set's warnings: key clashes, tempo gaps, energy drops and duplicates, at the
     /// positions the panel shows.
     pub(super) fn warnings(rows: &[SetRow]) -> Vec<SetWarning> {
-        let known: Vec<(usize, &PrepTrack, bool)> = rows
+        let known: Vec<(usize, &PrepTrack, &SetRow)> = rows
             .iter()
-            .filter_map(|row| Some((row.position, row.track.as_ref()?, row.free_into_next)))
+            .filter_map(|row| Some((row.position, row.track.as_ref()?, row)))
             .collect();
         let entries: Vec<SetTrack<'_>> = known
             .iter()
-            .map(|(_, track, free)| SetTrack {
+            .map(|(_, track, row)| SetTrack {
                 track,
-                vocals_at_start: false,
-                vocals_at_end: false,
-                free_into_next: *free,
+                vocals_at_start: row.vocals.is_some_and(|vocals| vocals.at_start),
+                vocals_at_end: row.vocals.is_some_and(|vocals| vocals.at_end),
+                free_into_next: row.free_into_next,
             })
             .collect();
         set_warnings(&entries)
@@ -721,9 +773,11 @@ impl DubplateApp {
             .set_selection
             .or_else(|| view.rows.len().checked_sub(1))
             .and_then(|position| Some((position, view.rows.get(position)?.track.clone()?)));
-        if let Some((_, reference)) = &reference {
-            view.next.after = Some(reference.title.clone());
-            view.next.pending = true;
+        if reference.is_some() {
+            view.next = NextSuggestions {
+                pending: true,
+                ..self.prepare_view.next.clone()
+            };
         }
         let target = self
             .set_editor
@@ -745,6 +799,13 @@ impl DubplateApp {
         let catalogue = Arc::clone(&self.catalogue);
         self.prepare_view = Arc::new(view.clone());
         cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(RANKING_DEBOUNCE).await;
+            let still_current = this
+                .update(cx, |this, _| this.prepare_generation == generation)
+                .unwrap_or(false);
+            if !still_current {
+                return;
+            }
             let view = cx
                 .background_executor()
                 .spawn(async move {
@@ -772,6 +833,7 @@ impl DubplateApp {
                         .next_cursor
                         .min(view.next.tracks.len().saturating_sub(1));
                     this.prepare_view = view;
+                    this.insert_queued_suggestion(cx);
                     cx.notify();
                 }
             })
@@ -934,19 +996,9 @@ fn apply_edit(
                     .map(|position| position.min(count - 1));
             }
         }
-        SetEdit::ConfirmGrid => {
+        SetEdit::Grid(grid_edit) => {
             if let Some(position) = selection {
-                editor.toggle_grid_confirmed(position)?;
-            }
-        }
-        SetEdit::NudgeGrid(milliseconds) => {
-            if let Some(position) = selection {
-                editor.nudge_grid(position, milliseconds)?;
-            }
-        }
-        SetEdit::ShiftDownbeat(beats) => {
-            if let Some(position) = selection {
-                editor.shift_downbeat(position, beats)?;
+                editor.edit_grid(position, grid_edit)?;
             }
         }
         SetEdit::AcceptProposedCues
@@ -990,7 +1042,7 @@ fn file_title(path: &Path) -> String {
 mod tests {
     use std::sync::mpsc;
 
-    use dubplate_prep::SetSession;
+    use dubplate_prep::{GridEdit, SetSession};
 
     use super::*;
 
@@ -1056,7 +1108,7 @@ mod tests {
         apply_edit(&mut editor, SetEdit::Remove, None, Some(&track("a").path)).unwrap();
         apply_edit(
             &mut editor,
-            SetEdit::ConfirmGrid,
+            SetEdit::Grid(GridEdit::ToggleConfirmed),
             None,
             Some(&track("a").path),
         )
@@ -1073,7 +1125,7 @@ mod tests {
         let before = editor.set().clone();
         editor.move_track(0, 1).unwrap();
         assert!(invalidated_check_paths(&before, editor.set()).is_empty());
-        editor.nudge_grid(0, 5).unwrap();
+        editor.edit_grid(0, GridEdit::Nudge(5)).unwrap();
         let nudged = editor.set().clone();
         assert!(!invalidated_check_paths(&before, &nudged).is_empty());
         editor.undo().unwrap();
@@ -1081,15 +1133,19 @@ mod tests {
     }
 
     #[test]
-    fn readding_a_file_invalidates_checks_from_its_previous_entry() {
+    fn readding_a_file_brings_back_its_grid_and_invalidates_its_old_checks() {
         let directory = tempfile::tempdir().unwrap();
         let mut editor = SetEditor::open(&directory.path().join("sets.sqlite")).unwrap();
         editor.add(track("a")).unwrap();
-        editor.nudge_grid(0, 5).unwrap();
+        editor.edit_grid(0, GridEdit::Nudge(5)).unwrap();
         editor.remove(0).unwrap();
         let without = editor.set().clone();
         editor.add(track("a")).unwrap();
-        assert_eq!(editor.tracks()[0].grid_offset_ms, 0);
+        assert_eq!(
+            editor.tracks()[0].grid_offset_ms,
+            5,
+            "the grid is kept per file"
+        );
         assert!(invalidated_check_paths(&without, editor.set()).contains(&track("a").path));
     }
 

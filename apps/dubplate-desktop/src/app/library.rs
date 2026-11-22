@@ -15,6 +15,7 @@ use super::{DubplateApp, error_chain};
 use crate::browser::LibraryStatus;
 use crate::collection::{Collection, RekordboxLibrary, folder_name};
 use crate::commands::Mode;
+use crate::folder_picker::{music_start_folder, open_next_picker_in};
 use crate::library::{RekordboxSource, ScanRequest};
 use crate::prep;
 use crate::relink::missing_tracks;
@@ -69,6 +70,9 @@ impl DubplateApp {
 
     /// Opens the system's folder picker and adds the folders chosen to the library.
     pub(super) fn add_music_folders(&mut self, cx: &mut Context<'_, Self>) {
+        if let Some(start) = music_start_folder(self.sources.folders()) {
+            open_next_picker_in(&start);
+        }
         let chosen = cx.prompt_for_paths(PathPromptOptions {
             files: false,
             directories: true,
@@ -280,6 +284,7 @@ impl DubplateApp {
                     this.forget_track_checks();
                     this.set_changed(cx);
                     this.request_library_analysis(cx);
+                    this.probe_library_stems();
                 }
             })
             .ok();

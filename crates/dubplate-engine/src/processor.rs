@@ -76,11 +76,26 @@ impl StereoBlock {
 
     /// Largest absolute sample value in use, across both channels.
     pub fn peak(&self) -> f32 {
-        self.left()
-            .iter()
-            .chain(self.right())
-            .fold(0.0_f32, |peak, sample| peak.max(sample.abs()))
+        peak_of(self.left()).max(peak_of(self.right()))
     }
+}
+
+/// Lanes a peak is measured in at once: eight independent maxima the compiler keeps in vector
+/// registers, where one running maximum would wait on itself every sample.
+const PEAK_LANES: usize = 8;
+
+/// Largest absolute value of `samples`, 0 for none. NaN never raises the peak.
+fn peak_of(samples: &[f32]) -> f32 {
+    let (chunks, rest) = samples.as_chunks::<PEAK_LANES>();
+    let mut lanes = [0.0_f32; PEAK_LANES];
+    for chunk in chunks {
+        for (lane, sample) in lanes.iter_mut().zip(chunk) {
+            *lane = lane.max(sample.abs());
+        }
+    }
+    let lanes_peak = lanes.into_iter().fold(0.0_f32, f32::max);
+    rest.iter()
+        .fold(lanes_peak, |peak, sample| peak.max(sample.abs()))
 }
 
 /// What a processor needs to know about the block it is processing.
@@ -105,4 +120,42 @@ pub struct ProcessContext {
 pub trait AudioProcessor: Send {
     /// Processes one block in place.
     fn process(&mut self, block: &mut StereoBlock, context: &ProcessContext);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_peak_is_the_loudest_sample_of_either_channel_whatever_the_length() {
+        for frame_count in [0, 1, 7, 8, 9, 31, 256, 300] {
+            let mut block = StereoBlock::with_capacity(512);
+            block.set_frame_count(frame_count);
+            let (left, right) = block.channels_mut();
+            for (index, sample) in left.iter_mut().enumerate() {
+                *sample = (index as f32 * 0.37).sin() * 0.5;
+            }
+            for (index, sample) in right.iter_mut().enumerate() {
+                *sample = -(index as f32 * 0.11).cos() * 0.25;
+            }
+            if frame_count > 0 {
+                left[frame_count - 1] = -0.9;
+            }
+            let expected = block
+                .left()
+                .iter()
+                .chain(block.right())
+                .fold(0.0_f32, |peak, sample| peak.max(sample.abs()));
+            assert_eq!(block.peak(), expected, "{frame_count} frames");
+        }
+    }
+
+    #[test]
+    fn a_nan_sample_does_not_raise_the_peak() {
+        let mut block = StereoBlock::with_capacity(16);
+        let (left, right) = block.channels_mut();
+        left[3] = f32::NAN;
+        right[12] = 0.5;
+        assert_eq!(block.peak(), 0.5);
+    }
 }

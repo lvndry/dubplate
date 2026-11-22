@@ -6,16 +6,23 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use gpui::base::FocusTrapElement;
 use gpui::prelude::*;
-use gpui::{ClickEvent, Context, FontWeight, MouseButton, Rgba, SharedString, div, px};
+use gpui::{
+    Bounds, ClickEvent, Context, FontWeight, MouseButton, Pixels, Rgba, SharedString, Window,
+    canvas, div, fill, point, px, size,
+};
 
 use super::DubplateApp;
+use super::faders::{channel_fader_curve_label, crossfader_curve_label, smart_fader_source_label};
 use crate::collection::folder_name;
-use crate::commands::Command;
+use crate::commands::{AutoCueChoice, Command, PadFxEdit};
+use crate::devices::BufferSize;
+use crate::fonts::MONO_FAMILY;
 use crate::library::RekordboxSource;
-use crate::theme;
+use crate::pad_fx::PadFxLayer;
+use crate::theme::{self, ThemeId};
 use crate::widgets::InteractiveControl;
 use crate::widgets::{Emphasis, button};
-use dubplate_engine::OutputDevice;
+use dubplate_engine::{ChannelFaderCurve, CrossfaderCurve, OutputDevice, SmartFaderSource};
 
 pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoElement {
     let mut output_rows = Vec::new();
@@ -33,7 +40,7 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
         .flex()
         .items_center()
         .justify_center()
-        .bg(theme::SCRIM)
+        .bg(theme::active().scrim)
         .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
             this.perform(Command::ToggleLibrary, window, cx);
         }))
@@ -41,7 +48,7 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
             div()
                 .id("library-card")
                 .role(gpui::Role::Dialog)
-                .aria_label("Music and audio settings")
+                .aria_label("Settings: theme, music and audio")
                 .key_context("Modal")
                 .track_focus(&app.modal_focus)
                 .tab_group()
@@ -55,8 +62,8 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
                 .p(px(20.0))
                 .rounded(px(10.0))
                 .border_1()
-                .border_color(theme::LINE)
-                .bg(theme::PANEL)
+                .border_color(theme::active().line)
+                .bg(theme::active().panel)
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_click(|_, _, cx| cx.stop_propagation())
                 .child(
@@ -80,16 +87,18 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
                         .child(
                             div()
                                 .text_size(theme::SMALL_TEXT_SIZE)
-                                .text_color(theme::MUTED)
+                                .text_color(theme::active().muted)
                                 .child("Dubplate never changes your files"),
                         ),
                 )
+                .child(section_title("Theme"))
+                .child(theme_picker(cx))
                 .child(section_title("Music folders"))
                 .children(folder_rows)
                 .when(app.sources.folders().is_empty(), |card| {
                     card.child(
                         div()
-                            .text_color(theme::MUTED)
+                            .text_color(theme::active().muted)
                             .child("No folders yet. Add the folders that hold your tracks."),
                     )
                 })
@@ -102,9 +111,558 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
                 ))
                 .child(section_title("rekordbox"))
                 .child(rekordbox_row(app, cx))
-                .child(section_title("Sound card"))
+                .child(section_title("Decks"))
+                .child(key_lock_row(app, cx))
+                .child(setting_switch(
+                    "auto-cue-saved",
+                    "Cue at the first memory or hot cue",
+                    "A track with saved cues loads at the earliest one.",
+                    app.settings.auto_cue.saved_cues_first,
+                    Command::ToggleAutoCue(AutoCueChoice::SavedCuesFirst),
+                    cx,
+                ))
+                .child(setting_switch(
+                    "auto-cue-sound",
+                    "Cue at the first sound",
+                    "Otherwise a track loads at its first sound, on the beat it starts with, not at 0:00.",
+                    app.settings.auto_cue.first_sound,
+                    Command::ToggleAutoCue(AutoCueChoice::FirstSound),
+                    cx,
+                ))
+                .child(setting_switch(
+                    "fader-echo",
+                    "Echo out on the faders",
+                    "Close a channel fader or the crossfader fast and the outgoing deck echoes on the half beat as it goes, ringing on after the fader is shut. A fader left part way stops echoing.",
+                    app.settings.fader_echo,
+                    Command::SetFaderEcho(!app.settings.fader_echo),
+                    cx,
+                ))
+                .child(section_title("Audio"))
                 .children(output_rows)
+                .child(buffer_row(app, cx))
+                .child(section_title("Mixer"))
+                .child(crossfader_row(app.crossfader().enabled, cx))
+                .child(smart_fader_source_row(app.smart_fader_source(), cx))
+                .child(curve_row(
+                    "Crossfader curve",
+                    CrossfaderCurve::ALL.map(|curve| CurveChoice {
+                        name: crossfader_curve_label(curve),
+                        chosen: curve == app.crossfader().curve,
+                        picture: CurvePicture::Crossfader(curve),
+                        command: Command::SetCrossfaderCurve(curve),
+                    }),
+                    cx,
+                ))
+                .child(curve_row(
+                    "Channel fader curve",
+                    ChannelFaderCurve::ALL.map(|curve| CurveChoice {
+                        name: channel_fader_curve_label(curve),
+                        chosen: curve == app.channel_fader_curve(),
+                        picture: CurvePicture::ChannelFader(curve),
+                        command: Command::SetChannelFaderCurve(curve),
+                    }),
+                    cx,
+                ))
+                .child(
+                    div()
+                        .text_size(theme::SMALL_TEXT_SIZE)
+                        .text_color(theme::active().muted)
+                        .child(
+                            "Each channel's A, THRU, B switch is under its fader. THRU takes the channel off the crossfader.",
+                        ),
+                )
+                .child(section_title("Pad FX"))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .child(div().text_size(theme::SMALL_TEXT_SIZE).child(format!(
+                            "{}{} \u{b7} 32 pads",
+                            app.pad_fx.preset().label(),
+                            if app.pad_fx.edited() { ", edited" } else { "" }
+                        )))
+                        .child(
+                            button("edit-pad-fx", "Edit Pad FX\u{2026}", Emphasis::Secondary)
+                                .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                                    this.perform(
+                                        Command::PadFx(PadFxEdit::Toggle(PadFxLayer::Fx1)),
+                                        window,
+                                        cx,
+                                    );
+                                })),
+                        ),
+                )
                 .focus_trap("settings-focus-trap", &app.modal_focus),
+        )
+}
+
+/// A swatch per theme, showing its background and deck colours; a click wears it.
+fn theme_picker(cx: &mut Context<'_, DubplateApp>) -> impl IntoElement + use<> {
+    let chosen = theme::active_id();
+    div()
+        .id("theme-picker")
+        .role(gpui::Role::RadioGroup)
+        .aria_label("Theme")
+        .flex()
+        .flex_none()
+        .flex_wrap()
+        .gap(px(6.0))
+        .children(ThemeId::ALL.into_iter().map(|choice| {
+            let colours = choice.theme();
+            let selected = choice == chosen;
+            div()
+                .id(("theme", choice as usize))
+                .accessible_toggle(choice.label(), selected)
+                .flex()
+                .items_center()
+                .gap(px(6.0))
+                .h(px(28.0))
+                .px(px(8.0))
+                .rounded(theme::CONTROL_RADIUS)
+                .border_1()
+                .border_color(if selected {
+                    theme::active().text
+                } else {
+                    theme::active().line
+                })
+                .text_size(theme::SMALL_TEXT_SIZE)
+                .text_color(if selected {
+                    theme::active().text
+                } else {
+                    theme::active().muted
+                })
+                .cursor_pointer()
+                .hover(|swatch| swatch.text_color(theme::active().text))
+                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                    this.perform(Command::ChooseTheme(choice), window, cx);
+                }))
+                .child(
+                    div()
+                        .flex()
+                        .flex_none()
+                        .size(px(14.0))
+                        .rounded_full()
+                        .overflow_hidden()
+                        .border_1()
+                        .border_color(theme::active().line)
+                        .bg(colours.background)
+                        .child(div().w(px(7.0)).h_full().bg(colours.band_low))
+                        .child(div().w(px(7.0)).h_full().bg(colours.band_mid)),
+                )
+                .child(choice.label())
+        }))
+}
+
+/// Whether the crossfader is in use, with what Off means. rekordbox has no single switch for
+/// it; DJs set both channels' crossfader assign to THRU, which Off does at once.
+fn crossfader_row(on: bool, cx: &mut Context<'_, DubplateApp>) -> impl IntoElement + use<> {
+    div()
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap(px(12.0))
+        .py(px(6.0))
+        .border_t_1()
+        .border_color(theme::active().row_line)
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(2.0))
+                .child(div().text_size(theme::SMALL_TEXT_SIZE).child("Crossfader"))
+                .child(
+                    div()
+                        .text_size(theme::TINY_TEXT_SIZE)
+                        .text_color(theme::active().muted)
+                        .child("Off: both channels play as on THRU, so the crossfader moves without changing the sound."),
+                ),
+        )
+        .child(
+            div()
+                .id("crossfader-switch")
+                .role(gpui::Role::RadioGroup)
+                .aria_label("Crossfader")
+                .flex()
+                .flex_none()
+                .gap(px(4.0))
+                .children([(true, "On"), (false, "Off")].map(|(choice, name)| {
+                    let chosen = choice == on;
+                    div()
+                        .id(SharedString::from(format!("crossfader-{name}")))
+                        .accessible_toggle(format!("Crossfader {name}"), chosen)
+                        .flex()
+                        .justify_center()
+                        .w(px(44.0))
+                        .py(px(4.0))
+                        .rounded(theme::SMALL_RADIUS)
+                        .border_1()
+                        .text_size(theme::SMALL_TEXT_SIZE)
+                        .cursor_pointer()
+                        .map(|option| {
+                            if chosen {
+                                option.border_color(theme::active().line).bg(theme::active().raised)
+                            } else {
+                                option
+                                    .border_color(gpui::transparent_black())
+                                    .text_color(theme::active().muted)
+                                    .hover(|option| option.bg(theme::active().raised))
+                            }
+                        })
+                        .when(!chosen, |option| {
+                            option.on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                                this.perform(Command::ToggleCrossfader, window, cx);
+                            }))
+                        })
+                        .child(name)
+                })),
+        )
+}
+
+/// What moves Smart Fader's blend, as rekordbox's Smart Fader setting: the crossfader and the
+/// channel faders, the crossfader alone, or the channel faders alone.
+fn smart_fader_source_row(
+    current: SmartFaderSource,
+    cx: &mut Context<'_, DubplateApp>,
+) -> impl IntoElement + use<> {
+    div()
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap(px(12.0))
+        .py(px(6.0))
+        .border_t_1()
+        .border_color(theme::active().row_line)
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(2.0))
+                .child(div().text_size(theme::SMALL_TEXT_SIZE).child("Smart Fader moves with"))
+                .child(
+                    div()
+                        .text_size(theme::TINY_TEXT_SIZE)
+                        .text_color(theme::active().muted)
+                        .child("Both: the crossfader, leaned toward the louder channel. Channel faders also work with the crossfader off."),
+                ),
+        )
+        .child(
+            div()
+                .id("smart-fader-source")
+                .role(gpui::Role::RadioGroup)
+                .aria_label("Smart Fader moves with")
+                .flex()
+                .flex_none()
+                .gap(px(4.0))
+                .children(SmartFaderSource::ALL.map(|source| {
+                    let chosen = source == current;
+                    let name = smart_fader_source_label(source);
+                    div()
+                        .id(SharedString::from(format!("smart-fader-source-{name}")))
+                        .accessible_toggle(format!("Smart Fader moves with {name}"), chosen)
+                        .flex()
+                        .justify_center()
+                        .px(px(8.0))
+                        .py(px(4.0))
+                        .rounded(theme::SMALL_RADIUS)
+                        .border_1()
+                        .text_size(theme::SMALL_TEXT_SIZE)
+                        .cursor_pointer()
+                        .map(|option| {
+                            if chosen {
+                                option.border_color(theme::active().line).bg(theme::active().raised)
+                            } else {
+                                option
+                                    .border_color(gpui::transparent_black())
+                                    .text_color(theme::active().muted)
+                                    .hover(|option| option.bg(theme::active().raised))
+                            }
+                        })
+                        .when(!chosen, |option| {
+                            option.on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                                this.perform(Command::SetSmartFaderSource(source), window, cx);
+                            }))
+                        })
+                        .child(name)
+                })),
+        )
+}
+
+/// The points a curve picture is drawn from, across its width.
+const CURVE_SAMPLES: usize = 28;
+const CURVE_PICTURE_WIDTH: Pixels = px(30.0);
+const CURVE_PICTURE_HEIGHT: Pixels = px(14.0);
+const CURVE_DOT: Pixels = px(1.5);
+
+/// What a curve option draws.
+#[derive(Clone, Copy)]
+enum CurvePicture {
+    /// Both sides of the crossfader, A falling and B rising.
+    Crossfader(CrossfaderCurve),
+    /// A channel fader's level rising with its position.
+    ChannelFader(ChannelFaderCurve),
+}
+
+impl CurvePicture {
+    /// The levels drawn at `position`, each from 0.0 to 1.0.
+    fn levels(self, position: f32) -> [Option<f32>; 2] {
+        match self {
+            Self::Crossfader(curve) => {
+                let (left, right) = curve.gains(position);
+                [Some(left), Some(right)]
+            }
+            Self::ChannelFader(curve) => [Some(curve.gain(position)), None],
+        }
+    }
+}
+
+/// One option of a curve setting.
+struct CurveChoice {
+    name: &'static str,
+    chosen: bool,
+    picture: CurvePicture,
+    command: Command,
+}
+
+/// A curve setting: its name, then its options side by side, each a small drawing of the curve
+/// above its name, the chosen one raised.
+fn curve_row(
+    title: &'static str,
+    choices: [CurveChoice; 3],
+    cx: &mut Context<'_, DubplateApp>,
+) -> impl IntoElement + use<> {
+    div()
+        .id(title)
+        .role(gpui::Role::RadioGroup)
+        .aria_label(title)
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap(px(12.0))
+        .py(px(6.0))
+        .border_t_1()
+        .border_color(theme::active().row_line)
+        .child(div().text_size(theme::SMALL_TEXT_SIZE).child(title))
+        .child(
+            div()
+                .flex()
+                .gap(px(4.0))
+                .children(choices.into_iter().map(|choice| {
+                    let command = choice.command;
+                    let picture = choice.picture;
+                    let colour = if choice.chosen {
+                        theme::active().text
+                    } else {
+                        theme::active().muted
+                    };
+                    div()
+                        .id(SharedString::from(format!("curve-{title}-{}", choice.name)))
+                        .accessible_toggle(format!("{title}: {}", choice.name), choice.chosen)
+                        .flex()
+                        .flex_col()
+                        .items_center()
+                        .gap(px(3.0))
+                        .w(px(64.0))
+                        .py(px(5.0))
+                        .rounded(theme::SMALL_RADIUS)
+                        .border_1()
+                        .cursor_pointer()
+                        .map(|option| {
+                            if choice.chosen {
+                                option
+                                    .border_color(theme::active().line)
+                                    .bg(theme::active().raised)
+                            } else {
+                                option
+                                    .border_color(gpui::transparent_black())
+                                    .hover(|option| option.bg(theme::active().raised))
+                            }
+                        })
+                        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                            this.perform(command, window, cx);
+                        }))
+                        .child(
+                            canvas(
+                                |_, _, _| {},
+                                move |bounds, (), window, _| {
+                                    paint_curve(bounds, picture, colour, window);
+                                },
+                            )
+                            .w(CURVE_PICTURE_WIDTH)
+                            .h(CURVE_PICTURE_HEIGHT),
+                        )
+                        .child(
+                            div()
+                                .text_size(theme::TINY_TEXT_SIZE)
+                                .text_color(colour)
+                                .child(choice.name),
+                        )
+                })),
+        )
+}
+
+/// Draws a curve as a row of small dots, level up, position across.
+fn paint_curve(bounds: Bounds<Pixels>, picture: CurvePicture, colour: Rgba, window: &mut Window) {
+    let travel_x = bounds.size.width - CURVE_DOT;
+    let travel_y = bounds.size.height - CURVE_DOT;
+    for sample in 0..CURVE_SAMPLES {
+        let position = sample as f32 / (CURVE_SAMPLES - 1) as f32;
+        for level in picture.levels(position).into_iter().flatten() {
+            let origin = bounds.origin + point(travel_x * position, travel_y * (1.0 - level));
+            window.paint_quad(fill(
+                Bounds::new(origin, size(CURVE_DOT, CURVE_DOT)),
+                colour,
+            ));
+        }
+    }
+}
+
+/// A setting that is on or off: its name and what it does, and a switch at the end of the row.
+fn setting_switch(
+    id: &'static str,
+    name: &'static str,
+    detail: &'static str,
+    on: bool,
+    command: Command,
+    cx: &mut Context<'_, DubplateApp>,
+) -> impl IntoElement + use<> {
+    div()
+        .id(id)
+        .accessible_toggle(format!("{name}. {detail}"), on)
+        .flex()
+        .items_center()
+        .gap(px(12.0))
+        .py(px(8.0))
+        .border_t_1()
+        .border_color(theme::active().row_line)
+        .cursor_pointer()
+        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+            this.perform(command, window, cx);
+        }))
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .flex_1()
+                .min_w_0()
+                .gap(px(2.0))
+                .child(div().child(name))
+                .child(
+                    div()
+                        .text_size(theme::SMALL_TEXT_SIZE)
+                        .text_color(theme::active().muted)
+                        .child(detail),
+                ),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_none()
+                .items_center()
+                .w(px(30.0))
+                .h(px(18.0))
+                .p(px(2.0))
+                .rounded_full()
+                .bg(if on {
+                    theme::active().ok
+                } else {
+                    theme::active().track
+                })
+                .when(on, |track| track.justify_end())
+                .child(
+                    div()
+                        .size(px(14.0))
+                        .rounded_full()
+                        .bg(theme::active().thumb),
+                ),
+        )
+}
+
+/// The buffer size, each choice with how long it lasts, the dropouts since launch, and what
+/// the choice trades.
+fn buffer_row(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoElement + use<> {
+    let current = app.buffer_size();
+    let sample_rate = app
+        .engine
+        .as_ref()
+        .map_or(48_000, |engine| engine.output.sample_rate());
+    let dropouts = app.dropouts();
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(6.0))
+        .py(px(8.0))
+        .border_t_1()
+        .border_color(theme::active().row_line)
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .gap(px(12.0))
+                .child("Buffer size")
+                .child(
+                    div()
+                        .id("buffer-sizes")
+                        .role(gpui::Role::RadioGroup)
+                        .aria_label("Buffer size")
+                        .flex()
+                        .gap(px(4.0))
+                        .children(BufferSize::ALL.map(|size| {
+                            let chosen = size == current;
+                            div()
+                                .id(("buffer-size", size.frames() as usize))
+                                .accessible_toggle(
+                                    format!(
+                                        "{} frames, {:.1} ms",
+                                        size.frames(),
+                                        size.milliseconds(sample_rate)
+                                    ),
+                                    chosen,
+                                )
+                                .flex()
+                                .flex_col()
+                                .items_center()
+                                .w(px(64.0))
+                                .py(px(4.0))
+                                .rounded(theme::SMALL_RADIUS)
+                                .border_1()
+                                .cursor_pointer()
+                                .map(|option| {
+                                    if chosen {
+                                        option.border_color(theme::active().line).bg(theme::active().raised)
+                                    } else {
+                                        option
+                                            .border_color(gpui::transparent_black())
+                                            .text_color(theme::active().muted)
+                                            .hover(|option| option.bg(theme::active().raised))
+                                    }
+                                })
+                                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                    this.choose_buffer_size(size, cx);
+                                }))
+                                .child(
+                                    div()
+                                        .font_family(MONO_FAMILY)
+                                        .text_size(theme::SMALL_TEXT_SIZE)
+                                        .child(size.frames().to_string()),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(theme::TINY_TEXT_SIZE)
+                                        .text_color(theme::active().muted)
+                                        .child(format!("{:.1} ms", size.milliseconds(sample_rate))),
+                                )
+                        })),
+                ),
+        )
+        .child(
+            div()
+                .text_size(theme::SMALL_TEXT_SIZE)
+                .text_color(theme::active().muted)
+                .child(format!(
+                    "A larger buffer gives the Mac more time and drops out less; a smaller one answers the controller sooner. Dropouts since launch: {dropouts}."
+                )),
         )
 }
 
@@ -112,7 +670,7 @@ fn section_title(text: &'static str) -> impl IntoElement {
     div()
         .pt(px(4.0))
         .text_size(theme::SMALL_TEXT_SIZE)
-        .text_color(theme::MUTED)
+        .text_color(theme::active().muted)
         .child(text)
 }
 
@@ -123,9 +681,9 @@ fn folder_row(
     cx: &mut Context<'_, DubplateApp>,
 ) -> impl IntoElement + use<> {
     let (detail, detail_colour): (SharedString, Rgba) = if app.sources.is_scanning(folder) {
-        ("Scanning\u{2026}".into(), theme::MUTED)
+        ("Scanning\u{2026}".into(), theme::active().muted)
     } else if let Some(problem) = app.sources.failure(folder) {
-        (problem.to_owned().into(), theme::ALERT)
+        (problem.to_owned().into(), theme::active().alert)
     } else if let Some(scan) = app.sources.scan(folder) {
         let mut text = format!(
             "{} \u{b7} scanned {}",
@@ -139,9 +697,9 @@ fn folder_row(
                 if scan.problems.len() == 1 { "" } else { "s" }
             ));
         }
-        (text.into(), theme::MUTED)
+        (text.into(), theme::active().muted)
     } else {
-        ("Not scanned yet".into(), theme::MUTED)
+        ("Not scanned yet".into(), theme::active().muted)
     };
     let rescanned = folder.to_path_buf();
     let removed = folder.to_path_buf();
@@ -154,7 +712,7 @@ fn folder_row(
         .gap(px(12.0))
         .py(px(8.0))
         .border_t_1()
-        .border_color(theme::ROW_LINE)
+        .border_color(theme::active().row_line)
         .child(
             div()
                 .flex()
@@ -171,7 +729,7 @@ fn folder_row(
                 .child(
                     div()
                         .text_size(theme::SMALL_TEXT_SIZE)
-                        .text_color(theme::MUTED)
+                        .text_color(theme::active().muted)
                         .truncate()
                         .child(abbreviated(folder)),
                 )
@@ -207,25 +765,28 @@ fn rekordbox_row(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl I
         RekordboxSource::Off => (
             "Not imported. Dubplate reads a copy of rekordbox's library and never writes to it."
                 .into(),
-            theme::MUTED,
+            theme::active().muted,
             "Import",
             true,
         ),
         RekordboxSource::Reading => (
             "Reading a copy of the library\u{2026}".into(),
-            theme::MUTED,
+            theme::active().muted,
             "Remove",
             false,
         ),
         RekordboxSource::Ready(library) => (
             track_count(library.track_count()).into(),
-            theme::MUTED,
+            theme::active().muted,
             "Remove",
             false,
         ),
-        RekordboxSource::Failed(problem) => {
-            (problem.clone().into(), theme::ALERT, "Try again", true)
-        }
+        RekordboxSource::Failed(problem) => (
+            problem.clone().into(),
+            theme::active().alert,
+            "Try again",
+            true,
+        ),
     };
     div()
         .id("rekordbox-settings")
@@ -236,7 +797,7 @@ fn rekordbox_row(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl I
         .gap(px(12.0))
         .py(px(8.0))
         .border_t_1()
-        .border_color(theme::ROW_LINE)
+        .border_color(theme::active().row_line)
         .child(
             div()
                 .flex()
@@ -296,7 +857,7 @@ fn output_row(
         .px(px(6.0))
         .rounded(theme::SMALL_RADIUS)
         .cursor_pointer()
-        .hover(|row| row.bg(theme::RAISED))
+        .hover(|row| row.bg(theme::active().raised))
         .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
             this.choose_output(name.clone(), cx);
         }))
@@ -306,8 +867,12 @@ fn output_row(
                 .flex_none()
                 .rounded_full()
                 .border_1()
-                .border_color(if current { theme::OK } else { theme::LINE })
-                .when(current, |dot| dot.bg(theme::OK)),
+                .border_color(if current {
+                    theme::active().ok
+                } else {
+                    theme::active().line
+                })
+                .when(current, |dot| dot.bg(theme::active().ok)),
         )
         .child(
             div()
@@ -323,9 +888,59 @@ fn output_row(
                 .child(
                     div()
                         .text_size(theme::SMALL_TEXT_SIZE)
-                        .text_color(theme::MUTED)
+                        .text_color(theme::active().muted)
                         .child(detail),
                 ),
+        )
+}
+
+/// Whether new tracks start with key lock on, as rekordbox's Master Tempo default.
+fn key_lock_row(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoElement + use<> {
+    let on = app.settings.key_lock_on_new_tracks;
+    div()
+        .id("key-lock-settings")
+        .flex()
+        .items_center()
+        .gap(px(12.0))
+        .py(px(8.0))
+        .border_t_1()
+        .border_color(theme::active().row_line)
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .flex_1()
+                .min_w_0()
+                .gap(px(2.0))
+                .child(
+                    div()
+                        .font_weight(FontWeight::MEDIUM)
+                        .child("Key lock on new tracks"),
+                )
+                .child(
+                    div()
+                        .text_size(theme::SMALL_TEXT_SIZE)
+                        .text_color(theme::active().muted)
+                        .child(
+                            "Each track you load keeps its pitch when its tempo moves. A deck's \
+                             Key lock button still changes it for the track on that deck.",
+                        ),
+                ),
+        )
+        .child(
+            button(
+                "key-lock-default",
+                if on { "On" } else { "Off" },
+                if on {
+                    Emphasis::Primary
+                } else {
+                    Emphasis::Secondary
+                },
+            )
+            .accessible_toggle("Key lock on new tracks", on)
+            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                this.perform(Command::SetKeyLockOnNewTracks(!on), window, cx);
+            })),
         )
 }
 

@@ -94,15 +94,25 @@ impl ReadyReport {
     }
 
     /// The badge the Prepare screen shows: "Ready" when there is nothing to
-    /// fix, otherwise the first problem's word and how many more there are.
+    /// fix, otherwise the first problem and how many more there are, such as
+    /// "File missing, and 3 more".
     pub fn badge(&self) -> String {
         let Some(first_problem) = self.problems.first() else {
             return "Ready".to_owned();
         };
-        let remaining_problem_count = self.problems.len() - 1;
-        if remaining_problem_count == 0 {
-            return first_problem.label().to_owned();
+        match self.problems.len() - 1 {
+            0 => first_problem.label().to_owned(),
+            remaining => format!("{}, and {remaining} more", first_problem.label()),
         }
-        format!("{} +{remaining_problem_count}", first_problem.label())
+    }
+
+    /// Every problem, one per line, from the most to the least urgent, for the
+    /// badge's tooltip. Empty when the track is ready.
+    pub fn details(&self) -> String {
+        self.problems
+            .iter()
+            .map(|problem| problem.label())
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 }

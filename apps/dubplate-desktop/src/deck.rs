@@ -7,17 +7,20 @@ use std::cell::RefCell;
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::time::Instant;
 
 use dubplate_engine::DeckId;
 use dubplate_prep::{AudioAnalysis, GridCorrection};
 use dubplate_rekordbox::analysis::BeatGrid;
-use dubplate_rekordbox::{HotCuePad, TrackAnalysis};
+use dubplate_rekordbox::{TrackAnalysis, TrackCues};
 
 use crate::collection::{CollectionTrack, TrackOrigin};
+use crate::cue_marks::{MarkerPulse, SeenMarks};
+use crate::phrases::{PhraseSpan, phrase_spans};
 use crate::playhead::PlayheadClock;
 use crate::prep::chosen_grid;
 use crate::tap_tempo::TapTempo;
-use crate::waveform::{BeatMarks, OverviewWaveform, Zoom, ZoomedWaveform};
+use crate::waveform::{BandLevels, BeatMarks, OverviewWaveform, Zoom, ZoomedWaveform};
 
 /// A track made ready for a deck on a background thread.
 pub struct PreparedTrack {
@@ -26,6 +29,8 @@ pub struct PreparedTrack {
     zoomed: Option<ZoomedWaveform>,
     overview: Option<OverviewWaveform>,
     beats: BeatMarks,
+    read_grid: Option<Arc<BeatGrid>>,
+    phrases: Vec<PhraseSpan>,
     /// The tempo and first downbeat, for the engine's beat-synced effects.
     pub beat_grid: Option<dubplate_engine::BeatGrid>,
     /// Where the beat grid comes from, when the track has one.
@@ -75,8 +80,13 @@ pub struct TrackVisuals {
     pub zoomed: Option<Arc<ZoomedWaveform>>,
     /// The whole-track waveform, with its bars kept for the last width drawn.
     pub overview: Option<Rc<RefCell<OverviewBars>>>,
-    /// The beat grid.
+    /// The beat grid, with the DJ's fix.
     pub beats: Arc<BeatMarks>,
+    /// The beat grid as rekordbox or Dubplate's analysis found it, before the DJ's fix, so a
+    /// new fix applies to it again. A tapped grid has none.
+    pub read_grid: Option<Arc<BeatGrid>>,
+    /// rekordbox's phrases in seconds, for the overview's phrase strip.
+    pub phrases: Arc<[PhraseSpan]>,
     /// Why rekordbox's analysis could not be read, if it could not.
     pub analysis_problem: Option<String>,
 }
@@ -91,13 +101,19 @@ impl TrackVisuals {
                 .take()
                 .map(|waveform| Rc::new(RefCell::new(OverviewBars::new(waveform)))),
             beats: Arc::new(std::mem::take(&mut prepared.beats)),
+            read_grid: prepared.read_grid.take(),
+            phrases: std::mem::take(&mut prepared.phrases).into(),
             analysis_problem: prepared.analysis_problem.take(),
         }
     }
 
     /// Draws `zoomed` and `overview`, worked out after the track was loaded.
-    pub fn show_waveforms(&mut self, zoomed: ZoomedWaveform, overview: Option<OverviewWaveform>) {
-        self.zoomed = Some(Arc::new(zoomed));
+    pub fn show_waveforms(
+        &mut self,
+        zoomed: Arc<ZoomedWaveform>,
+        overview: Option<OverviewWaveform>,
+    ) {
+        self.zoomed = Some(zoomed);
         self.overview = overview.map(|waveform| Rc::new(RefCell::new(OverviewBars::new(waveform))));
     }
 }
@@ -106,7 +122,7 @@ impl TrackVisuals {
 /// changes.
 pub struct OverviewBars {
     waveform: OverviewWaveform,
-    bars: Vec<f32>,
+    bars: Vec<BandLevels>,
 }
 
 impl OverviewBars {
@@ -117,8 +133,8 @@ impl OverviewBars {
         }
     }
 
-    /// The level of each of `bar_count` bars.
-    pub fn bars(&mut self, bar_count: usize) -> &[f32] {
+    /// The bands of each of `bar_count` bars.
+    pub fn bars(&mut self, bar_count: usize) -> &[BandLevels] {
         if self.bars.len() != bar_count {
             self.bars = self.waveform.bars(bar_count);
         }
@@ -179,8 +195,10 @@ pub fn prepare_track(
     let rekordbox = rekordbox.as_ref().ok();
     let chosen = chosen_grid(rekordbox, analysis);
     let grid_source = chosen.as_ref().map(|(_, source)| *source);
-    let (beats, beat_grid) = chosen
-        .map(|(grid, _)| DeckGrid::new(&grid, correction))
+    let read_grid = chosen.map(|(grid, _)| Arc::new(grid));
+    let (beats, beat_grid) = read_grid
+        .as_deref()
+        .map(|grid| DeckGrid::new(grid, correction))
         .map_or_else(Default::default, |grid| (grid.beats, grid.engine));
     let analysis_problem = match grid_source {
         Some(GridSource::Analysis) => Some(ANALYSED_GRID_NOTE.to_owned()),
@@ -192,7 +210,16 @@ pub fn prepare_track(
             .and_then(|analysis| ZoomedWaveform::from_waveforms(&analysis.waveforms, zoom)),
         overview: rekordbox
             .and_then(|analysis| OverviewWaveform::from_waveforms(&analysis.waveforms)),
+        phrases: rekordbox
+            .and_then(|analysis| {
+                Some(phrase_spans(
+                    analysis.song_structure.as_ref()?,
+                    analysis.beat_grid.as_ref()?,
+                ))
+            })
+            .unwrap_or_default(),
         beats,
+        read_grid,
         beat_grid,
         grid_source,
         analysis_problem,
@@ -203,11 +230,7 @@ pub fn prepare_track(
 /// cannot follow beat by beat, such as one with a beat out of order or at an impossible tempo,
 /// still gives the deck a steady grid at the downbeat's tempo rather than none at all.
 fn engine_beat_grid(grid: &BeatGrid) -> Option<dubplate_engine::BeatGrid> {
-    let downbeat = grid
-        .beats
-        .iter()
-        .position(|beat| beat.beat_in_bar == 1)
-        .unwrap_or(0);
+    let downbeat = grid.first_downbeat_index().unwrap_or(0);
     let beats: Vec<_> = grid
         .beats
         .iter()
@@ -246,53 +269,6 @@ pub enum DeckContent {
     Failed(String),
 }
 
-/// The hot cues of the track on a deck, pad A first, in seconds from the start of the track.
-/// They start as rekordbox saved them; pads set or deleted on the deck change only this copy.
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
-pub struct HotCues([Option<f64>; HotCuePad::ALL.len()]);
-
-impl HotCues {
-    /// The hot cues rekordbox saved for `track`.
-    pub fn of(track: &CollectionTrack) -> Self {
-        let mut hot_cues = Self::default();
-        for cue in &track.hot_cues {
-            hot_cues.set(cue.pad, cue.seconds);
-        }
-        hot_cues
-    }
-
-    /// Where the hot cue on `pad` is, if one is set.
-    pub fn get(&self, pad: HotCuePad) -> Option<f64> {
-        self.0[pad_position(pad)]
-    }
-
-    /// Puts the hot cue of `pad` at `seconds`.
-    pub fn set(&mut self, pad: HotCuePad, seconds: f64) {
-        self.0[pad_position(pad)] = Some(seconds);
-    }
-
-    /// Deletes the hot cue of `pad`.
-    pub fn delete(&mut self, pad: HotCuePad) {
-        self.0[pad_position(pad)] = None;
-    }
-
-    /// Every hot cue set, with its pad, A first.
-    pub fn iter(&self) -> impl Iterator<Item = (HotCuePad, f64)> + '_ {
-        HotCuePad::ALL
-            .into_iter()
-            .zip(self.0)
-            .filter_map(|(pad, seconds)| Some((pad, seconds?)))
-    }
-}
-
-/// Where `pad` sits among the pads, A being 0.
-pub fn pad_position(pad: HotCuePad) -> usize {
-    HotCuePad::ALL
-        .iter()
-        .position(|candidate| *candidate == pad)
-        .unwrap_or_default()
-}
-
 /// The interface side of one deck.
 #[derive(Default)]
 pub struct Deck {
@@ -300,8 +276,9 @@ pub struct Deck {
     pub track: Option<Arc<CollectionTrack>>,
     /// Where it stands.
     pub content: DeckContent,
-    /// The track's hot cues as the pads show them.
-    pub hot_cues: HotCues,
+    /// The track's cues as the deck uses them: the ones the DJ made in Dubplate, else
+    /// rekordbox's.
+    pub cues: Arc<TrackCues>,
     /// The playhead drawn on its waveforms.
     pub clock: PlayheadClock,
     /// Whether CUE is held down at the cue point, playing until it is let go, as on a CDJ.
@@ -310,17 +287,24 @@ pub struct Deck {
     pub tap_tempo: TapTempo,
     /// Where the deck's beat grid comes from, when it has one.
     pub grid_source: Option<GridSource>,
+    /// Where the pointer is over the deck's overview, from 0.0 to 1.0.
+    pub overview_hover: Option<f32>,
+    /// The deck's cues as last drawn, to notice one being set.
+    pub seen_marks: Option<SeenMarks>,
+    /// The cue just set, pulsing where it landed.
+    pub marker_pulse: Option<MarkerPulse>,
     load_generation: u64,
     committed_generation: u64,
-    pending: Option<(Arc<CollectionTrack>, HotCues)>,
+    pending: Option<(Arc<CollectionTrack>, Arc<TrackCues>)>,
+    loaded_at: Option<Instant>,
 }
 
 impl Deck {
-    /// Marks `track` as loading with `hot_cues` on its pads, and returns the number that its
-    /// result must bring back, so a slower earlier load never replaces a later one.
-    pub fn begin_load(&mut self, track: Arc<CollectionTrack>, hot_cues: HotCues) -> u64 {
+    /// Marks `track` as loading with `cues`, and returns the number that its result must bring
+    /// back, so a slower earlier load never replaces a later one.
+    pub fn begin_load(&mut self, track: Arc<CollectionTrack>, cues: Arc<TrackCues>) -> u64 {
         self.load_generation += 1;
-        self.pending = Some((track, hot_cues));
+        self.pending = Some((track, cues));
         if self.track.is_none() {
             self.content = DeckContent::Loading;
         }
@@ -337,12 +321,13 @@ impl Deck {
         if !self.is_current_load(generation) {
             return false;
         }
-        let Some((track, hot_cues)) = self.pending.take() else {
+        let Some((track, cues)) = self.pending.take() else {
             return false;
         };
         self.committed_generation = generation;
+        self.loaded_at = Some(Instant::now());
         self.track = Some(track);
-        self.hot_cues = hot_cues;
+        self.cues = cues;
         self.content = DeckContent::Loaded(visuals);
         self.cue_preview = false;
         self.tap_tempo = TapTempo::default();
@@ -359,6 +344,21 @@ impl Deck {
         if self.track.is_none() {
             self.content = DeckContent::Failed(problem);
         }
+    }
+
+    /// When the track on the deck finished loading, if one did.
+    pub fn loaded_at(&self) -> Option<Instant> {
+        self.loaded_at
+    }
+
+    /// The number of the latest load asked for.
+    pub fn load_generation(&self) -> u64 {
+        self.load_generation
+    }
+
+    /// The load the deck shows and plays, while a track is loaded.
+    pub fn loaded_generation(&self) -> Option<u64> {
+        self.visuals().map(|_| self.committed_generation)
     }
 
     /// Whether a load result with `generation` is the latest one asked for.
@@ -383,6 +383,8 @@ impl Deck {
 
 #[cfg(test)]
 mod tests {
+    use dubplate_rekordbox::{HotCue, HotCuePad};
+
     use super::*;
 
     #[test]
@@ -390,11 +392,11 @@ mod tests {
         let mut deck = Deck::default();
         let first = deck.begin_load(
             Arc::new(CollectionTrack::from_file(Path::new("one.mp3"))),
-            HotCues::default(),
+            Arc::default(),
         );
         let second = deck.begin_load(
             Arc::new(CollectionTrack::from_file(Path::new("two.mp3"))),
-            HotCues::default(),
+            Arc::default(),
         );
         assert!(!deck.is_current_load(first));
         assert!(deck.is_current_load(second));
@@ -410,6 +412,8 @@ mod tests {
             zoomed: None,
             overview: None,
             beats: Arc::default(),
+            read_grid: None,
+            phrases: Arc::default(),
             analysis_problem: None,
         }
     }
@@ -417,16 +421,16 @@ mod tests {
     #[test]
     fn failed_replacement_retains_identity_cues_grid_and_visuals() {
         let mut deck = Deck::default();
-        let mut cues = HotCues::default();
-        cues.set(HotCuePad::B, 2.0);
+        let mut cues = TrackCues::default();
+        cues.set_hot_cue(HotCuePad::B, HotCue::at(2_000));
         let first = deck.begin_load(
             Arc::new(CollectionTrack::from_file(Path::new("old.mp3"))),
-            cues,
+            Arc::new(cues),
         );
         assert!(deck.commit_load(first, visuals(), Some(GridSource::Tapped)));
         let failed = deck.begin_load(
             Arc::new(CollectionTrack::from_file(Path::new("missing.mp3"))),
-            HotCues::default(),
+            Arc::default(),
         );
         assert_eq!(deck.track.as_ref().unwrap().row.title.as_ref(), "old");
         assert!(deck.is_loaded_generation(first));
@@ -434,7 +438,10 @@ mod tests {
         deck.fail_load(failed, "missing".into());
         assert!(deck.is_loaded_generation(first));
         assert_eq!(deck.track.as_ref().unwrap().row.title.as_ref(), "old");
-        assert_eq!(deck.hot_cues.get(HotCuePad::B), Some(2.0));
+        assert_eq!(
+            deck.cues.hot_cue(HotCuePad::B).map(|cue| cue.start_ms),
+            Some(2_000)
+        );
         assert_eq!(deck.grid_source, Some(GridSource::Tapped));
         assert!(deck.visuals().is_some());
         assert!(!deck.commit_load(first, visuals(), None));
@@ -474,6 +481,36 @@ mod tests {
     }
 
     #[test]
+    fn the_djs_grid_fix_moves_a_variable_grid_and_keeps_its_tempo_changes() {
+        use dubplate_rekordbox::analysis::Beat;
+        let beat = |time_ms, tempo_hundredths, beat_in_bar| Beat {
+            time_ms,
+            tempo_hundredths,
+            beat_in_bar,
+        };
+        let grid = BeatGrid {
+            beats: vec![
+                beat(0, 12000, 4),
+                beat(500, 12000, 1),
+                beat(1000, 10000, 2),
+                beat(1600, 10000, 3),
+            ],
+        };
+        let correction = GridCorrection {
+            offset_ms: 20,
+            downbeat_shift: 1,
+        };
+        let engine = DeckGrid::new(&grid, correction).engine.unwrap();
+        assert!(engine.has_tempo_changes());
+        assert!((engine.bpm_at(3.0) - 100.0).abs() < 1e-8);
+        assert!(
+            engine.beat_at(1.02).abs() < 1e-8,
+            "the shifted downbeat is beat zero"
+        );
+        assert!((engine.beat_at(0.52) + 1.0).abs() < 1e-8);
+    }
+
+    #[test]
     fn a_grid_with_a_beat_out_of_order_still_gives_a_steady_grid_at_the_downbeat() {
         use dubplate_rekordbox::analysis::Beat;
         let grid = BeatGrid {
@@ -499,21 +536,5 @@ mod tests {
         assert!(!engine.has_tempo_changes());
         assert!((engine.bpm() - 120.0).abs() < 1e-8);
         assert!((engine.beat_at(0.5)).abs() < 1e-8);
-    }
-
-    #[test]
-    fn hot_cues_are_set_and_deleted_by_pad() {
-        let mut hot_cues = HotCues::default();
-        hot_cues.set(HotCuePad::C, 12.5);
-        hot_cues.set(HotCuePad::A, 1.0);
-        assert_eq!(hot_cues.get(HotCuePad::C), Some(12.5));
-        let set: Vec<(char, f64)> = hot_cues
-            .iter()
-            .map(|(pad, seconds)| (pad.letter(), seconds))
-            .collect();
-        assert_eq!(set, [('A', 1.0), ('C', 12.5)]);
-        hot_cues.delete(HotCuePad::C);
-        assert_eq!(hot_cues.get(HotCuePad::C), None);
-        assert_eq!(pad_position(HotCuePad::H), 7);
     }
 }

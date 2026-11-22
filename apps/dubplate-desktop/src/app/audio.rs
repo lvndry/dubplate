@@ -2,25 +2,32 @@
 //! to another while the decks are stopped, keeping the tracks, their places, the mixer and the
 //! effects as they were.
 
+use std::time::{Duration, Instant};
+
 use dubplate_engine::{
-    AudioOutput, Controller, DeckId, EffectUnitId, EngineError, MasterTempo, OutputConfig,
-    OutputDevice,
+    AudioOutput, Controller, DeckId, DeckSnapshot, EffectUnitId, EngineError, MasterTempo,
+    OutputConfig, OutputDevice,
 };
 use gpui::{Context, SharedString};
 
 use super::notice::NoticePlace;
-use super::{BUFFER_FRAMES, DubplateApp, Engine, error_chain};
+use super::{DubplateApp, Engine, error_chain};
 use crate::controls::{MixerPositions, master_gain_at, tempo_fader, trim_gain_at};
+use crate::devices::{BufferSize, DeviceAccess};
 
 /// Starts the engine on the sound card called `device`, or on the system's default one when
-/// none is chosen. Returns the engine, and why the chosen card was not used if it was not.
+/// none is chosen, or on the silent output when the devices are offline. Returns the engine,
+/// and why the chosen card was not used if it was not.
 pub(super) fn start_engine(
     mixer: &MixerPositions,
     device: Option<&str>,
+    buffer: BufferSize,
+    devices: &DeviceAccess,
 ) -> (Result<Engine, SharedString>, Option<String>) {
-    match (device, engine_on(mixer, device)) {
+    let device = device.filter(|_| !devices.is_offline());
+    match (device, engine_on(mixer, device, buffer, devices)) {
         (Some(name), Err(problem)) => (
-            engine_on(mixer, None),
+            engine_on(mixer, None, buffer, devices),
             Some(format!(
                 "{name} is not available, so Dubplate plays on the default output: {problem}"
             )),
@@ -29,14 +36,21 @@ pub(super) fn start_engine(
     }
 }
 
-/// The engine on the sound card called `device`, or the default one, with the mixer set.
-fn engine_on(mixer: &MixerPositions, device: Option<&str>) -> Result<Engine, SharedString> {
+/// The engine on the sound card called `device`, or the default one, or the silent output
+/// when the devices are offline, with the mixer set.
+fn engine_on(
+    mixer: &MixerPositions,
+    device: Option<&str>,
+    buffer: BufferSize,
+    devices: &DeviceAccess,
+) -> Result<Engine, SharedString> {
     let config = OutputConfig {
-        buffer_frames: Some(BUFFER_FRAMES),
+        buffer_frames: Some(buffer.frames()),
     };
-    let started = match device {
-        Some(name) => AudioOutput::start_on(name, &config),
-        None => AudioOutput::start(&config),
+    let started = match (devices, device) {
+        (DeviceAccess::Offline { .. }, _) => AudioOutput::start_silent(&config),
+        (DeviceAccess::Real, Some(name)) => AudioOutput::start_on(name, &config),
+        (DeviceAccess::Real, None) => AudioOutput::start(&config),
     };
     let (mut controller, output) =
         started.map_err(|error| SharedString::from(error_chain(&error)))?;
@@ -63,11 +77,31 @@ fn apply_mixer(controller: &mut Controller, mixer: &MixerPositions) -> Result<()
     controller.set_sampler_volume(mixer.sampler_volume)
 }
 
+/// How long a sound card change waits for the old audio thread to carry out the commands
+/// sent to it before taking what it last published: a stream that died never will.
+const SNAPSHOT_TIMEOUT: Duration = Duration::from_millis(200);
+const SNAPSHOT_RETRY: Duration = Duration::from_millis(5);
+
+/// A deck of `source` to carry over: its state once the audio thread has caught up, or what
+/// it last published when the thread does not answer in time.
+fn deck_snapshot(source: &Controller, deck: DeckId) -> Result<DeckSnapshot, EngineError> {
+    let deadline = Instant::now() + SNAPSHOT_TIMEOUT;
+    loop {
+        match source.snapshot_deck(deck) {
+            Err(EngineError::DeckStatePending) if Instant::now() < deadline => {
+                std::thread::sleep(SNAPSHOT_RETRY);
+            }
+            Err(EngineError::DeckStatePending) => return Ok(source.last_published_deck(deck)),
+            answer => return answer,
+        }
+    }
+}
+
 /// Puts on `target` what `source` has beyond the mixer: the tracks at their places with their
 /// cue points and grids, the headphone buttons, the effect units, the tempo ranges and sync.
 fn carry_over(source: &Controller, target: &mut Controller) -> Result<(), EngineError> {
     for deck in DeckId::ALL {
-        let snapshot = source.snapshot_deck(deck)?;
+        let snapshot = deck_snapshot(source, deck)?;
         target.restore_deck(deck, &snapshot)?;
         let tempo = source.tempo_state(deck);
         if tempo.is_master {
@@ -83,20 +117,48 @@ fn carry_over(source: &Controller, target: &mut Controller) -> Result<(), Engine
         let state = source.effect_unit(unit);
         target.set_effect_kind(unit, state.kind)?;
         target.set_effect_target(unit, state.target)?;
-        target.set_effect_beat(unit, state.beat)?;
+        if let Some(value) = state.parameter {
+            target.set_effect_parameter(unit, value)?;
+        }
         target.set_effect_depth(unit, state.depth)?;
         target.set_effect_enabled(unit, state.enabled)?;
+        target.set_release_fx(unit, state.release)?;
     }
     for deck in DeckId::ALL {
         target.set_smart_cfx(deck, source.smart_cfx(deck))?;
     }
     target.set_smart_fader(source.smart_fader())?;
+    target.set_smart_fader_source(source.smart_fader_source())?;
+    target.set_fader_echo(source.fader_echo())?;
+    target.set_crossfader_enabled(source.crossfader_enabled())?;
+    target.set_crossfader_curve(source.crossfader_curve())?;
+    target.set_channel_fader_curve(source.channel_fader_curve())?;
+    for deck in DeckId::ALL {
+        target.set_crossfader_assign(deck, source.crossfader_assign(deck))?;
+    }
     target.set_quantize(source.quantize())
 }
 
 impl DubplateApp {
-    /// Reads the sound cards on a background thread, for the settings.
+    /// Reads the sound cards on a background thread, for the settings. With the devices
+    /// offline, the silent output is the only one.
     pub(super) fn refresh_output_devices(&mut self, cx: &mut Context<'_, Self>) {
+        if self.devices.is_offline() {
+            self.output_devices = self
+                .engine
+                .as_ref()
+                .ok()
+                .map(|engine| OutputDevice {
+                    name: engine.output.device_name().to_owned(),
+                    channel_count: engine.output.channel_count(),
+                    sample_rate: engine.output.sample_rate(),
+                    is_default: true,
+                })
+                .into_iter()
+                .collect();
+            cx.notify();
+            return;
+        }
         cx.spawn(async move |this, cx| {
             let devices = cx
                 .background_executor()
@@ -140,13 +202,56 @@ impl DubplateApp {
         if self.current_output() == Some(name.as_str()) {
             return;
         }
+        if self.restart_engine(Some(&name), self.buffer_size(), "the sound card", cx) {
+            self.settings.audio_device = Some(name);
+            self.save_settings(cx);
+        }
+    }
+
+    /// The buffer the sound card is fed in.
+    pub(super) fn buffer_size(&self) -> BufferSize {
+        BufferSize::from_setting(self.settings.buffer_frames)
+    }
+
+    /// Starts the sound card again with a buffer of `buffer` and remembers it. The decks must
+    /// be stopped, as for a change of sound card.
+    pub(super) fn choose_buffer_size(&mut self, buffer: BufferSize, cx: &mut Context<'_, Self>) {
+        if buffer == self.buffer_size() {
+            return;
+        }
+        let device = self.current_output().map(str::to_owned);
+        if self.restart_engine(device.as_deref(), buffer, "the buffer size", cx) {
+            self.settings.buffer_frames = Some(buffer.frames());
+            self.save_settings(cx);
+        }
+    }
+
+    /// The dropouts since launch: buffers the sound card asked for that were not ready in
+    /// time.
+    pub(super) fn dropouts(&self) -> u64 {
+        self.engine
+            .as_ref()
+            .map_or(0, |engine| engine.controller.stats().overruns())
+    }
+
+    /// Replaces the engine with one on `device` with `buffer`, carrying the decks, mixer and
+    /// effects over. Refused while recording or playing, since the change drops a moment of
+    /// audio; `change` names what the DJ is changing for the notice. Returns whether it
+    /// happened.
+    fn restart_engine(
+        &mut self,
+        device: Option<&str>,
+        buffer: BufferSize,
+        change: &str,
+        cx: &mut Context<'_, Self>,
+    ) -> bool {
         if self.is_recording() {
             self.show_notice(
                 NoticePlace::Window,
-                "Stop the recording to change the sound card.",
+                format!("Stop the recording to change {change}."),
                 cx,
             );
-            return;
+            return false;
         }
         if DeckId::ALL
             .into_iter()
@@ -154,12 +259,13 @@ impl DubplateApp {
         {
             self.show_notice(
                 NoticePlace::Window,
-                "Stop both decks to change the sound card.",
+                format!("Stop both decks to change {change}."),
                 cx,
             );
-            return;
+            return false;
         }
-        let mut engine = match engine_on(&self.mixer, Some(&name)) {
+        let name = device.unwrap_or("the default output").to_owned();
+        let mut engine = match engine_on(&self.mixer, device, buffer, &self.devices) {
             Ok(engine) => engine,
             Err(problem) => {
                 self.show_notice(
@@ -167,7 +273,7 @@ impl DubplateApp {
                     format!("{name} could not be opened: {problem}"),
                     cx,
                 );
-                return;
+                return false;
             }
         };
         if let Ok(previous) = &self.engine
@@ -181,16 +287,16 @@ impl DubplateApp {
         }
         self.engine = Ok(engine);
         self.restore_sampler(cx);
-        self.settings.audio_device = Some(name);
-        self.save_settings(cx);
         cx.notify();
+        true
     }
 }
 
 #[cfg(test)]
 mod tests {
     use dubplate_engine::{
-        BeatLength, EffectKind, EffectTarget, Renderer, SyncMode, TempoRange, Track, offline_engine,
+        BeatLength, ChannelFaderCurve, CrossfaderAssign, CrossfaderCurve, EffectKind, EffectTarget,
+        ParameterValue, Renderer, SyncMode, TempoRange, Track, offline_engine,
     };
 
     use super::*;
@@ -216,18 +322,33 @@ mod tests {
         source.set_sync(DeckId::A, SyncMode::Beat).unwrap();
         source.set_key_lock(DeckId::B, true).unwrap();
         let unit = EffectUnitId::ALL[2];
-        source.set_effect_kind(unit, EffectKind::Gate).unwrap();
+        source.set_effect_kind(unit, EffectKind::Trans).unwrap();
         source
             .set_effect_target(unit, EffectTarget::Deck(DeckId::B))
             .unwrap();
-        source.set_effect_beat(unit, BeatLength::HALF).unwrap();
+        source
+            .set_effect_parameter(unit, ParameterValue::Beats(BeatLength::HALF))
+            .unwrap();
         source.set_effect_depth(unit, 0.8).unwrap();
+        source
+            .set_crossfader_assign(DeckId::A, CrossfaderAssign::Thru)
+            .unwrap();
+        source
+            .set_crossfader_curve(CrossfaderCurve::Scratch)
+            .unwrap();
+        source
+            .set_channel_fader_curve(ChannelFaderCurve::Fast)
+            .unwrap();
         render(&mut source_renderer);
 
         let (mut target, mut target_renderer) = offline_engine(SAMPLE_RATE);
         carry_over(&source, &mut target).unwrap();
         render(&mut target_renderer);
 
+        assert_eq!(target.crossfader_assign(DeckId::A), CrossfaderAssign::Thru);
+        assert_eq!(target.crossfader_assign(DeckId::B), CrossfaderAssign::B);
+        assert_eq!(target.crossfader_curve(), CrossfaderCurve::Scratch);
+        assert_eq!(target.channel_fader_curve(), ChannelFaderCurve::Fast);
         let deck = target.deck_state(DeckId::B);
         assert!(deck.loaded && !deck.playing);
         assert!((deck.position_seconds - 4.5).abs() < 1e-6, "{deck:?}");
@@ -239,10 +360,35 @@ mod tests {
         assert_eq!(target.tempo_state(DeckId::A).sync, SyncMode::Beat);
         assert!(target.key_lock(DeckId::B) && !target.key_lock(DeckId::A));
         let effect = target.effect_unit(unit);
-        assert_eq!(effect.kind, EffectKind::Gate);
+        assert_eq!(effect.kind, EffectKind::Trans);
         assert_eq!(effect.target, EffectTarget::Deck(DeckId::B));
-        assert_eq!(effect.beat, BeatLength::HALF);
+        assert_eq!(
+            effect.parameter,
+            Some(ParameterValue::Beats(BeatLength::HALF))
+        );
         assert!((effect.depth - 0.8).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_sound_card_that_stopped_still_hands_over_what_it_last_played() {
+        let (mut source, mut source_renderer) = offline_engine(SAMPLE_RATE);
+        let samples = vec![0.1; SAMPLE_RATE as usize * 10 * 2];
+        let track = Track::from_interleaved_stereo(&samples, SAMPLE_RATE).unwrap();
+        source.load_track(DeckId::A, track).unwrap();
+        source.seek(DeckId::A, 4.0).unwrap();
+        render(&mut source_renderer);
+        drop(source_renderer);
+        source.set_headphone_cue(DeckId::A, true).unwrap();
+
+        let (mut target, mut target_renderer) = offline_engine(SAMPLE_RATE);
+        carry_over(&source, &mut target).unwrap();
+        render(&mut target_renderer);
+        let state = target.deck_state(DeckId::A);
+        assert!(
+            state.loaded,
+            "deck A is carried over though the old stream died"
+        );
+        assert!((state.position_seconds - 4.0).abs() < 1e-3, "{state:?}");
     }
 
     #[test]
