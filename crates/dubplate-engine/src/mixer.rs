@@ -10,6 +10,7 @@ use crate::effects::{EffectChange, EffectRack, EffectTarget, EffectUnitId};
 use crate::grid::BeatGrid;
 use crate::headphones::Headphones;
 use crate::jog::JogInput;
+use crate::preview::{PreviewBus, PreviewPlan};
 use crate::processor::{AudioProcessor, ProcessContext, StereoBlock};
 use crate::state::{GapDetector, SharedState, encode_loop_length, raise_peak};
 use crate::sync::SyncMode;
@@ -138,6 +139,7 @@ pub(crate) enum Command {
         deck: DeckId,
         enabled: bool,
     },
+    Preview(Option<PreviewPlan>),
 }
 
 /// Something the audio thread no longer needs. It goes back to the control side to be dropped,
@@ -191,6 +193,7 @@ pub struct Renderer {
     master_block: StereoBlock,
     master_gain: Ramp,
     headphones: Headphones,
+    preview: PreviewBus,
     master_limiter: Limiter,
     headphone_limiter: Limiter,
     crossfader: f32,
@@ -220,6 +223,7 @@ impl Renderer {
             master_block: StereoBlock::with_capacity(MAX_BLOCK_FRAMES),
             master_gain: Ramp::new(1.0, declick_frames),
             headphones: Headphones::new(MAX_BLOCK_FRAMES, declick_frames),
+            preview: PreviewBus::new(sample_rate, MAX_BLOCK_FRAMES, declick_frames),
             master_limiter: Limiter::new(sample_rate as f32),
             headphone_limiter: Limiter::new(sample_rate as f32),
             crossfader: 0.5,
@@ -352,7 +356,9 @@ impl Renderer {
             &mut self.master_block,
             &master_context,
         );
-        self.headphones.finish(&self.master_block);
+        starved |= self.render_preview(frame_count);
+        self.headphones
+            .finish(&self.master_block, &self.preview.block);
         let (headphones_left, headphones_right) = self.headphones.block.channels_mut();
         self.headphone_limiter
             .process(headphones_left, headphones_right);
@@ -369,6 +375,13 @@ impl Renderer {
             &self.shared.master_limiting,
             1.0 - self.master_limiter.take_gain_reduction(),
         );
+        starved
+    }
+
+    fn render_preview(&mut self, frame_count: usize) -> bool {
+        let mut starved = false;
+        self.preview
+            .render(frame_count, &mut self.retire, &mut starved);
         starved
     }
 
@@ -495,6 +508,7 @@ impl Renderer {
             Command::SetKeyLock { deck, enabled } => {
                 self.decks[deck.index()].set_key_lock(enabled);
             }
+            Command::Preview(plan) => self.preview.set(plan, &mut self.retire),
             Command::SetMasterTempo(source) => self.tempo_master.set_source(source),
             Command::ChangeEffect { unit, change } => self.effects.change(unit, change),
             Command::SetEq {
@@ -586,6 +600,12 @@ impl Renderer {
             shared.store(sounding, Ordering::Relaxed);
         }
         self.shared.tempo_master.store(self.tempo_master.current());
+        self.shared
+            .preview_playing
+            .store(self.preview.is_playing(), Ordering::Relaxed);
+        self.shared
+            .preview_position_seconds
+            .store(self.preview.position_seconds());
     }
 }
 

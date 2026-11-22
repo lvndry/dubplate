@@ -116,6 +116,10 @@ Key lock, the MASTER TEMPO button of a CDJ, changes a deck's tempo without chang
 
 The stretcher needs to hear about 140 ms of music ahead of what it plays. The track is fully decoded, so the deck reads ahead by that much, round loops as the playhead will, and the stretched beats land within a millisecond of the playhead. After a jump, hot cue or beat jump the stretcher starts again at the new place at once. Scratching, and a record held still, play without key lock, as on a CDJ; at the track's own tempo the deck plays the track untouched. Turning key lock on or off crossfades over 20 ms. In the play example, a switches key lock on the selected deck.
 
+## Preview a seam
+
+`Controller::preview` auditions a transition in the headphones before playing it: two tracks, each from its own start at its own tempo, the second coming in at the planned overlap, with key lock if asked. It plays on the headphone bus only, after the cue mix and before the headphone level and limiter, using the decks' own reader and time-stretcher, and never touches the decks or the master output: a test checks the master stays bit for bit the same while a preview plays. It stops by itself when both tracks end, or after 30 seconds. `Controller::preview_state` says whether it plays and how far it is.
+
 ## Master limiter
 
 The master and the headphones each end in a look-ahead limiter, so however hard the decks are pushed no sample passes -0.3 dBFS. It sees peaks 1.5 ms ahead and turns down smoothly before they arrive, holds the gain for 20 ms so a bass note is turned down without distortion, and lets go over 120 ms. Music under the ceiling passes untouched, only delayed by the look-ahead. `Meters::master_limiter_gain` shows how far the master was pushed into it, for a LIMIT light.

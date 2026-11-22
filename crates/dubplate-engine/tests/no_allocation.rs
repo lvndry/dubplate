@@ -13,8 +13,8 @@ use common::{SAMPLE_RATE, constant_track, wait_until_decoded, write_wav};
 use dubplate_engine::cpal::{OutputCallbackInfo, OutputStreamTimestamp, StreamInstant};
 use dubplate_engine::{
     AudioProcessor, BeatGrid, BeatLength, Controller, DeckId, EffectKind, EffectTarget,
-    EffectUnitId, EngineError, EqBand, GridBeat, MasterTempo, ProcessContext, Renderer,
-    StereoBlock, SyncMode, TempoRange, offline_engine,
+    EffectUnitId, EngineError, EqBand, GridBeat, MasterTempo, Preview, PreviewTrack,
+    ProcessContext, Renderer, StereoBlock, SyncMode, TempoRange, offline_engine,
 };
 
 struct CountingAllocator;
@@ -185,7 +185,28 @@ fn run_session(
     controller.set_sync(DeckId::A, SyncMode::Beat)?;
     render_armed(renderer, &mut output[..9600], 2);
 
-    let steps: [Step; 50] = [
+    let steps: [Step; 52] = [
+        |controller| {
+            let track = controller
+                .track(DeckId::B)
+                .cloned()
+                .ok_or(EngineError::NoOutputDevice)?;
+            controller.preview(Some(Preview {
+                first: PreviewTrack {
+                    track: track.clone(),
+                    start_seconds: 0.2,
+                    tempo: 1.05,
+                },
+                second: PreviewTrack {
+                    track,
+                    start_seconds: 0.0,
+                    tempo: 0.95,
+                },
+                second_offset_seconds: 0.05,
+                key_lock: true,
+            }))
+        },
+        |controller| controller.preview(None),
         |controller| controller.set_key_lock(DeckId::B, false),
         |controller| controller.set_key_lock(DeckId::B, true),
         |controller| controller.set_headphone_cue(DeckId::A, true),

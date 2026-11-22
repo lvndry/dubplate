@@ -206,13 +206,27 @@ impl KeyLock {
         self.hold_frames = self.output_latency as usize;
     }
 
-    /// The stretched frame `index` of the block and its share of the deck's sound.
+    /// The playhead's frame `index` of the block: the stretched sound over the plain resampled
+    /// one from `voice`, in the share the key lock fade has reached.
     #[inline]
-    pub(crate) fn next_frame(&mut self, index: usize) -> (f32, f32, f32) {
+    pub(crate) fn playhead_frame(
+        &mut self,
+        index: usize,
+        voice: &Voice,
+        starved: &mut bool,
+    ) -> (f32, f32) {
         let mix = self.mix.next_value();
-        let left = self.output[index * CHANNELS];
-        let right = self.output[index * CHANNELS + 1];
-        (left, right, mix)
+        let stretched_left = self.output[index * CHANNELS];
+        let stretched_right = self.output[index * CHANNELS + 1];
+        let (plain_left, plain_right) = if mix < 1.0 {
+            voice.read_playhead(starved)
+        } else {
+            (0.0, 0.0)
+        };
+        (
+            plain_left + (stretched_left - plain_left) * mix,
+            plain_right + (stretched_right - plain_right) * mix,
+        )
     }
 }
 
