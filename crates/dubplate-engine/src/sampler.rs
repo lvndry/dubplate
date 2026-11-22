@@ -248,9 +248,9 @@ impl Sampler {
             let gain = slot.settings.gain;
             for (left, right) in left_bus.iter_mut().zip(right_bus.iter_mut()) {
                 let playhead_gain = slot.voice.transport.next_value() * gain;
-                let (slot_left, slot_right) = slot
-                    .voice
-                    .next_frame(playhead_gain, &UNITY_STEM_GAINS, retire, starved);
+                let (slot_left, slot_right) =
+                    slot.voice
+                        .next_frame(playhead_gain, &UNITY_STEM_GAINS, retire, starved);
                 *left += slot_left;
                 *right += slot_right;
                 if !slot.playing {

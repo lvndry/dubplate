@@ -2,7 +2,7 @@
 //! deck, and whether they line up with it, by rendering both offline. Plays nothing aloud.
 //!
 //! ```text
-//! cargo run --profile fast -p dubplate-stems --example stem_residual -- <track> <stems-folder> [--from SECONDS] [--seconds N]
+//! cargo run --profile fast -p dubplate-stems --example stem_residual -- <track> <stems-folder> [--from SECONDS] [--seconds N] [--write FOLDER]
 //! ```
 
 use std::path::PathBuf;
@@ -35,16 +35,18 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let stems_folder = PathBuf::from(arguments.next().ok_or("give the stems folder")?);
     let mut from_seconds = 60.0;
     let mut seconds = 30.0;
+    let mut write_to = None;
     while let Some(argument) = arguments.next() {
-        let value: f64 = arguments.next().ok_or("an option needs a value")?.parse()?;
+        let value = arguments.next().ok_or("an option needs a value")?;
         match argument.as_str() {
-            "--from" => from_seconds = value,
-            "--seconds" => seconds = value,
+            "--from" => from_seconds = value.parse()?,
+            "--seconds" => seconds = value.parse()?,
+            "--write" => write_to = Some(PathBuf::from(value)),
             other => return Err(format!("unknown option {other}").into()),
         }
     }
-    let stems = StemFiles::in_folder(stems_folder)
-        .ok_or("the folder does not hold the four stems")?;
+    let stems =
+        StemFiles::in_folder(stems_folder).ok_or("the folder does not hold the four stems")?;
     let loading = Instant::now();
     let stem_tracks = stems.load()?;
     println!(
@@ -57,14 +59,29 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     separated_track.attach_stems(stem_tracks)?;
     let separated = render(&separated_track, from_seconds, seconds)?;
 
+    if let Some(folder) = &write_to {
+        std::fs::create_dir_all(folder)?;
+        for (name, samples) in [("track.f32", &plain), ("stems.f32", &separated)] {
+            let bytes: Vec<u8> = samples
+                .iter()
+                .flat_map(|sample| sample.to_le_bytes())
+                .collect();
+            std::fs::write(folder.join(name), bytes)?;
+        }
+    }
     let (best_lag, best_residual) = (-LAGS..=LAGS)
         .map(|lag| (lag, residual_decibels(&plain, &separated, lag)))
         .min_by(|first, second| first.1.total_cmp(&second.1))
         .ok_or("no lag")?;
-    println!(
-        "residual at full level: {:.1} dB under the track",
-        -residual_decibels(&plain, &separated, 0)
-    );
+    let residual = residual_decibels(&plain, &separated, 0);
+    if residual == f64::NEG_INFINITY {
+        println!("at full level the deck plays the track bit for bit");
+    } else {
+        println!(
+            "residual at full level: {:.1} dB under the track",
+            -residual
+        );
+    }
     println!(
         "best alignment: {best_lag} frames at {OUTPUT_RATE} Hz ({:.1} dB under the track)",
         -best_residual

@@ -68,9 +68,7 @@ impl StemFiles {
     /// Reads the four files into memory for a deck: about 300 MB for seven minutes, which
     /// takes a fraction of a second. Run it off the audio and interface threads.
     pub fn load(&self) -> Result<StemTracks, StemLoadError> {
-        let stems = self
-            .paths()
-            .map(|path| read_stem(&path, STEMS_SAMPLE_RATE));
+        let stems = self.paths().map(|path| read_stem(&path, STEMS_SAMPLE_RATE));
         let [drums, bass, melody, vocals] = stems;
         let samples = [drums?, bass?, melody?, vocals?];
         Ok(StemTracks::from_interleaved_stereo(

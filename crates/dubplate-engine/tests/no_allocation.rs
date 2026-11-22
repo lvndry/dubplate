@@ -14,8 +14,8 @@ use dubplate_engine::cpal::{OutputCallbackInfo, OutputStreamTimestamp, StreamIns
 use dubplate_engine::{
     AudioProcessor, BeatGrid, BeatLength, Controller, DeckId, EffectKind, EffectTarget,
     EffectUnitId, EngineError, EqBand, GridBeat, MasterTempo, PadEffect, Preview, PreviewTrack,
-    ProcessContext, Renderer, SampleMode, SampleSettings, SmartCfx, Stem, StemLevel,
-    StemSettings, StereoBlock, SyncMode, TempoRange, offline_engine,
+    ProcessContext, Renderer, SampleMode, SampleSettings, SmartCfx, Stem, StemLevel, StemSettings,
+    StereoBlock, SyncMode, TempoRange, offline_engine,
 };
 
 struct CountingAllocator;

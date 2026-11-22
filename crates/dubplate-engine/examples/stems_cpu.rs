@@ -7,9 +7,7 @@
 
 use std::time::{Duration, Instant};
 
-use dubplate_engine::{
-    DeckId, Stem, StemSettings, StemTracks, Track, offline_engine,
-};
+use dubplate_engine::{DeckId, Stem, StemSettings, StemTracks, Track, offline_engine};
 
 const OUTPUT_RATE: u32 = 48_000;
 const TRACK_RATE: u32 = 48_000;
@@ -108,9 +106,12 @@ fn noise_track() -> Track {
 fn noise_stems() -> StemTracks {
     let samples: Vec<Vec<i16>> = (0..Stem::COUNT as u32)
         .map(|stem| {
-            noise(11 + stem, (TRACK_SECONDS * f64::from(STEM_RATE)) as usize * 2)
-                .map(|sample| (sample * 8_000.0) as i16)
-                .collect()
+            noise(
+                11 + stem,
+                (TRACK_SECONDS * f64::from(STEM_RATE)) as usize * 2,
+            )
+            .map(|sample| (sample * 8_000.0) as i16)
+            .collect()
         })
         .collect();
     StemTracks::from_interleaved_stereo(

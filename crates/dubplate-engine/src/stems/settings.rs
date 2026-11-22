@@ -139,7 +139,9 @@ pub(crate) struct StemMix {
 
 impl StemMix {
     pub(crate) fn new(output_rate: u32) -> Self {
-        let fade_frames = (f64::from(output_rate) * STEM_FADE_SECONDS).round().max(1.0) as u32;
+        let fade_frames = (f64::from(output_rate) * STEM_FADE_SECONDS)
+            .round()
+            .max(1.0) as u32;
         Self {
             settings: StemSettings::UNTOUCHED,
             gains: std::array::from_fn(|_| Ramp::new(1.0, fade_frames)),

@@ -9,8 +9,8 @@ use common::{
     render_frames, stems_like,
 };
 use dubplate_engine::{
-    BeatGrid, BeatLength, Controller, DeckId, EngineError, Renderer, Stem, StemLevel,
-    StemSettings, Track, offline_engine,
+    BeatGrid, BeatLength, Controller, DeckId, EngineError, Renderer, Stem, StemLevel, StemSettings,
+    Track, offline_engine,
 };
 
 const BLOCK: usize = 256;
@@ -60,16 +60,18 @@ fn residual_decibels(reference: &[f32], other: &[f32]) -> f64 {
 
 /// The level of the `frequency` tone in `signal`, as the amplitude of a sine.
 fn tone_level(signal: &[f32], frequency: f64) -> f64 {
-    let (sine, cosine) = signal.iter().enumerate().fold(
-        (0.0, 0.0),
-        |(sine, cosine), (index, sample)| {
-            let phase = std::f64::consts::TAU * frequency * index as f64 / f64::from(SAMPLE_RATE);
-            (
-                sine + f64::from(*sample) * phase.sin(),
-                cosine + f64::from(*sample) * phase.cos(),
-            )
-        },
-    );
+    let (sine, cosine) =
+        signal
+            .iter()
+            .enumerate()
+            .fold((0.0, 0.0), |(sine, cosine), (index, sample)| {
+                let phase =
+                    std::f64::consts::TAU * frequency * index as f64 / f64::from(SAMPLE_RATE);
+                (
+                    sine + f64::from(*sample) * phase.sin(),
+                    cosine + f64::from(*sample) * phase.cos(),
+                )
+            });
     2.0 * (sine * sine + cosine * cosine).sqrt() / signal.len() as f64
 }
 
@@ -98,11 +100,17 @@ fn track_and_stems(
 fn stems_at_full_level_sound_like_the_track() {
     let (track, stems) = track_and_stems(SAMPLE_RATE, SAMPLE_RATE as usize * 2, |_| {});
     let residual = residual_decibels(&track, &stems);
-    assert!(residual < -120.0, "stems at the track's rate: {residual:.1} dB");
+    assert!(
+        residual < -120.0,
+        "stems at the track's rate: {residual:.1} dB"
+    );
 
     let (track, stems) = track_and_stems(44_100, SAMPLE_RATE as usize * 2, |_| {});
     let residual = residual_decibels(&track, &stems);
-    assert!(residual < -50.0, "stems at 44.1 kHz on a 48 kHz track: {residual:.1} dB");
+    assert!(
+        residual < -50.0,
+        "stems at 44.1 kHz on a 48 kHz track: {residual:.1} dB"
+    );
 }
 
 #[test]
@@ -115,7 +123,10 @@ fn a_muted_stem_is_silent_after_its_fade_and_never_clicks() {
     let before = render(&mut renderer, SAMPLE_RATE as usize);
     let steady_step = largest_step(&before);
     controller
-        .set_stems(DeckId::A, StemSettings::UNTOUCHED.with_muted(Stem::Vocals, true))
+        .set_stems(
+            DeckId::A,
+            StemSettings::UNTOUCHED.with_muted(Stem::Vocals, true),
+        )
         .expect("mute");
     let fade = render(&mut renderer, FADE_FRAMES * 4);
     let after = render(&mut renderer, SAMPLE_RATE as usize);
@@ -185,7 +196,10 @@ fn stems_stay_on_the_playhead_through_tempo_loops_and_jumps() {
             .expect("roll");
     });
     let residual = residual_decibels(&track, &stems);
-    assert!(residual < -120.0, "after a jump and a roll: {residual:.1} dB");
+    assert!(
+        residual < -120.0,
+        "after a jump and a roll: {residual:.1} dB"
+    );
 }
 
 #[test]
@@ -214,11 +228,17 @@ fn with_key_lock_the_stems_sound_like_the_track_and_mute_at_once() {
     controller.set_key_lock(DeckId::A, true).expect("key lock");
     controller.set_tempo(DeckId::A, 1.06).expect("tempo");
     controller
-        .set_stems(DeckId::A, StemSettings::UNTOUCHED.with_muted(Stem::Melody, true))
+        .set_stems(
+            DeckId::A,
+            StemSettings::UNTOUCHED.with_muted(Stem::Melody, true),
+        )
         .expect("mute the melody");
     render(&mut renderer, SAMPLE_RATE as usize);
     controller
-        .set_stems(DeckId::A, StemSettings::UNTOUCHED.with_muted(Stem::Vocals, true))
+        .set_stems(
+            DeckId::A,
+            StemSettings::UNTOUCHED.with_muted(Stem::Vocals, true),
+        )
         .expect("mute the vocals");
     let heard_from = FADE_FRAMES + common::mixer_latency_frames(&controller) + LIMITER_FRAMES;
     let after = render(&mut renderer, heard_from + SAMPLE_RATE as usize / 4);
@@ -230,13 +250,110 @@ fn with_key_lock_the_stems_sound_like_the_track_and_mute_at_once() {
     );
 }
 
+/// A track holding the four stems and a tone none of them holds, as a real separation leaves
+/// part of the track out of every stem.
+fn track_with_more_than_its_stems() -> Track {
+    let rate = f64::from(SAMPLE_RATE);
+    let stems = mix_of_stems(SECONDS, SAMPLE_RATE);
+    let frames = (SECONDS * rate).round() as usize;
+    let samples: Vec<f32> = (0..frames)
+        .flat_map(|index| {
+            let left_and_right = stems.frame(index).expect("a decoded frame");
+            let missing = ((std::f64::consts::TAU * MISSING_TONE * index as f64 / rate).sin()
+                * STEM_AMPLITUDE) as f32;
+            [left_and_right[0] + missing, left_and_right[1] + missing]
+        })
+        .collect();
+    Track::from_interleaved_stereo(&samples, SAMPLE_RATE).expect("valid test track")
+}
+
+const MISSING_TONE: f64 = 400.0;
+
+#[test]
+fn what_the_separation_left_out_plays_with_the_drums_and_bass_and_never_in_an_acapella() {
+    let (_plain_controller, mut plain_renderer) = playing_deck(track_with_more_than_its_stems());
+    let plain = render(&mut plain_renderer, SAMPLE_RATE as usize);
+
+    let track = track_with_more_than_its_stems();
+    track
+        .attach_stems(stems_like(SECONDS, SAMPLE_RATE))
+        .expect("attach");
+    let (mut controller, mut renderer) = playing_deck(track);
+    let untouched = render(&mut renderer, SAMPLE_RATE as usize);
+    let residual = residual_decibels(&plain, &untouched);
+    assert!(
+        residual < -120.0,
+        "every stem up: {residual:.1} dB from the track"
+    );
+
+    controller
+        .set_stems(DeckId::A, StemSettings::UNTOUCHED.without(Stem::Vocals))
+        .expect("instrumental");
+    render(&mut renderer, FADE_FRAMES * 4);
+    let instrumental = render(&mut renderer, SAMPLE_RATE as usize);
+    assert!((tone_level(&instrumental, MISSING_TONE) - STEM_AMPLITUDE).abs() < 0.01);
+    assert!(tone_level(&instrumental, STEM_TONES[Stem::Vocals.index()]) < 1e-4);
+
+    controller
+        .set_stems(DeckId::A, StemSettings::UNTOUCHED.solo(Stem::Vocals))
+        .expect("acapella");
+    render(&mut renderer, FADE_FRAMES * 4);
+    let acapella = render(&mut renderer, SAMPLE_RATE as usize);
+    assert!(tone_level(&acapella, MISSING_TONE) < 1e-3);
+    assert!(
+        (tone_level(&acapella, STEM_TONES[Stem::Vocals.index()]) - STEM_AMPLITUDE).abs() < 0.01
+    );
+}
+
+#[test]
+fn with_key_lock_every_stem_up_sounds_like_the_track() {
+    let frames = SAMPLE_RATE as usize * 2;
+    let render_with = |stems: bool| {
+        let track = track_with_more_than_its_stems();
+        if stems {
+            track
+                .attach_stems(stems_like(SECONDS, 44_100))
+                .expect("attach");
+        }
+        let (mut controller, mut renderer) = playing_deck(track);
+        controller.set_key_lock(DeckId::A, true).expect("key lock");
+        controller.set_tempo(DeckId::A, 0.94).expect("tempo");
+        if stems {
+            controller
+                .set_stems(
+                    DeckId::A,
+                    StemSettings::UNTOUCHED.with_muted(Stem::Melody, true),
+                )
+                .expect("touch the stems");
+            controller
+                .set_stems(DeckId::A, StemSettings::UNTOUCHED)
+                .expect("every stem back up");
+        }
+        render(&mut renderer, frames)
+    };
+    let settled = SAMPLE_RATE as usize / 2;
+    let track = render_with(false);
+    let stems = render_with(true);
+    for tone in STEM_TONES.into_iter().chain([MISSING_TONE]) {
+        let from_track = tone_level(&track[settled..], tone);
+        let from_stems = tone_level(&stems[settled..], tone);
+        assert!(
+            (from_track - from_stems).abs() < 0.01,
+            "{tone} Hz: {from_track} from the track, {from_stems} from the stems"
+        );
+    }
+}
+
 #[test]
 fn stems_of_another_length_are_refused() {
     let track = mix_of_stems(SECONDS, SAMPLE_RATE);
     let error = track
         .attach_stems(stems_like(SECONDS + 1.0, 44_100))
         .unwrap_err();
-    assert!(matches!(error, EngineError::StemsDoNotMatch { .. }), "{error}");
+    assert!(
+        matches!(error, EngineError::StemsDoNotMatch { .. }),
+        "{error}"
+    );
     track
         .attach_stems(stems_like(SECONDS, 44_100))
         .expect("attach");

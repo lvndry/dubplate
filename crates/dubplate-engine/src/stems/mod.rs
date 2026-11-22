@@ -1,17 +1,19 @@
 //! The four parts a track is separated into, which a deck can turn up, down or off one by one.
 //!
 //! A track's stems are attached to its [`crate::Track`] once they are loaded. From then on the
-//! deck plays the sum of the stems instead of the track, each at its own level, read at the very
-//! position the track would be read at: tempo, loops, slip, jumps and key lock all move the
-//! stems with the playhead, frame for frame. A track without stems plays as it is.
+//! deck plays each stem at its own level, read at the very position the track is read at:
+//! tempo, loops, slip, jumps and key lock all move the stems with the playhead, frame for frame.
+//! What the separation left out of the stems, the track minus their sum, plays along with the
+//! drums and bass, so a deck with every stem up sounds exactly like the track. A track without
+//! stems plays as it is.
 
 mod buffer;
 mod settings;
 
 pub use buffer::StemTracks;
-pub(crate) use buffer::{AttachedStems, STEM_CHANNELS, StemFrame, mix_down};
-pub use settings::{StemLevel, StemSettings};
+pub(crate) use buffer::{AttachedStems, PART_CHANNELS, PartFrame, all_full, mix_parts};
 pub(crate) use settings::StemMix;
+pub use settings::{StemLevel, StemSettings};
 
 /// One of the four parts a track is separated into.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]

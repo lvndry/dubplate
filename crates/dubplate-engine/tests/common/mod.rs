@@ -130,8 +130,8 @@ pub fn stem_samples(stem: Stem, seconds: f64, sample_rate: u32) -> Vec<i16> {
     (0..frame_count)
         .flat_map(|index| {
             let time = index as f64 / f64::from(sample_rate);
-            let value = (std::f64::consts::TAU * STEM_TONES[stem.index()] * time).sin()
-                * STEM_AMPLITUDE;
+            let value =
+                (std::f64::consts::TAU * STEM_TONES[stem.index()] * time).sin() * STEM_AMPLITUDE;
             let quantized = (value * 32_768.0).round() as i16;
             [quantized, quantized]
         })

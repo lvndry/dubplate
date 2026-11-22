@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::curves::Ramp;
 use crate::mixer::RetireQueue;
-use crate::stems::{STEM_CHANNELS, Stem, StemFrame};
+use crate::stems::{PART_CHANNELS, PartFrame, Stem, all_full, mix_parts};
 use crate::track::{FrameRead, TrackBuffer};
 
 /// The gain of each stem for one output frame, in the order of [`Stem::ALL`].
@@ -132,7 +132,12 @@ impl Voice {
     /// Switches between the track and its stems with a crossfade at the same position, as a
     /// jump to where the playhead already is: what was playing fades out as a tail while the
     /// other fades in.
-    pub(crate) fn set_reads_stems(&mut self, reads_stems: bool, step: f64, retire: &mut RetireQueue) {
+    pub(crate) fn set_reads_stems(
+        &mut self,
+        reads_stems: bool,
+        step: f64,
+        retire: &mut RetireQueue,
+    ) {
         if self.reads_stems == reads_stems {
             return;
         }
@@ -163,25 +168,26 @@ impl Voice {
         (left * gain + tail_left, right * gain + tail_right)
     }
 
-    /// Every stem of the next frame of the playhead and of every tail, unmixed, and moves the
-    /// tails on: what key lock stretches when the voice reads stems.
+    /// Every stem and the track at the next frame of the playhead and of every tail, unmixed,
+    /// and moves the tails on: what key lock stretches when the voice reads stems.
     #[inline]
-    pub(crate) fn next_stem_frame(&mut self, retire: &mut RetireQueue) -> StemFrame {
-        let mut frame = self
-            .track
-            .as_ref()
-            .and_then(|track| track.stems())
-            .map_or([0.0; STEM_CHANNELS], |stems| stems.read(self.position));
+    pub(crate) fn next_part_frame(
+        &mut self,
+        retire: &mut RetireQueue,
+        starved: &mut bool,
+    ) -> PartFrame {
+        let mut frame = match &self.track {
+            Some(track) => read_parts(track, self.position, starved),
+            None => [0.0; PART_CHANNELS],
+        };
         for slot in &mut self.tails {
             let Some(tail) = slot else {
                 continue;
             };
             let tail_gain = tail.gain(self.declick_frames);
-            if let Some(stems) = tail.track.stems() {
-                let tail_frame = stems.read(tail.position);
-                for (sample, tail_sample) in frame.iter_mut().zip(tail_frame) {
-                    *sample += tail_sample * tail_gain;
-                }
+            let tail_frame = read_parts(&tail.track, tail.position, starved);
+            for (sample, tail_sample) in frame.iter_mut().zip(tail_frame) {
+                *sample += tail_sample * tail_gain;
             }
             if tail.advance()
                 && let Some(finished) = slot.take()
@@ -246,8 +252,9 @@ impl Tail {
     }
 }
 
-/// The frame of `track` at `position`: its stems mixed at `stem_gains` when `reads_stems` and
-/// the track has them, the track itself otherwise.
+/// The frame of `track` at `position`: the track itself, or, when `reads_stems` and the track
+/// has stems, its stems mixed at `stem_gains` with what they left out. Every gain full plays the
+/// track itself without reading the stems.
 #[inline]
 fn read_source(
     track: &TrackBuffer,
@@ -256,12 +263,29 @@ fn read_source(
     stem_gains: &StemGains,
     starved: &mut bool,
 ) -> (f32, f32) {
-    if reads_stems && let Some(stems) = track.stems() {
-        return stems.read_mixed(position, stem_gains);
+    let (left, right, missing) = read_interpolated(track, position);
+    *starved |= missing;
+    match track.stems() {
+        Some(stems) if reads_stems && !all_full(stem_gains) => {
+            mix_parts((left, right), &stems.read(position), stem_gains)
+        }
+        _ => (left, right),
+    }
+}
+
+/// Every stem of `track` at `position`, then the track itself; silent stems when it has none.
+#[inline]
+fn read_parts(track: &TrackBuffer, position: f64, starved: &mut bool) -> PartFrame {
+    let mut frame = [0.0; PART_CHANNELS];
+    if let Some(stems) = track.stems() {
+        let stem_frame = stems.read(position);
+        frame[..stem_frame.len()].copy_from_slice(&stem_frame);
     }
     let (left, right, missing) = read_interpolated(track, position);
     *starved |= missing;
-    (left, right)
+    frame[PART_CHANNELS - 2] = left;
+    frame[PART_CHANNELS - 1] = right;
+    frame
 }
 
 /// Reads a stereo frame between two decoded frames with Catmull-Rom cubic interpolation, which

@@ -6,7 +6,7 @@ use crate::MAX_BLOCK_FRAMES;
 use crate::curves::Ramp;
 use crate::looping::LoopRegion;
 use crate::mixer::RetireQueue;
-use crate::stems::{STEM_CHANNELS, StemFrame, mix_down};
+use crate::stems::{PART_CHANNELS, mix_parts};
 use crate::track::TrackBuffer;
 use crate::voice::{StemGains, UNITY_STEM_GAINS, Voice};
 
@@ -30,7 +30,8 @@ pub(crate) struct KeyLockBlock<'track> {
     /// Track frames per output frame at the track's own speed: the sample rate conversion.
     pub(crate) unit_step: f64,
     pub(crate) active_loop: Option<LoopRegion>,
-    /// The deck plays the track's stems, so they are stretched side by side and mixed after.
+    /// The deck plays the track's stems, so they and the track are stretched side by side and
+    /// mixed after.
     pub(crate) stems: bool,
 }
 
@@ -109,7 +110,7 @@ impl KeyLock {
         Self::build(
             output_rate,
             declick_frames,
-            Some(Stretcher::new(STEM_CHANNELS, output_rate)),
+            Some(Stretcher::new(PART_CHANNELS, output_rate)),
         )
     }
 
@@ -157,7 +158,9 @@ impl KeyLock {
                 .stretch
                 .set_transpose_factor_semitones(semitones, None);
             if let Some(stems) = &mut self.stems {
-                stems.stretch.set_transpose_factor_semitones(semitones, None);
+                stems
+                    .stretch
+                    .set_transpose_factor_semitones(semitones, None);
             }
         }
     }
@@ -307,10 +310,9 @@ impl KeyLock {
         let mix = self.mix.next_value();
         let (stretched_left, stretched_right) = match &self.stems {
             Some(stems) if self.stretching_stems => {
-                let start = index * STEM_CHANNELS;
-                let mut frame: StemFrame = [0.0; STEM_CHANNELS];
-                frame.copy_from_slice(&stems.output[start..start + STEM_CHANNELS]);
-                mix_down(&frame, stem_gains)
+                let frame = &stems.output[index * PART_CHANNELS..(index + 1) * PART_CHANNELS];
+                let track = (frame[PART_CHANNELS - 2], frame[PART_CHANNELS - 1]);
+                mix_parts(track, frame, stem_gains)
             }
             _ => (
                 self.stereo.output[index * CHANNELS],
@@ -331,7 +333,7 @@ impl KeyLock {
 
 /// Reads frames at the track's own speed into interleaved `input`, going round `active_loop`
 /// with a crossfade where the playhead will: stereo frames of the track, or every stem side by
-/// side when `stems`.
+/// side followed by the track when `stems`.
 fn read_ahead(
     feeder: &mut Voice,
     input: &mut [f32],
@@ -341,10 +343,10 @@ fn read_ahead(
     retire: &mut RetireQueue,
     starved: &mut bool,
 ) {
-    let channels = if stems { STEM_CHANNELS } else { CHANNELS };
+    let channels = if stems { PART_CHANNELS } else { CHANNELS };
     for frame in input.chunks_exact_mut(channels) {
         if stems {
-            frame.copy_from_slice(&feeder.next_stem_frame(retire));
+            frame.copy_from_slice(&feeder.next_part_frame(retire, starved));
         } else {
             (frame[0], frame[1]) = feeder.next_frame(1.0, &UNITY_STEM_GAINS, retire, starved);
         }

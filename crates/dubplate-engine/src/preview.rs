@@ -219,17 +219,23 @@ impl PreviewBus {
             {
                 let gain = preview_voice.voice.transport.next_value();
                 let (playhead_left, playhead_right) = if stretched {
-                    preview_voice
-                        .key_lock
-                        .playhead_frame(index, &preview_voice.voice, &UNITY_STEM_GAINS, starved)
+                    preview_voice.key_lock.playhead_frame(
+                        index,
+                        &preview_voice.voice,
+                        &UNITY_STEM_GAINS,
+                        starved,
+                    )
                 } else if gain > 0.0 {
-                    preview_voice.voice.read_playhead(&UNITY_STEM_GAINS, starved)
+                    preview_voice
+                        .voice
+                        .read_playhead(&UNITY_STEM_GAINS, starved)
                 } else {
                     (0.0, 0.0)
                 };
-                let (tail_left, tail_right) = preview_voice
-                    .voice
-                    .next_tails(&UNITY_STEM_GAINS, retire, starved);
+                let (tail_left, tail_right) =
+                    preview_voice
+                        .voice
+                        .next_tails(&UNITY_STEM_GAINS, retire, starved);
                 *left += playhead_left * gain + tail_left;
                 *right += playhead_right * gain + tail_right;
                 if running && !preview_voice.finished {

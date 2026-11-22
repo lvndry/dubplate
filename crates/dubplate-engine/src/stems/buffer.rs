@@ -120,28 +120,47 @@ impl AttachedStems {
             .buffer
             .read_interpolated(track_position * self.position_scale)
     }
-
-    /// The stems at `track_position` mixed to stereo at `gains`.
-    #[inline]
-    pub(crate) fn read_mixed(
-        &self,
-        track_position: f64,
-        gains: &[f32; Stem::COUNT],
-    ) -> (f32, f32) {
-        mix_down(&self.read(track_position), gains)
-    }
 }
 
-/// Mixes a frame of every stem to stereo, each stem at its gain.
+/// Channels of one part frame: every stem side by side, then the track itself.
+pub(crate) const PART_CHANNELS: usize = STEM_CHANNELS + 2;
+
+/// One frame of every stem and of the track, as key lock stretches them together.
+pub(crate) type PartFrame = [f32; PART_CHANNELS];
+
+/// The gain of what the separation left out of every stem, the track minus the sum of its
+/// stems. It sits mostly in the low end, where the network does not make the stems add up to
+/// the track, so it follows the louder of the drums and the bass: the deck sounds exactly like
+/// the track with every stem up, an instrumental is the track minus its vocals, and an acapella
+/// is the vocals stem alone.
 #[inline]
-pub(crate) fn mix_down(frame: &StemFrame, gains: &[f32; Stem::COUNT]) -> (f32, f32) {
-    let mut left = 0.0;
-    let mut right = 0.0;
+fn residual_gain(gains: &[f32; Stem::COUNT]) -> f32 {
+    gains[Stem::Drums.index()].max(gains[Stem::Bass.index()])
+}
+
+/// Mixes the track's frame `track` and its stems' frame `stems` to stereo at `gains`: each stem
+/// at its gain, and the track minus the stems at the residual gain.
+#[inline]
+pub(crate) fn mix_parts(
+    track: (f32, f32),
+    stems: &[f32],
+    gains: &[f32; Stem::COUNT],
+) -> (f32, f32) {
+    let residual = residual_gain(gains);
+    let mut left = track.0 * residual;
+    let mut right = track.1 * residual;
     for (stem, gain) in gains.iter().enumerate() {
-        left += frame[stem * 2] * gain;
-        right += frame[stem * 2 + 1] * gain;
+        let difference = gain - residual;
+        left += stems[stem * 2] * difference;
+        right += stems[stem * 2 + 1] * difference;
     }
     (left, right)
+}
+
+/// Whether every gain is full, so the deck plays the track itself.
+#[inline]
+pub(crate) fn all_full(gains: &[f32; Stem::COUNT]) -> bool {
+    gains.iter().all(|gain| *gain == 1.0)
 }
 
 impl StemBuffer {
@@ -212,8 +231,14 @@ mod tests {
     #[test]
     fn outside_the_stems_is_silence() {
         let stems = stems(4);
-        assert_eq!(stems.buffer().read_interpolated(-10.0), [0.0; STEM_CHANNELS]);
-        assert_eq!(stems.buffer().read_interpolated(100.0), [0.0; STEM_CHANNELS]);
+        assert_eq!(
+            stems.buffer().read_interpolated(-10.0),
+            [0.0; STEM_CHANNELS]
+        );
+        assert_eq!(
+            stems.buffer().read_interpolated(100.0),
+            [0.0; STEM_CHANNELS]
+        );
     }
 
     #[test]
