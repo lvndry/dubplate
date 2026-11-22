@@ -74,8 +74,8 @@ impl Kernel for RollKernel {
 
     fn begin_block(&mut self, timing: &BlockTiming) {
         let capacity = self.recording[0].len();
-        self.loop_samples = (timing.beats_to_samples(self.beat.beats()).round() as usize)
-            .clamp(2, capacity);
+        self.loop_samples =
+            (timing.beats_to_samples(self.beat.beats()).round() as usize).clamp(2, capacity);
         self.edge_samples = (EDGE_SECONDS * timing.sample_rate).max(1.0);
     }
 

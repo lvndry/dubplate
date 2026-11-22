@@ -121,9 +121,7 @@ impl Kernel for ShimmerKernel {
         } else {
             -SHIFT_SEMITONES
         };
-        let shifted = self
-            .shifter
-            .tick(self.returning, (semitones / 12.0).exp2());
+        let shifted = self.shifter.tick(self.returning, (semitones / 12.0).exp2());
         let feedback = self.feedback.next();
         let [left_tone, right_tone] = &mut self.tone;
         let shaped = if self.rising {

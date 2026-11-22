@@ -226,10 +226,7 @@ impl ReverbKernel {
             output_gain: OUTPUT_GAIN,
             decay_seconds: Smoothed::new(DEFAULT_DECAY_SECONDS, TONE_SMOOTHING_SECONDS),
             damping: Smoothed::new(DEFAULT_DAMPING, TONE_SMOOTHING_SECONDS),
-            size_scale: Smoothed::new(
-                size_scale(DEFAULT_SIZE),
-                SIZE_SMOOTHING_SECONDS,
-            ),
+            size_scale: Smoothed::new(size_scale(DEFAULT_SIZE), SIZE_SMOOTHING_SECONDS),
             control_countdown: 0,
             sample_rate: 0.0,
         }

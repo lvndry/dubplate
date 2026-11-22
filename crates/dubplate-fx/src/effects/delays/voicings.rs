@@ -294,7 +294,11 @@ impl Voicing for Filtered {
     }
 
     fn reset(&mut self) {
-        for filter in self.input_filters.iter_mut().chain(&mut self.feedback_filters) {
+        for filter in self
+            .input_filters
+            .iter_mut()
+            .chain(&mut self.feedback_filters)
+        {
             filter.reset();
         }
         self.tape.reset();
@@ -349,9 +353,8 @@ impl Voicing for Crushed {
     fn set_depth(&mut self, depth: f32) {
         let bits = CLEAN_BITS + (CRUSHED_BITS - CLEAN_BITS) * depth;
         self.levels = (bits - 1.0).exp2();
-        self.rate_hz = (CLEAN_RATE_HZ.log2()
-            + (CRUSHED_RATE_HZ.log2() - CLEAN_RATE_HZ.log2()) * depth)
-            .exp2();
+        self.rate_hz =
+            (CLEAN_RATE_HZ.log2() + (CRUSHED_RATE_HZ.log2() - CLEAN_RATE_HZ.log2()) * depth).exp2();
     }
 
     #[inline]

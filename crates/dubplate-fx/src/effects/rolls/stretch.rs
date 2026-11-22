@@ -83,7 +83,10 @@ impl StretchKernel {
     /// share of the time it did not play.
     fn lag(&self) -> f32 {
         let lag = self.since_trigger * (1.0 - 1.0 / self.slowdown);
-        lag.clamp(MIN_DELAY_SAMPLES, self.lines[0].max_delay() - self.grain_samples)
+        lag.clamp(
+            MIN_DELAY_SAMPLES,
+            self.lines[0].max_delay() - self.grain_samples,
+        )
     }
 }
 

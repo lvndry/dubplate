@@ -92,8 +92,8 @@ impl Kernel for MultiTapKernel {
         let fitting = (self.beat.beats() / TAP_SPACING_BEATS).round() as usize;
         self.tap_count = fitting.clamp(1, MOST_TAPS);
         let longest = self.lines[0].max_delay() / self.tap_count as f32;
-        self.spacing_samples = (timing.beats_to_samples(TAP_SPACING_BEATS) as f32)
-            .clamp(MIN_DELAY_SAMPLES, longest);
+        self.spacing_samples =
+            (timing.beats_to_samples(TAP_SPACING_BEATS) as f32).clamp(MIN_DELAY_SAMPLES, longest);
     }
 
     #[inline]

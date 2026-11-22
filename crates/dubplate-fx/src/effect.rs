@@ -398,9 +398,12 @@ pub fn create(kind: EffectKind, config: &EffectConfig) -> Box<dyn Effect> {
         EffectKind::Crusher => Box::new(Crusher::new()),
         EffectKind::Brake => Box::new(Brake::new(config)),
         EffectKind::Backspin => Box::new(Backspin::new(config)),
-        EffectKind::EchoOut => Box::new(EchoEffect::new(config, Outgoing::default(), BeatLength::ONE)),
+        EffectKind::EchoOut => Box::new(EchoEffect::new(
+            config,
+            Outgoing::default(),
+            BeatLength::ONE,
+        )),
     }
-}
 }
 
 #[cfg(test)]
