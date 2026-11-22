@@ -8,7 +8,7 @@ use crate::processor::{ProcessContext, StereoBlock};
 use crate::{DECK_COUNT, EFFECT_UNIT_COUNT};
 
 const KIND_COUNT: usize = EffectKind::ALL.len();
-const TARGET_COUNT: usize = EffectTarget::ALL.len();
+const BUS_COUNT: usize = DECK_COUNT + 1;
 const DEFAULT_KINDS: [EffectKind; EFFECT_UNIT_COUNT] =
     [EffectKind::Echo, EffectKind::Reverb, EffectKind::Flanger];
 const DEFAULT_DEPTH: f32 = 0.5;
@@ -45,23 +45,61 @@ impl fmt::Display for EffectUnitId {
     }
 }
 
-/// Where an effect unit sits: on one deck's channel or on the master mix.
+/// Where an effect unit sits: on one deck's channel, on both decks' channels, or on the master
+/// mix.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EffectTarget {
     /// A deck's channel, after its channel fader and the crossfader, so echo and reverb trails
     /// keep ringing when the fader closes.
     Deck(DeckId),
+    /// Both decks' channels, each with its own instance of the effect following its own beat
+    /// grid: the 1&2 position of a controller's CH SELECT lever. The sampler is left dry.
+    BothDecks,
     /// The master mix, after the master inserts and before the master gain.
     Master,
 }
 
 impl EffectTarget {
-    /// Every target, in the order of a mixer's channel select switch.
-    pub const ALL: [Self; DECK_COUNT + 1] =
-        [Self::Deck(DeckId::A), Self::Deck(DeckId::B), Self::Master];
+    /// Every target, in the order of the strip's target buttons.
+    pub const ALL: [Self; 4] = [
+        Self::Deck(DeckId::A),
+        Self::Deck(DeckId::B),
+        Self::BothDecks,
+        Self::Master,
+    ];
 
     /// Position of the target in [`EffectTarget::ALL`].
     pub fn index(self) -> usize {
+        match self {
+            Self::Deck(deck) => deck.index(),
+            Self::BothDecks => DECK_COUNT,
+            Self::Master => DECK_COUNT + 1,
+        }
+    }
+
+    /// Whether a unit on this target processes `bus`.
+    pub(crate) fn covers(self, bus: Bus) -> bool {
+        match (self, bus) {
+            (Self::Deck(target), Bus::Deck(deck)) => target == deck,
+            (Self::BothDecks, Bus::Deck(_)) | (Self::Master, Bus::Master) => true,
+            (Self::Deck(_) | Self::BothDecks, Bus::Master) | (Self::Master, Bus::Deck(_)) => false,
+        }
+    }
+}
+
+/// A point in the mix an effect runs on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum Bus {
+    /// A deck's channel, after its fader.
+    Deck(DeckId),
+    /// The master mix.
+    Master,
+}
+
+impl Bus {
+    const ALL: [Self; BUS_COUNT] = [Self::Deck(DeckId::A), Self::Deck(DeckId::B), Self::Master];
+
+    fn index(self) -> usize {
         match self {
             Self::Deck(deck) => deck.index(),
             Self::Master => DECK_COUNT,
@@ -144,17 +182,17 @@ pub(crate) enum EffectChange {
     Enabled(bool),
 }
 
-/// Every effect of one unit for one target, built up front so switching never allocates.
+/// Every effect of one unit for one bus, built up front so switching never allocates.
 type Bank = [Box<dyn Effect>; KIND_COUNT];
 
 /// The audio-thread side of one effect unit.
 ///
-/// It holds a bank of every effect for every target. Moving the unit or choosing another
+/// It holds a bank of every effect for every bus. Moving the unit or choosing another
 /// effect switches the old instance off and the new one on: the old one fades out or rings out
 /// its trail on its own target while the new one fades in, so nothing clicks.
 struct EffectUnit {
     settings: EffectSettings,
-    banks: [Bank; TARGET_COUNT],
+    banks: [Bank; BUS_COUNT],
 }
 
 impl EffectUnit {
@@ -178,8 +216,8 @@ impl EffectUnit {
         }
     }
 
-    fn set_selected_enabled(&mut self, kind: EffectKind, target: EffectTarget, enabled: bool) {
-        for effect in &mut self.banks[target.index()] {
+    fn set_enabled_on(&mut self, bus: Bus, kind: EffectKind, enabled: bool) {
+        for effect in &mut self.banks[bus.index()] {
             if effect.kind() == kind {
                 effect.set_enabled(enabled);
             }
@@ -193,33 +231,41 @@ impl EffectUnit {
             EffectChange::Beat(beat) => self.for_each_effect(|effect| effect.set_beat(beat)),
             EffectChange::Depth(depth) => self.for_each_effect(|effect| effect.set_depth(depth)),
             EffectChange::Kind(_) | EffectChange::Target(_) | EffectChange::Enabled(_) => {
-                let moved =
-                    (previous.kind, previous.target) != (self.settings.kind, self.settings.target);
-                if moved {
-                    self.set_selected_enabled(previous.kind, previous.target, false);
+                for bus in Bus::ALL {
+                    let before = previous.target.covers(bus).then_some(previous.kind);
+                    let after = self
+                        .settings
+                        .target
+                        .covers(bus)
+                        .then_some(self.settings.kind);
+                    if let Some(kind) = before.filter(|kind| after != Some(*kind)) {
+                        self.set_enabled_on(bus, kind, false);
+                    }
+                    if let Some(kind) = after {
+                        self.set_enabled_on(bus, kind, self.settings.enabled);
+                    }
                 }
-                self.set_selected_enabled(
-                    self.settings.kind,
-                    self.settings.target,
-                    self.settings.enabled,
-                );
             }
         }
     }
 
-    /// Runs the selected effect, when the unit sits on `target`, and every effect still fading
+    /// Runs the selected effect, when the unit covers `bus`, and every effect still fading
     /// out or ringing out there. An effect that is off, faded out and not ringing is skipped
     /// unless it needs to hear the music while off; brake and backspin do, so they can stop the
     /// turntable the moment they are switched on.
     fn process(
         &mut self,
-        target: EffectTarget,
+        bus: Bus,
         left: &mut [f32],
         right: &mut [f32],
         context: &dubplate_fx::ProcessContext,
     ) {
-        let selected = (self.settings.target == target).then_some(self.settings.kind);
-        for effect in &mut self.banks[target.index()] {
+        let selected = self
+            .settings
+            .target
+            .covers(bus)
+            .then_some(self.settings.kind);
+        for effect in &mut self.banks[bus.index()] {
             let selected = selected == Some(effect.kind());
             if !selected && !effect.is_active() {
                 continue;
@@ -273,17 +319,12 @@ impl EffectRack {
         self.units[unit.index()].change(change);
     }
 
-    /// Runs every unit on `target` over the block, in unit order.
-    pub(crate) fn process(
-        &mut self,
-        target: EffectTarget,
-        block: &mut StereoBlock,
-        context: &ProcessContext,
-    ) {
+    /// Runs every unit on `bus` over the block, in unit order.
+    pub(crate) fn process(&mut self, bus: Bus, block: &mut StereoBlock, context: &ProcessContext) {
         let effect_context = effect_context(context);
         let (left, right) = block.channels_mut();
         for unit in &mut self.units {
-            unit.process(target, left, right, &effect_context);
+            unit.process(bus, left, right, &effect_context);
         }
     }
 

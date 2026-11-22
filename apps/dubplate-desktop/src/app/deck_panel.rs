@@ -8,7 +8,7 @@ use gpui::{ClickEvent, Context, FontWeight, MouseButton, Pixels, SharedString, d
 use super::drop_target::accept_drops;
 use super::overview::{self, ENDING_SECONDS};
 use super::slider::{self, SMALL_THUMB};
-use super::{DeckFrame, DubplateApp, pad_grid};
+use super::{DeckFrame, DubplateApp, deck_grid, pad_grid};
 use crate::analysis::{AnalysisState, key_cell, track_key};
 use crate::assets::{PAUSE_ICON_PATH, PLAY_ICON_PATH};
 use crate::collection::{CollectionTrack, TrackOrigin, clock};
@@ -19,7 +19,7 @@ use crate::deck::deck_letter;
 use crate::fonts::MONO_FAMILY;
 use crate::pads::semitones_label;
 use crate::theme;
-use crate::widgets::InteractiveControl;
+use crate::widgets::{InteractiveControl, tooltip};
 
 const BUTTON_HEIGHT: Pixels = px(34.0);
 
@@ -43,6 +43,7 @@ pub(super) fn render(
         .child(title_row(app, deck, frame, entry))
         .child(overview::render(app, deck, frame, cx))
         .child(transport(app, deck, frame, cx))
+        .children(deck_grid::grid_bar(app, deck, cx))
         .child(pad_grid::render(app, deck, cx));
     accept_drops(panel, deck, cx)
 }
@@ -140,6 +141,24 @@ fn title_row(
                 .gap(px(10.0))
                 .min_w_0()
                 .child(deck_badge(deck))
+                .when(app.space_deck() == deck, |row| {
+                    row.child(
+                        div()
+                            .id(("space-deck", deck.index()))
+                            .flex_none()
+                            .px(px(4.0))
+                            .rounded(px(3.0))
+                            .border_1()
+                            .border_color(theme::LINE)
+                            .font_family(MONO_FAMILY)
+                            .text_size(theme::TINY_TEXT_SIZE)
+                            .text_color(theme::MUTED)
+                            .tooltip(tooltip(
+                                "Space plays or pauses this deck: the one you can hear",
+                            ))
+                            .child("Space"),
+                    )
+                })
                 .child(
                     div()
                         .flex()
@@ -274,6 +293,14 @@ fn transport(
             Lit::when(app.slip(deck)),
             colour,
             Command::ToggleSlip(deck),
+            cx,
+        ))
+        .child(toggle(
+            ("grid", deck.index()),
+            "Grid",
+            Lit::when(app.grid_bar == Some(deck)),
+            colour,
+            Command::ToggleGridBar(deck),
             cx,
         ))
         .child(
