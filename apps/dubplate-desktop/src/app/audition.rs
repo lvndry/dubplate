@@ -165,14 +165,13 @@ impl DubplateApp {
                 + (length - plan.incoming_offset_seconds).max(0.0) * plan.incoming_tempo
                 + DECODE_MARGIN_SECONDS;
             loop {
-                if decoded_to(&outgoing, outgoing_needed)
-                    && decoded_to(&incoming, incoming_needed)
+                if decoded_to(&outgoing, outgoing_needed) && decoded_to(&incoming, incoming_needed)
                 {
                     break;
                 }
                 // A track that failed to decode will never reach `decoded_to`, so end the
                 // audition instead of waiting for it forever.
-                if let DecodeStatus::Failed(problem) = track_failed(&outgoing, &incoming) {
+                if let Some(problem) = track_failed(&outgoing, &incoming) {
                     this.update(cx, |this, cx| {
                         this.end_audition(generation, cx);
                         this.show_notice(
@@ -311,10 +310,11 @@ fn seam_preview(outgoing: Track, incoming: Track, plan: AuditionPlan) -> Preview
 
 /// Whether `track` is decoded to `seconds`; a track that failed to decode is never ready.
 fn decoded_to(track: &Track, seconds: f64) -> bool {
-    matches!(
-        track.status(),
-        DecodeStatus::Complete | (DecodeStatus::Decoding if track.decoded_seconds() >= seconds)
-    )
+    match track.status() {
+        DecodeStatus::Complete => true,
+        DecodeStatus::Decoding => track.decoded_seconds() >= seconds,
+        DecodeStatus::Failed(_) => false,
+    }
 }
 
 /// The reason the wait above can end only by giving up: a track that failed to decode.

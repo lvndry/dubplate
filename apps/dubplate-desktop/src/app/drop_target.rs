@@ -32,7 +32,10 @@ pub(super) fn accept_drops(
             if paths.len() > 1 {
                 this.show_notice(
                     super::notice::NoticePlace::Window,
-                    format!("Only the first of the {} dropped files was loaded, the rest were not", paths.len()),
+                    format!(
+                        "Only the first of the {} dropped files was loaded, the rest were not",
+                        paths.len()
+                    ),
                     cx,
                 );
             }

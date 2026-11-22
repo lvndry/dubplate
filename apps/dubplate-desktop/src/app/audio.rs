@@ -3,8 +3,8 @@
 //! effects as they were.
 
 use dubplate_engine::{
-        AudioOutput, Controller, DeckId, EffectUnitId, EngineError, MasterTempo,
-    OutputConfig, OutputDevice,
+    AudioOutput, Controller, DeckId, EffectUnitId, EngineError, MasterTempo, OutputConfig,
+    OutputDevice,
 };
 use gpui::{Context, SharedString};
 
