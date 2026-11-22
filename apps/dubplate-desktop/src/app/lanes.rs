@@ -9,8 +9,8 @@ use std::time::Instant;
 use dubplate_engine::DeckId;
 use gpui::prelude::*;
 use gpui::{
-    Bounds, Context, FontWeight, Pixels, Point, Rgba, Window, canvas, div, fill, point, px,
-    relative, size,
+    Bounds, Context, FontWeight, MouseButton, MouseDownEvent, Pixels, Point, Rgba, Window, canvas,
+    div, fill, point, px, relative, size,
 };
 
 use super::drop_target::accept_drops;
@@ -115,6 +115,24 @@ fn lane(
     };
     let lane = div()
         .id(("lane", deck.index()))
+        .when(matches!(content, DeckContent::Loaded(_)), |lane| {
+            let held = app.is_dragging_lane(deck);
+            lane.when(held, |lane| lane.cursor_grabbing())
+                .when(!held, |lane| lane.cursor_grab())
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                        this.begin_lane_drag(
+                            deck,
+                            event.position,
+                            event.modifiers.shift,
+                            window,
+                            cx,
+                        );
+                        cx.stop_propagation();
+                    }),
+                )
+        })
         .relative()
         .h(LANE_HEIGHT)
         .rounded(px(4.0))

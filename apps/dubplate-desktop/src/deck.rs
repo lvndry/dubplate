@@ -26,6 +26,7 @@ pub struct PreparedTrack {
     zoomed: Option<ZoomedWaveform>,
     overview: Option<OverviewWaveform>,
     beats: BeatMarks,
+    read_grid: Option<Arc<BeatGrid>>,
     /// The tempo and first downbeat, for the engine's beat-synced effects.
     pub beat_grid: Option<dubplate_engine::BeatGrid>,
     /// Where the beat grid comes from, when the track has one.
@@ -75,8 +76,11 @@ pub struct TrackVisuals {
     pub zoomed: Option<Arc<ZoomedWaveform>>,
     /// The whole-track waveform, with its bars kept for the last width drawn.
     pub overview: Option<Rc<RefCell<OverviewBars>>>,
-    /// The beat grid.
+    /// The beat grid, with the DJ's fix.
     pub beats: Arc<BeatMarks>,
+    /// The beat grid as rekordbox or Dubplate's analysis found it, before the DJ's fix, so a
+    /// new fix applies to it again. A tapped grid has none.
+    pub read_grid: Option<Arc<BeatGrid>>,
     /// Why rekordbox's analysis could not be read, if it could not.
     pub analysis_problem: Option<String>,
 }
@@ -91,6 +95,7 @@ impl TrackVisuals {
                 .take()
                 .map(|waveform| Rc::new(RefCell::new(OverviewBars::new(waveform)))),
             beats: Arc::new(std::mem::take(&mut prepared.beats)),
+            read_grid: prepared.read_grid.take(),
             analysis_problem: prepared.analysis_problem.take(),
         }
     }
@@ -183,8 +188,10 @@ pub fn prepare_track(
     let rekordbox = rekordbox.as_ref().ok();
     let chosen = chosen_grid(rekordbox, analysis);
     let grid_source = chosen.as_ref().map(|(_, source)| *source);
-    let (beats, beat_grid) = chosen
-        .map(|(grid, _)| DeckGrid::new(&grid, correction))
+    let read_grid = chosen.map(|(grid, _)| Arc::new(grid));
+    let (beats, beat_grid) = read_grid
+        .as_deref()
+        .map(|grid| DeckGrid::new(grid, correction))
         .map_or_else(Default::default, |grid| (grid.beats, grid.engine));
     let analysis_problem = match grid_source {
         Some(GridSource::Analysis) => Some(ANALYSED_GRID_NOTE.to_owned()),
@@ -197,6 +204,7 @@ pub fn prepare_track(
         overview: rekordbox
             .and_then(|analysis| OverviewWaveform::from_waveforms(&analysis.waveforms)),
         beats,
+        read_grid,
         beat_grid,
         grid_source,
         analysis_problem,
@@ -207,11 +215,7 @@ pub fn prepare_track(
 /// cannot follow beat by beat, such as one with a beat out of order or at an impossible tempo,
 /// still gives the deck a steady grid at the downbeat's tempo rather than none at all.
 fn engine_beat_grid(grid: &BeatGrid) -> Option<dubplate_engine::BeatGrid> {
-    let downbeat = grid
-        .beats
-        .iter()
-        .position(|beat| beat.beat_in_bar == 1)
-        .unwrap_or(0);
+    let downbeat = grid.first_downbeat_index().unwrap_or(0);
     let beats: Vec<_> = grid
         .beats
         .iter()
@@ -414,6 +418,7 @@ mod tests {
             zoomed: None,
             overview: None,
             beats: Arc::default(),
+            read_grid: None,
             analysis_problem: None,
         }
     }
@@ -475,6 +480,36 @@ mod tests {
         assert!((engine.bpm_at(3.0) - 100.0).abs() < 1e-8);
         assert!((engine.beat_at(0.5)).abs() < 1e-8);
         assert!((engine.beat_at(0.0) + 1.0).abs() < 1e-8);
+    }
+
+    #[test]
+    fn the_djs_grid_fix_moves_a_variable_grid_and_keeps_its_tempo_changes() {
+        use dubplate_rekordbox::analysis::Beat;
+        let beat = |time_ms, tempo_hundredths, beat_in_bar| Beat {
+            time_ms,
+            tempo_hundredths,
+            beat_in_bar,
+        };
+        let grid = BeatGrid {
+            beats: vec![
+                beat(0, 12000, 4),
+                beat(500, 12000, 1),
+                beat(1000, 10000, 2),
+                beat(1600, 10000, 3),
+            ],
+        };
+        let correction = GridCorrection {
+            offset_ms: 20,
+            downbeat_shift: 1,
+        };
+        let engine = DeckGrid::new(&grid, correction).engine.unwrap();
+        assert!(engine.has_tempo_changes());
+        assert!((engine.bpm_at(3.0) - 100.0).abs() < 1e-8);
+        assert!(
+            engine.beat_at(1.02).abs() < 1e-8,
+            "the shifted downbeat is beat zero"
+        );
+        assert!((engine.beat_at(0.52) + 1.0).abs() < 1e-8);
     }
 
     #[test]

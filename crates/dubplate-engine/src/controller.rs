@@ -11,7 +11,7 @@ use crate::effects::{EffectChange, EffectSettings, EffectTarget, EffectUnitId, E
 use crate::error::{EngineError, check_range};
 use crate::grid::BeatGrid;
 use crate::headphones::HeadphoneSettings;
-use crate::jog::JogInput;
+use crate::jog::{DEFAULT_JOG_TICKS_PER_REVOLUTION, JogInput};
 use crate::mixer::{Command, QueuedCommand, Renderer, RetireQueue, Retired};
 use crate::pad_effects::PadEffect;
 use crate::preview::{MAX_PREVIEW_SECONDS, Preview, PreviewPlan, PreviewState};
@@ -65,6 +65,7 @@ pub fn offline_engine(sample_rate: u32) -> (Controller, Renderer) {
         sampler_cue: false,
         smart_cfx: [None; DECK_COUNT],
         smart_fader: false,
+        jog_ticks_per_revolution: DEFAULT_JOG_TICKS_PER_REVOLUTION,
     };
     let renderer = Renderer::new(
         sample_rate,
@@ -98,6 +99,7 @@ pub struct Controller {
     sampler_cue: bool,
     smart_cfx: [Option<SmartCfx>; DECK_COUNT],
     smart_fader: bool,
+    jog_ticks_per_revolution: u32,
 }
 
 /// A deck's track, grid and playback state, captured to put back on a new engine after a change
@@ -455,7 +457,14 @@ impl Controller {
                 value: 0.0,
             });
         }
-        self.send(Command::SetJogTicksPerRevolution(ticks))
+        self.send(Command::SetJogTicksPerRevolution(ticks))?;
+        self.jog_ticks_per_revolution = ticks;
+        Ok(())
+    }
+
+    /// How many ticks the jog wheels report per revolution of the platter.
+    pub fn jog_ticks_per_revolution(&self) -> u32 {
+        self.jog_ticks_per_revolution
     }
 
     /// Switches a deck's vinyl mode, on by default: on, touching the platter top holds the

@@ -273,8 +273,8 @@ fn level_bar(
         .cursor_ew_resize()
         .on_mouse_down(
             MouseButton::Left,
-            cx.listener(move |this, event: &MouseDownEvent, _, cx| {
-                this.begin_effect_level_drag(unit, event.position, cx);
+            cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                this.begin_effect_level_drag(unit, event.position, window, cx);
                 cx.stop_propagation();
             }),
         )
