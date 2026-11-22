@@ -25,6 +25,8 @@ use crate::theme;
 use crate::waveform::{BandLevels, BeatMarks, LaneLoop, LaneView, LoopLook, Zoom, ZoomedWaveform};
 
 const LANE_HEIGHT: Pixels = px(74.0);
+/// The lanes' height in a short window, so the library keeps some rows.
+const SHORT_LANE_HEIGHT: Pixels = px(50.0);
 const PLAYHEAD_WIDTH: Pixels = px(2.0);
 const FLAG_WIDTH: f32 = 14.0;
 /// The quietest band still drawn, in pixels of half height.
@@ -213,7 +215,11 @@ fn lane(
                 )
         })
         .relative()
-        .h(LANE_HEIGHT)
+        .h(if app.short_window() {
+            SHORT_LANE_HEIGHT
+        } else {
+            LANE_HEIGHT
+        })
         .rounded(px(4.0))
         .overflow_hidden()
         .child(
