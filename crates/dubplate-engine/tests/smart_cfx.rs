@@ -157,3 +157,42 @@ fn turning_smart_cfx_on_after_the_knob_moved_takes_the_knob_where_it_is() {
         .count();
     assert!(changed > settled / 4, "the chop never came in");
 }
+
+#[test]
+fn sweep_plays_without_the_filter_gating_to_the_left_and_narrowing_to_the_right() {
+    let track = sine_track(5_000.0, 0.5, 0.5, 4.0, SAMPLE_RATE);
+    let level = |preset, knob| {
+        let (mut controller, mut renderer) = deck(track.clone(), preset);
+        controller.set_filter(DeckId::A, knob).unwrap();
+        let output = seconds(&mut renderer, 2.0);
+        rms(&output[48_000..])
+    };
+    let filtered = level(None, 0.05);
+    let gated = level(Some(SmartCfx::Sweep), 0.05);
+    assert!(
+        filtered < 0.03,
+        "the filter takes 5 kHz out far left: {filtered}"
+    );
+    assert!(
+        gated > 0.08 && gated < 0.3,
+        "Sweep far left gates the 5 kHz instead of filtering it: {gated}"
+    );
+    let narrowed = level(Some(SmartCfx::Sweep), 0.95);
+    let open = level(Some(SmartCfx::Sweep), 0.5);
+    assert!(
+        narrowed < open * 0.5,
+        "Sweep far right narrows on the mids, away from 5 kHz: {narrowed} against {open}"
+    );
+}
+
+#[test]
+fn noise_lays_noise_over_silence_either_way() {
+    let track = sine_track(440.0, 0.0, 0.0, 4.0, SAMPLE_RATE);
+    for knob in [0.1, 0.9] {
+        let (mut controller, mut renderer) = deck(track.clone(), Some(SmartCfx::Noise));
+        controller.set_filter(DeckId::A, knob).unwrap();
+        let output = seconds(&mut renderer, 2.0);
+        let level = rms(&output[48_000..]);
+        assert!(level > 0.01, "Noise at {knob} is silent: {level}");
+    }
+}

@@ -11,7 +11,7 @@ use symphonia::core::packet::Packet;
 use symphonia::core::units::TimeBase;
 
 use crate::error::EngineError;
-use crate::track::{Track, TrackWriter, check_sample_rate};
+use crate::track::{DecodeStatus, Track, TrackWriter, check_sample_rate};
 
 const PUBLISH_EVERY_FRAMES: usize = 4096;
 
@@ -35,7 +35,42 @@ pub fn decode_file(path: impl AsRef<Path>) -> Result<Track, EngineError> {
     Ok(track)
 }
 
+/// Decodes an audio file to its end on the calling thread, for work that needs every frame
+/// before it can start, such as drawing a waveform for an export. Fails when the file cannot
+/// be opened or decoding stops with an error.
+pub fn decode_file_to_end(path: impl AsRef<Path>) -> Result<Track, EngineError> {
+    let path = path.as_ref();
+    let session = DecodeSession::open(path)?;
+    let track = session.writer.track();
+    session.run();
+    match track.status() {
+        DecodeStatus::Failed(message) => Err(EngineError::Decode {
+            path: path.to_path_buf(),
+            message,
+        }),
+        DecodeStatus::Complete | DecodeStatus::Decoding => Ok(track),
+    }
+}
+
+/// What an audio file says about its audio, read from its header without decoding it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AudioFileInfo {
+    /// The sample rate in hertz.
+    pub sample_rate: u32,
+    /// The bits per sample of lossless audio, `None` for lossy formats.
+    pub bits_per_sample: Option<u32>,
+    /// How many channels the file holds.
+    pub channels: u16,
+}
+
+/// Reads the header of the audio file at `path`.
+pub fn probe_file(path: impl AsRef<Path>) -> Result<AudioFileInfo, EngineError> {
+    let session = DecodeSession::open(path.as_ref())?;
+    Ok(session.info)
+}
+
 struct DecodeSession {
+    info: AudioFileInfo,
     format: Box<dyn FormatReader>,
     decoder: Box<dyn AudioDecoder>,
     track_id: u32,
@@ -95,12 +130,18 @@ impl DecodeSession {
             .map_or(2, |channels| channels.count())
             .try_into()
             .unwrap_or(u16::MAX);
+        let info = AudioFileInfo {
+            sample_rate,
+            bits_per_sample: parameters.bits_per_sample,
+            channels: source_channels,
+        };
         let decoder = symphonia::default::get_codecs()
             .make_audio_decoder(parameters, &AudioDecoderOptions::default())
             .map_err(|error| decode_error(error.to_string()))?;
         let track_id = audio_track.id;
         let time_base = audio_track.time_base;
         Ok(Self {
+            info,
             format,
             decoder,
             track_id,

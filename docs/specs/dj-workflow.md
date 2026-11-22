@@ -47,7 +47,7 @@ Statuses are as audited on 22 November 2026, on `main` with a second Dubplate ru
 
 **L4 Instant doubles.** Must: LOAD twice copies the other deck at the same place, playing, in phase. Status: **Done.**
 
-**L5 Played tracks.** See: tracks played this session marked in the library, as rekordbox colours them. Status: **Missing** ([inventory 25](feature-inventory.md#top-40-gaps)). Spec: a track played 60 seconds or more gets a dimmed title and a played mark, with a Hide played filter.
+**L5 Played tracks.** See: tracks played this session marked in the library, as rekordbox colours them. Status: **In progress** (played tracks pull request): a track played 60 seconds or more of track time gets a dimmed title and a tick, the same rule as the History, and Hide played beside Key fits puts `played:no` in the search.
 
 ## The cue point and CUE
 
@@ -211,7 +211,7 @@ Statuses are as audited on 22 November 2026, on `main` with a second Dubplate ru
 
 **BR5 Preview in the headphones.** Status: **Missing** ([inventory 11](feature-inventory.md#top-40-gaps)).
 
-**BR6 History.** Status: **Missing** ([inventory 9](feature-inventory.md#top-40-gaps)).
+**BR6 History.** See: under History in the browser's sidebar, this session's plays newest first (start time, deck, title, artist) and earlier sessions by day; a track counts after 60 seconds of track time on one load, once per load, as in rekordbox's History. Export TXT and CSV tracklists with times into the mix. Status: **In progress** (play history pull request). rekordbox's own histories: **Missing.**
 
 ## The app
 

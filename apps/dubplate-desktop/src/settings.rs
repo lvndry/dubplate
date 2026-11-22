@@ -70,6 +70,9 @@ pub struct Settings {
     pub smart_cfx_preset: Option<String>,
     /// Whether SMART CFX was on, so the channels' CFX knobs play the preset from launch.
     pub smart_cfx_on: bool,
+    /// The Sound Color FX each channel's CFX knob plays with SMART CFX off, deck A first:
+    /// `filter`, or a colour such as `space` or `dub echo`.
+    pub cfx_colours: Vec<String>,
     /// The sampler's volume and the sample in each slot.
     pub sampler: SamplerSetting,
     /// The 32 Pad FX pads and the preset they started from.
@@ -322,6 +325,7 @@ impl Default for Settings {
             effect_units: Vec::new(),
             smart_cfx_preset: None,
             smart_cfx_on: false,
+            cfx_colours: Vec::new(),
             sampler: SamplerSetting::default(),
             pad_fx: PadFxSetting::default(),
             screen: None,
@@ -456,6 +460,7 @@ mod tests {
             }],
             smart_cfx_preset: Some("dub echo".to_owned()),
             smart_cfx_on: true,
+            cfx_colours: vec!["filter".to_owned(), "noise".to_owned()],
             sampler: SamplerSetting {
                 volume: 0.6,
                 slots: vec![SampleSlotSetting {

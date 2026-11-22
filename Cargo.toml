@@ -8,6 +8,7 @@ members = [
   "crates/dubplate-library",
   "crates/dubplate-prep",
   "crates/dubplate-stems",
+  "crates/dubplate-usb",
   "apps/dubplate-cli",
   "apps/dubplate-desktop",
 ]

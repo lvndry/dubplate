@@ -1879,6 +1879,7 @@ dependencies = [
  "dubplate-midi",
  "dubplate-prep",
  "dubplate-rekordbox",
+ "dubplate-usb",
  "jiff",
  "serde_json",
 ]
@@ -2000,6 +2001,21 @@ dependencies = [
  "hound",
  "libc",
  "rubato",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "dubplate-usb"
+version = "0.1.0"
+dependencies = [
+ "dubplate-engine",
+ "dubplate-library",
+ "dubplate-prep",
+ "dubplate-rekordbox",
+ "jiff",
  "serde",
  "serde_json",
  "tempfile",

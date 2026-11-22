@@ -18,6 +18,7 @@ mod filter_reference;
 mod grid_controls;
 mod header;
 mod help;
+mod history;
 mod knob;
 mod lane_drag;
 mod lanes;
@@ -32,7 +33,6 @@ mod pad_fx_editor;
 mod pad_grid;
 mod pads;
 mod pickup;
-mod played;
 mod prepare;
 mod recording;
 mod relink;
@@ -51,7 +51,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use dubplate_engine::{
     AudioOutput, Controller, DECK_COUNT, DeckId, DeckState, EFFECT_UNIT_COUNT, EffectKind,
@@ -71,7 +71,9 @@ use gpui::{
 use crate::analysis::{AnalysisPriority, TrackAnalyser, TrackAnalyses};
 use crate::browser::{Browser, BrowserEvent, LibraryStatus};
 use crate::collection::{Collection, CollectionTrack, TrackIndex};
-use crate::commands::{AutoCueChoice, Command, Direction, EffectEdit, JogMotion, Mode, Press};
+use crate::commands::{
+    AutoCueChoice, CfxScope, Command, Direction, EffectEdit, JogMotion, Mode, Press,
+};
 use crate::controls::{
     CROSSFADER_STEP, Control, MixerPositions, Orientation, Slider, fraction_at, master_gain_at,
     nudged_tempo_slider, tempo_fader, trim_gain_at,
@@ -92,6 +94,7 @@ use crate::glitches::GlitchWatch;
 use crate::hardware::{
     DeckLights, Hardware, Lights, LinkEvent, Surface, controller_deck, meter_level,
 };
+use crate::history::{PlayHistory, PlayWatch, SessionRecord};
 use crate::library::{LibrarySources, RekordboxSource};
 use crate::library_view::SortSetting;
 use crate::loading::{LoadRefusal, LoadSource, check_deck_free, check_file, check_present};
@@ -251,8 +254,6 @@ pub struct DubplateApp {
     catalogue: Arc<Catalogue>,
     /// What the library's Match column was last worked out for.
     match_source: Option<library_matches::MatchSource>,
-    /// The tracks a deck played this session, by file.
-    played_tracks: Arc<HashSet<PathBuf>>,
     missing: Arc<Vec<Missing>>,
     relinking: bool,
     relink_review: Option<RelinkReview>,
@@ -264,7 +265,12 @@ pub struct DubplateApp {
     stems_changed: bool,
     recording: Option<Recording>,
     recording_skip_reported: bool,
+    play_history: PlayHistory,
+    play_watches: [PlayWatch<SessionRecord>; DECK_COUNT],
+    time_zone: jiff::tz::TimeZone,
     smart_cfx_menu: bool,
+    /// The Sound Color FX picker, when it is open, and the channels it sets.
+    cfx_menu: Option<CfxScope>,
     effect_menu: Option<EffectMenu>,
     /// The effect the picker's arrow keys and Enter are on, when moved from the unit's own.
     effect_highlight: Option<EffectKind>,
@@ -319,6 +325,9 @@ impl DubplateApp {
                 BrowserEvent::ImportRekordbox => this.set_rekordbox_import(true, cx),
                 BrowserEvent::RelinkAll => this.start_relink(None, cx),
                 BrowserEvent::Relink(track) => this.start_relink(Some(track), cx),
+                BrowserEvent::ExportHistory { page, format } => {
+                    this.export_history(page, format, cx);
+                }
                 BrowserEvent::SeparateStems(track) => {
                     if let Some(path) = this.track_file(track) {
                         this.separate_stems_now(path, cx);
@@ -339,6 +348,7 @@ impl DubplateApp {
         let effect_search = cx.new(|cx| InputState::new(window, cx).placeholder("Find an effect"));
         let quit_subscription = cx.on_app_quit(|this: &mut Self, cx| {
             this.finish_recording_on_quit();
+            this.finish_plays(cx);
             let barrier = this
                 .set_editor
                 .as_ref()
@@ -425,6 +435,7 @@ impl DubplateApp {
             },
         };
         keep_lights_moving(cx);
+        Self::keep_watching_plays(cx);
         let analysis_queue = Settings::analysis_cache_path()
             .map_err(|error| error.to_string())
             .and_then(|path| AnalysisQueue::start(path).map_err(|error| error.to_string()))
@@ -506,7 +517,6 @@ impl DubplateApp {
             check_cursor_seconds: 0.0,
             catalogue: Arc::default(),
             match_source: None,
-            played_tracks: Arc::default(),
             missing: Arc::default(),
             relinking: false,
             relink_review: None,
@@ -520,7 +530,11 @@ impl DubplateApp {
             stems_changed: true,
             recording: None,
             recording_skip_reported: false,
+            play_history: PlayHistory::new(SystemTime::now()),
+            play_watches: Default::default(),
+            time_zone: jiff::tz::TimeZone::system(),
             smart_cfx_menu: false,
+            cfx_menu: None,
             effect_menu: None,
             effect_highlight: None,
             effect_picker_scroll: ScrollHandle::new(),
@@ -633,6 +647,7 @@ impl DubplateApp {
         }
         self.quit_requested = true;
         self.quit_barrier_ready = false;
+        self.finish_plays(cx);
         let barrier = self
             .set_editor
             .as_ref()
@@ -731,6 +746,7 @@ impl DubplateApp {
                 Ok((session, grids, track_cues)) => {
                     this.set_editor = Some(session);
                     this.take_track_grids(grids, cx);
+                    this.restore_play_history(cx);
                     this.restore_track_cues(track_cues);
                     this.set_changed(cx);
                     // The first library build may have completed before set storage opened.
@@ -1038,6 +1054,17 @@ impl DubplateApp {
                 self.choose_smart_cfx(next, cx);
             }
             Command::ChooseSmartCfx(preset) => self.choose_smart_cfx(preset, cx),
+            Command::ToggleCfxMenu => {
+                self.cfx_menu = match self.cfx_menu {
+                    Some(_) => None,
+                    None => Some(CfxScope::default()),
+                };
+            }
+            Command::SetCfxScope(scope) => self.cfx_menu = Some(scope),
+            Command::ChooseCfxColour(colour) => {
+                let scope = self.cfx_menu.take().unwrap_or_default();
+                self.choose_cfx_colour(scope.decks(), colour, cx);
+            }
             Command::ToggleSmartFader => self.toggle_smart_fader(cx),
             Command::ToggleMasterCue => {
                 let cued = self
@@ -2230,7 +2257,6 @@ impl Render for DubplateApp {
         if self.glitches.observe(self.dropouts(), Instant::now()) {
             self.show_notice(NoticePlace::Window, GLITCH_NOTICE, cx);
         }
-        self.mark_played(&frames, cx);
         self.follow_library_matches(cx);
         let root = div()
             .key_context(WINDOW_CONTEXT)

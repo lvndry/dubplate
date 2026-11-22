@@ -14,9 +14,16 @@ const ENTRY_CURVE: f32 = 0.6;
 /// The crusher only bites deep into its range, so its amount rises faster: 0.66 a quarter of
 /// the way.
 const CRUSH_ENTRY_CURVE: f32 = 0.3;
+/// The noise is quiet next to the music until it is well in, so it rises faster still: 0.76
+/// a quarter of the way.
+const NOISE_ENTRY_CURVE: f32 = 0.2;
 /// How far the Pitch preset bends the music at the end of the knob: an octave down to the
 /// left, an octave up to the right.
 const PITCH_RANGE_SEMITONES: i8 = 12;
+/// The Sweep's band-pass to the right: its depth at the end of the knob, which centres it on
+/// the mids, about 900 Hz, and its resonance.
+const SWEEP_BAND_DEPTH: f32 = 0.5;
+const SWEEP_RESONANCE_PERCENT: i16 = 70;
 /// The size of the Space preset's room.
 const SPACE_SIZE_PERCENT: i16 = 60;
 
@@ -30,6 +37,12 @@ pub enum SmartCfx {
     Space,
     /// A 3/4-beat echo feeding the filter, the classic dub echo.
     DubEcho,
+    /// A DJ mixer's Sweep colour effect, without the filter: to the left a gate that cuts the
+    /// music tighter the further it turns, to the right a band-pass that narrows on the mids.
+    Sweep,
+    /// White noise laid over the filtered music, louder and brighter the further the knob
+    /// turns either way: a DJ mixer's Noise colour effect, for build-ups.
+    Noise,
     /// A bit crusher into the filter, as a DJ mixer's Crush colour effect crushes then filters.
     Crush,
     /// A 1/8-beat gate after the filter that chops the music in time.
@@ -45,9 +58,11 @@ pub enum SmartCfx {
 
 impl SmartCfx {
     /// Every preset, in the order the preset button steps through them.
-    pub const ALL: [SmartCfx; 7] = [
+    pub const ALL: [SmartCfx; 9] = [
         SmartCfx::Space,
         SmartCfx::DubEcho,
+        SmartCfx::Sweep,
+        SmartCfx::Noise,
         SmartCfx::Crush,
         SmartCfx::Chop,
         SmartCfx::Jet,
@@ -68,8 +83,8 @@ impl SmartCfx {
             .unwrap_or(0)
     }
 
-    /// What the preset plays at the end of the knob.
-    fn recipe(self) -> Recipe {
+    /// What the preset plays at the end of the knob, turned to the right when `rising`.
+    fn recipe(self, rising: bool) -> Recipe {
         let recipe = |kind, parameter, depth, mix| Recipe {
             kind,
             parameter,
@@ -91,6 +106,27 @@ impl SmartCfx {
                 0.8,
                 PresetMix::OnTop,
             ),
+            SmartCfx::Sweep if rising => recipe(
+                EffectKind::BandPass,
+                Some(ParameterValue::Percent(SWEEP_RESONANCE_PERCENT)),
+                SWEEP_BAND_DEPTH,
+                PresetMix::FullyWet,
+            ),
+            SmartCfx::Sweep => recipe(
+                EffectKind::Trans,
+                beats(BeatLength::SIXTEENTH),
+                1.0,
+                PresetMix::FullyWet,
+            ),
+            SmartCfx::Noise => Recipe {
+                entry: NOISE_ENTRY_CURVE,
+                ..recipe(
+                    EffectKind::Noise,
+                    beats(BeatLength::QUARTER),
+                    1.0,
+                    PresetMix::FullyWet,
+                )
+            },
             SmartCfx::Crush => Recipe {
                 entry: CRUSH_ENTRY_CURVE,
                 ..recipe(EffectKind::Crusher, None, 1.0, PresetMix::FullyWet)
@@ -124,7 +160,17 @@ impl SmartCfx {
 
     /// Whether the effect comes before the filter, so the filter shapes its tails.
     fn before_filter(self) -> bool {
-        !matches!(self, SmartCfx::Chop)
+        !matches!(self, SmartCfx::Chop | SmartCfx::Noise)
+    }
+
+    /// Whether the preset plays a different effect to the right of the knob than to the left.
+    fn splits(self) -> bool {
+        self == SmartCfx::Sweep
+    }
+
+    /// Whether the knob still turns the channel's filter along with the preset.
+    pub(crate) fn filters(self) -> bool {
+        self != SmartCfx::Sweep
     }
 }
 
@@ -166,6 +212,8 @@ impl fmt::Display for SmartCfx {
         formatter.write_str(match self {
             SmartCfx::Space => "space",
             SmartCfx::DubEcho => "dub echo",
+            SmartCfx::Sweep => "sweep",
+            SmartCfx::Noise => "noise",
             SmartCfx::Crush => "crush",
             SmartCfx::Chop => "chop",
             SmartCfx::Jet => "jet",
@@ -178,25 +226,29 @@ impl fmt::Display for SmartCfx {
 /// The audio-thread side of a channel's Smart CFX: one effect per preset, built up front.
 pub(crate) struct SmartCfxRack {
     effects: [Box<dyn Effect>; SmartCfx::ALL.len()],
+    rising_effects: [Option<Box<dyn Effect>>; SmartCfx::ALL.len()],
     selected: Option<SmartCfx>,
     travel: f32,
     lowering: bool,
 }
 
 impl SmartCfxRack {
-    /// Builds every preset's effect for `sample_rate`. This allocates, so it runs before the
-    /// renderer reaches the audio thread.
+    /// Builds every preset's effect for `sample_rate`, and a second one for the presets that
+    /// play another to the right. This allocates, so it runs before the renderer reaches the
+    /// audio thread.
     pub(crate) fn new(sample_rate: u32) -> Self {
         let config = effect_config(sample_rate);
+        let build = |recipe: Recipe| {
+            let mut effect = create(recipe.kind, &config);
+            if let Some(value) = recipe.parameter {
+                effect.set_parameter(value);
+            }
+            effect
+        };
         Self {
-            effects: SmartCfx::ALL.map(|preset| {
-                let recipe = preset.recipe();
-                let mut effect = create(recipe.kind, &config);
-                if let Some(value) = recipe.parameter {
-                    effect.set_parameter(value);
-                }
-                effect
-            }),
+            effects: SmartCfx::ALL.map(|preset| build(preset.recipe(false))),
+            rising_effects: SmartCfx::ALL
+                .map(|preset| preset.splits().then(|| build(preset.recipe(true)))),
             selected: None,
             travel: 0.0,
             lowering: false,
@@ -209,6 +261,11 @@ impl SmartCfxRack {
         self.update();
     }
 
+    /// Whether the channel's filter follows the knob: with no preset, or one that keeps it.
+    pub(crate) fn filters(&self) -> bool {
+        self.selected.is_none_or(SmartCfx::filters)
+    }
+
     /// Follows the filter knob, from 0 to 1 with its centre at 0.5.
     pub(crate) fn set_knob(&mut self, position: f32) {
         self.travel = ((position - 0.5).abs() * 2.0).clamp(0.0, 1.0);
@@ -218,23 +275,33 @@ impl SmartCfxRack {
 
     fn update(&mut self) {
         let travel = ((self.travel - DEAD_ZONE) / (1.0 - DEAD_ZONE)).max(0.0);
-        for (preset, effect) in SmartCfx::ALL.into_iter().zip(&mut self.effects) {
+        let lowering = self.lowering;
+        for ((preset, effect), rising_effect) in SmartCfx::ALL
+            .into_iter()
+            .zip(&mut self.effects)
+            .zip(&mut self.rising_effects)
+        {
             let engaged = self.selected == Some(preset) && travel > 0.0;
-            if engaged {
-                let recipe = preset.recipe();
-                let amount = travel.powf(recipe.entry);
-                effect.set_depth(amount * recipe.depth);
-                effect.set_mix(recipe.mix.at(amount));
-                if preset == SmartCfx::Pitch {
-                    let range = if self.lowering {
-                        -PITCH_RANGE_SEMITONES
-                    } else {
-                        PITCH_RANGE_SEMITONES
-                    };
-                    effect.set_parameter(ParameterValue::Semitones(range));
+            let sides = std::iter::once((effect, false))
+                .chain(rising_effect.as_mut().map(|rising| (rising, true)));
+            for (effect, rising) in sides {
+                let playing = engaged && (!preset.splits() || rising != lowering);
+                if playing {
+                    let recipe = preset.recipe(rising);
+                    let amount = travel.powf(recipe.entry);
+                    effect.set_depth(amount * recipe.depth);
+                    effect.set_mix(recipe.mix.at(amount));
+                    if preset == SmartCfx::Pitch {
+                        let range = if lowering {
+                            -PITCH_RANGE_SEMITONES
+                        } else {
+                            PITCH_RANGE_SEMITONES
+                        };
+                        effect.set_parameter(ParameterValue::Semitones(range));
+                    }
                 }
+                effect.set_enabled(playing);
             }
-            effect.set_enabled(engaged);
         }
     }
 
@@ -248,11 +315,18 @@ impl SmartCfxRack {
     ) {
         let effect_context = effect_context(context);
         let (left, right) = block.channels_mut();
-        for (preset, effect) in SmartCfx::ALL.into_iter().zip(&mut self.effects) {
-            if preset.before_filter() == before_filter
-                && (effect.is_enabled() || effect.is_active())
-            {
-                effect.process(left, right, &effect_context);
+        for ((preset, effect), rising_effect) in SmartCfx::ALL
+            .into_iter()
+            .zip(&mut self.effects)
+            .zip(&mut self.rising_effects)
+        {
+            if preset.before_filter() != before_filter {
+                continue;
+            }
+            for effect in std::iter::once(effect).chain(rising_effect.as_mut()) {
+                if effect.is_enabled() || effect.is_active() {
+                    effect.process(left, right, &effect_context);
+                }
             }
         }
     }

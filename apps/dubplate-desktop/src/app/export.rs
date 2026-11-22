@@ -53,7 +53,7 @@ impl DubplateApp {
         let track_cues = self.track_cues.clone();
         cx.spawn(async move |this, cx| {
             let path = match chosen.await {
-                Ok(Ok(Some(path))) => with_xml_extension(path),
+                Ok(Ok(Some(path))) => with_extension(path, XML_EXTENSION),
                 Ok(Ok(None)) | Err(_) => return,
                 Ok(Err(error)) => {
                     this.update(cx, |this, cx| {
@@ -111,17 +111,17 @@ impl DubplateApp {
     }
 }
 
-/// `path`, with `.xml` added when the DJ typed a name without it.
-fn with_xml_extension(path: PathBuf) -> PathBuf {
+/// `path`, with `.extension` added when the DJ typed a name without it.
+pub(super) fn with_extension(path: PathBuf, extension: &str) -> PathBuf {
     let has_extension = path
         .extension()
-        .is_some_and(|extension| extension.eq_ignore_ascii_case(XML_EXTENSION));
+        .is_some_and(|existing| existing.eq_ignore_ascii_case(extension));
     if has_extension {
         return path;
     }
     let mut name = path.into_os_string();
     name.push(".");
-    name.push(XML_EXTENSION);
+    name.push(extension);
     PathBuf::from(name)
 }
 
@@ -156,16 +156,20 @@ mod tests {
     #[test]
     fn a_name_without_the_extension_gets_it() {
         assert_eq!(
-            with_xml_extension(PathBuf::from("/Exports/Friday")),
+            with_extension(PathBuf::from("/Exports/Friday"), XML_EXTENSION),
             PathBuf::from("/Exports/Friday.xml")
         );
         assert_eq!(
-            with_xml_extension(PathBuf::from("/Exports/Fri.day")),
+            with_extension(PathBuf::from("/Exports/Fri.day"), XML_EXTENSION),
             PathBuf::from("/Exports/Fri.day.xml")
         );
         assert_eq!(
-            with_xml_extension(PathBuf::from("/Exports/Friday.XML")),
+            with_extension(PathBuf::from("/Exports/Friday.XML"), XML_EXTENSION),
             PathBuf::from("/Exports/Friday.XML")
+        );
+        assert_eq!(
+            with_extension(PathBuf::from("/Exports/Friday tracklist"), "csv"),
+            PathBuf::from("/Exports/Friday tracklist.csv")
         );
     }
 
