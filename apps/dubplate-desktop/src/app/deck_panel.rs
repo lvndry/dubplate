@@ -44,6 +44,7 @@ pub(super) fn render(
         .child(overview::render(app, deck, frame, cx))
         .child(transport(app, deck, frame, cx))
         .children(deck_grid::grid_bar(app, deck, cx))
+        .child(super::stems_strip::render(app, deck, cx))
         .child(pad_grid::render(app, deck, cx));
     accept_drops(panel, deck, cx)
 }

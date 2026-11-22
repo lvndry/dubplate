@@ -1,19 +1,20 @@
 //! Hands a prepared set to rekordbox as a rekordbox XML file: the set becomes a playlist in its
 //! order, and each track carries its beat grid with the DJ's corrections, the mix-in and
-//! mix-out as memory cues, and the cues rekordbox already had. rekordbox's own files are never
+//! mix-out as memory cues, and its cues: the ones the DJ made in Dubplate, else the ones
+//! rekordbox already had. rekordbox's own files are never
 //! written: the DJ imports the file from rekordbox's rekordbox xml tree.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use dubplate_library::{FolderScan, LibraryTrack};
 use dubplate_rekordbox::analysis::{Beat, BeatGrid};
-use dubplate_rekordbox::xml::{
-    MarkSlot, PositionMark, TempoMarker, XmlLibrary, XmlPlaylist, XmlTrack,
-};
-use dubplate_rekordbox::{Cue, CueKind, Error, Track, TrackAnalysis};
+use dubplate_rekordbox::xml::{TempoMarker, XmlLibrary, XmlPlaylist, XmlTrack};
+use dubplate_rekordbox::{Cue, Error, MemoryCue, Track, TrackAnalysis, TrackCues};
 
 use crate::grid::GridCorrection;
+use crate::identity::TrackIdentity;
 use crate::store::{Set, SetEntry, is_inside_rekordbox};
 
 /// The name of the memory cue where the track comes in.
@@ -46,8 +47,9 @@ pub struct ExportTrack {
     pub in_rekordbox: bool,
     /// rekordbox's beat grid, before the DJ's corrections.
     pub beat_grid: Option<BeatGrid>,
-    /// rekordbox's own memory cues, hot cues and saved loops for the track.
-    pub cues: Vec<Cue>,
+    /// The track's memory cues, hot cues and saved loops: the ones the DJ made in Dubplate when
+    /// there are, else rekordbox's.
+    pub cues: TrackCues,
 }
 
 impl ExportTrack {
@@ -115,7 +117,7 @@ fn xml_track(track_id: u32, export: &ExportTrack) -> XmlTrack {
             .as_ref()
             .map(|grid| tempo_markers(&GridCorrection::of(&export.entry).apply(grid)))
             .unwrap_or_default(),
-        position_marks: position_marks(&export.entry, &export.cues),
+        cues: with_mix_cues(&export.entry, &export.cues),
     }
 }
 
@@ -154,52 +156,30 @@ fn follows_marker(anchor: &Beat, beats_since: usize, beat: &Beat) -> bool {
         && (f64::from(beat.time_ms) - expected_ms).abs() <= BEAT_DRIFT_TOLERANCE_MS
 }
 
-/// The DJ's mix-in and mix-out as named memory cues, then rekordbox's own cues. A rekordbox
-/// memory cue at the very place of a mix cue gives way to it.
-fn position_marks(entry: &SetEntry, cues: &[Cue]) -> Vec<PositionMark> {
-    let mix_cues: Vec<PositionMark> = [
+/// `cues` with the DJ's mix-in and mix-out as named memory cues. A memory cue at the very
+/// place of a mix cue gives way to it; a saved loop there stays.
+fn with_mix_cues(entry: &SetEntry, cues: &TrackCues) -> TrackCues {
+    let mix_cues: Vec<(u32, &str)> = [
         (entry.mix_in_ms, MIX_IN_CUE_NAME),
         (entry.mix_out_ms, MIX_OUT_CUE_NAME),
     ]
     .into_iter()
-    .filter_map(|(start_ms, name)| {
-        Some(PositionMark {
-            name: name.to_owned(),
-            start_ms: start_ms?,
-            loop_end_ms: None,
-            slot: MarkSlot::Memory,
-        })
-    })
+    .filter_map(|(start_ms, name)| Some((start_ms?, name)))
     .collect();
-    let mut memory: Vec<PositionMark> = cues
-        .iter()
-        .filter(|cue| cue.kind == CueKind::Memory)
-        .filter(|cue| {
-            cue.loop_end_ms.is_some() || !mix_cues.iter().any(|mix| mix.start_ms == cue.start_ms)
-        })
-        .map(|cue| rekordbox_mark(cue, MarkSlot::Memory))
-        .chain(mix_cues.iter().cloned())
-        .collect();
-    memory.sort_by_key(|mark| mark.start_ms);
-    let mut hot: Vec<PositionMark> = cues
-        .iter()
-        .filter_map(|cue| Some(rekordbox_mark(cue, MarkSlot::Hot(cue.kind.pad()?))))
-        .collect();
-    hot.sort_by_key(|mark| match mark.slot {
-        MarkSlot::Hot(pad) => pad.index(),
-        MarkSlot::Memory => 0,
+    let mut exported = cues.clone();
+    exported.remove_memory_cues(|cue| {
+        cue.loop_end_ms.is_none()
+            && mix_cues
+                .iter()
+                .any(|(start_ms, _)| *start_ms == cue.start_ms)
     });
-    memory.extend(hot);
-    memory
-}
-
-fn rekordbox_mark(cue: &Cue, slot: MarkSlot) -> PositionMark {
-    PositionMark {
-        name: cue.comment.clone().unwrap_or_default(),
-        start_ms: cue.start_ms,
-        loop_end_ms: cue.loop_end_ms,
-        slot,
+    for (start_ms, name) in mix_cues {
+        exported.insert_memory_cue(MemoryCue {
+            name: name.to_owned(),
+            ..MemoryCue::at(start_ms)
+        });
     }
+    exported
 }
 
 /// rekordbox's collection as the export reads it.
@@ -223,6 +203,7 @@ pub struct ExportLibrary<'a> {
     share_directory: Option<&'a Path>,
     folder_tracks: HashMap<&'a Path, &'a LibraryTrack>,
     relinks: &'a HashMap<PathBuf, PathBuf>,
+    track_cues: Option<&'a HashMap<TrackIdentity, Arc<TrackCues>>>,
 }
 
 /// A set exported to rekordbox XML, with what the DJ should know about it.
@@ -342,7 +323,17 @@ impl<'a> ExportLibrary<'a> {
             share_directory: rekordbox.map(|rekordbox| rekordbox.share_directory),
             folder_tracks,
             relinks,
+            track_cues: None,
         }
+    }
+
+    /// Exports the cues the DJ made in Dubplate, by track, in place of rekordbox's.
+    pub fn with_track_cues(
+        mut self,
+        track_cues: &'a HashMap<TrackIdentity, Arc<TrackCues>>,
+    ) -> Self {
+        self.track_cues = Some(track_cues);
+        self
     }
 
     /// Exports `set`, its backups included, reading each rekordbox track's beat grid from
@@ -416,10 +407,16 @@ impl<'a> ExportLibrary<'a> {
             track.file_path = Some(current_path.clone());
             let beat_grid = self.beat_grid(&track, problems);
             let cues = self
-                .cues_by_track
-                .get(track.id.as_str())
-                .map(|cues| cues.iter().map(|cue| (*cue).clone()).collect())
-                .unwrap_or_default();
+                .dubplate_cues(&TrackIdentity::Rekordbox(track.id.clone()))
+                .unwrap_or_else(|| {
+                    TrackCues::from_rekordbox(
+                        self.cues_by_track
+                            .get(track.id.as_str())
+                            .into_iter()
+                            .flatten()
+                            .copied(),
+                    )
+                });
             return ExportTrack {
                 entry: entry.clone(),
                 track,
@@ -438,8 +435,16 @@ impl<'a> ExportLibrary<'a> {
             track,
             in_rekordbox: false,
             beat_grid: None,
-            cues: Vec::new(),
+            cues: self
+                .dubplate_cues(&TrackIdentity::File(current_path))
+                .unwrap_or_default(),
         }
+    }
+
+    fn dubplate_cues(&self, identity: &TrackIdentity) -> Option<TrackCues> {
+        self.track_cues?
+            .get(identity)
+            .map(|cues| TrackCues::clone(cues))
     }
 
     fn relinked(&self, path: &Path) -> PathBuf {

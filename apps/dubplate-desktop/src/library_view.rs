@@ -28,6 +28,8 @@ pub enum Column {
     Energy,
     /// How the track mixes after the tempo master's, ranked as the Next suggestions are.
     Match,
+    /// Whether the track's stems are separated, being separated or not asked for.
+    Stems,
     /// The length.
     Time,
     /// rekordbox or the music folder.
@@ -36,7 +38,7 @@ pub enum Column {
 
 impl Column {
     /// Every column, in the table's order.
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::Title,
         Self::Artist,
         Self::Genre,
@@ -44,6 +46,7 @@ impl Column {
         Self::Key,
         Self::Energy,
         Self::Match,
+        Self::Stems,
         Self::Time,
         Self::Source,
     ];
@@ -58,6 +61,7 @@ impl Column {
             Self::Key => "Key",
             Self::Energy => "Energy",
             Self::Match => "Match",
+            Self::Stems => "Stems",
             Self::Time => "Time",
             Self::Source => "Source",
         }
@@ -73,6 +77,7 @@ impl Column {
             Self::Key => "key",
             Self::Energy => "energy",
             Self::Match => "match",
+            Self::Stems => "stems",
             Self::Time => "time",
             Self::Source => "source",
         }
@@ -90,7 +95,7 @@ impl Column {
             return None;
         }
         match self {
-            Self::Title | Self::Artist | Self::Genre | Self::Source => {
+            Self::Title | Self::Artist | Self::Genre | Self::Stems | Self::Source => {
                 Some(CellValue::Text(text.to_lowercase()))
             }
             Self::Bpm | Self::Energy | Self::Match => text

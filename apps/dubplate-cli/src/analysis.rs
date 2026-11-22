@@ -141,11 +141,11 @@ fn print_cues(analysis: &TrackAnalysis, master_db_cues: &[Cue]) {
             .kind
             .pad()
             .map_or_else(|| "memory".to_owned(), |pad| pad.letter().to_string());
-        let colour = cue
-            .color
-            .filter(|color| *color >= 0)
-            .map(|color| format!("rekordbox colour {color}"))
-            .unwrap_or_default();
+        let colour = match (cue.hot_cue_color, cue.memory_color) {
+            (Some(color), _) => format!("{} (index {})", color.rgb(), color.index()),
+            (None, Some(color)) => color.name().to_owned(),
+            (None, None) => String::new(),
+        };
         let time = with_loop_end(cue.start_ms, cue.loop_end_ms);
         println!(
             "  {pad:<6} {time:<11} {:<16} {colour:<22} {}",
