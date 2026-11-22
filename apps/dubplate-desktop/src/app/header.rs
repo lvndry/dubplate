@@ -32,7 +32,7 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
         .pl(theme::GUTTER + WINDOW_BUTTONS_WIDTH)
         .pr(theme::GUTTER)
         .border_b_1()
-        .border_color(theme::LINE)
+        .border_color(theme::active().line)
         .on_double_click(|_, window, _| window.titlebar_double_click())
         .on_mouse_down(
             MouseButton::Left,
@@ -56,7 +56,12 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
                 .items_center()
                 .gap(px(8.0))
                 .w(px(120.0))
-                .child(svg().path(LOGO_PATH).size(px(20.0)).text_color(theme::TEXT))
+                .child(
+                    svg()
+                        .path(LOGO_PATH)
+                        .size(px(20.0))
+                        .text_color(theme::active().text),
+                )
                 .child(
                     div()
                         .text_size(px(19.0))
@@ -103,14 +108,14 @@ fn mode(
         .cursor_pointer()
         .when(current, |button| {
             button
-                .bg(theme::RAISED)
-                .text_color(theme::TEXT)
+                .bg(theme::active().raised)
+                .text_color(theme::active().text)
                 .font_weight(FontWeight::MEDIUM)
         })
         .when(!current, |button| {
             button
-                .text_color(theme::MUTED)
-                .hover(|button| button.text_color(theme::TEXT))
+                .text_color(theme::active().muted)
+                .hover(|button| button.text_color(theme::active().text))
         })
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
@@ -123,12 +128,14 @@ fn status(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoElem
     let (library_colour, library_text): (Rgba, SharedString) =
         match (app.sources.files_seen(), &app.library) {
             (Some(files), _) => (
-                theme::MUTED,
+                theme::active().muted,
                 format!("Scanning\u{2026} {files} files").into(),
             ),
-            (None, LibraryStatus::Reading) => (theme::MUTED, "Opening library\u{2026}".into()),
+            (None, LibraryStatus::Reading) => {
+                (theme::active().muted, "Opening library\u{2026}".into())
+            }
             (None, LibraryStatus::Ready(collection)) => (
-                theme::OK,
+                theme::active().ok,
                 match app.analysis_waiting() {
                     0 => format!("{} tracks", collection.track_count()),
                     waiting => format!(
@@ -138,23 +145,23 @@ fn status(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoElem
                 }
                 .into(),
             ),
-            (None, LibraryStatus::Unchosen) => (theme::MUTED, "No music yet".into()),
+            (None, LibraryStatus::Unchosen) => (theme::active().muted, "No music yet".into()),
         };
     let (audio_colour, audio_text): (Rgba, SharedString) = match &app.engine {
         Ok(engine) => {
             let stats = engine.controller.stats();
             let latency = stats.output_latency_ms.unwrap_or(stats.buffer_latency_ms);
             (
-                theme::MUTED,
+                theme::active().muted,
                 format!("{} \u{b7} {latency:.1} ms", engine.output.device_name()).into(),
             )
         }
-        Err(_) => (theme::ALERT, "No audio output".into()),
+        Err(_) => (theme::active().alert, "No audio output".into()),
     };
     let dropouts = app.dropouts();
     let controllers = app.controller_names();
     let (controller_colour, controller_text): (Rgba, SharedString) = if controllers.is_empty() {
-        (theme::MUTED, "No controller".into())
+        (theme::active().muted, "No controller".into())
     } else {
         let others = controllers.len() - 1;
         let name = controllers.first().copied().unwrap_or_default();
@@ -163,7 +170,7 @@ fn status(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoElem
         } else {
             format!("{name} +{others}")
         };
-        (theme::OK, text.into())
+        (theme::active().ok, text.into())
     };
     div()
         .flex()
@@ -172,7 +179,7 @@ fn status(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoElem
         .items_center()
         .gap(px(10.0))
         .text_size(theme::SMALL_TEXT_SIZE)
-        .text_color(theme::MUTED)
+        .text_color(theme::active().muted)
         .child(
             div()
                 .id("library-status")
@@ -186,7 +193,7 @@ fn status(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoElem
                 .px(px(8.0))
                 .rounded(theme::CONTROL_RADIUS)
                 .cursor_pointer()
-                .hover(|chip| chip.bg(theme::RAISED))
+                .hover(|chip| chip.bg(theme::active().raised))
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
                     this.perform(Command::ToggleLibrary, window, cx);
@@ -217,7 +224,7 @@ fn status(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoElem
             status.child(
                 div()
                     .font_family(MONO_FAMILY)
-                    .text_color(theme::ALERT)
+                    .text_color(theme::active().alert)
                     .child(format!(
                         "{dropouts} dropout{}",
                         if dropouts == 1 { "" } else { "s" }
@@ -236,22 +243,22 @@ fn status(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoElem
                 .px(px(10.0))
                 .rounded(theme::CONTROL_RADIUS)
                 .border_1()
-                .border_color(theme::LINE)
+                .border_color(theme::active().line)
                 .text_color(if app.lock_playing_deck {
-                    theme::TEXT
+                    theme::active().text
                 } else {
-                    theme::MUTED
+                    theme::active().muted
                 })
                 .cursor_pointer()
-                .hover(|button| button.bg(theme::RAISED))
+                .hover(|button| button.bg(theme::active().raised))
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                     this.toggle_lock_playing_deck(cx);
                 }))
                 .child(dot(if app.lock_playing_deck {
-                    theme::OK
+                    theme::active().ok
                 } else {
-                    theme::MUTED
+                    theme::active().muted
                 }))
                 .child("Lock playing deck"),
         )
@@ -266,11 +273,11 @@ fn status(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoElem
                 .px(px(10.0))
                 .rounded(theme::CONTROL_RADIUS)
                 .border_1()
-                .border_color(theme::LINE)
-                .bg(theme::PANEL)
-                .text_color(theme::TEXT)
+                .border_color(theme::active().line)
+                .bg(theme::active().panel)
+                .text_color(theme::active().text)
                 .cursor_pointer()
-                .hover(|button| button.bg(theme::RAISED))
+                .hover(|button| button.bg(theme::active().raised))
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
                     this.perform(Command::ToggleHelp, window, cx);
@@ -280,7 +287,7 @@ fn status(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoElem
                     div()
                         .font_family(MONO_FAMILY)
                         .text_size(theme::TINY_TEXT_SIZE)
-                        .text_color(theme::MUTED)
+                        .text_color(theme::active().muted)
                         .child("?"),
                 ),
         )
@@ -291,7 +298,7 @@ fn record_button(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl I
     let status = app.recording_status();
     let (colour, label): (Rgba, SharedString) = match &status {
         Some(status) if !status.skipped.is_zero() => (
-            theme::ATTENTION,
+            theme::active().attention,
             format!(
                 "REC {} \u{b7} {:.1} s skipped",
                 running_time(status.elapsed),
@@ -300,10 +307,10 @@ fn record_button(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl I
             .into(),
         ),
         Some(status) => (
-            theme::ALERT,
+            theme::active().alert,
             format!("REC {}", running_time(status.elapsed)).into(),
         ),
-        None => (theme::MUTED, "Rec".into()),
+        None => (theme::active().muted, "Rec".into()),
     };
     div()
         .id("record")
@@ -318,16 +325,16 @@ fn record_button(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl I
         .border_color(if status.is_some() {
             theme::faded(colour, 0.6)
         } else {
-            theme::LINE
+            theme::active().line
         })
         .text_color(if status.is_some() {
             colour
         } else {
-            theme::MUTED
+            theme::active().muted
         })
         .when(status.is_some(), |button| button.font_family(MONO_FAMILY))
         .cursor_pointer()
-        .hover(|button| button.bg(theme::RAISED))
+        .hover(|button| button.bg(theme::active().raised))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
             this.perform(Command::ToggleRecording, window, cx);

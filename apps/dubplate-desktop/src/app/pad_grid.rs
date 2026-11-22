@@ -101,12 +101,12 @@ fn mode_tabs(
                         .cursor_pointer()
                         .map(|tab| {
                             if selected {
-                                tab.bg(theme::RAISED)
-                                    .text_color(theme::TEXT)
+                                tab.bg(theme::active().raised)
+                                    .text_color(theme::active().text)
                                     .font_weight(FontWeight::MEDIUM)
                             } else {
-                                tab.text_color(theme::MUTED)
-                                    .hover(|tab| tab.text_color(theme::TEXT))
+                                tab.text_color(theme::active().muted)
+                                    .hover(|tab| tab.text_color(theme::active().text))
                             }
                         })
                         .aria_description(
@@ -161,17 +161,17 @@ fn sampler_controls(
             .border_1()
             .map(|button| {
                 if on {
-                    button.border_color(colour).text_color(theme::TEXT)
+                    button.border_color(colour).text_color(theme::active().text)
                 } else if enabled {
                     button
-                        .border_color(theme::LINE)
-                        .text_color(theme::MUTED)
-                        .hover(|button| button.text_color(theme::TEXT))
+                        .border_color(theme::active().line)
+                        .text_color(theme::active().muted)
+                        .hover(|button| button.text_color(theme::active().text))
                 } else {
                     button
                         .border_dashed()
-                        .border_color(theme::LINE)
-                        .text_color(theme::MUTED)
+                        .border_color(theme::active().line)
+                        .text_color(theme::active().muted)
                 }
             })
             .when(enabled, |button| button.cursor_pointer())
@@ -246,12 +246,12 @@ fn loop_buttons(
             .border_1()
             .map(|button| {
                 if looping {
-                    button.border_color(colour).text_color(theme::TEXT)
+                    button.border_color(colour).text_color(theme::active().text)
                 } else {
                     button
-                        .border_color(theme::LINE)
-                        .text_color(theme::MUTED)
-                        .hover(|button| button.text_color(theme::TEXT))
+                        .border_color(theme::active().line)
+                        .text_color(theme::active().muted)
+                        .hover(|button| button.text_color(theme::active().text))
                 }
             })
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
@@ -311,21 +311,21 @@ fn pads(
                 .map(|pad_button| {
                     if face.lit && loaded {
                         pad_button
-                            .bg(theme::RAISED)
-                            .border_color(face.dot.unwrap_or(theme::LINE))
+                            .bg(theme::active().raised)
+                            .border_color(face.dot.unwrap_or(theme::active().line))
                     } else if playable {
-                        pad_button.bg(theme::RAISED).border_color(theme::LINE)
+                        pad_button.bg(theme::active().raised).border_color(theme::active().line)
                     } else {
                         pad_button
                             .border_dashed()
-                            .border_color(theme::LINE)
-                            .text_color(theme::MUTED)
+                            .border_color(theme::active().line)
+                            .text_color(theme::active().muted)
                     }
                 })
                 .when(playable, |pad_button| {
                     pad_button
                         .cursor_pointer()
-                        .hover(|pad_button| pad_button.border_color(theme::MUTED))
+                        .hover(|pad_button| pad_button.border_color(theme::active().muted))
                         .aria_description("Enter plays this pad. Shift Enter performs its alternate action, such as deleting a hot cue.")
                         .on_key_down(cx.listener(move |this, event, window, cx| {
                             if shift_activation(event) {
@@ -359,7 +359,7 @@ fn pads(
                     div()
                         .font_family(MONO_FAMILY)
                         .text_size(theme::TINY_TEXT_SIZE)
-                        .text_color(theme::MUTED)
+                        .text_color(theme::active().muted)
                         .child(face.detail),
                 )
         }))
@@ -385,7 +385,9 @@ fn faces(app: &DubplateApp, deck: DeckId) -> Vec<PadFace> {
                         .unwrap_or_default()
                         .into(),
                     detail: cue.map(clock).unwrap_or_default().into(),
-                    dot: cue.map(|_| theme::HOT_CUE_TINTS[pad % theme::HOT_CUE_TINTS.len()]),
+                    dot: cue.map(|_| {
+                        theme::active().hot_cue_tints[pad % theme::active().hot_cue_tints.len()]
+                    }),
                     lit: cue.is_some(),
                     playable: true,
                 }

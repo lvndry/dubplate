@@ -389,7 +389,10 @@ pub fn help_sections() -> Vec<HelpSection> {
                 line(&["cmd-1", "cmd-2"], "Prepare / Perform"),
                 line(&["cmd-shift-r"], "Record the mix, or stop recording"),
                 line(&["cmd-o"], "Add music folders to the library"),
-                line(&["cmd-,"], "Settings: music folders, rekordbox, sound card"),
+                line(
+                    &["cmd-,"],
+                    "Settings: music folders, rekordbox, sound card, theme",
+                ),
                 line(&["?", "escape"], "Show / close this help"),
             ],
         },

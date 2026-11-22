@@ -98,7 +98,7 @@ impl Render for DeckOverview {
                 (
                     (seconds / content.duration).clamp(0.0, 1.0) as f32,
                     pad.letter(),
-                    theme::HOT_CUE_TINTS[pad_position(pad)],
+                    theme::active().hot_cue_tints[pad_position(pad)],
                 )
             })
             .collect();
@@ -130,7 +130,7 @@ impl Render for DeckOverview {
                     .text_size(px(9.0))
                     .line_height(px(CUE_ROW - 1.0))
                     .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(theme::ON_DECK)
+                    .text_color(theme::active().on_deck)
                     .child(letter.to_string())
             }))
     }
@@ -139,12 +139,12 @@ impl Render for DeckOverview {
 /// The colour of a section on the phrase strip.
 fn section_colour(section: Section) -> Rgba {
     match section {
-        Section::Intro => theme::PHRASE_INTRO,
-        Section::Build => theme::PHRASE_BUILD,
-        Section::Drop => theme::PHRASE_DROP,
-        Section::Breakdown => theme::PHRASE_BREAKDOWN,
-        Section::Outro => theme::PHRASE_OUTRO,
-        Section::Other => theme::PHRASE_OTHER,
+        Section::Intro => theme::active().phrase_intro,
+        Section::Build => theme::active().phrase_build,
+        Section::Drop => theme::active().phrase_drop,
+        Section::Breakdown => theme::active().phrase_breakdown,
+        Section::Outro => theme::active().phrase_outro,
+        Section::Other => theme::active().phrase_other,
     }
 }
 
@@ -197,18 +197,18 @@ fn paint_content(bounds: Bounds<Pixels>, content: &OverviewContent, window: &mut
     let ending_from = area.x_of(content.duration - ENDING_SECONDS);
     window.paint_quad(fill(
         area.band_span(ending_from, area.width - ending_from),
-        theme::ENDING_TINT,
+        theme::active().ending_tint,
     ));
     for &(start, end) in &content.track.saved_loops {
         let left = area.x_of(start);
         let width = (area.x_of(end) - left).max(1.0);
         window.paint_quad(fill(
             area.band_span(left, width),
-            theme::faded(theme::SAVED_LOOP, 0.14),
+            theme::faded(theme::active().saved_loop, 0.14),
         ));
         window.paint_quad(fill(
             area.rect(left, area.bands_top, width, 2.0),
-            theme::SAVED_LOOP,
+            theme::active().saved_loop,
         ));
     }
     if let Some(bars) = &content.bars {
@@ -220,12 +220,12 @@ fn paint_content(bounds: Bounds<Pixels>, content: &OverviewContent, window: &mut
         let x = area.x_of(minute as f64 * SECONDS_PER_MINUTE);
         window.paint_quad(fill(
             area.rect(x, area.bands_top, 1.0, 3.0),
-            theme::MINUTE_TICK,
+            theme::active().minute_tick,
         ));
     }
     for (seconds, colour) in [
-        (content.mix_in, theme::MIX_IN_MARK),
-        (content.mix_out, theme::MIX_OUT_MARK),
+        (content.mix_in, theme::active().mix_in_mark),
+        (content.mix_out, theme::active().mix_out_mark),
     ] {
         if let Some(seconds) = seconds {
             let x = area.x_of(seconds);
@@ -234,7 +234,13 @@ fn paint_content(bounds: Bounds<Pixels>, content: &OverviewContent, window: &mut
         }
     }
     for &seconds in &content.track.memory_cues {
-        paint_triangle(&area, area.x_of(seconds), 1.0, theme::MEMORY_CUE, window);
+        paint_triangle(
+            &area,
+            area.x_of(seconds),
+            1.0,
+            theme::active().memory_cue,
+            window,
+        );
     }
     let strip_top = area.bands_bottom + 1.0;
     for phrase in content.phrases.iter() {
@@ -267,9 +273,9 @@ fn paint_band_bars(area: &OverviewArea, bars: &[BandLevels], window: &mut Window
     for (index, levels) in bars.iter().enumerate() {
         let left = index as f32 * BAR_SPACING;
         for (level, colour) in [
-            (levels.low, theme::BAND_LOW),
-            (levels.mid, theme::BAND_MID),
-            (levels.high, theme::BAND_HIGH),
+            (levels.low, theme::active().band_low),
+            (levels.mid, theme::active().band_mid),
+            (levels.high, theme::active().band_high),
         ] {
             let height = (level * tallest).max(0.0);
             if height < 0.5 {
@@ -315,10 +321,13 @@ fn paint_motion(bounds: Bounds<Pixels>, motion: OverviewMotion, window: &mut Win
     }
     if let Some(progress) = motion.progress {
         let played = progress * area.width;
-        window.paint_quad(fill(area.band_span(0.0, played), theme::PLAYED_SHADE));
+        window.paint_quad(fill(
+            area.band_span(0.0, played),
+            theme::active().played_shade,
+        ));
         window.paint_quad(fill(
             area.rect(played - 1.0, 0.0, 2.0, f32::from(bounds.size.height)),
-            theme::PLAYHEAD,
+            theme::active().playhead,
         ));
     }
     if let Some(cue_point) = motion.cue_point {
@@ -330,20 +339,20 @@ fn paint_motion(bounds: Bounds<Pixels>, motion: OverviewMotion, window: &mut Win
         triangle.line_to(origin + point(px(x), px(area.bands_bottom - 6.0)));
         triangle.close();
         if let Ok(path) = triangle.build() {
-            window.paint_path(path, theme::CUE_POINT);
+            window.paint_path(path, theme::active().cue_point);
         }
     }
     if let Some((seconds, strength)) = motion.pulse {
         let half_width = 2.0 + 5.0 * (1.0 - strength);
         window.paint_quad(fill(
             area.band_span(area.x_of(seconds) - half_width, half_width * 2.0),
-            theme::faded(theme::TEXT, 0.5 * strength),
+            theme::faded(theme::active().text, 0.5 * strength),
         ));
     }
     if let Some(hover) = motion.hover {
         window.paint_quad(fill(
             area.band_span(hover * area.width, 1.0),
-            theme::faded(theme::TEXT, 0.6),
+            theme::faded(theme::active().text, 0.6),
         ));
     }
 }
@@ -456,7 +465,7 @@ pub(super) fn render(
         .relative()
         .h(OVERVIEW_HEIGHT)
         .rounded(px(4.0))
-        .bg(theme::RAISED)
+        .bg(theme::active().raised)
         .overflow_hidden()
         .cursor_pointer()
         .on_mouse_down(
@@ -502,12 +511,12 @@ pub(super) fn render(
                 .ml(px(4.0))
                 .px(px(4.0))
                 .rounded(px(3.0))
-                .bg(theme::PANEL)
+                .bg(theme::active().panel)
                 .border_1()
-                .border_color(theme::LINE)
+                .border_color(theme::active().line)
                 .font_family(MONO_FAMILY)
                 .text_size(px(10.0))
-                .text_color(theme::TEXT)
+                .text_color(theme::active().text)
                 .whitespace_nowrap()
                 .child(label)
         }))

@@ -45,9 +45,9 @@ impl Render for DraggedSetTrack {
             .py(px(5.0))
             .rounded(theme::SMALL_RADIUS)
             .border_1()
-            .border_color(theme::LINE)
-            .bg(theme::RAISED)
-            .text_color(theme::TEXT)
+            .border_color(theme::active().line)
+            .bg(theme::active().raised)
+            .text_color(theme::active().text)
             .text_size(theme::SMALL_TEXT_SIZE)
             .font_weight(FontWeight::MEDIUM)
             .child(self.title.clone())
@@ -78,7 +78,7 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
             div()
                 .px(theme::GUTTER)
                 .py(px(16.0))
-                .text_color(theme::MUTED)
+                .text_color(theme::active().muted)
                 .child(
                     "Select tracks in the library and press Enter to add them, or drag them here.",
                 ),
@@ -104,8 +104,8 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
         .w(PANEL_WIDTH)
         .h_full()
         .border_l_1()
-        .border_color(theme::LINE)
-        .bg(theme::PANEL)
+        .border_color(theme::active().line)
+        .bg(theme::active().panel)
         .on_drop(cx.listener(|this, dragged: &DraggedTrack, _, cx| {
             let last = this.set_track_count().checked_sub(1);
             this.insert_into_set(dragged.track, last, cx);
@@ -148,7 +148,7 @@ fn summary(
         .px(theme::GUTTER)
         .py(px(12.0))
         .border_b_1()
-        .border_color(theme::LINE)
+        .border_color(theme::active().line)
         .child(
             div()
                 .flex()
@@ -164,7 +164,11 @@ fn summary(
                     div()
                         .font_family(MONO_FAMILY)
                         .text_size(theme::SMALL_TEXT_SIZE)
-                        .text_color(if over { theme::ATTENTION } else { theme::TEXT })
+                        .text_color(if over {
+                            theme::active().attention
+                        } else {
+                            theme::active().text
+                        })
                         .child(format!(
                             "{} / {}",
                             running_time(total),
@@ -178,7 +182,7 @@ fn summary(
                 .items_center()
                 .gap(px(8.0))
                 .text_size(theme::SMALL_TEXT_SIZE)
-                .text_color(theme::MUTED)
+                .text_color(theme::active().muted)
                 .child(div().flex_1().min_w_0().truncate().child(format!(
                     "{} track{} \u{b7} {range} \u{b7} {ready} of {} ready",
                     rows.len(),
@@ -202,7 +206,11 @@ fn export_button(cx: &mut Context<'_, DubplateApp>) -> impl IntoElement + use<> 
         .px(px(6.0))
         .rounded(theme::SMALL_RADIUS)
         .cursor_pointer()
-        .hover(|button| button.bg(theme::RAISED).text_color(theme::TEXT))
+        .hover(|button| {
+            button
+                .bg(theme::active().raised)
+                .text_color(theme::active().text)
+        })
         .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.export_set(cx)))
         .child("Export to rekordbox\u{2026}")
 }
@@ -231,7 +239,7 @@ fn energy_curve(rows: &[SetRow], target: Duration, range: EnergyRange) -> impl I
                 .flex()
                 .justify_between()
                 .text_size(theme::TINY_TEXT_SIZE)
-                .text_color(theme::MUTED)
+                .text_color(theme::active().muted)
                 .child("Energy against the target")
                 .when(!rated, |caption| caption.child("No ratings yet")),
         )
@@ -262,7 +270,7 @@ fn energy_curve(rows: &[SetRow], target: Duration, range: EnergyRange) -> impl I
                         }
                     }
                     if let Ok(path) = target_line.build() {
-                        window.paint_path(path, theme::faded(theme::MUTED, 0.5));
+                        window.paint_path(path, theme::faded(theme::active().muted, 0.5));
                     }
                     if !rated {
                         return;
@@ -283,7 +291,7 @@ fn energy_curve(rows: &[SetRow], target: Duration, range: EnergyRange) -> impl I
                         drawing = true;
                     }
                     if let Ok(path) = energy_line.build() {
-                        window.paint_path(path, theme::TEXT);
+                        window.paint_path(path, theme::active().text);
                     }
                 },
             )
@@ -352,17 +360,18 @@ fn track_row(
         .px(theme::GUTTER)
         .cursor_pointer()
         .when(selected, |row| {
-            row.bg(theme::SELECTED_ROW)
-                .when(focused, |row| row.border_l_2().border_color(theme::TEXT))
+            row.bg(theme::active().selected_row).when(focused, |row| {
+                row.border_l_2().border_color(theme::active().text)
+            })
         })
-        .hover(|row| row.bg(theme::SELECTED_ROW))
+        .hover(|row| row.bg(theme::active().selected_row))
         .on_mouse_down(
             MouseButton::Left,
             cx.listener(move |this, _, _, cx| this.select_set_track(position, cx)),
         )
         .on_drag(dragged, |dragged, _, _, cx| cx.new(|_| dragged.clone()))
-        .drag_over::<DraggedSetTrack>(|style, _, _, _| style.bg(theme::RAISED))
-        .drag_over::<DraggedTrack>(|style, _, _, _| style.bg(theme::RAISED))
+        .drag_over::<DraggedSetTrack>(|style, _, _, _| style.bg(theme::active().raised))
+        .drag_over::<DraggedTrack>(|style, _, _, _| style.bg(theme::active().raised))
         .on_drop(cx.listener(move |this, dragged: &DraggedSetTrack, _, cx| {
             this.drop_set_track(dragged.position, position, cx);
             cx.stop_propagation();
@@ -377,7 +386,7 @@ fn track_row(
                 .flex_none()
                 .font_family(MONO_FAMILY)
                 .text_size(theme::TINY_TEXT_SIZE)
-                .text_color(theme::MUTED)
+                .text_color(theme::active().muted)
                 .child((position + 1).to_string()),
         )
         .child(
@@ -396,7 +405,7 @@ fn track_row(
                     div()
                         .when(!selected, |text| text.truncate())
                         .text_size(theme::SMALL_TEXT_SIZE)
-                        .text_color(theme::MUTED)
+                        .text_color(theme::active().muted)
                         .child(match duplicate {
                             Some(warning) => warning.kind.label(),
                             None => artist,
@@ -416,9 +425,9 @@ fn track_row(
                         .gap(px(8.0))
                         .font_family(MONO_FAMILY)
                         .text_size(theme::SMALL_TEXT_SIZE)
-                        .child(div().text_color(theme::MUTED).child(energy))
+                        .child(div().text_color(theme::active().muted).child(energy))
                         .child(key)
-                        .child(div().text_color(theme::MUTED).child(bpm)),
+                        .child(div().text_color(theme::active().muted).child(bpm)),
                 )
                 .child(ready_badge(row)),
         )
@@ -458,9 +467,9 @@ fn track_row(
 /// fill a missing cue shows the Y key that accepts it.
 fn ready_badge(row: &SetRow) -> impl IntoElement + use<> {
     let colour = match row.ready.problems.first().map(|problem| problem.severity()) {
-        None => theme::OK,
-        Some(Severity::Blocking) => theme::ALERT,
-        Some(Severity::NeedsAttention) => theme::ATTENTION,
+        None => theme::active().ok,
+        Some(Severity::Blocking) => theme::active().alert,
+        Some(Severity::NeedsAttention) => theme::active().attention,
     };
     let mut details = row.ready.details();
     if row.has_proposal {
@@ -481,9 +490,9 @@ fn ready_badge(row: &SetRow) -> impl IntoElement + use<> {
                     .px(px(4.0))
                     .rounded(px(3.0))
                     .border_1()
-                    .border_color(theme::LINE)
+                    .border_color(theme::active().line)
                     .font_family(MONO_FAMILY)
-                    .text_color(theme::TEXT)
+                    .text_color(theme::active().text)
                     .child("Y"),
             )
         })
@@ -529,20 +538,20 @@ fn seam_row(
         .pl(px(42.0))
         .pr(theme::GUTTER)
         .text_size(theme::TINY_TEXT_SIZE)
-        .text_color(theme::MUTED)
-        .child(div().w(px(10.0)).h(px(1.0)).bg(theme::LINE))
+        .text_color(theme::active().muted)
+        .child(div().w(px(10.0)).h(px(1.0)).bg(theme::active().line))
         .child(div().truncate().child(line))
         .child(div().flex_1())
         .map(|seam_row| {
             if free {
-                seam_row.child(div().text_color(theme::TEXT).child("Free"))
+                seam_row.child(div().text_color(theme::active().text).child("Free"))
             } else if seam_warnings.is_empty() {
                 seam_row
             } else {
                 seam_row.child(
                     div()
                         .truncate()
-                        .text_color(theme::ATTENTION)
+                        .text_color(theme::active().attention)
                         .child(seam_warnings.join(" \u{b7} ")),
                 )
             }
@@ -560,12 +569,18 @@ fn seam_row(
                 .cursor_pointer()
                 .font_family(MONO_FAMILY)
                 .text_color(if audition.is_some() {
-                    theme::TEXT
+                    theme::active().text
                 } else {
-                    theme::MUTED
+                    theme::active().muted
                 })
-                .when(audition.is_some(), |button| button.bg(theme::RAISED))
-                .hover(|button| button.bg(theme::RAISED).text_color(theme::TEXT))
+                .when(audition.is_some(), |button| {
+                    button.bg(theme::active().raised)
+                })
+                .hover(|button| {
+                    button
+                        .bg(theme::active().raised)
+                        .text_color(theme::active().text)
+                })
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     this.toggle_audition_of(position, cx);
@@ -593,11 +608,11 @@ fn backups(app: &DubplateApp) -> impl IntoElement {
             .px(theme::GUTTER)
             .py(px(8.0))
             .border_t_1()
-            .border_color(theme::LINE)
+            .border_color(theme::active().line)
             .child(
                 div()
                     .text_size(theme::TINY_TEXT_SIZE)
-                    .text_color(theme::MUTED)
+                    .text_color(theme::active().muted)
                     .child("Backups"),
             )
             .children(
@@ -641,7 +656,7 @@ fn next_panel(
         .px(theme::GUTTER)
         .py(px(10.0))
         .border_t_1()
-        .border_color(theme::LINE)
+        .border_color(theme::active().line)
         .child(
             div()
                 .flex()
@@ -649,13 +664,13 @@ fn next_panel(
                 .gap(px(8.0))
                 .pb(px(4.0))
                 .text_size(theme::TINY_TEXT_SIZE)
-                .text_color(theme::MUTED)
+                .text_color(theme::active().muted)
                 .child(div().flex_1().min_w_0().truncate().child(heading))
                 .when(cursor.is_some() && !next.is_empty(), |heading| {
                     heading.child(
                         div()
                             .flex_none()
-                            .text_color(theme::TEXT)
+                            .text_color(theme::active().text)
                             .child("\u{2191}\u{2193} choose \u{b7} \u{21a9} insert"),
                     )
                 }),
@@ -664,21 +679,21 @@ fn next_panel(
         panel = panel.child(
             div()
                 .text_size(theme::SMALL_TEXT_SIZE)
-                .text_color(theme::MUTED)
+                .text_color(theme::active().muted)
                 .child("Finding matching tracks…"),
         );
     } else if after.is_none() {
         panel = panel.child(
             div()
                 .text_size(theme::SMALL_TEXT_SIZE)
-                .text_color(theme::MUTED)
+                .text_color(theme::active().muted)
                 .child("Suggestions follow the selected set track."),
         );
     } else if next.is_empty() {
         panel = panel.child(
             div()
                 .text_size(theme::SMALL_TEXT_SIZE)
-                .text_color(theme::MUTED)
+                .text_color(theme::active().muted)
                 .child("Nothing in the library mixes well after it."),
         );
     }
@@ -707,8 +722,8 @@ fn next_panel(
                 .py(px(4.0))
                 .rounded(theme::SMALL_RADIUS)
                 .cursor_pointer()
-                .when(highlighted, |row| row.bg(theme::RAISED))
-                .hover(|row| row.bg(theme::RAISED))
+                .when(highlighted, |row| row.bg(theme::active().raised))
+                .hover(|row| row.bg(theme::active().raised))
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     this.insert_suggestion(&path, cx);
@@ -728,7 +743,7 @@ fn next_panel(
                             div()
                                 .flex_1()
                                 .min_w_0()
-                                .text_color(theme::MUTED)
+                                .text_color(theme::active().muted)
                                 .child(suggestion.artist),
                         )
                         .child(
@@ -737,9 +752,9 @@ fn next_panel(
                                 .font_family(MONO_FAMILY)
                                 .text_size(theme::TINY_TEXT_SIZE)
                                 .text_color(if highlighted {
-                                    theme::TEXT
+                                    theme::active().text
                                 } else {
-                                    theme::MUTED
+                                    theme::active().muted
                                 })
                                 .children(insert_key(rank)),
                         ),
@@ -747,7 +762,7 @@ fn next_panel(
                 .child(
                     div()
                         .text_size(theme::TINY_TEXT_SIZE)
-                        .text_color(theme::MUTED)
+                        .text_color(theme::active().muted)
                         .child(suggestion.reason),
                 ),
         );

@@ -114,9 +114,9 @@ impl Render for DraggedTrack {
             .py(px(5.0))
             .rounded(theme::SMALL_RADIUS)
             .border_1()
-            .border_color(theme::LINE)
-            .bg(theme::RAISED)
-            .text_color(theme::TEXT)
+            .border_color(theme::active().line)
+            .bg(theme::active().raised)
+            .text_color(theme::active().text)
             .text_size(theme::SMALL_TEXT_SIZE)
             .font_weight(gpui::FontWeight::MEDIUM)
             .child(self.title.clone())
@@ -529,8 +529,8 @@ impl Browser {
             .p(px(8.0))
             .gap(px(1.0))
             .border_r_1()
-            .border_color(theme::LINE)
-            .bg(theme::BACKGROUND)
+            .border_color(theme::active().line)
+            .bg(theme::active().background)
             .overflow_y_scroll()
             .children(collection.indexed_crates().map(|(crate_index, entry)| {
                 let chosen = crate_index == self.crate_index;
@@ -553,16 +553,21 @@ impl Browser {
                     .pr(px(8.0))
                     .rounded(theme::SMALL_RADIUS)
                     .cursor_pointer()
-                    .text_color(if chosen { theme::TEXT } else { theme::MUTED })
-                    .when(chosen, |row| {
-                        row.bg(theme::RAISED).font_weight(gpui::FontWeight::MEDIUM)
+                    .text_color(if chosen {
+                        theme::active().text
+                    } else {
+                        theme::active().muted
                     })
-                    .hover(|row| row.text_color(theme::TEXT))
+                    .when(chosen, |row| {
+                        row.bg(theme::active().raised)
+                            .font_weight(gpui::FontWeight::MEDIUM)
+                    })
+                    .hover(|row| row.text_color(theme::active().text))
                     .border_1()
                     .border_color(if chosen && self.pane == BrowserPane::Crates {
-                        theme::MUTED
+                        theme::active().muted
                     } else {
-                        theme::faded(theme::MUTED, 0.0)
+                        theme::faded(theme::active().muted, 0.0)
                     })
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                         this.pane = BrowserPane::Crates;
@@ -573,7 +578,7 @@ impl Browser {
                         div()
                             .font_family(MONO_FAMILY)
                             .text_size(theme::TINY_TEXT_SIZE)
-                            .text_color(theme::MUTED)
+                            .text_color(theme::active().muted)
                             .child(count),
                     )
             }))
@@ -602,14 +607,14 @@ impl Browser {
             .aria_label("Library tracks")
             .aria_description("Use Up and Down to select a track. Full title and artist appear below the list. Shift Left or Shift Right loads a deck.")
             .tab_index(0)
-            .focus_visible(|style| style.border_1().border_color(theme::TEXT))
+            .focus_visible(|style| style.border_1().border_color(theme::active().text))
             .track_focus(&self.table_focus)
             .flex()
             .flex_col()
             .flex_1()
             .min_w_0()
             .h_full()
-            .bg(theme::BACKGROUND)
+            .bg(theme::active().background)
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _: &MouseDownEvent, window, cx| {
@@ -626,7 +631,7 @@ impl Browser {
                     div()
                         .px(theme::GUTTER)
                         .py(px(12.0))
-                        .text_color(theme::MUTED)
+                        .text_color(theme::active().muted)
                         .child(message),
                 ),
                 None => table.child(
@@ -675,11 +680,11 @@ impl Browser {
                         }))
                         .flex_none().min_w_0().max_h(px(120.0)).overflow_y_scroll()
                         .px(theme::GUTTER).py(px(8.0))
-                        .border_t_1().border_color(theme::LINE)
+                        .border_t_1().border_color(theme::active().line)
                         .child(div().font_weight(gpui::FontWeight::MEDIUM).child(entry.row.title.clone()))
-                        .child(div().text_color(theme::MUTED).child(entry.row.artist.clone()))
+                        .child(div().text_color(theme::active().muted).child(entry.row.artist.clone()))
                         .when_some(entry.track.file_path.as_ref().and_then(|path| self.analyses.get(path)).and_then(|answer| answer.as_ref().err()), |details, problem| {
-                            details.child(div().text_color(theme::ALERT).child(format!("Analysis failed: {problem}. Rescan this music folder to retry.")))
+                            details.child(div().text_color(theme::active().alert).child(format!("Analysis failed: {problem}. Rescan this music folder to retry.")))
                         })
                 )
             })
@@ -701,7 +706,7 @@ impl Browser {
             .h(FILTER_BAR_HEIGHT)
             .px(theme::GUTTER)
             .border_b_1()
-            .border_color(theme::LINE)
+            .border_color(theme::active().line)
             .child(self.bpm_filter(cx))
             .child(self.key_filter(cx))
             .child(div().flex_1())
@@ -710,7 +715,7 @@ impl Browser {
                     .flex_none()
                     .font_family(MONO_FAMILY)
                     .text_size(theme::TINY_TEXT_SIZE)
-                    .text_color(theme::MUTED)
+                    .text_color(theme::active().muted)
                     .child(count),
             )
     }
@@ -737,11 +742,11 @@ impl Browser {
             .pr(px(2.0))
             .rounded(theme::CONTROL_RADIUS)
             .border_1()
-            .border_color(theme::LINE)
-            .bg(theme::PANEL)
+            .border_color(theme::active().line)
+            .bg(theme::active().panel)
             .child(toggle.border_0())
             .child(bpm_stepper(RangeEnd::Lowest, range.lowest, cx))
-            .child(div().text_color(theme::MUTED).child("\u{2013}"))
+            .child(div().text_color(theme::active().muted).child("\u{2013}"))
             .child(bpm_stepper(RangeEnd::Highest, range.highest, cx))
             .child(clear_button(
                 "bpm-filter-clear",
@@ -800,7 +805,7 @@ impl Browser {
             .items_center()
             .h(px(30.0))
             .text_size(theme::SMALL_TEXT_SIZE)
-            .text_color(theme::MUTED)
+            .text_color(theme::active().muted)
             .font_weight(gpui::FontWeight::MEDIUM)
             .children(Column::ALL.map(|column| {
                 let direction = sort
@@ -814,7 +819,7 @@ impl Browser {
                         })
                         .size(px(11.0))
                         .flex_none()
-                        .text_color(theme::TEXT)
+                        .text_color(theme::active().text)
                 });
                 let label = div().truncate().child(column.label());
                 column_box(column)
@@ -835,8 +840,10 @@ impl Browser {
                     .gap(px(4.0))
                     .when(column == Column::Title, |header| header.pl(px(22.0)))
                     .cursor_pointer()
-                    .hover(|header| header.text_color(theme::TEXT))
-                    .when(direction.is_some(), |header| header.text_color(theme::TEXT))
+                    .hover(|header| header.text_color(theme::active().text))
+                    .when(direction.is_some(), |header| {
+                        header.text_color(theme::active().text)
+                    })
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                         this.click_header(column, cx);
                     }))
@@ -901,9 +908,9 @@ impl Browser {
             .h(ROW_HEIGHT)
             .w_full()
             .border_t_1()
-            .border_color(theme::ROW_LINE)
-            .when(selected, |row| row.bg(theme::SELECTED_ROW))
-            .hover(|row| row.bg(theme::SELECTED_ROW))
+            .border_color(theme::active().row_line)
+            .when(selected, |row| row.bg(theme::active().selected_row))
+            .hover(|row| row.bg(theme::active().selected_row))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, event: &MouseDownEvent, window, cx| {
@@ -933,22 +940,22 @@ impl Browser {
                                 .size(px(6.0))
                                 .flex_none()
                                 .rounded_full()
-                                .when(in_set, |dot| dot.bg(theme::OK)),
+                                .when(in_set, |dot| dot.bg(theme::active().ok)),
                         )
                         .child(
                             div()
                                 .truncate()
                                 .min_w_0()
                                 .font_weight(gpui::FontWeight::MEDIUM)
-                                .when(missing, |title| title.text_color(theme::MUTED))
+                                .when(missing, |title| title.text_color(theme::active().muted))
                                 .child(text),
                         ),
                     Column::Artist => cell
-                        .text_color(theme::MUTED)
+                        .text_color(theme::active().muted)
                         .child(div().truncate().min_w_0().child(text)),
                     Column::Genre => cell
                         .text_size(theme::SMALL_TEXT_SIZE)
-                        .text_color(theme::MUTED)
+                        .text_color(theme::active().muted)
                         .child(div().truncate().min_w_0().child(text)),
                     Column::Bpm | Column::Key | Column::Energy => cell
                         .font_family(MONO_FAMILY)
@@ -957,14 +964,14 @@ impl Browser {
                     Column::Time => cell
                         .font_family(MONO_FAMILY)
                         .text_size(theme::SMALL_TEXT_SIZE)
-                        .text_color(theme::MUTED)
+                        .text_color(theme::active().muted)
                         .child(text),
                     Column::Source => cell
                         .text_size(theme::SMALL_TEXT_SIZE)
                         .text_color(if missing {
-                            theme::ATTENTION
+                            theme::active().attention
                         } else {
-                            theme::MUTED
+                            theme::active().muted
                         })
                         .child(div().truncate().min_w_0().child(text)),
                 }
@@ -1051,14 +1058,17 @@ fn filter_chip(id: &'static str, label: &'static str, on: bool) -> gpui::Statefu
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .map(|chip| {
             if on {
-                chip.border_color(theme::LINE)
-                    .bg(theme::RAISED)
-                    .text_color(theme::TEXT)
+                chip.border_color(theme::active().line)
+                    .bg(theme::active().raised)
+                    .text_color(theme::active().text)
                     .font_weight(gpui::FontWeight::MEDIUM)
             } else {
-                chip.border_color(theme::LINE)
-                    .text_color(theme::MUTED)
-                    .hover(|chip| chip.text_color(theme::TEXT).bg(theme::PANEL))
+                chip.border_color(theme::active().line)
+                    .text_color(theme::active().muted)
+                    .hover(|chip| {
+                        chip.text_color(theme::active().text)
+                            .bg(theme::active().panel)
+                    })
             }
         })
         .child(label)
@@ -1087,9 +1097,13 @@ fn bpm_stepper(end: RangeEnd, bpm: u16, cx: &mut Context<'_, Browser>) -> impl I
             .w(px(18.0))
             .h(px(22.0))
             .rounded(px(5.0))
-            .text_color(theme::MUTED)
+            .text_color(theme::active().muted)
             .cursor_pointer()
-            .hover(|arrow| arrow.bg(theme::RAISED).text_color(theme::TEXT))
+            .hover(|arrow| {
+                arrow
+                    .bg(theme::active().raised)
+                    .text_color(theme::active().text)
+            })
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                 this.step_bpm_range(end, direction, cx);
@@ -1125,9 +1139,13 @@ fn clear_button(
         .justify_center()
         .size(px(22.0))
         .rounded(px(5.0))
-        .text_color(theme::MUTED)
+        .text_color(theme::active().muted)
         .cursor_pointer()
-        .hover(|button| button.bg(theme::RAISED).text_color(theme::TEXT))
+        .hover(|button| {
+            button
+                .bg(theme::active().raised)
+                .text_color(theme::active().text)
+        })
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_click(on_click)
         .tooltip(tooltip("Show every tempo"))
@@ -1135,7 +1153,7 @@ fn clear_button(
             svg()
                 .path(CLOSE_ICON_PATH)
                 .size(px(12.0))
-                .text_color(theme::MUTED),
+                .text_color(theme::active().muted),
         )
 }
 
@@ -1155,13 +1173,13 @@ fn load_button(
         .size(px(22.0))
         .rounded(px(5.0))
         .border_1()
-        .border_color(theme::LINE)
+        .border_color(theme::active().line)
         .font_family(MONO_FAMILY)
         .text_size(theme::TINY_TEXT_SIZE)
         .font_weight(gpui::FontWeight::SEMIBOLD)
         .text_color(colour)
         .cursor_pointer()
-        .hover(move |button| button.bg(colour).text_color(theme::ON_DECK))
+        .hover(move |button| button.bg(colour).text_color(theme::active().on_deck))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
             this.select(Some(track), cx);
@@ -1181,15 +1199,20 @@ fn missing_bar(count: usize, relinking: bool, cx: &mut Context<'_, Browser>) -> 
         .h(px(34.0))
         .px(theme::GUTTER)
         .border_b_1()
-        .border_color(theme::LINE)
-        .bg(theme::PANEL)
+        .border_color(theme::active().line)
+        .bg(theme::active().panel)
         .text_size(theme::SMALL_TEXT_SIZE)
         .child(
             div()
                 .flex()
                 .items_center()
                 .gap(px(8.0))
-                .child(div().size(px(6.0)).rounded_full().bg(theme::ATTENTION))
+                .child(
+                    div()
+                        .size(px(6.0))
+                        .rounded_full()
+                        .bg(theme::active().attention),
+                )
                 .child(format!(
                     "{count} file{} moved or missing since rekordbox last saw {}",
                     if count == 1 { "" } else { "s" },
@@ -1198,7 +1221,7 @@ fn missing_bar(count: usize, relinking: bool, cx: &mut Context<'_, Browser>) -> 
         )
         .child(if relinking {
             div()
-                .text_color(theme::MUTED)
+                .text_color(theme::active().muted)
                 .child("Looking\u{2026}")
                 .into_any_element()
         } else {
@@ -1225,11 +1248,11 @@ fn relink_button(
         .px(px(6.0))
         .rounded(px(5.0))
         .border_1()
-        .border_color(theme::LINE)
+        .border_color(theme::active().line)
         .text_size(theme::TINY_TEXT_SIZE)
-        .text_color(theme::ATTENTION)
+        .text_color(theme::active().attention)
         .cursor_pointer()
-        .hover(|button| button.bg(theme::RAISED))
+        .hover(|button| button.bg(theme::active().raised))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
             this.select(Some(track), cx);
@@ -1250,16 +1273,16 @@ pub fn search_field(browser: &Browser) -> impl IntoElement + use<> {
         .px(px(10.0))
         .rounded(theme::CONTROL_RADIUS)
         .border_1()
-        .border_color(theme::LINE)
-        .bg(theme::PANEL)
-        .text_color(theme::MUTED)
+        .border_color(theme::active().line)
+        .bg(theme::active().panel)
+        .text_color(theme::active().muted)
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .child(
             svg()
                 .path(SEARCH_ICON_PATH)
                 .size(px(14.0))
                 .flex_none()
-                .text_color(theme::MUTED),
+                .text_color(theme::active().muted),
         )
         .child(
             div().flex_1().min_w_0().child(
@@ -1278,7 +1301,11 @@ pub fn search_field(browser: &Browser) -> impl IntoElement + use<> {
 
 impl Render for Browser {
     fn render(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
-        let body = div().flex().size_full().min_h_0().bg(theme::BACKGROUND);
+        let body = div()
+            .flex()
+            .size_full()
+            .min_h_0()
+            .bg(theme::active().background);
         match self.library.clone() {
             LibraryStatus::Ready(collection) => body
                 .child(self.render_sidebar(&collection, cx))
@@ -1306,7 +1333,7 @@ fn empty_library(cx: &mut Context<'_, Browser>) -> impl IntoElement {
                     .font_weight(gpui::FontWeight::MEDIUM)
                     .child("Add your music"),
             )
-            .child(div().text_color(theme::MUTED).child(
+            .child(div().text_color(theme::active().muted).child(
                 "Choose the folders that hold your tracks. Dubplate reads them, \
                  and their subfolders, and never changes your files.",
             ))
@@ -1349,11 +1376,11 @@ fn message_panel(title: SharedString, detail: Option<SharedString>) -> impl Into
         .flex_col()
         .gap(px(6.0))
         .p(px(24.0))
-        .child(div().text_color(theme::TEXT).child(title))
+        .child(div().text_color(theme::active().text).child(title))
         .children(detail.map(|detail| {
             div()
                 .max_w(px(640.0))
-                .text_color(theme::MUTED)
+                .text_color(theme::active().muted)
                 .child(detail)
         }))
 }

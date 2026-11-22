@@ -7,6 +7,7 @@ use dubplate_midi::PadMode;
 use dubplate_prep::GridEdit;
 
 use crate::controls::Control;
+use crate::theme::ThemeId;
 
 /// Which way a control moves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -233,6 +234,8 @@ pub enum Command {
     ToggleHelp,
     /// Show or hide the library's settings: the music folders and rekordbox.
     ToggleLibrary,
+    /// Wear a theme, from Settings.
+    ChooseTheme(ThemeId),
     /// Open the folder picker to add music folders to the library.
     AddMusicFolders,
     /// Close the help or leave the search field.

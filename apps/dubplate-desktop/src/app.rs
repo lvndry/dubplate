@@ -327,6 +327,7 @@ impl DubplateApp {
             ..MixerPositions::default()
         });
         let mode = settings.screen();
+        theme::wear(settings.theme(), cx);
         let (engine, audio_problem) =
             audio::start_engine(&mixer, settings.audio_device.as_deref(), &devices);
         problems.extend(audio_problem);
@@ -985,6 +986,11 @@ impl DubplateApp {
             Command::ToggleHelp => {
                 self.help_open = !self.help_open;
                 self.library_open = false;
+            }
+            Command::ChooseTheme(choice) => {
+                theme::wear(choice, cx);
+                self.settings.set_theme(choice);
+                self.save_settings(cx);
             }
             Command::ToggleLibrary => {
                 self.library_open = !self.library_open;
@@ -1973,8 +1979,8 @@ impl Render for DubplateApp {
             .flex()
             .flex_col()
             .size_full()
-            .bg(theme::BACKGROUND)
-            .text_color(theme::TEXT)
+            .bg(theme::active().background)
+            .text_color(theme::active().text)
             .font_family(UI_FAMILY)
             .text_size(theme::TEXT_SIZE)
             .child(header::render(self, cx))
@@ -1986,7 +1992,7 @@ impl Render for DubplateApp {
                             .flex()
                             .flex_none()
                             .border_b_1()
-                            .border_color(theme::LINE)
+                            .border_color(theme::active().line)
                             .child(deck_panel::render(self, DeckId::A, &frames[0], cx))
                             .child(mixer::render(self, cx))
                             .child(deck_panel::render(self, DeckId::B, &frames[1], cx)),
