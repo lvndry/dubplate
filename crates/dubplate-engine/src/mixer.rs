@@ -11,7 +11,9 @@ use crate::grid::BeatGrid;
 use crate::headphones::Headphones;
 use crate::jog::JogInput;
 use crate::pad_effects::PadEffect;
+use crate::preview::{PreviewBus, PreviewPlan};
 use crate::processor::{AudioProcessor, ProcessContext, StereoBlock};
+use crate::recording::RecordingSink;
 use crate::sampler::{SampleSettings, Sampler};
 use crate::smart_cfx::SmartCfx;
 use crate::smart_fader::{TEMPO_GLIDE_SECONDS, bass_swap, shared_bpm};
@@ -142,6 +144,8 @@ pub(crate) enum Command {
         deck: DeckId,
         enabled: bool,
     },
+    Preview(Option<PreviewPlan>),
+    SetRecording(Option<RecordingSink>),
     SetSlip {
         deck: DeckId,
         enabled: bool,
@@ -186,6 +190,7 @@ pub(crate) enum Retired {
     Track(#[allow(dead_code)] Arc<TrackBuffer>),
     Processor(#[allow(dead_code)] Box<dyn AudioProcessor>),
     BeatGrid(#[allow(dead_code)] BeatGrid),
+    Recording(#[allow(dead_code)] RecordingSink),
 }
 
 /// The audio thread's end of the queue of retired objects.
@@ -204,6 +209,10 @@ impl RetireQueue {
 
     pub(crate) fn beat_grid(&mut self, beat_grid: BeatGrid) {
         self.retire(Retired::BeatGrid(beat_grid));
+    }
+
+    fn recording(&mut self, sink: RecordingSink) {
+        self.retire(Retired::Recording(sink));
     }
 
     fn processor(&mut self, processor: Box<dyn AudioProcessor>) {
@@ -232,7 +241,9 @@ pub struct Renderer {
     master_gain: Ramp,
     headphones: Headphones,
     sampler: Sampler,
+    preview: PreviewBus,
     master_limiter: Limiter,
+    recording: Option<RecordingSink>,
     headphone_limiter: Limiter,
     crossfader: f32,
     sync_half_and_double: bool,
@@ -264,7 +275,9 @@ impl Renderer {
             master_gain: Ramp::new(1.0, declick_frames),
             headphones: Headphones::new(MAX_BLOCK_FRAMES, declick_frames),
             sampler: Sampler::new(sample_rate, MAX_BLOCK_FRAMES, declick_frames),
+            preview: PreviewBus::new(sample_rate, MAX_BLOCK_FRAMES, declick_frames),
             master_limiter: Limiter::new(sample_rate as f32),
+            recording: None,
             headphone_limiter: Limiter::new(sample_rate as f32),
             crossfader: 0.5,
             sync_half_and_double: true,
@@ -407,7 +420,9 @@ impl Renderer {
             &mut self.master_block,
             &master_context,
         );
-        self.headphones.finish(&self.master_block);
+        starved |= self.render_preview(frame_count);
+        self.headphones
+            .finish(&self.master_block, &self.preview.block);
         let (headphones_left, headphones_right) = self.headphones.block.channels_mut();
         self.headphone_limiter
             .process(headphones_left, headphones_right);
@@ -419,11 +434,21 @@ impl Renderer {
             *right *= gain;
         }
         self.master_limiter.process(left_channel, right_channel);
+        if let Some(recording) = &mut self.recording {
+            recording.write(&self.master_block);
+        }
         raise_peak(&self.shared.master_peak, self.master_block.peak());
         raise_peak(
             &self.shared.master_limiting,
             1.0 - self.master_limiter.take_gain_reduction(),
         );
+        starved
+    }
+
+    fn render_preview(&mut self, frame_count: usize) -> bool {
+        let mut starved = false;
+        self.preview
+            .render(frame_count, &mut self.retire, &mut starved);
         starved
     }
 
@@ -615,6 +640,12 @@ impl Renderer {
             Command::StopSample(slot) => self.sampler.stop(slot, &mut self.retire),
             Command::SetSamplerVolume(position) => self.sampler.set_volume(position),
             Command::SetSamplerCue(enabled) => self.sampler.set_cue(enabled),
+            Command::Preview(plan) => self.preview.set(plan, &mut self.retire),
+            Command::SetRecording(sink) => {
+                if let Some(previous) = std::mem::replace(&mut self.recording, sink) {
+                    self.retire.recording(previous);
+                }
+            }
             Command::SetSlip { deck, enabled } => self.decks[deck.index()].set_slip(enabled),
             Command::BeatRoll { deck, length } => {
                 self.decks[deck.index()].beat_roll(length, &mut self.retire);
@@ -727,6 +758,12 @@ impl Renderer {
             .sampler_playing
             .store(playing, Ordering::Relaxed);
         self.shared.sampler_loaded.store(loaded, Ordering::Relaxed);
+        self.shared
+            .preview_playing
+            .store(self.preview.is_playing(), Ordering::Relaxed);
+        self.shared
+            .preview_position_seconds
+            .store(self.preview.position_seconds());
     }
 }
 

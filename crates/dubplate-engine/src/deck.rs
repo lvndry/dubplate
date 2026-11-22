@@ -934,16 +934,7 @@ impl Deck {
             let stylus_gain = (step.abs() / audible_step).min(1.0) as f32;
             let gain = voice.transport.next_value() * stylus_gain;
             let (playhead_left, playhead_right) = if stretched {
-                let (stretched_left, stretched_right, mix) = key_lock.next_frame(index);
-                let (plain_left, plain_right) = if mix < 1.0 && gain > 0.0 {
-                    voice.read_playhead(&mut result.starved)
-                } else {
-                    (0.0, 0.0)
-                };
-                (
-                    plain_left + (stretched_left - plain_left) * mix,
-                    plain_right + (stretched_right - plain_right) * mix,
-                )
+                key_lock.playhead_frame(index, voice, &mut result.starved)
             } else if gain > 0.0 {
                 voice.read_playhead(&mut result.starved)
             } else {

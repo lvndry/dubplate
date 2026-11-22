@@ -5,7 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use dubplate_prep::{
-    CueSource, EqIntent, Seam, SeamStatus, Set, SetEntry, SetList, SetStore, StoreError,
+    CueSource, EqIntent, Seam, SeamStatus, Set, SetEntry, SetId, SetList, SetStore, StoreError,
 };
 use rusqlite::Connection;
 use tempfile::TempDir;
@@ -111,7 +111,7 @@ fn refuses_a_database_newer_than_this_build() {
         result,
         Err(StoreError::NewerSchema {
             found: 99,
-            known: 1
+            known: 2
         })
     ));
 }
@@ -233,6 +233,8 @@ fn a_snapshot_round_trips_through_json() {
                 vocal_out_ms: Some(120_000),
                 note: "peak energy".to_owned(),
                 is_backup: false,
+                grid_offset_ms: 8,
+                downbeat_shift: -1,
             },
         )
         .unwrap();
@@ -466,4 +468,63 @@ fn inserting_and_moving_in_the_middle_shift_the_neighbours() {
         .map(PathBuf::from)
         .collect();
     assert_eq!(order, expected);
+}
+
+#[test]
+fn a_version_one_file_gains_the_grid_corrections_and_keeps_its_entries() {
+    let root = tempfile::tempdir().unwrap();
+    let directory_holder = TempDir::new_in(root.path()).unwrap();
+    let database_path = directory_holder.path().join("dubplate.db");
+    {
+        let connection = Connection::open(&database_path).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE sets (id INTEGER PRIMARY KEY, name TEXT NOT NULL,
+                    target_minutes INTEGER NOT NULL, created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL);
+                 CREATE TABLE set_entry (set_id INTEGER NOT NULL, position INTEGER NOT NULL,
+                    track_path TEXT NOT NULL, rekordbox_id TEXT, mix_in_ms INTEGER,
+                    mix_out_ms INTEGER, cue_source TEXT,
+                    grid_confirmed INTEGER NOT NULL DEFAULT 0, energy_override REAL,
+                    vocal_in_ms INTEGER, vocal_out_ms INTEGER, note TEXT NOT NULL DEFAULT '',
+                    is_backup INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (set_id, is_backup, position));
+                 CREATE TABLE seam (set_id INTEGER NOT NULL, from_track_path TEXT NOT NULL,
+                    to_track_path TEXT NOT NULL, overlap_bars INTEGER NOT NULL,
+                    eq_intent TEXT NOT NULL, status TEXT NOT NULL, note TEXT NOT NULL DEFAULT '',
+                    PRIMARY KEY (set_id, from_track_path, to_track_path));
+                 CREATE TABLE set_revision (id INTEGER PRIMARY KEY, set_id INTEGER NOT NULL,
+                    saved_at INTEGER NOT NULL, reason TEXT NOT NULL, json TEXT NOT NULL);
+                 CREATE TABLE play_history (set_id INTEGER NOT NULL, track_path TEXT NOT NULL,
+                    rekordbox_id TEXT, played_at INTEGER NOT NULL, deck TEXT NOT NULL,
+                    off_plan INTEGER NOT NULL DEFAULT 0);
+                 INSERT INTO sets VALUES (1, 'Old', 120, 0, 0);
+                 INSERT INTO set_entry (set_id, position, track_path, grid_confirmed)
+                    VALUES (1, 0, '/a.mp3', 1);
+                 PRAGMA user_version = 1;",
+            )
+            .unwrap();
+    }
+    let mut store = SetStore::open(&database_path).unwrap();
+    let set = store.load_set(SetId(1)).unwrap();
+    let first = set.entries[0].clone();
+    assert!(first.grid_confirmed);
+    assert_eq!((first.grid_offset_ms, first.downbeat_shift), (0, 0));
+    store
+        .update_entry(
+            SetId(1),
+            SetList::Main,
+            0,
+            SetEntry {
+                grid_offset_ms: -12,
+                downbeat_shift: 1,
+                ..first
+            },
+        )
+        .unwrap();
+    let corrected = store.load_set(SetId(1)).unwrap().entries[0].clone();
+    assert_eq!(
+        (corrected.grid_offset_ms, corrected.downbeat_shift),
+        (-12, 1)
+    );
 }

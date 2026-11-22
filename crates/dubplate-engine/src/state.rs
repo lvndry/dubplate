@@ -21,6 +21,8 @@ pub(crate) struct SharedState {
     pub(crate) sampler_peak: AtomicU32,
     pub(crate) sampler_playing: AtomicU32,
     pub(crate) sampler_loaded: AtomicU32,
+    pub(crate) preview_playing: AtomicBool,
+    pub(crate) preview_position_seconds: AtomicF64,
     pub(crate) effect_sounding: [AtomicBool; EFFECT_UNIT_COUNT],
     pub(crate) tempo_master: AtomicDeck,
     pub(crate) stats: SharedStats,
@@ -145,6 +147,8 @@ impl SharedState {
             sampler_peak: AtomicU32::new(0),
             sampler_playing: AtomicU32::new(0),
             sampler_loaded: AtomicU32::new(0),
+            preview_playing: AtomicBool::new(false),
+            preview_position_seconds: AtomicF64::default(),
             effect_sounding: std::array::from_fn(|_| AtomicBool::new(false)),
             tempo_master: AtomicDeck::default(),
             stats: SharedStats {

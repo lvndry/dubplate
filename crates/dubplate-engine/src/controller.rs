@@ -14,7 +14,9 @@ use crate::headphones::HeadphoneSettings;
 use crate::jog::JogInput;
 use crate::mixer::{Command, Renderer, RetireQueue, Retired};
 use crate::pad_effects::PadEffect;
+use crate::preview::{MAX_PREVIEW_SECONDS, Preview, PreviewPlan, PreviewState};
 use crate::processor::AudioProcessor;
+use crate::recording::{RecordingTap, recording_tap};
 use crate::sampler::{
     DEFAULT_SAMPLER_VOLUME, SAMPLER_SLOTS, SampleSettings, SamplerState, SlotState,
 };
@@ -34,6 +36,7 @@ const RETIRE_CAPACITY: usize = COMMAND_CAPACITY * 4;
 const MAX_TEMPO: f64 = 4.0;
 const MAX_GAIN: f32 = 16.0;
 const MAX_JUMP_BEATS: f64 = 1_024.0;
+const MAX_RECORDING_BUFFER_SECONDS: f64 = 600.0;
 
 /// Creates an engine whose audio side is driven by hand instead of a sound card.
 ///
@@ -463,6 +466,70 @@ impl Controller {
         self.key_locks[deck.index()]
     }
 
+    /// Auditions a seam in the headphones, or stops the audition with `None`: two tracks, each
+    /// from its own start at its own tempo, the second coming in at the planned overlap, with
+    /// key lock if asked. The preview plays on the headphone bus only, after the cue mix and
+    /// before the headphone level, and never touches the decks or the master output. It stops
+    /// itself when both tracks end, or after [`crate::MAX_PREVIEW_SECONDS`].
+    pub fn preview(&mut self, preview: Option<Preview>) -> Result<(), EngineError> {
+        if let Some(preview) = &preview {
+            for preview_track in [&preview.first, &preview.second] {
+                check_range(
+                    "preview start",
+                    preview_track.start_seconds,
+                    0.0,
+                    MAX_TRACK_SECONDS as f64,
+                )?;
+                if !(preview_track.tempo.is_finite()
+                    && preview_track.tempo > 0.0
+                    && preview_track.tempo <= MAX_TEMPO)
+                {
+                    return Err(EngineError::InvalidParameter {
+                        name: "preview tempo",
+                        value: preview_track.tempo,
+                    });
+                }
+            }
+            check_range(
+                "preview overlap",
+                preview.second_offset_seconds,
+                0.0,
+                MAX_PREVIEW_SECONDS,
+            )?;
+        }
+        self.send(Command::Preview(preview.as_ref().map(PreviewPlan::new)))
+    }
+
+    /// Whether a preview plays and how far it is, as the audio thread last published it.
+    pub fn preview_state(&self) -> PreviewState {
+        PreviewState {
+            playing: self.shared.preview_playing.load(Ordering::Relaxed),
+            position_seconds: self.shared.preview_position_seconds.load(),
+        }
+    }
+
+    /// Starts a recording tap: the master output exactly as it goes to the speakers, after the
+    /// master level and the limiter, into a buffer of `buffer_seconds` that the returned tap
+    /// reads. Starting another tap stops this one. Frames that do not fit while the tap is not
+    /// read are dropped and counted, never waited for.
+    pub fn start_recording(&mut self, buffer_seconds: f64) -> Result<RecordingTap, EngineError> {
+        check_range(
+            "recording buffer seconds",
+            buffer_seconds,
+            0.01,
+            MAX_RECORDING_BUFFER_SECONDS,
+        )?;
+        let sample_rate = self.shared.stats.sample_rate;
+        let capacity_frames = (buffer_seconds * f64::from(sample_rate)).ceil() as usize;
+        let (tap, sink) = recording_tap(capacity_frames, sample_rate);
+        self.send(Command::SetRecording(Some(sink)))?;
+        Ok(tap)
+    }
+
+    /// Stops the recording tap. Frames already in its buffer can still be read.
+    pub fn stop_recording(&mut self) -> Result<(), EngineError> {
+        self.send(Command::SetRecording(None))
+    }
     /// The SLIP button: with it on, scratching and loops slip as well as rolls. While an action
     /// slips, the track keeps playing silently underneath and the deck lands back on it, in
     /// rhythm, when the action ends.

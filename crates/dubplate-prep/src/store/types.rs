@@ -130,6 +130,11 @@ pub struct SetEntry {
     pub cue_source: Option<CueSource>,
     /// Whether the DJ has confirmed the phrase grid.
     pub grid_confirmed: bool,
+    /// How far the DJ moved rekordbox's grid, in milliseconds, later when positive.
+    pub grid_offset_ms: i32,
+    /// How many beats the DJ moved the downbeats, later when positive, for grids whose bars
+    /// start on the wrong beat.
+    pub downbeat_shift: i32,
     /// The DJ's own energy rating, kept apart from the analysis.
     pub energy_override: Option<f32>,
     /// Where the vocals start, in milliseconds, when tagged.
