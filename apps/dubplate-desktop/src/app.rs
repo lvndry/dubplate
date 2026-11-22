@@ -196,8 +196,8 @@ pub struct DubplateApp {
     quit_requested: bool,
     quit_barrier_ready: bool,
     set_edits_pending: usize,
-    set_save_failed: bool,
     set_save_problem: Option<String>,
+    quit_refused: bool,
     prepare_focus: PrepareFocus,
     next_cursor: usize,
     set_scroll: ScrollHandle,
@@ -376,8 +376,8 @@ impl DubplateApp {
             quit_requested: false,
             quit_barrier_ready: false,
             set_edits_pending: 0,
-            set_save_failed: false,
             set_save_problem: None,
+            quit_refused: false,
             prepare_focus: PrepareFocus::Library,
             next_cursor: 0,
             set_scroll: ScrollHandle::new(),
@@ -489,7 +489,6 @@ impl DubplateApp {
         error: impl std::fmt::Display,
         cx: &mut Context<'_, Self>,
     ) {
-        self.set_save_failed = true;
         self.set_save_problem = Some(error.to_string());
         self.show_notice(
             NoticePlace::Window,
@@ -499,23 +498,28 @@ impl DubplateApp {
     }
 
     /// A worker barrier is not enough: every submitted edit's UI callback must also report
-    /// its outcome before a successful barrier can allow the application to exit.
+    /// its outcome before a successful barrier can allow the application to exit. A failed save
+    /// keeps Dubplate open once, to be reviewed; quitting again then quits even if saving still
+    /// fails, so a set store that broke for good never leaves the app impossible to quit.
     fn finish_quit_if_saved(&mut self, cx: &mut Context<'_, Self>) {
         if !self.quit_requested || !self.quit_barrier_ready || self.set_edits_pending != 0 {
             return;
         }
-        if self.set_save_failed {
-            self.quit_requested = false;
-            self.quit_barrier_ready = false;
-            self.set_save_failed = false;
-            let problem = self
-                .set_save_problem
-                .take()
-                .unwrap_or_else(|| "a set edit failed".to_owned());
-            self.show_notice(NoticePlace::Window,
-                format!("The set was not saved: {problem}. Dubplate stayed open; review the set before quitting again."), cx);
-        } else {
-            cx.quit();
+        match self.set_save_problem.take() {
+            Some(problem) if !self.quit_refused => {
+                self.quit_requested = false;
+                self.quit_barrier_ready = false;
+                self.quit_refused = true;
+                self.show_notice(
+                    NoticePlace::Window,
+                    format!(
+                        "The set was not saved: {problem}. Dubplate stayed open; review the set \
+                         before quitting again."
+                    ),
+                    cx,
+                );
+            }
+            Some(_) | None => cx.quit(),
         }
     }
 
