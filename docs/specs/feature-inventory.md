@@ -32,10 +32,10 @@ Some controls appear twice, once in their area and once in the FLX4 table, so th
 
 | Status | Rows | P0 | P1 | P2 | P3 |
 | --- | --- | --- | --- | --- | --- |
-| Done | 183 | 99 | 56 | 21 | 7 |
-| Partial | 132 | 11 | 49 | 50 | 22 |
+| Done | 193 | 99 | 62 | 24 | 8 |
+| Partial | 128 | 11 | 46 | 49 | 22 |
 | In progress | 2 | 2 | 0 | 0 | 0 |
-| Missing | 308 | 7 | 60 | 101 | 140 |
+| Missing | 302 | 7 | 57 | 99 | 139 |
 | n/a | 3 | 0 | 0 | 0 | 3 |
 | Total | 628 | 119 | 165 | 172 | 172 |
 
