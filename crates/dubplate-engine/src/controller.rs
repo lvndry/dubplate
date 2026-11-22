@@ -60,6 +60,7 @@ pub fn offline_engine(sample_rate: u32) -> (Controller, Renderer) {
         sampler_volume: DEFAULT_SAMPLER_VOLUME,
         sampler_cue: false,
         smart_cfx: [None; DECK_COUNT],
+        smart_fader: false,
     };
     let renderer = Renderer::new(
         sample_rate,
@@ -91,6 +92,7 @@ pub struct Controller {
     sampler_volume: f32,
     sampler_cue: bool,
     smart_cfx: [Option<SmartCfx>; DECK_COUNT],
+    smart_fader: bool,
 }
 
 impl Controller {
@@ -238,6 +240,23 @@ impl Controller {
         self.send(Command::SetFilterResonance { deck, resonance })?;
         self.channels[deck.index()].filter_resonance = resonance;
         Ok(())
+    }
+
+    /// Smart Fader, for long clean blends: while it is on, the two decks share one tempo that
+    /// the crossfader moves from deck A's own BPM at the left to deck B's at the right, gliding
+    /// there, with the decks' beats locked together, and the LOW knobs swap across the middle
+    /// third of the crossfader, the outgoing bass turning down as the incoming bass comes up. A
+    /// LOW knob turned away from its centre takes over from the swap. Switching it off gives
+    /// the tempo back to the faders, which take over once moved through the playing tempo.
+    pub fn set_smart_fader(&mut self, enabled: bool) -> Result<(), EngineError> {
+        self.send(Command::SetSmartFader(enabled))?;
+        self.smart_fader = enabled;
+        Ok(())
+    }
+
+    /// Whether Smart Fader is on.
+    pub fn smart_fader(&self) -> bool {
+        self.smart_fader
     }
 
     /// Turns Smart CFX on a channel with `preset`, or back to the plain filter with `None`. The

@@ -40,6 +40,7 @@ mod processor;
 mod sampler;
 mod slip;
 mod smart_cfx;
+mod smart_fader;
 mod state;
 mod sync;
 mod tempo;

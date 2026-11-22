@@ -43,6 +43,8 @@ impl Default for ChannelSettings {
 /// isolator EQ, then the filter.
 pub(crate) struct ChannelStrip {
     isolator: Isolator,
+    eq_positions: [f32; 3],
+    automatic_low: Option<f32>,
     filter: SweepFilter,
     smart_cfx: SmartCfxRack,
     filter_context: dubplate_fx::ProcessContext,
@@ -58,6 +60,8 @@ impl ChannelStrip {
         filter.reset();
         Self {
             isolator: Isolator::new(sample_rate as f32),
+            eq_positions: [KNOB_CENTRE; 3],
+            automatic_low: None,
             filter,
             smart_cfx: SmartCfxRack::new(sample_rate),
             filter_context: dubplate_fx::ProcessContext::new(sample_rate as f32, 0.0, 0.0),
@@ -69,6 +73,23 @@ impl ChannelStrip {
     }
 
     pub(crate) fn set_eq(&mut self, band: EqBand, position: f32) {
+        self.eq_positions[band.index()] = position;
+        self.apply_eq(band);
+    }
+
+    /// Lets Smart Fader turn the LOW knob, or gives it back with `None`. A LOW knob the DJ has
+    /// turned away from its centre always wins.
+    pub(crate) fn set_automatic_low(&mut self, position: Option<f32>) {
+        self.automatic_low = position;
+        self.apply_eq(EqBand::Low);
+    }
+
+    fn apply_eq(&mut self, band: EqBand) {
+        let manual = self.eq_positions[band.index()];
+        let position = match (band, self.automatic_low) {
+            (EqBand::Low, Some(automatic)) if manual == KNOB_CENTRE => automatic,
+            _ => manual,
+        };
         self.isolator.set_gain(band, eq_gain(position));
     }
 
