@@ -1,5 +1,5 @@
-//! Dubplate's own database: sets, their ordered entries, seam plans, snapshots
-//! and play history.
+//! Dubplate's own database: sets, their ordered entries, seam plans, snapshots,
+//! play history, and the cues the DJ made for each track.
 //!
 //! The file lives where Dubplate owns it, never inside rekordbox's folders, so
 //! every write Dubplate makes stays out of rekordbox's files. A guard refuses
@@ -12,12 +12,13 @@ use std::path::{Path, PathBuf};
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior};
 use thiserror::Error;
 
+mod cues;
 mod types;
 
 pub use types::{CueSource, EqIntent, Seam, SeamStatus, Set, SetEntry, SetId, SetList};
 
 /// The highest schema version `MIGRATIONS` can bring a database to.
-const SCHEMA_VERSION: u32 = 2;
+const SCHEMA_VERSION: u32 = 3;
 
 /// One migration per schema version, index = target version - 1.
 const MIGRATIONS: &[&str] = &[
@@ -83,6 +84,34 @@ ALTER TABLE set_entry ADD COLUMN downbeat_shift INTEGER NOT NULL DEFAULT 0;
 
 PRAGMA user_version = 2;
 "#,
+    r#"
+CREATE TABLE track_cues (
+    identity_kind TEXT NOT NULL,
+    identity TEXT NOT NULL,
+    track_path TEXT,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (identity_kind, identity)
+);
+
+CREATE TABLE track_cue (
+    identity_kind TEXT NOT NULL,
+    identity TEXT NOT NULL,
+    pad INTEGER CHECK (pad BETWEEN 0 AND 7),
+    start_ms INTEGER NOT NULL CHECK (start_ms >= 0),
+    loop_end_ms INTEGER CHECK (loop_end_ms > start_ms),
+    color_table_index INTEGER,
+    memory_color INTEGER,
+    name TEXT NOT NULL DEFAULT '',
+    FOREIGN KEY (identity_kind, identity) REFERENCES track_cues (identity_kind, identity)
+        ON DELETE CASCADE ON UPDATE CASCADE
+);
+
+CREATE UNIQUE INDEX track_cue_pad ON track_cue (identity_kind, identity, pad)
+    WHERE pad IS NOT NULL;
+CREATE INDEX track_cue_track ON track_cue (identity_kind, identity);
+
+PRAGMA user_version = 3;
+"#,
 ];
 
 /// A position no real entry can hold while one is in the middle of moving.
@@ -141,7 +170,7 @@ pub enum StoreError {
     Io(#[from] std::io::Error),
 }
 
-/// Dubplate's own database of sets, seam plans, snapshots and play history.
+/// Dubplate's own database of sets, seam plans, snapshots, play history and track cues.
 ///
 /// One `SetStore` owns one SQLite file in WAL mode. Every mutating method runs
 /// in a transaction and refreshes the set's `updated_at`.

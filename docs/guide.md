@@ -72,7 +72,7 @@ A Free seam never warns: it means you will feel it live. Grids on amapiano are o
 
 - its beat grid, with your nudges and downbeat moves;
 - your mix-in and mix-out as memory cues named "Mix in" and "Mix out";
-- the hot cues and memory cues it already had in rekordbox.
+- its hot cues, memory cues and saved loops: the ones you set in Dubplate, or else the ones it already had in rekordbox.
 
 Tracks from your own folders go in too, so rekordbox adds them; relinked files point at their new place. Dubplate writes only this file, never rekordbox's library.
 
@@ -91,7 +91,7 @@ Cmd+L loads the set's first two tracks onto deck A and deck B at their mix-in cu
 
 On the FLX4, everything works as in rekordbox's FLX4 layout:
 
-- PLAY, CUE (CDJ style), hot cue pads, TEMPO, BEAT SYNC (hold for tempo master, SHIFT for the tempo range), the jogs (touch to scratch, side to nudge, SHIFT to search).
+- PLAY, CUE (CDJ style), hot cue pads (a cue you set or delete is kept with the track, for the next time it loads and for the export), TEMPO, BEAT SYNC (hold for tempo master, SHIFT for the tempo range), the jogs (touch to scratch, side to nudge, SHIFT to search).
 - The mixer: TRIM, HI/MID/LOW, the filter knobs, channel faders, crossfader, headphone CUE, MIX and LEVEL.
 - The pad modes: Hot Cue, Pad FX 1 and 2 (hold for rolls and effects), Beat Jump, Beat Loop, Sampler, Keyboard, Key Shift; the loop section IN, OUT, 4 BEAT/EXIT.
 - BEAT FX: FX SELECT, BEAT left and right, the CH SELECT lever, LEVEL/DEPTH and ON/OFF.

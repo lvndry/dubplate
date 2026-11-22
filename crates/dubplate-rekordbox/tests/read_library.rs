@@ -5,7 +5,9 @@ mod common;
 use std::path::Path;
 
 use common::{TEST_KEY, build_library, open_fixture};
-use dubplate_rekordbox::{CueKind, DatabaseKey, Error, HotCuePad, Library, PlaylistKind};
+use dubplate_rekordbox::{
+    CueKind, DatabaseKey, Error, HotCuePad, Library, MemoryCueColor, PaletteColor, PlaylistKind,
+};
 
 #[test]
 fn reads_tracks_with_their_names_key_and_tempo() {
@@ -47,6 +49,32 @@ fn reads_memory_cues_hot_cues_and_loops_but_not_deleted_cues() {
     assert_eq!(cues[1].comment.as_deref(), Some("Drop"));
     assert_eq!(cues[2].kind, CueKind::Hot { pad: HotCuePad::B });
     assert_eq!(cues[2].loop_end_ms, Some(60_000));
+}
+
+#[test]
+fn reads_hot_cue_colours_from_the_colour_table_and_memory_colours_from_color() {
+    let (_directory, library) = open_fixture();
+    let cues = library.cues().unwrap();
+    let cue = |id: &str| cues.iter().find(|cue| cue.id == id).unwrap();
+
+    assert_eq!(cue("c1").memory_color, Some(MemoryCueColor::Blue));
+    assert_eq!(cue("c1").hot_cue_color, None);
+    let drop = cue("c2");
+    assert_eq!(drop.hot_cue_color.map(PaletteColor::index), Some(42));
+    assert_eq!(
+        drop.memory_color, None,
+        "a hot cue's Color is not its colour"
+    );
+    assert_eq!(
+        cue("c3").hot_cue_color,
+        None,
+        "no index means the pad's default"
+    );
+    assert_eq!(
+        cue("c5").hot_cue_color,
+        None,
+        "index 0 means the pad's default"
+    );
 }
 
 #[test]

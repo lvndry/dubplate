@@ -17,6 +17,7 @@ mod editor;
 mod energy;
 mod export;
 mod grid;
+mod identity;
 mod ready;
 mod session;
 mod store;
@@ -40,6 +41,7 @@ pub use export::{
     export_file_name, file_track, folder_track, rekordbox_xml, tempo_markers,
 };
 pub use grid::{BEATS_PER_BAR, GridCorrection};
+pub use identity::TrackIdentity;
 pub use ready::{ReadyProblem, ReadyReport, Severity, TrackReadiness, ready_report};
 pub use session::{SetCompletion, SetJob, SetSession, SetSessionError};
 pub use store::{

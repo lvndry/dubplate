@@ -5,6 +5,7 @@
 mod analysis;
 mod audio;
 mod audition;
+mod cues;
 mod deck_panel;
 mod drop_target;
 mod effects_strip;
@@ -45,8 +46,8 @@ use dubplate_engine::{
     TempoRange, TempoState,
 };
 use dubplate_midi::{Feedback, PadMode};
-use dubplate_prep::{AnalysisQueue, GridCorrection};
-use dubplate_rekordbox::HotCuePad;
+use dubplate_prep::{AnalysisQueue, GridCorrection, TrackIdentity};
+use dubplate_rekordbox::{HotCue, HotCuePad, TrackCues, cue_milliseconds};
 use gpui::component::input::{InputEvent, InputState};
 use gpui::prelude::*;
 use gpui::{
@@ -64,7 +65,7 @@ use crate::controls::{
 };
 use crate::cue_marks::{MarkerPulse, SeenMarks};
 use crate::deck::{
-    Deck, DeckContent, GridSource, HotCues, LoadError, PreparedTrack, TrackVisuals, deck_letter,
+    Deck, DeckContent, GridSource, LoadError, PreparedTrack, TrackVisuals, deck_letter,
     prepare_track,
 };
 use crate::effects::{EffectUnitSetting, search, step_beat, step_effect};
@@ -165,7 +166,7 @@ pub struct DubplateApp {
     settings: Settings,
     settings_path: Option<PathBuf>,
     hardware: Option<Hardware>,
-    edited_hot_cues: HashMap<String, HotCues>,
+    track_cues: HashMap<TrackIdentity, Arc<TrackCues>>,
     lights_settling: bool,
     effect_focus: EffectUnitId,
     mode: Mode,
@@ -348,7 +349,7 @@ impl DubplateApp {
             settings,
             settings_path,
             hardware,
-            edited_hot_cues: HashMap::new(),
+            track_cues: HashMap::new(),
             lights_settling: false,
             effect_focus: EffectUnitId::ALL[0],
             mode,
@@ -511,8 +512,8 @@ impl DubplateApp {
                 self.show_notice(
                     NoticePlace::Window,
                     format!(
-                        "The set was not saved: {problem}. Dubplate stayed open; review the set \
-                         before quitting again."
+                        "Not everything was saved: {problem}. Dubplate stayed open; review the \
+                         set and the cues before quitting again."
                     ),
                     cx,
                 );
@@ -524,17 +525,21 @@ impl DubplateApp {
     /// Opens and migrates set storage off the UI thread, then starts its serialized worker.
     fn start_set_session(&mut self, cx: &mut Context<'_, Self>) {
         cx.spawn(async move |this, cx| {
-            let session = cx
+            let opened = cx
                 .background_executor()
                 .spawn(async {
                     let path = Settings::sets_path().map_err(|error| error.to_string())?;
                     let editor = SetEditor::open(&path).map_err(|error| error.to_string())?;
-                    dubplate_prep::SetSession::new(editor).map_err(|error| error.to_string())
+                    let track_cues = editor.track_cues().map_err(|error| error.to_string())?;
+                    let session = dubplate_prep::SetSession::new(editor)
+                        .map_err(|error| error.to_string())?;
+                    Ok::<_, String>((session, track_cues))
                 })
                 .await;
-            this.update(cx, |this, cx| match session {
-                Ok(session) => {
+            this.update(cx, |this, cx| match opened {
+                Ok((session, track_cues)) => {
                     this.set_editor = Some(session);
+                    this.restore_track_cues(track_cues);
                     this.set_changed(cx);
                     // The first library build may have completed before set storage opened.
                     this.rebuild_collection(cx);
@@ -703,12 +708,8 @@ impl DubplateApp {
             }
         };
         check_deck_free(deck, self.deck_state(deck).playing, self.lock_playing_deck)?;
-        let hot_cues = self
-            .edited_hot_cues
-            .get(&track.identity())
-            .copied()
-            .unwrap_or_else(|| HotCues::of(&track));
-        let generation = self.decks[deck.index()].begin_load(Arc::clone(&track), hot_cues);
+        let cues = self.cues_of(&track);
+        let generation = self.decks[deck.index()].begin_load(Arc::clone(&track), cues);
         Ok((track, generation))
     }
 
@@ -1022,30 +1023,20 @@ impl DubplateApp {
         if self.deck(deck).visuals().is_none() {
             return;
         }
-        match self.deck(deck).hot_cues.get(pad) {
+        match self.deck(deck).cues.hot_cue(pad).map(HotCue::start_seconds) {
             Some(seconds) => {
                 self.decks[deck.index()].cue_preview = false;
                 self.engine_command(cx, |controller| controller.hot_cue(deck, seconds));
             }
             None => {
                 let seconds = self.quantized(deck, self.heard_seconds(deck));
-                self.edit_hot_cues(deck, |hot_cues| hot_cues.set(pad, seconds));
+                self.edit_cues(
+                    deck,
+                    |cues| cues.set_hot_cue(pad, HotCue::at(cue_milliseconds(seconds))),
+                    cx,
+                );
             }
         }
-    }
-
-    /// Changes the hot cues of the track on `deck`, and keeps the change for the next time the
-    /// track is loaded in this session.
-    fn edit_hot_cues(&mut self, deck: DeckId, edit: impl FnOnce(&mut HotCues)) {
-        let side = &mut self.decks[deck.index()];
-        let Some(track) = side.track.as_ref() else {
-            return;
-        };
-        if side.visuals().is_none() {
-            return;
-        }
-        edit(&mut side.hot_cues);
-        self.edited_hot_cues.insert(track.identity(), side.hot_cues);
     }
 
     /// Where the music a deck plays reaches the speakers now: the engine's position less what
@@ -1088,7 +1079,7 @@ impl DubplateApp {
             self.show_notice(NoticePlace::Deck(deck), refusal.to_string(), cx);
             return;
         }
-        let hot_cues = self.deck(source).hot_cues;
+        let cues = Arc::clone(&self.deck(source).cues);
         let mut doubled = false;
         self.engine_command(cx, |controller| {
             doubled = transport::double(controller, source, deck)?;
@@ -1100,7 +1091,7 @@ impl DubplateApp {
         let grid_source = self.deck(source).grid_source;
         let needs_waveform = visuals.zoomed.is_none();
         let side = &mut self.decks[deck.index()];
-        let generation = side.begin_load(track, hot_cues);
+        let generation = side.begin_load(track, cues);
         side.commit_load(generation, visuals, grid_source);
         if needs_waveform {
             self.draw_waveform_from_audio(deck, generation, cx);
@@ -1688,11 +1679,11 @@ fn notice_new_cue(side: &mut Deck, cue_point: f64, now: Instant) {
     let marks = SeenMarks {
         load_generation: side.load_generation(),
         cue_point,
-        hot_cues: side.hot_cues,
+        cues: Arc::clone(&side.cues),
     };
     if let Some(seconds) = side
         .seen_marks
-        .replace(marks)
+        .replace(marks.clone())
         .and_then(|seen| seen.newly_set(&marks))
     {
         side.marker_pulse = Some(MarkerPulse {

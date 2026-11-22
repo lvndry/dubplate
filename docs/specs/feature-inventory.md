@@ -46,7 +46,7 @@ The 17 features in the last section, which rekordbox does not have, are not coun
 Ranked by what stops the owner from playing a club night with Dubplate alone, then by what a professional notices first.
 
 1. **USB export for CDJs.** Write the Device Library (export.pdb) and OneLibrary (exportLibrary.db) with the ANLZ files (.DAT, .EXT, .2EX: blue, RGB and 3-band waveforms, grid, cues, phrases) for sets and playlists, to FAT32, exFAT or HFS+ sticks, from a Devices pane with progress and eject. Today a set reaches CDJs only through rekordbox.
-2. **Save the cues made in Dubplate.** Hot cues A to H, memory cues and loops set live or in prep are kept per track in Dubplate's store, survive a relaunch, and go into the XML and USB exports. Today live hot cues vanish when the deck reloads.
+2. **Save the cues made in Dubplate (done for XML).** Hot cues A to H, memory cues and loops set live or in prep are kept per track in Dubplate's store, survive a relaunch, and go into the XML export; the USB export waits for item 1.
 3. **Memory cues on the decks.** Draw them as red triangles on the lanes and the overview; CUE/LOOP CALL ◁ ▷ calls the previous or next one when no loop plays; SHIFT + ▷ saves one, SHIFT + ◁ deletes it; up to 10 per track.
 4. **Grid editing on the decks for every track.** Set the downbeat at the playhead, shift 1 ms, type a BPM, x2 and /2, widen and narrow, edit from here, metronome; saved and exported like track check edits.
 5. **Waveform and overview (done).** Cue point mark, loops and the slip shadow on the lanes, a 3-band overview with hot cues, memory cues, mix cues, loops and phrases, and the end-of-track warning.
@@ -273,8 +273,8 @@ Ranked by what stops the owner from playing a club night with Dubplate alone, th
 
 | Feature | What it does | Where in rekordbox | Tier | Dubplate | Priority |
 | --- | --- | --- | --- | --- | --- |
-| Set and edit cues in prep | Hot cues A to H (16 in Performance), memory cues and loops set while preparing. | 1 PLAYER CUE/LOOP panel | Free | Partial: mix-in and mix-out on set tracks; hot cues only live and not saved | P0 |
-| Save hot cues and memory cues | Cues are stored with the track and exported to USB. | Automatic | Free | Missing for cues made in Dubplate (only mix cues persist) | P0 |
+| Set and edit cues in prep | Hot cues A to H (16 in Performance), memory cues and loops set while preparing. | 1 PLAYER CUE/LOOP panel | Free | Partial: mix-in and mix-out on set tracks; hot cues set live on the decks and saved per track | P0 |
+| Save hot cues and memory cues | Cues are stored with the track and exported to USB. | Automatic | Free | Partial: cues made in Dubplate are kept per track in Dubplate's database, in place of rekordbox's, and go into the XML export; no USB export yet | P0 |
 | Memory cue colours and comments | Colour per memory cue, comment shown on CDJs. | MEMORY panel | Free | Missing | P1 |
 | Hot cue colours and comments | Colour per hot cue (16 colours), comment shown on CDJ-3000. | HOT CUE panel | Free | Missing (rekordbox's colours ignored) | P1 |
 | Hot cue colour scheme | CDJ (green cues, amber loops), COLD1, COLD2, COLORFUL. | Preferences > View > Color | Free | Missing | P3 |
@@ -451,7 +451,7 @@ These are features of the players. Dubplate prepares for them once it writes USB
 | Continuous playing | Plays the next track of the list when one ends. | Preferences > Controller > Deck | Free | Missing | P3 |
 | Elapsed and remaining time | Both shown; remaining with a minus. | Deck | Free (FLX4) | Done | P0 |
 | Reverse | Plays backwards; slip reverse plays 8 beats back and returns in time. | Controller, keyboard S | Free (FLX4) | Missing | P2 |
-| Hot cues A to H | Set on an empty pad, call on a full one, quantized; a stopped deck plays from it. | Pads | Free (FLX4) | Partial: set, call and delete live, but never saved or exported | P0 |
+| Hot cues A to H | Set on an empty pad, call on a full one, quantized; a stopped deck plays from it. | Pads | Free (FLX4) | Done: set, call and delete live, saved per track and exported to XML | P0 |
 | Hot cues I to P | 16 hot cues per track in Performance mode (FLX4 reaches A to H). | Pads, scroll | Free | Missing | P3 |
 | Hot cue loops | A pad pressed during a loop stores the loop; calling it starts the loop. | Pads | Free (FLX4) | Missing: rekordbox's hot loops play as plain cues | P1 |
 | Hot cue colours on screen | Each hot cue's own colour from the 16-colour palette. | Pads, waveform | Free | Partial: one fixed pastel per pad letter | P1 |
