@@ -12,9 +12,9 @@ use common::{SAMPLE_RATE, constant_track, stems_like, wait_until_decoded, write_
 use dubplate_engine::cpal::{OutputCallbackInfo, OutputStreamTimestamp, StreamInstant};
 use dubplate_engine::{
     AudioProcessor, BeatGrid, BeatLength, Controller, DeckId, EffectKind, EffectTarget,
-    EffectUnitId, EngineError, EqBand, GridBeat, MasterTempo, PadEffect, ParameterValue, Preview,
-    PreviewTrack, ProcessContext, Renderer, SampleMode, SampleSettings, SmartCfx, Stem, StemLevel,
-    StemSettings, StereoBlock, SyncMode, TempoRange, offline_engine,
+    EffectUnitId, EngineError, EqBand, GridBeat, MasterTempo, PadEffect, PadRelease,
+    ParameterValue, Preview, PreviewTrack, ProcessContext, Renderer, SampleMode, SampleSettings,
+    SmartCfx, Stem, StemLevel, StemSettings, StereoBlock, SyncMode, TempoRange, offline_engine,
 };
 
 struct CountingAllocator;
@@ -288,6 +288,7 @@ fn run_session(
                     kind: EffectKind::Brake,
                     parameter: Some(ParameterValue::Beats(BeatLength::HALF)),
                     depth: 1.0,
+                    release: PadRelease::RingOut,
                 },
             )
         },

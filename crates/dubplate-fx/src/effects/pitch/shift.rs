@@ -62,6 +62,8 @@ pub(crate) struct PitchKernel {
     range_semitones: i8,
     depth: f32,
     semitones: Smoothed,
+    window_samples: f32,
+    heard_samples: f32,
 }
 
 impl PitchKernel {
@@ -71,6 +73,8 @@ impl PitchKernel {
             range_semitones: DEFAULT_RANGE_SEMITONES,
             depth: 0.0,
             semitones: Smoothed::new(0.0, PITCH_SMOOTHING_SECONDS),
+            window_samples: 1.0,
+            heard_samples: 0.0,
         }
     }
 
@@ -86,18 +90,32 @@ impl Kernel for PitchKernel {
 
     fn begin_block(&mut self, timing: &BlockTiming) {
         self.semitones.prepare(timing.sample_rate);
-        self.shifter
-            .set_window_samples(WINDOW_SECONDS * timing.sample_rate);
+        self.window_samples = (WINDOW_SECONDS * timing.sample_rate).max(1.0);
+        self.shifter.set_window_samples(self.window_samples);
     }
 
+    /// Until the shifter has heard a whole window of music its read heads would start on the
+    /// silence before it, a click, so the music plays as it is and the shifted sound fades in
+    /// over the next window.
     #[inline]
     fn tick(&mut self, input: Frame, _beat_position: f64) -> Frame {
         let ratio = (self.semitones.next() / 12.0).exp2();
-        self.shifter.tick(input, ratio)
+        let shifted = self.shifter.tick(input, ratio);
+        if self.heard_samples >= 2.0 * self.window_samples {
+            return shifted;
+        }
+        self.heard_samples += 1.0;
+        let shifted_share =
+            ((self.heard_samples - self.window_samples) / self.window_samples).clamp(0.0, 1.0);
+        [
+            input[0] + (shifted[0] - input[0]) * shifted_share,
+            input[1] + (shifted[1] - input[1]) * shifted_share,
+        ]
     }
 
     fn reset(&mut self) {
         self.shifter.clear();
         self.semitones.snap_to_target();
+        self.heard_samples = 0.0;
     }
 }

@@ -26,6 +26,7 @@ mod memory_cues;
 mod mixer;
 mod notice;
 mod overview;
+mod pad_fx_editor;
 mod pad_grid;
 mod pads;
 mod pickup;
@@ -89,6 +90,7 @@ use crate::library::LibrarySources;
 use crate::library_view::SortSetting;
 use crate::loading::{LoadRefusal, LoadSource, check_deck_free, check_file, check_present};
 use crate::meter::PeakMeter;
+use crate::pad_fx::PadFxBanks;
 use crate::pads::next_mode;
 use crate::prep::{Catalogue, TrackCheck, TrackDetail};
 use crate::recording::Recording;
@@ -106,6 +108,7 @@ use audition::Audition;
 use cues::new_cue_span;
 use notice::{NoticePlace, Notices};
 use overview::DeckOverview;
+use pad_fx_editor::PadFxEditing;
 use pads::HeldPad;
 use prepare::PrepareFocus;
 use relink::RelinkReview;
@@ -196,6 +199,14 @@ pub struct DubplateApp {
     pad_modes: [PadMode; DECK_COUNT],
     beat_jump_scales: [i32; DECK_COUNT],
     held_pads: [Option<HeldPad>; DECK_COUNT],
+    /// The 32 Pad FX pads as the DJ set them.
+    pad_fx: PadFxBanks,
+    /// The Pad FX editor, when it is open: the pad it is editing.
+    pad_fx_editor: Option<PadFxEditing>,
+    /// Whether each deck's SHIFT is held on the controller, so its pads show their SHIFT layer.
+    shift_held: [bool; DECK_COUNT],
+    /// Whether each deck's pads show their SHIFT layer on screen without SHIFT held.
+    shift_layer_shown: [bool; DECK_COUNT],
     key_pad_offsets: [i32; DECK_COUNT],
     keyboard_cues: [HotCuePad; DECK_COUNT],
     selected_samples: [usize; DECK_COUNT],
@@ -353,6 +364,7 @@ impl DubplateApp {
                 })
             })
             .unwrap_or_default();
+        let pad_fx = PadFxBanks::from_setting(&settings.pad_fx);
         let mixer = settings.levels.apply(MixerPositions {
             sampler_volume: settings.sampler.volume.clamp(0.0, 1.0),
             ..MixerPositions::default()
@@ -436,6 +448,10 @@ impl DubplateApp {
             pad_modes: [PadMode::HotCue; DECK_COUNT],
             beat_jump_scales: [0; DECK_COUNT],
             held_pads: [None; DECK_COUNT],
+            pad_fx,
+            pad_fx_editor: None,
+            shift_held: [false; DECK_COUNT],
+            shift_layer_shown: [false; DECK_COUNT],
             key_pad_offsets: [0; DECK_COUNT],
             keyboard_cues: [HotCuePad::ALL[0]; DECK_COUNT],
             selected_samples: [0; DECK_COUNT],
@@ -1083,9 +1099,17 @@ impl DubplateApp {
                 self.help_open = false;
             }
             Command::AddMusicFolders => self.add_music_folders(cx),
+            Command::ShiftHeld(deck, held) => self.shift_held[deck.index()] = held,
+            Command::TogglePadLayer(deck) => {
+                let shown = &mut self.shift_layer_shown[deck.index()];
+                *shown = !*shown;
+            }
+            Command::PadFx(edit) => self.edit_pad_fx(edit, cx),
             Command::Dismiss => {
                 if self.effect_menu.is_some() {
                     self.close_effect_menu(cx);
+                } else if self.pad_fx_editor.is_some() {
+                    self.pad_fx_editor = None;
                 } else if self.relink_review.is_some() {
                     self.close_relink_review(cx);
                 } else if self.help_open || self.library_open {
@@ -2040,7 +2064,10 @@ fn error_chain(error: &dyn std::error::Error) -> String {
 impl Render for DubplateApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let render_started = Instant::now();
-        let modal_open = self.help_open || self.library_open || self.relink_review.is_some();
+        let modal_open = self.help_open
+            || self.library_open
+            || self.relink_review.is_some()
+            || self.pad_fx_editor.is_some();
         if modal_open && !self.modal_active {
             self.modal_return_focus = window.focused(cx);
             window.focus(&self.modal_focus, cx);
@@ -2121,6 +2148,11 @@ impl Render for DubplateApp {
             .when_some(
                 self.relink_review.as_ref().filter(|_| !self.library_open),
                 |root, review| root.child(relink::render(self, review, cx)),
+            )
+            .when_some(
+                self.pad_fx_editor
+                    .filter(|_| !self.library_open && !self.help_open),
+                |root, editing| root.child(pad_fx_editor::render(self, editing, cx)),
             )
             .when(self.library_open, |root| {
                 root.child(library_panel::render(self, cx))

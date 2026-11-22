@@ -102,6 +102,21 @@ On the FLX4, everything works as in rekordbox's FLX4 layout:
 - BEAT FX: FX SELECT, BEAT left and right, the CH SELECT lever, LEVEL/DEPTH and ON/OFF.
 - SMART CFX turns both filter knobs into the chosen preset (Space, Dub echo, Crush, Chop, Jet, Phase; SHIFT + SMART CFX steps through them). SMART FADER makes the crossfader glide a shared tempo and swap the bass for you; a LOW knob you turn takes over.
 
+SHIFT never turns pages of pads on the FLX4; it gives each pad a second job, as rekordbox's FLX4 layout does. The FLX4 has 8 hot cues per track, A to H, with no banks or pages. While SHIFT is held the pads on screen show their SHIFT job:
+
+| Mode | Pads | SHIFT + pads |
+|---|---|---|
+| Hot Cue (SHIFT + HOT CUE: Keyboard) | Set or call hot cues A to H | Delete the hot cue |
+| Pad FX 1 (SHIFT + PAD FX1: Pad FX 2) | Pad FX 1 to 8 (Pad FX 2: 17 to 24) | Pad FX 9 to 16 (Pad FX 2: 25 to 32) |
+| Beat Jump (SHIFT + BEAT JUMP: Beat Loop) | Jump 1, 2, 4 and 8 beats back and forward | Pads 7 and 8 make the jumps shorter and longer |
+| Sampler (SHIFT + SAMPLER: Key Shift) | Play slots 1 to 8 (deck B: 9 to 16) | Stop the slot, or load the selected track into an empty one |
+| Keyboard, Key Shift | Pitch from ±0 to +7 semitones | Pads 7 and 8 move the range up and down a semitone |
+| Beat Loop | Loops of 1/4 to 32 beats | Stems, Dubplate's own: vocals, melody, bass and drums in or out, acapella, instrumental, groove, every stem (rekordbox maps nothing here) |
+
+In the Pad FX modes a row above the pads names the layer showing, **Pads 1-8** or **SHIFT 9-16**, lit in the deck's colour. Click the other one to show and play that layer with the mouse; hold SHIFT on the FLX4 and it switches while you hold it.
+
+**Pad FX editor.** The **Edit** button in that row, or **Edit Pad FX** in Settings, opens the 32 Pad FX pads, as rekordbox's PAD EDITOR shows them: FX1, FX1 + SHIFT, FX2, FX2 + SHIFT, eight pads each. Click a pad and set what it plays (a loop roll or any Beat FX), its beat or parameter, its depth, whether it plays while held or latches on until pressed again, and what letting go does: the echoes and reverb ring out, or the music goes back to dry at once. **Start from** loads one of three sets: **Classic** (rolls from 1/4 to 1/32, echoes, spiral, reverb, gates, filters, vinyl brake and back spin, pitch, noise, echo out), **Afro house** (half and quarter beat rolls, 3/4 echoes and delays, the echo out, filtered echoes, slow sweeps) and **Amapiano** (log drum rolls, dotted echoes, reverb washes, pitch drops, brakes). Changes apply at once and are remembered.
+
 When Smart Fader or sync has moved a deck's tempo away from where its TEMPO slider sits, the on-screen slider shows the tempo the deck plays, an amber outline where the fader waits, and "Move to take over": move the fader through the playing tempo and it takes over without a jump, as in rekordbox. The BEAT FX LEVEL/DEPTH knob shows an amber mark on the effect's level bar in the same case.
 
 Each deck's **overview** shows the whole track in rekordbox's three bands (lows blue, mids gold, highs white), so drops and breakdowns read at a glance, with the hot cues as letters on top in rekordbox's colour for each (its own, or its default for the pad; hover one to read its name), memory cues as red triangles, the set's mix-in (green) and mix-out (lavender), saved loops in yellow, a tick every minute, and a strip along the bottom coloured by phrase (intro, build, drop, breakdown, outro). The last 30 seconds are tinted and the time left turns amber. Hover it to read the time and phrase under the pointer; click to jump there. The CUE button's point shows as an orange triangle on the overview and the lanes, and any cue you set, from CUE or a hot cue pad, flashes where it landed. The scrolling waveforms above show each hot cue as a flag in its colour with its letter and name, memory cues as small triangles along the top, an active loop as a tinted band with its length, a loop waiting for RELOOP as an outline, and the slip shadow playhead while slipping.

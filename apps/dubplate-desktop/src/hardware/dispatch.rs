@@ -294,6 +294,7 @@ impl Dispatcher {
             (Button::SmartCfx, Layer::Normal) if pressed => Some(Command::ToggleSmartCfx),
             (Button::SmartCfx, Layer::Shift) if pressed => Some(Command::NextSmartCfx),
             (Button::SmartFader, Layer::Normal) if pressed => Some(Command::ToggleSmartFader),
+            (Button::Shift(deck), _) => Some(Command::ShiftHeld(deck_id(deck), pressed)),
             (Button::PadMode { deck, mode }, _) if pressed => {
                 Some(Command::SetPadMode(deck_id(deck), mode))
             }
@@ -514,6 +515,29 @@ mod tests {
                 pad_press(DeckId::A, 0, PadMode::HotCue, Press::Up, false),
                 pad_press(DeckId::B, 7, PadMode::BeatJump, Press::Down, true),
                 Command::SetPadMode(DeckId::B, PadMode::BeatLoop),
+            ]
+        );
+    }
+
+    #[test]
+    fn each_decks_shift_reports_when_it_is_held_and_let_go() {
+        let mut dispatcher = Dispatcher::default();
+        let surface = Surface::default();
+        let commands = run(
+            &mut dispatcher,
+            &surface,
+            &[
+                press(Button::Shift(Deck::B)),
+                release(Button::Shift(Deck::B)),
+                press(Button::Shift(Deck::A)),
+            ],
+        );
+        assert_eq!(
+            commands,
+            [
+                Command::ShiftHeld(DeckId::B, true),
+                Command::ShiftHeld(DeckId::B, false),
+                Command::ShiftHeld(DeckId::A, true),
             ]
         );
     }

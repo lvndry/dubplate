@@ -535,9 +535,9 @@ These are features of the players. Dubplate prepares for them once it writes USB
 | --- | --- | --- | --- | --- | --- |
 | HOT CUE pad mode | Hot cues on the pads. | FLX4 HOT CUE | Free (FLX4) | Done | P0 |
 | KEYBOARD pad mode | Plays the chosen hot cue at +4 to +7 and ±0 to +3 semitones; SHIFT + pads 7 and 8 move the range. | FLX4 SHIFT + HOT CUE | Free (FLX4) | Done | P2 |
-| PAD FX1 and PAD FX2 | 32 pad effects (16 per mode with SHIFT), held to apply; several at once. | FLX4 PAD FX | Free (FLX4) | Done (rolls, echoes, reverb, filters, gate, crusher, flanger, phaser, brake, backspin) | P1 |
-| Pad FX editing | Choose the effect, beat and parameter of each of the 32 pads. | PAD FX edit mode | Free | Missing: fixed set | P2 |
-| Release FX on a pad | A pad that cancels held effects and plays a release effect. | PAD FX | Free | Missing | P2 |
+| PAD FX1 and PAD FX2 | 32 pad effects (16 per mode with SHIFT), held to apply; several at once. | FLX4 PAD FX | Free (FLX4) | Partial: all 32 pads, every Beat FX and loop rolls, editable; one pad plays at a time per deck | P1 |
+| Pad FX editing | Choose the effect, beat and parameter of each of the 32 pads. | PAD FX edit mode | Free | Done: effect or loop roll, parameter, depth, hold or latch, ring out or dry; Classic, Afro house and Amapiano presets | P2 |
+| Release FX on a pad | A pad that cancels held effects and plays a release effect. | PAD FX | Free | Partial: a pad can play Echo Out, Vinyl Brake or Backspin, which takes over from the pad held | P2 |
 | Temporary beat change | Hold a Pad FX pad and press BEAT ◁ ▷. | Controller | Free | Missing | P3 |
 | BEAT JUMP pad mode | See loops and beat jump. | FLX4 BEAT JUMP | Free (FLX4) | Done | P0 |
 | BEAT LOOP pad mode | 1/4, 1/2, 1, 2, 4, 8, 16, 32 beats on pads 1 to 8. | FLX4 SHIFT + BEAT JUMP | Free (FLX4) | Done | P0 |

@@ -14,8 +14,9 @@ use gpui::{
 use super::DubplateApp;
 use super::faders::{channel_fader_curve_label, crossfader_curve_label};
 use crate::collection::folder_name;
-use crate::commands::Command;
+use crate::commands::{Command, PadFxEdit};
 use crate::library::RekordboxSource;
+use crate::pad_fx::PadFxLayer;
 use crate::theme;
 use crate::widgets::InteractiveControl;
 use crate::widgets::{Emphasis, button};
@@ -138,6 +139,28 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
                         .text_color(theme::MUTED)
                         .child(
                             "Each channel's A, THRU, B switch is under its fader. THRU takes the channel off the crossfader.",
+                        ),
+                )
+                .child(section_title("Pad FX"))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .child(div().text_size(theme::SMALL_TEXT_SIZE).child(format!(
+                            "{}{} \u{b7} 32 pads",
+                            app.pad_fx.preset().label(),
+                            if app.pad_fx.edited() { ", edited" } else { "" }
+                        )))
+                        .child(
+                            button("edit-pad-fx", "Edit Pad FX\u{2026}", Emphasis::Secondary)
+                                .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                                    this.perform(
+                                        Command::PadFx(PadFxEdit::Toggle(PadFxLayer::Fx1)),
+                                        window,
+                                        cx,
+                                    );
+                                })),
                         ),
                 )
                 .focus_trap("settings-focus-trap", &app.modal_focus),

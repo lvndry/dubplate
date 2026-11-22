@@ -26,6 +26,7 @@ mod loading;
 mod macos_identity;
 mod match_cell;
 mod meter;
+mod pad_fx;
 mod pads;
 mod phrases;
 mod playhead;

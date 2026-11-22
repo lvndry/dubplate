@@ -14,6 +14,7 @@ use crate::commands::Mode;
 use crate::controls::{DEFAULT_MASTER_LEVEL, DEFAULT_SAMPLER_VOLUME, MixerPositions};
 use crate::effects::EffectUnitSetting;
 use crate::library_view::SortSetting;
+use crate::pad_fx::PadFxSetting;
 
 /// Why the settings could not be read or written.
 #[derive(Debug, thiserror::Error)]
@@ -65,6 +66,8 @@ pub struct Settings {
     pub smart_cfx_on: bool,
     /// The sampler's volume and the sample in each slot.
     pub sampler: SamplerSetting,
+    /// The 32 Pad FX pads and the preset they started from.
+    pub pad_fx: PadFxSetting,
     /// The screen Dubplate was on, `prepare` or `perform`.
     pub screen: Option<String>,
     /// The master and headphone levels.
@@ -288,6 +291,7 @@ impl Default for Settings {
             smart_cfx_preset: None,
             smart_cfx_on: false,
             sampler: SamplerSetting::default(),
+            pad_fx: PadFxSetting::default(),
             screen: None,
             levels: LevelsSetting::default(),
             mixer: MixerSetting::default(),
@@ -425,6 +429,14 @@ mod tests {
                     gate: true,
                     sync: false,
                 }],
+            },
+            pad_fx: {
+                let mut banks =
+                    crate::pad_fx::PadFxBanks::from_preset(crate::pad_fx::PadFxPreset::Amapiano);
+                banks.edit(crate::pad_fx::PadFxLayer::Fx2, 2, |slot| {
+                    slot.toggle_trigger().step_parameter(1)
+                });
+                banks.setting()
             },
             screen: Some("prepare".to_owned()),
             levels: LevelsSetting {

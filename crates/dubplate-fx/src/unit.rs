@@ -79,6 +79,7 @@ pub(crate) struct Unit<K> {
     enabled: bool,
     mix: Smoothed,
     presence: Smoothed,
+    trail_cut: bool,
     idle: bool,
     quiet_samples: usize,
     sample_rate: f32,
@@ -91,6 +92,7 @@ impl<K: Kernel> Unit<K> {
             enabled: false,
             mix: Smoothed::new(mix.clamp(0.0, 1.0), MIX_SMOOTHING_SECONDS),
             presence: Smoothed::new(0.0, SWITCH_SMOOTHING_SECONDS),
+            trail_cut: false,
             idle: true,
             quiet_samples: 0,
             sample_rate: 0.0,
@@ -114,6 +116,7 @@ impl<K: Kernel> Unit<K> {
         self.enabled = enabled;
         self.presence.set_target(if enabled { 1.0 } else { 0.0 });
         if enabled {
+            self.trail_cut = false;
             if self.idle {
                 self.mix.snap_to_target();
                 if !K::TRAILS && !K::LISTENS_WHEN_OFF {
@@ -124,6 +127,13 @@ impl<K: Kernel> Unit<K> {
             self.quiet_samples = 0;
             self.kernel.switched_on();
         }
+    }
+
+    /// Switches off and fades the trail out with the switch, leaving the music dry. The trail
+    /// keeps running silently until it has died away, so the effect goes idle as usual.
+    pub(crate) fn switch_off_dry(&mut self) {
+        self.set_enabled(false);
+        self.trail_cut = true;
     }
 
     pub(crate) fn is_enabled(&self) -> bool {
@@ -181,10 +191,12 @@ impl<K: Kernel> Unit<K> {
             let presence = self.presence.next();
             let (dry_mix, wet_mix) = K::MIX_LAW.gains(self.mix.next());
             let dry_gain = presence * dry_mix + (1.0 - presence);
-            let (send_gain, wet_gain) = if K::TRAILS {
-                (presence, wet_mix)
+            let (send_gain, wet_gain, heard_gain) = if K::TRAILS && self.trail_cut {
+                (presence, wet_mix, presence * wet_mix)
+            } else if K::TRAILS {
+                (presence, wet_mix, wet_mix)
             } else {
-                (1.0, presence * wet_mix)
+                (1.0, presence * wet_mix, presence * wet_mix)
             };
 
             let mut wet = self
@@ -195,8 +207,8 @@ impl<K: Kernel> Unit<K> {
                 poisoned = true;
             }
 
-            *left_sample = sanitize_output(dry[0] * dry_gain + wet[0] * wet_gain);
-            *right_sample = sanitize_output(dry[1] * dry_gain + wet[1] * wet_gain);
+            *left_sample = sanitize_output(dry[0] * dry_gain + wet[0] * heard_gain);
+            *right_sample = sanitize_output(dry[1] * dry_gain + wet[1] * heard_gain);
             beat_position += timing.beats_per_sample;
 
             if !self.enabled && self.presence.is_settled() {
@@ -278,6 +290,10 @@ macro_rules! implement_effect {
 
             fn set_enabled(&mut self, enabled: bool) {
                 self.unit.set_enabled(enabled);
+            }
+
+            fn switch_off_dry(&mut self) {
+                self.unit.switch_off_dry();
             }
 
             fn is_enabled(&self) -> bool {
