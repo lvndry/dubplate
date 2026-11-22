@@ -7,11 +7,12 @@ use std::cell::RefCell;
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::time::Instant;
 
 use dubplate_engine::DeckId;
 use dubplate_prep::{AudioAnalysis, GridCorrection};
 use dubplate_rekordbox::analysis::BeatGrid;
-use dubplate_rekordbox::{HotCuePad, TrackAnalysis};
+use dubplate_rekordbox::{TrackAnalysis, TrackCues};
 
 use crate::collection::{CollectionTrack, TrackOrigin};
 use crate::cue_marks::{MarkerPulse, SeenMarks};
@@ -268,53 +269,6 @@ pub enum DeckContent {
     Failed(String),
 }
 
-/// The hot cues of the track on a deck, pad A first, in seconds from the start of the track.
-/// They start as rekordbox saved them; pads set or deleted on the deck change only this copy.
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
-pub struct HotCues([Option<f64>; HotCuePad::ALL.len()]);
-
-impl HotCues {
-    /// The hot cues rekordbox saved for `track`.
-    pub fn of(track: &CollectionTrack) -> Self {
-        let mut hot_cues = Self::default();
-        for cue in &track.hot_cues {
-            hot_cues.set(cue.pad, cue.seconds);
-        }
-        hot_cues
-    }
-
-    /// Where the hot cue on `pad` is, if one is set.
-    pub fn get(&self, pad: HotCuePad) -> Option<f64> {
-        self.0[pad_position(pad)]
-    }
-
-    /// Puts the hot cue of `pad` at `seconds`.
-    pub fn set(&mut self, pad: HotCuePad, seconds: f64) {
-        self.0[pad_position(pad)] = Some(seconds);
-    }
-
-    /// Deletes the hot cue of `pad`.
-    pub fn delete(&mut self, pad: HotCuePad) {
-        self.0[pad_position(pad)] = None;
-    }
-
-    /// Every hot cue set, with its pad, A first.
-    pub fn iter(&self) -> impl Iterator<Item = (HotCuePad, f64)> + '_ {
-        HotCuePad::ALL
-            .into_iter()
-            .zip(self.0)
-            .filter_map(|(pad, seconds)| Some((pad, seconds?)))
-    }
-}
-
-/// Where `pad` sits among the pads, A being 0.
-pub fn pad_position(pad: HotCuePad) -> usize {
-    HotCuePad::ALL
-        .iter()
-        .position(|candidate| *candidate == pad)
-        .unwrap_or_default()
-}
-
 /// The interface side of one deck.
 #[derive(Default)]
 pub struct Deck {
@@ -322,8 +276,9 @@ pub struct Deck {
     pub track: Option<Arc<CollectionTrack>>,
     /// Where it stands.
     pub content: DeckContent,
-    /// The track's hot cues as the pads show them.
-    pub hot_cues: HotCues,
+    /// The track's cues as the deck uses them: the ones the DJ made in Dubplate, else
+    /// rekordbox's.
+    pub cues: Arc<TrackCues>,
     /// The playhead drawn on its waveforms.
     pub clock: PlayheadClock,
     /// Whether CUE is held down at the cue point, playing until it is let go, as on a CDJ.
@@ -340,15 +295,16 @@ pub struct Deck {
     pub marker_pulse: Option<MarkerPulse>,
     load_generation: u64,
     committed_generation: u64,
-    pending: Option<(Arc<CollectionTrack>, HotCues)>,
+    pending: Option<(Arc<CollectionTrack>, Arc<TrackCues>)>,
+    loaded_at: Option<Instant>,
 }
 
 impl Deck {
-    /// Marks `track` as loading with `hot_cues` on its pads, and returns the number that its
-    /// result must bring back, so a slower earlier load never replaces a later one.
-    pub fn begin_load(&mut self, track: Arc<CollectionTrack>, hot_cues: HotCues) -> u64 {
+    /// Marks `track` as loading with `cues`, and returns the number that its result must bring
+    /// back, so a slower earlier load never replaces a later one.
+    pub fn begin_load(&mut self, track: Arc<CollectionTrack>, cues: Arc<TrackCues>) -> u64 {
         self.load_generation += 1;
-        self.pending = Some((track, hot_cues));
+        self.pending = Some((track, cues));
         if self.track.is_none() {
             self.content = DeckContent::Loading;
         }
@@ -365,12 +321,13 @@ impl Deck {
         if !self.is_current_load(generation) {
             return false;
         }
-        let Some((track, hot_cues)) = self.pending.take() else {
+        let Some((track, cues)) = self.pending.take() else {
             return false;
         };
         self.committed_generation = generation;
+        self.loaded_at = Some(Instant::now());
         self.track = Some(track);
-        self.hot_cues = hot_cues;
+        self.cues = cues;
         self.content = DeckContent::Loaded(visuals);
         self.cue_preview = false;
         self.tap_tempo = TapTempo::default();
@@ -389,6 +346,11 @@ impl Deck {
         }
     }
 
+    /// When the track on the deck finished loading, if one did.
+    pub fn loaded_at(&self) -> Option<Instant> {
+        self.loaded_at
+    }
+
     /// The number of the latest load asked for.
     pub fn load_generation(&self) -> u64 {
         self.load_generation
@@ -397,6 +359,11 @@ impl Deck {
     /// Whether a load result with `generation` is the latest one asked for.
     pub fn is_current_load(&self, generation: u64) -> bool {
         self.load_generation == generation
+    }
+
+    /// The load number of the track on the deck, once one is loaded.
+    pub fn loaded_generation(&self) -> Option<u64> {
+        self.track.as_ref().map(|_| self.committed_generation)
     }
 
     /// Whether a background visual still belongs to the committed track. A pending or
@@ -416,6 +383,8 @@ impl Deck {
 
 #[cfg(test)]
 mod tests {
+    use dubplate_rekordbox::{HotCue, HotCuePad};
+
     use super::*;
 
     #[test]
@@ -423,11 +392,11 @@ mod tests {
         let mut deck = Deck::default();
         let first = deck.begin_load(
             Arc::new(CollectionTrack::from_file(Path::new("one.mp3"))),
-            HotCues::default(),
+            Arc::default(),
         );
         let second = deck.begin_load(
             Arc::new(CollectionTrack::from_file(Path::new("two.mp3"))),
-            HotCues::default(),
+            Arc::default(),
         );
         assert!(!deck.is_current_load(first));
         assert!(deck.is_current_load(second));
@@ -452,16 +421,16 @@ mod tests {
     #[test]
     fn failed_replacement_retains_identity_cues_grid_and_visuals() {
         let mut deck = Deck::default();
-        let mut cues = HotCues::default();
-        cues.set(HotCuePad::B, 2.0);
+        let mut cues = TrackCues::default();
+        cues.set_hot_cue(HotCuePad::B, HotCue::at(2_000));
         let first = deck.begin_load(
             Arc::new(CollectionTrack::from_file(Path::new("old.mp3"))),
-            cues,
+            Arc::new(cues),
         );
         assert!(deck.commit_load(first, visuals(), Some(GridSource::Tapped)));
         let failed = deck.begin_load(
             Arc::new(CollectionTrack::from_file(Path::new("missing.mp3"))),
-            HotCues::default(),
+            Arc::default(),
         );
         assert_eq!(deck.track.as_ref().unwrap().row.title.as_ref(), "old");
         assert!(deck.is_loaded_generation(first));
@@ -469,7 +438,10 @@ mod tests {
         deck.fail_load(failed, "missing".into());
         assert!(deck.is_loaded_generation(first));
         assert_eq!(deck.track.as_ref().unwrap().row.title.as_ref(), "old");
-        assert_eq!(deck.hot_cues.get(HotCuePad::B), Some(2.0));
+        assert_eq!(
+            deck.cues.hot_cue(HotCuePad::B).map(|cue| cue.start_ms),
+            Some(2_000)
+        );
         assert_eq!(deck.grid_source, Some(GridSource::Tapped));
         assert!(deck.visuals().is_some());
         assert!(!deck.commit_load(first, visuals(), None));
@@ -564,21 +536,5 @@ mod tests {
         assert!(!engine.has_tempo_changes());
         assert!((engine.bpm() - 120.0).abs() < 1e-8);
         assert!((engine.beat_at(0.5)).abs() < 1e-8);
-    }
-
-    #[test]
-    fn hot_cues_are_set_and_deleted_by_pad() {
-        let mut hot_cues = HotCues::default();
-        hot_cues.set(HotCuePad::C, 12.5);
-        hot_cues.set(HotCuePad::A, 1.0);
-        assert_eq!(hot_cues.get(HotCuePad::C), Some(12.5));
-        let set: Vec<(char, f64)> = hot_cues
-            .iter()
-            .map(|(pad, seconds)| (pad.letter(), seconds))
-            .collect();
-        assert_eq!(set, [('A', 1.0), ('C', 12.5)]);
-        hot_cues.delete(HotCuePad::C);
-        assert_eq!(hot_cues.get(HotCuePad::C), None);
-        assert_eq!(pad_position(HotCuePad::H), 7);
     }
 }

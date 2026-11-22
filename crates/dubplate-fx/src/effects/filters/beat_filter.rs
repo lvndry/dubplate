@@ -6,7 +6,7 @@ use crate::dsp::filters::SvfCoefficients;
 use crate::dsp::lfo::SyncedPhase;
 use crate::dsp::smoothing::Smoothed;
 use crate::effect::EffectKind;
-use crate::effects::filter::{FilterSlope, FilterStages, stage_qualities};
+use crate::effects::filters::filter::{FilterSlope, FilterStages, stage_qualities};
 use crate::unit::{Controls, Frame, Kernel, MixLaw, Unit, engaged, implement_effect};
 
 const OPEN_HZ: f32 = 16_000.0;
