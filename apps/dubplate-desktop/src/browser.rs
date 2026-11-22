@@ -510,7 +510,7 @@ impl Browser {
                 table.child(
                     div().id("selected-track-details")
                         .accessible_button(format!("Selected track: {} by {}", entry.row.title, entry.row.artist))
-                        .role(gpui::Role::ScrollView)
+                        .role(gpui::Role::Group)
                         .aria_description("Full track details. Use Up, Down, Page Up or Page Down to scroll, and Home or End to reach either end.")
                         .track_scroll(&self.detail_scroll)
                         .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _, cx| {
