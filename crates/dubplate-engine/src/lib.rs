@@ -83,6 +83,7 @@ pub use processor::{AudioProcessor, ProcessContext, StereoBlock};
 pub use recording::RecordingTap;
 pub use sampler::{SAMPLER_SLOTS, SampleMode, SampleSettings, SamplerState, SlotState};
 pub use smart_cfx::SmartCfx;
+pub use smart_fader::SmartFaderSource;
 pub use state::{DeckState, EngineStats, LoopState, Meters, PlatterState, SlipState, TempoState};
 pub use stems::{Stem, StemLevel, StemSettings, StemTracks};
 pub use sync::SyncMode;

@@ -88,6 +88,9 @@ pub struct Settings {
     pub auto_cue: AutoCueSetting,
     /// The fader curves and the crossfader assign switches.
     pub mixer: MixerSetting,
+    /// What moves Smart Fader's blend: `crossfader-and-channel-faders`, `crossfader` or
+    /// `channel-faders`.
+    pub smart_fader_source: String,
     /// How the library's tracks are sorted on each screen.
     pub library_sort: LibrarySortSetting,
     /// The theme Dubplate wears, by name.
@@ -353,6 +356,7 @@ impl Default for Settings {
             lane_zoom: None,
             auto_cue: AutoCueSetting::default(),
             mixer: MixerSetting::default(),
+            smart_fader_source: String::new(),
             library_sort: LibrarySortSetting::default(),
             theme: None,
             key_lock_on_new_tracks: true,
@@ -523,6 +527,7 @@ mod tests {
                 },
                 ChannelFaderCurve::Fast,
             ),
+            smart_fader_source: "channel-faders".to_owned(),
             library_sort: LibrarySortSetting {
                 prepare: Some(SortSetting {
                     column: "bpm".to_owned(),

@@ -3,7 +3,7 @@
 //! with SMART CFX off each CFX knob plays its channel's Sound Color FX, the filter unless the DJ
 //! picked another; SMART FADER makes the crossfader move a shared tempo and swap the bass.
 
-use dubplate_engine::{DeckId, SmartCfx};
+use dubplate_engine::{DeckId, SmartCfx, SmartFaderSource};
 use gpui::Context;
 
 use super::DubplateApp;
@@ -141,7 +141,10 @@ impl DubplateApp {
     /// Turns SMART FADER on or off.
     pub(super) fn toggle_smart_fader(&mut self, cx: &mut Context<'_, Self>) {
         let enabled = !self.smart_fader_on();
-        if enabled && !self.crossfader().enabled {
+        if enabled
+            && !self.crossfader().enabled
+            && self.smart_fader_source() != SmartFaderSource::ChannelFaders
+        {
             self.explain_unavailable_smart_fader(cx);
             return;
         }

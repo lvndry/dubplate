@@ -128,6 +128,8 @@ fn carry_over(source: &Controller, target: &mut Controller) -> Result<(), Engine
         target.set_smart_cfx(deck, source.smart_cfx(deck))?;
     }
     target.set_smart_fader(source.smart_fader())?;
+    target.set_smart_fader_source(source.smart_fader_source())?;
+    target.set_fader_echo(source.fader_echo())?;
     target.set_crossfader_enabled(source.crossfader_enabled())?;
     target.set_crossfader_curve(source.crossfader_curve())?;
     target.set_channel_fader_curve(source.channel_fader_curve())?;

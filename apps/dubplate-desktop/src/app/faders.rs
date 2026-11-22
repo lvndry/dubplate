@@ -1,7 +1,9 @@
 //! The crossfader assign switches and the fader curves: rekordbox's mixer panel and its
 //! Preferences > Controller > Mixer, kept in the settings.
 
-use dubplate_engine::{ChannelFaderCurve, Crossfader, CrossfaderAssign, CrossfaderCurve, DeckId};
+use dubplate_engine::{
+    ChannelFaderCurve, Crossfader, CrossfaderAssign, CrossfaderCurve, DeckId, SmartFaderSource,
+};
 use gpui::Context;
 
 use super::DubplateApp;
@@ -22,6 +24,32 @@ pub(super) fn crossfader_curve_label(curve: CrossfaderCurve) -> &'static str {
         CrossfaderCurve::Constant => "Constant",
         CrossfaderCurve::Scratch => "Scratch",
     }
+}
+
+/// A Smart Fader source's name on screen.
+pub(super) fn smart_fader_source_label(source: SmartFaderSource) -> &'static str {
+    match source {
+        SmartFaderSource::CrossfaderAndChannelFaders => "Both",
+        SmartFaderSource::Crossfader => "Crossfader",
+        SmartFaderSource::ChannelFaders => "Channel faders",
+    }
+}
+
+/// A Smart Fader source's name in the settings file.
+fn smart_fader_source_name(source: SmartFaderSource) -> &'static str {
+    match source {
+        SmartFaderSource::CrossfaderAndChannelFaders => "crossfader-and-channel-faders",
+        SmartFaderSource::Crossfader => "crossfader",
+        SmartFaderSource::ChannelFaders => "channel-faders",
+    }
+}
+
+/// The Smart Fader source a settings name stands for, the default for an unknown or empty one.
+fn smart_fader_source_named(name: &str) -> SmartFaderSource {
+    SmartFaderSource::ALL
+        .into_iter()
+        .find(|source| smart_fader_source_name(*source) == name)
+        .unwrap_or_default()
 }
 
 /// A channel fader curve's name in the settings.
@@ -54,7 +82,26 @@ impl DubplateApp {
     /// Whether Smart Fader is on but has no deck on one of the crossfader's sides, or the
     /// crossfader is off.
     pub(super) fn smart_fader_resting(&self) -> bool {
-        self.smart_fader_on() && self.crossfader().sides().is_none()
+        self.smart_fader_on()
+            && self.smart_fader_source() != SmartFaderSource::ChannelFaders
+            && self.crossfader().sides().is_none()
+    }
+
+    /// What moves Smart Fader's blend, as kept in the settings.
+    pub(super) fn smart_fader_source(&self) -> SmartFaderSource {
+        smart_fader_source_named(&self.settings.smart_fader_source)
+    }
+
+    /// Chooses what moves Smart Fader's blend and remembers it.
+    pub(super) fn set_smart_fader_source(
+        &mut self,
+        source: SmartFaderSource,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.settings.smart_fader_source = smart_fader_source_name(source).to_owned();
+        self.save_settings(cx);
+        self.engine_command(cx, |controller| controller.set_smart_fader_source(source));
+        self.explain_resting_smart_fader(cx);
     }
 
     /// Puts the crossfader in or out of use and remembers it.
@@ -140,10 +187,12 @@ impl DubplateApp {
     pub(super) fn restore_mixer_switches(&mut self, cx: &mut Context<'_, Self>) {
         let crossfader = self.crossfader();
         let channel_fader_curve = self.channel_fader_curve();
+        let smart_fader_source = self.smart_fader_source();
         self.engine_command(cx, |controller| {
             controller.set_crossfader_enabled(crossfader.enabled)?;
             controller.set_crossfader_curve(crossfader.curve)?;
             controller.set_channel_fader_curve(channel_fader_curve)?;
+            controller.set_smart_fader_source(smart_fader_source)?;
             for deck in DeckId::ALL {
                 controller.set_crossfader_assign(deck, crossfader.assign[deck.index()])?;
             }
@@ -166,6 +215,22 @@ impl DubplateApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_smart_fader_source_comes_back_by_its_saved_name() {
+        for source in SmartFaderSource::ALL {
+            assert!(!smart_fader_source_label(source).is_empty());
+            assert_eq!(
+                smart_fader_source_named(smart_fader_source_name(source)),
+                source
+            );
+        }
+        assert_eq!(
+            smart_fader_source_named(""),
+            SmartFaderSource::CrossfaderAndChannelFaders,
+            "a settings file from before the choice keeps rekordbox's default"
+        );
+    }
 
     #[test]
     fn every_curve_has_a_label() {

@@ -19,7 +19,9 @@ use crate::processor::{AudioProcessor, ProcessContext, StereoBlock};
 use crate::recording::RecordingSink;
 use crate::sampler::{SampleSettings, Sampler};
 use crate::smart_cfx::SmartCfx;
-use crate::smart_fader::{TEMPO_GLIDE_SECONDS, bass_swap, shared_bpm};
+use crate::smart_fader::{
+    SmartFaderSource, TEMPO_GLIDE_SECONDS, bass_swap, blend_position, shared_bpm,
+};
 use crate::state::{GapDetector, SharedState, encode_loop_length, raise_peak};
 use crate::stems::StemSettings;
 use crate::sync::SyncMode;
@@ -223,6 +225,7 @@ pub(crate) enum Command {
         preset: Option<SmartCfx>,
     },
     SetSmartFader(bool),
+    SetSmartFaderSource(SmartFaderSource),
     SetFaderEcho(bool),
 }
 
@@ -292,6 +295,7 @@ pub struct Renderer {
     channel_fader_curve: ChannelFaderCurve,
     sync_half_and_double: bool,
     smart_fader: bool,
+    smart_fader_source: SmartFaderSource,
     smart_bpm: Option<f64>,
     fader_echo: bool,
     fader_echoes: [FaderEcho; DECK_COUNT],
@@ -330,6 +334,7 @@ impl Renderer {
             channel_fader_curve: ChannelFaderCurve::default(),
             sync_half_and_double: true,
             smart_fader: false,
+            smart_fader_source: SmartFaderSource::default(),
             smart_bpm: None,
             fader_echo: false,
             fader_echoes: std::array::from_fn(|_| FaderEcho::new(sample_rate)),
@@ -528,11 +533,13 @@ impl Renderer {
         if !self.smart_fader {
             return;
         }
-        let Some(sides) = self.crossfader.sides() else {
+        let Some(sides) = self.smart_fader_sides() else {
             self.rest_smart_fader();
             return;
         };
-        let lows = bass_swap(self.crossfader.position);
+        let faders = sides.map(|deck| self.decks[deck.index()].fader_position());
+        let position = blend_position(self.smart_fader_source, self.crossfader.position, faders);
+        let lows = bass_swap(position);
         for (deck, low) in sides.into_iter().zip(lows) {
             self.decks[deck.index()].set_automatic_low(Some(low));
         }
@@ -540,7 +547,7 @@ impl Renderer {
         let (Some(master), [Some(left_bpm), Some(right_bpm)]) = (master, own) else {
             return;
         };
-        let target = shared_bpm(self.crossfader.position, left_bpm, right_bpm);
+        let target = shared_bpm(position, left_bpm, right_bpm);
         let glide = 1.0
             - (-(frame_count as f64) / (TEMPO_GLIDE_SECONDS * f64::from(self.sample_rate))).exp();
         let bpm = match self.smart_bpm {
@@ -551,6 +558,16 @@ impl Renderer {
         for deck_id in DeckId::ALL {
             let smart_bpm = (deck_id == master).then_some(bpm);
             self.decks[deck_id.index()].set_smart_bpm(smart_bpm);
+        }
+    }
+
+    /// The decks Smart Fader blends between, left then right: the crossfader's sides, or deck A
+    /// and deck B when the channel faders alone move the blend. `None` while it rests.
+    fn smart_fader_sides(&self) -> Option<[DeckId; 2]> {
+        if self.smart_fader_source.uses_crossfader() {
+            self.crossfader.sides()
+        } else {
+            Some(DeckId::ALL)
         }
     }
 
@@ -574,7 +591,7 @@ impl Renderer {
     /// beat sync to its beats, for the next block.
     fn follow_tempo_master(&mut self, master: Option<DeckId>) {
         let master_beat = master.and_then(|deck| self.decks[deck.index()].master_beat(deck));
-        let smart = self.smart_fader && self.crossfader.sides().is_some();
+        let smart = self.smart_fader && self.smart_fader_sides().is_some();
         for deck_id in DeckId::ALL {
             let deck = &mut self.decks[deck_id.index()];
             match master_beat {
@@ -728,6 +745,7 @@ impl Renderer {
                 self.decks[deck.index()].set_stem_settings(settings);
             }
             Command::SetSmartFader(enabled) => self.set_smart_fader(enabled),
+            Command::SetSmartFaderSource(source) => self.smart_fader_source = source,
             Command::SetFaderEcho(enabled) => self.fader_echo = enabled,
             Command::SetSmartCfx { deck, preset } => {
                 self.decks[deck.index()].set_smart_cfx(preset);

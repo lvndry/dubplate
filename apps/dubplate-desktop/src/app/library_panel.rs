@@ -12,7 +12,7 @@ use gpui::{
 };
 
 use super::DubplateApp;
-use super::faders::{channel_fader_curve_label, crossfader_curve_label};
+use super::faders::{channel_fader_curve_label, crossfader_curve_label, smart_fader_source_label};
 use crate::collection::folder_name;
 use crate::commands::{AutoCueChoice, Command, PadFxEdit};
 use crate::devices::BufferSize;
@@ -22,7 +22,7 @@ use crate::pad_fx::PadFxLayer;
 use crate::theme::{self, ThemeId};
 use crate::widgets::InteractiveControl;
 use crate::widgets::{Emphasis, button};
-use dubplate_engine::{ChannelFaderCurve, CrossfaderCurve, OutputDevice};
+use dubplate_engine::{ChannelFaderCurve, CrossfaderCurve, OutputDevice, SmartFaderSource};
 
 pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoElement {
     let mut output_rows = Vec::new();
@@ -142,6 +142,7 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
                 .child(buffer_row(app, cx))
                 .child(section_title("Mixer"))
                 .child(crossfader_row(app.crossfader().enabled, cx))
+                .child(smart_fader_source_row(app.smart_fader_source(), cx))
                 .child(curve_row(
                     "Crossfader curve",
                     CrossfaderCurve::ALL.map(|curve| CurveChoice {
@@ -311,6 +312,75 @@ fn crossfader_row(on: bool, cx: &mut Context<'_, DubplateApp>) -> impl IntoEleme
                         .when(!chosen, |option| {
                             option.on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
                                 this.perform(Command::ToggleCrossfader, window, cx);
+                            }))
+                        })
+                        .child(name)
+                })),
+        )
+}
+
+/// What moves Smart Fader's blend, as rekordbox's Smart Fader setting: the crossfader and the
+/// channel faders, the crossfader alone, or the channel faders alone.
+fn smart_fader_source_row(
+    current: SmartFaderSource,
+    cx: &mut Context<'_, DubplateApp>,
+) -> impl IntoElement + use<> {
+    div()
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap(px(12.0))
+        .py(px(6.0))
+        .border_t_1()
+        .border_color(theme::active().row_line)
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(2.0))
+                .child(div().text_size(theme::SMALL_TEXT_SIZE).child("Smart Fader moves with"))
+                .child(
+                    div()
+                        .text_size(theme::TINY_TEXT_SIZE)
+                        .text_color(theme::active().muted)
+                        .child("Both: the crossfader, leaned toward the louder channel. Channel faders also work with the crossfader off."),
+                ),
+        )
+        .child(
+            div()
+                .id("smart-fader-source")
+                .role(gpui::Role::RadioGroup)
+                .aria_label("Smart Fader moves with")
+                .flex()
+                .flex_none()
+                .gap(px(4.0))
+                .children(SmartFaderSource::ALL.map(|source| {
+                    let chosen = source == current;
+                    let name = smart_fader_source_label(source);
+                    div()
+                        .id(SharedString::from(format!("smart-fader-source-{name}")))
+                        .accessible_toggle(format!("Smart Fader moves with {name}"), chosen)
+                        .flex()
+                        .justify_center()
+                        .px(px(8.0))
+                        .py(px(4.0))
+                        .rounded(theme::SMALL_RADIUS)
+                        .border_1()
+                        .text_size(theme::SMALL_TEXT_SIZE)
+                        .cursor_pointer()
+                        .map(|option| {
+                            if chosen {
+                                option.border_color(theme::active().line).bg(theme::active().raised)
+                            } else {
+                                option
+                                    .border_color(gpui::transparent_black())
+                                    .text_color(theme::active().muted)
+                                    .hover(|option| option.bg(theme::active().raised))
+                            }
+                        })
+                        .when(!chosen, |option| {
+                            option.on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                                this.perform(Command::SetSmartFaderSource(source), window, cx);
                             }))
                         })
                         .child(name)
