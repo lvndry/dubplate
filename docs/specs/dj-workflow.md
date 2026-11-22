@@ -47,7 +47,7 @@ Statuses are as audited on 22 November 2026, on `main` with a second Dubplate ru
 
 **L4 Instant doubles.** Must: LOAD twice copies the other deck at the same place, playing, in phase. Status: **Done.**
 
-**L5 Played tracks.** See: tracks played this session marked in the library, as rekordbox colours them. Status: **Missing** ([inventory 25](feature-inventory.md#top-40-gaps)). Spec: a track played 60 seconds or more gets a dimmed title and a played mark, with a Hide played filter.
+**L5 Played tracks.** See: tracks played this session marked in the library, as rekordbox colours them. Status: **In progress** (played tracks pull request): a track played 60 seconds or more of track time gets a dimmed title and a tick, the same rule as the History, and Hide played beside Key fits puts `played:no` in the search.
 
 ## The cue point and CUE
 

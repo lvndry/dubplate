@@ -43,6 +43,27 @@ pub enum Press {
     Tap,
 }
 
+/// Which channels the Sound Color FX picker sets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CfxScope {
+    /// Both channels at once.
+    #[default]
+    Both,
+    /// One channel.
+    Deck(DeckId),
+}
+
+impl CfxScope {
+    /// The channels it sets.
+    pub fn decks(self) -> &'static [DeckId] {
+        match self {
+            CfxScope::Both => &DeckId::ALL,
+            CfxScope::Deck(DeckId::A) => &[DeckId::A],
+            CfxScope::Deck(DeckId::B) => &[DeckId::B],
+        }
+    }
+}
+
 /// A change in the Pad FX editor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PadFxEdit {
@@ -278,6 +299,12 @@ pub enum Command {
     NextSmartCfx,
     /// Pick a Smart CFX preset, from the screen.
     ChooseSmartCfx(SmartCfx),
+    /// Open or close the Sound Color FX picker of the CFX knobs.
+    ToggleCfxMenu,
+    /// Choose which channels the Sound Color FX picker sets.
+    SetCfxScope(CfxScope),
+    /// Give the channels of the picker's scope a Sound Color FX; `None` is the plain filter.
+    ChooseCfxColour(Option<SmartCfx>),
     /// SMART FADER: the crossfader moves a shared tempo and swaps the bass.
     ToggleSmartFader,
     /// Load the track selected in the browser.

@@ -33,7 +33,6 @@ mod pad_fx_editor;
 mod pad_grid;
 mod pads;
 mod pickup;
-mod played;
 mod prepare;
 mod recording;
 mod relink;
@@ -72,7 +71,9 @@ use gpui::{
 use crate::analysis::{AnalysisPriority, TrackAnalyser, TrackAnalyses};
 use crate::browser::{Browser, BrowserEvent, LibraryStatus};
 use crate::collection::{Collection, CollectionTrack, TrackIndex};
-use crate::commands::{AutoCueChoice, Command, Direction, EffectEdit, JogMotion, Mode, Press};
+use crate::commands::{
+    AutoCueChoice, CfxScope, Command, Direction, EffectEdit, JogMotion, Mode, Press,
+};
 use crate::controls::{
     CROSSFADER_STEP, Control, MixerPositions, Orientation, Slider, fraction_at, master_gain_at,
     nudged_tempo_slider, tempo_fader, trim_gain_at,
@@ -249,8 +250,6 @@ pub struct DubplateApp {
     catalogue: Arc<Catalogue>,
     /// What the library's Match column was last worked out for.
     match_source: Option<library_matches::MatchSource>,
-    /// The tracks a deck played this session, by file.
-    played_tracks: Arc<HashSet<PathBuf>>,
     missing: Arc<Vec<Missing>>,
     relinking: bool,
     relink_review: Option<RelinkReview>,
@@ -266,6 +265,8 @@ pub struct DubplateApp {
     play_watches: [PlayWatch<SessionRecord>; DECK_COUNT],
     time_zone: jiff::tz::TimeZone,
     smart_cfx_menu: bool,
+    /// The Sound Color FX picker, when it is open, and the channels it sets.
+    cfx_menu: Option<CfxScope>,
     effect_menu: Option<EffectMenu>,
     fx_select_presses: u64,
     refocus_window: bool,
@@ -514,7 +515,6 @@ impl DubplateApp {
             check_cursor_seconds: 0.0,
             catalogue: Arc::default(),
             match_source: None,
-            played_tracks: Arc::default(),
             missing: Arc::default(),
             relinking: false,
             relink_review: None,
@@ -532,6 +532,7 @@ impl DubplateApp {
             play_watches: Default::default(),
             time_zone: jiff::tz::TimeZone::system(),
             smart_cfx_menu: false,
+            cfx_menu: None,
             effect_menu: None,
             fx_select_presses: 0,
             refocus_window: false,
@@ -1058,6 +1059,17 @@ impl DubplateApp {
                 self.choose_smart_cfx(next, cx);
             }
             Command::ChooseSmartCfx(preset) => self.choose_smart_cfx(preset, cx),
+            Command::ToggleCfxMenu => {
+                self.cfx_menu = match self.cfx_menu {
+                    Some(_) => None,
+                    None => Some(CfxScope::default()),
+                };
+            }
+            Command::SetCfxScope(scope) => self.cfx_menu = Some(scope),
+            Command::ChooseCfxColour(colour) => {
+                let scope = self.cfx_menu.take().unwrap_or_default();
+                self.choose_cfx_colour(scope.decks(), colour, cx);
+            }
             Command::ToggleSmartFader => self.toggle_smart_fader(cx),
             Command::ToggleMasterCue => {
                 let cued = self
@@ -2210,7 +2222,6 @@ impl Render for DubplateApp {
         if self.glitches.observe(self.dropouts(), Instant::now()) {
             self.show_notice(NoticePlace::Window, GLITCH_NOTICE, cx);
         }
-        self.mark_played(&frames, cx);
         self.follow_library_matches(cx);
         let root = div()
             .key_context(WINDOW_CONTEXT)
