@@ -106,6 +106,8 @@ Each deck's **overview** shows the whole track in rekordbox's three bands (lows 
 
 On screen, each deck also has Sync, Master, Key lock and Slip, and the compact effects strip drives the three effect units. Press ? for every keyboard shortcut.
 
+Key lock (a CDJ's Master Tempo) is on for every track you load, so moving the tempo or syncing keeps a track's pitch. Turn **Key lock on new tracks** off in Settings to load tracks without it, as rekordbox's Master Tempo default; the deck's Key lock button (or K, Shift+K) still changes it for the track on that deck. Key lock steps aside while you scratch.
+
 Drag a deck's waveform on the lanes to move it, as with a jog: a stopped deck scrubs under your hand and lands on the nearest beat when you let go (with quantize on); a playing deck is nudged, never jumped; Shift+drag searches.
 
 **Grid** on a deck (or E, Shift+E for deck B) opens its grid bar to fix any track's beat grid while you play, as rekordbox's grid edit does: the downbeat a beat earlier or later, the grid 5 ms earlier or later, and confirm. The grid keys G, [ ], comma and period then work on that deck. A fix never moves the deck in the track, and it is the same fix the track check shows.
