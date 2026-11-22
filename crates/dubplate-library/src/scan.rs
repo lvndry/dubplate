@@ -51,6 +51,12 @@ pub struct LibraryTrack {
     pub artist: Option<String>,
     /// The album tag.
     pub album: Option<String>,
+    /// The genre tag.
+    #[serde(default)]
+    pub genre: Option<String>,
+    /// The comment tag.
+    #[serde(default)]
+    pub comment: Option<String>,
     /// The BPM tag.
     pub bpm: Option<f32>,
     /// The key tag, as written by the tagging software.
@@ -295,6 +301,8 @@ fn read_resolved_track(
         title: accessor_text(tag.and_then(|tag| tag.title())),
         artist: tag.and_then(|tag| artists(tag.get_strings(ItemKey::TrackArtist))),
         album: accessor_text(tag.and_then(|tag| tag.album())),
+        genre: accessor_text(tag.and_then(|tag| tag.genre())),
+        comment: accessor_text(tag.and_then(|tag| tag.comment())),
         bpm,
         key: text(ItemKey::InitialKey),
         duration_seconds: (!duration.is_zero()).then_some(duration.as_secs_f32()),
@@ -342,6 +350,8 @@ mod tests {
         tag.set_title(title.to_owned());
         tag.set_artist(artist.to_owned());
         tag.set_album("Fixtures".to_owned());
+        tag.set_genre("Amapiano".to_owned());
+        tag.set_comment("Log drum from bar 33".to_owned());
         tag.insert_text(ItemKey::IntegerBpm, bpm.to_owned());
         tag.insert_text(ItemKey::InitialKey, key.to_owned());
         tag.save_to_path(path, WriteOptions::default()).unwrap();
@@ -380,6 +390,8 @@ mod tests {
         assert_eq!(track.title.as_deref(), Some("Saltwater Hymn"));
         assert_eq!(track.artist.as_deref(), Some("Mara Okonjo"));
         assert_eq!(track.album.as_deref(), Some("Fixtures"));
+        assert_eq!(track.genre.as_deref(), Some("Amapiano"));
+        assert_eq!(track.comment.as_deref(), Some("Log drum from bar 33"));
         assert_eq!(track.bpm, Some(124.0));
         assert_eq!(track.key.as_deref(), Some("8A"));
         let duration = track.duration_seconds.unwrap();
