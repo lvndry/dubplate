@@ -13,6 +13,7 @@ mod analysis;
 mod analysis_cache;
 mod analysis_queue;
 mod cue_proposal;
+mod downbeat;
 mod editor;
 mod energy;
 mod export;
