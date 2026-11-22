@@ -2,6 +2,7 @@
 //! of track time, as in rekordbox's History, and only once per load. The browser shows this
 //! session's plays and the earlier ones by day.
 
+use std::path::Path;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -291,6 +292,11 @@ impl PlayHistory {
         }
     }
 
+    /// The files played this session.
+    pub fn played_paths(&self) -> impl Iterator<Item = &Path> {
+        self.session.iter().map(|play| play.track_path.as_path())
+    }
+
     /// The pages as the browser shows them.
     pub fn shelf(&self, time_zone: &TimeZone) -> HistoryShelf {
         let mut pages = vec![HistoryPageView {
@@ -518,6 +524,23 @@ mod tests {
             .map(|play| play.title.as_str())
             .collect();
         assert_eq!(plays, ["Early", "Late"], "an export runs oldest first");
+    }
+
+    #[test]
+    fn only_this_sessions_plays_count_as_played() {
+        let session_started = UNIX_EPOCH + Duration::from_secs(10_000);
+        let mut history = PlayHistory::new(session_started);
+        history.restore_earlier([play("Yesterday", 'A', 5_000)]);
+        history.add(play("Tonight", 'B', 10_100));
+        history.add(play("Tonight", 'A', 10_500));
+        let played: Vec<&Path> = history.played_paths().collect();
+        assert_eq!(
+            played,
+            [
+                Path::new("/Music/Tonight.mp3"),
+                Path::new("/Music/Tonight.mp3")
+            ]
+        );
     }
 
     #[test]
