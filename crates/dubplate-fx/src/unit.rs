@@ -23,6 +23,9 @@ pub(crate) enum MixLaw {
     /// taper, so the first quarter stays gentle: 12 dB under the music a quarter of the way,
     /// at full level half way. The master limiter keeps the sum from clipping.
     Blend,
+    /// The music always plays at full level and the effect is laid over it at the mix: for
+    /// effects that add a sound of their own, such as a tone or noise.
+    Layer,
 }
 
 impl MixLaw {
@@ -34,6 +37,7 @@ impl MixLaw {
                 let rise = (2.0 * mix).min(1.0);
                 ((2.0 - 2.0 * mix).min(1.0), rise * rise)
             }
+            Self::Layer => (1.0, mix),
         }
     }
 }
@@ -239,8 +243,14 @@ pub(crate) trait Controls {
 
 /// Implements [`Effect`] for a type with a `unit` field and [`Controls`].
 macro_rules! implement_effect {
+    (impl<$generic:ident: $bound:path> $effect:ty) => {
+        $crate::unit::implement_effect!(@body [$generic: $bound] $effect);
+    };
     ($effect:ty) => {
-        impl $crate::effect::Effect for $effect {
+        $crate::unit::implement_effect!(@body [] $effect);
+    };
+    (@body [$($generic:ident: $bound:path)?] $effect:ty) => {
+        impl$(<$generic: $bound>)? $crate::effect::Effect for $effect {
             fn kind(&self) -> $crate::effect::EffectKind {
                 $crate::unit::Controls::effect_kind(self)
             }

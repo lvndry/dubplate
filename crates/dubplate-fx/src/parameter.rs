@@ -292,7 +292,112 @@ const fn beat_spec(steps: &'static [ParameterValue], default: BeatLength) -> Par
     }
 }
 
+const fn rising(length: BeatLength) -> ParameterValue {
+    ParameterValue::SignedBeats(SignedBeats::rising(length))
+}
+
+const fn falling(length: BeatLength) -> ParameterValue {
+    ParameterValue::SignedBeats(SignedBeats::falling(length))
+}
+
+/// -32 to -1/16 beats and 1/16 to 32 beats: the effects that rise forever, or fall when the
+/// length is negative.
+const SIGNED_SIXTEENTH_TO_THIRTY_TWO: [ParameterValue; 22] = [
+    falling(BeatLength::THIRTY_TWO),
+    falling(BeatLength::SIXTEEN),
+    falling(BeatLength::EIGHT),
+    falling(BeatLength::FOUR),
+    falling(BeatLength::TWO),
+    falling(BeatLength::ONE),
+    falling(BeatLength::THREE_QUARTERS),
+    falling(BeatLength::HALF),
+    falling(BeatLength::QUARTER),
+    falling(BeatLength::EIGHTH),
+    falling(BeatLength::SIXTEENTH),
+    rising(BeatLength::SIXTEENTH),
+    rising(BeatLength::EIGHTH),
+    rising(BeatLength::QUARTER),
+    rising(BeatLength::HALF),
+    rising(BeatLength::THREE_QUARTERS),
+    rising(BeatLength::ONE),
+    rising(BeatLength::TWO),
+    rising(BeatLength::FOUR),
+    rising(BeatLength::EIGHT),
+    rising(BeatLength::SIXTEEN),
+    rising(BeatLength::THIRTY_TWO),
+];
+
+/// -100% to 100% in tens.
+const SIGNED_TENS_OF_PERCENT: [ParameterValue; 21] = [
+    ParameterValue::Percent(-100),
+    ParameterValue::Percent(-90),
+    ParameterValue::Percent(-80),
+    ParameterValue::Percent(-70),
+    ParameterValue::Percent(-60),
+    ParameterValue::Percent(-50),
+    ParameterValue::Percent(-40),
+    ParameterValue::Percent(-30),
+    ParameterValue::Percent(-20),
+    ParameterValue::Percent(-10),
+    ParameterValue::Percent(0),
+    ParameterValue::Percent(10),
+    ParameterValue::Percent(20),
+    ParameterValue::Percent(30),
+    ParameterValue::Percent(40),
+    ParameterValue::Percent(50),
+    ParameterValue::Percent(60),
+    ParameterValue::Percent(70),
+    ParameterValue::Percent(80),
+    ParameterValue::Percent(90),
+    ParameterValue::Percent(100),
+];
+
+/// An octave down to an octave up, in semitones.
+const OCTAVE_EACH_WAY: [ParameterValue; 25] = [
+    ParameterValue::Semitones(-12),
+    ParameterValue::Semitones(-11),
+    ParameterValue::Semitones(-10),
+    ParameterValue::Semitones(-9),
+    ParameterValue::Semitones(-8),
+    ParameterValue::Semitones(-7),
+    ParameterValue::Semitones(-6),
+    ParameterValue::Semitones(-5),
+    ParameterValue::Semitones(-4),
+    ParameterValue::Semitones(-3),
+    ParameterValue::Semitones(-2),
+    ParameterValue::Semitones(-1),
+    ParameterValue::Semitones(0),
+    ParameterValue::Semitones(1),
+    ParameterValue::Semitones(2),
+    ParameterValue::Semitones(3),
+    ParameterValue::Semitones(4),
+    ParameterValue::Semitones(5),
+    ParameterValue::Semitones(6),
+    ParameterValue::Semitones(7),
+    ParameterValue::Semitones(8),
+    ParameterValue::Semitones(9),
+    ParameterValue::Semitones(10),
+    ParameterValue::Semitones(11),
+    ParameterValue::Semitones(12),
+];
+
 const ECHO: ParameterSpec = beat_spec(&SIXTEENTH_TO_SIXTEEN, BeatLength::HALF);
+const ONE_BEAT: ParameterSpec = beat_spec(&SIXTEENTH_TO_SIXTEEN, BeatLength::ONE);
+const ENDLESS: ParameterSpec = ParameterSpec {
+    name: "Beat",
+    steps: &SIGNED_SIXTEENTH_TO_THIRTY_TWO,
+    default: rising(BeatLength::FOUR),
+};
+const PITCH: ParameterSpec = ParameterSpec {
+    name: "Pitch",
+    steps: &OCTAVE_EACH_WAY,
+    default: ParameterValue::Semitones(12),
+};
+const TONE: ParameterSpec = ParameterSpec {
+    name: "Tone",
+    steps: &SIGNED_TENS_OF_PERCENT,
+    default: ParameterValue::Percent(0),
+};
 const GATE: ParameterSpec = beat_spec(&SIXTEENTH_TO_SIXTEEN, BeatLength::EIGHTH);
 const FILTER_SWEEP: ParameterSpec = beat_spec(&SIXTEENTH_TO_THIRTY_TWO, BeatLength::FOUR);
 const PHASER_SWEEP: ParameterSpec = beat_spec(&SIXTEENTH_TO_THIRTY_TWO, BeatLength::TWO);
@@ -312,12 +417,40 @@ const RESONANCE: ParameterSpec = ParameterSpec {
 /// The parameter of every effect, as its BEAT buttons step through it.
 pub(crate) fn parameter_spec(kind: EffectKind) -> Option<&'static ParameterSpec> {
     match kind {
-        EffectKind::Echo | EffectKind::PingPong => Some(&ECHO),
-        EffectKind::Reverb => Some(&REVERB),
-        EffectKind::LowPass | EffectKind::HighPass | EffectKind::BandPass => Some(&RESONANCE),
+        EffectKind::Delay
+        | EffectKind::Echo
+        | EffectKind::Spiral
+        | EffectKind::UpEcho
+        | EffectKind::DownEcho
+        | EffectKind::Pan
+        | EffectKind::SlipRoll
+        | EffectKind::Roll
+        | EffectKind::RevRoll
+        | EffectKind::LowCutEcho
+        | EffectKind::PingPong
+        | EffectKind::Helix
+        | EffectKind::BpfEcho
+        | EffectKind::Noise
+        | EffectKind::SpiralUp
+        | EffectKind::HpfEcho
+        | EffectKind::LpfEcho
+        | EffectKind::CrushEcho
+        | EffectKind::SpiralDown => Some(&ECHO),
+        EffectKind::RevDelay
+        | EffectKind::MtDelay
+        | EffectKind::VinylBrake
+        | EffectKind::Stretch
+        | EffectKind::EchoOut => Some(&ONE_BEAT),
+        EffectKind::Reverb | EffectKind::ReverbUp | EffectKind::ReverbDown => Some(&REVERB),
+        EffectKind::Trans => Some(&GATE),
         EffectKind::Filter | EffectKind::Flanger => Some(&FILTER_SWEEP),
         EffectKind::Phaser => Some(&PHASER_SWEEP),
-        EffectKind::Gate => Some(&GATE),
+        EffectKind::Robot => Some(&TONE),
+        EffectKind::Pitch => Some(&PITCH),
+        EffectKind::EnigmaJet | EffectKind::MobiusSaw | EffectKind::MobiusTriangle => {
+            Some(&ENDLESS)
+        }
+        EffectKind::LowPass | EffectKind::HighPass | EffectKind::BandPass => Some(&RESONANCE),
         EffectKind::Crusher => None,
         EffectKind::Brake => Some(&BRAKE),
         EffectKind::Backspin => Some(&BACKSPIN),

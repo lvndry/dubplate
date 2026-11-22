@@ -8,6 +8,9 @@ use crate::processor::{ProcessContext, StereoBlock};
 /// How far the filter knob must leave its centre before a preset's effect comes in, the same
 /// dead zone as the filter's own.
 const DEAD_ZONE: f32 = 0.02;
+/// How far the Pitch preset bends the music at the end of the knob: an octave down to the
+/// left, an octave up to the right.
+const PITCH_RANGE_SEMITONES: i8 = 12;
 
 /// A Smart CFX preset: the channel's filter knob drives the filter and a second effect at
 /// once, the effect growing with the square of the knob's travel from the centre so the first
@@ -27,17 +30,21 @@ pub enum SmartCfx {
     Jet,
     /// A 2-beat phaser into the filter.
     Phase,
+    /// The pitch bent down an octave to the left and up an octave to the right, into the
+    /// filter, like a DJ mixer's Pitch colour effect.
+    Pitch,
 }
 
 impl SmartCfx {
     /// Every preset, in the order the preset button steps through them.
-    pub const ALL: [SmartCfx; 6] = [
+    pub const ALL: [SmartCfx; 7] = [
         SmartCfx::Space,
         SmartCfx::DubEcho,
         SmartCfx::Crush,
         SmartCfx::Chop,
         SmartCfx::Jet,
         SmartCfx::Phase,
+        SmartCfx::Pitch,
     ];
 
     /// The next preset, wrapping round to the first.
@@ -63,6 +70,11 @@ impl SmartCfx {
             SmartCfx::Chop => (EffectKind::Gate, beats(BeatLength::EIGHTH), 1.0),
             SmartCfx::Jet => (EffectKind::Flanger, beats(BeatLength::FOUR), 1.0),
             SmartCfx::Phase => (EffectKind::Phaser, beats(BeatLength::TWO), 1.0),
+            SmartCfx::Pitch => (
+                EffectKind::Pitch,
+                Some(ParameterValue::Semitones(PITCH_RANGE_SEMITONES)),
+                1.0,
+            ),
         }
     }
 
@@ -81,6 +93,7 @@ impl fmt::Display for SmartCfx {
             SmartCfx::Chop => "chop",
             SmartCfx::Jet => "jet",
             SmartCfx::Phase => "phase",
+            SmartCfx::Pitch => "pitch",
         })
     }
 }
@@ -90,6 +103,7 @@ pub(crate) struct SmartCfxRack {
     effects: [Box<dyn Effect>; SmartCfx::ALL.len()],
     selected: Option<SmartCfx>,
     travel: f32,
+    lowering: bool,
 }
 
 impl SmartCfxRack {
@@ -108,6 +122,7 @@ impl SmartCfxRack {
             }),
             selected: None,
             travel: 0.0,
+            lowering: false,
         }
     }
 
@@ -120,6 +135,7 @@ impl SmartCfxRack {
     /// Follows the filter knob, from 0 to 1 with its centre at 0.5.
     pub(crate) fn set_knob(&mut self, position: f32) {
         self.travel = ((position - 0.5).abs() * 2.0).clamp(0.0, 1.0);
+        self.lowering = position < 0.5;
         self.update();
     }
 
@@ -130,6 +146,14 @@ impl SmartCfxRack {
             if engaged {
                 let (_, _, max_depth) = preset.recipe();
                 effect.set_depth(amount * amount * max_depth);
+                if preset == SmartCfx::Pitch {
+                    let range = if self.lowering {
+                        -PITCH_RANGE_SEMITONES
+                    } else {
+                        PITCH_RANGE_SEMITONES
+                    };
+                    effect.set_parameter(ParameterValue::Semitones(range));
+                }
             }
             effect.set_enabled(engaged);
         }
