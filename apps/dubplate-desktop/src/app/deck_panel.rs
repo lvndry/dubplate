@@ -328,6 +328,14 @@ fn transport(
             cx,
         ))
         .child(toggle(
+            ("vinyl", deck.index()),
+            "Vinyl",
+            Lit::when(app.vinyl_mode(deck)),
+            colour,
+            Command::ToggleVinylMode(deck),
+            cx,
+        ))
+        .child(toggle(
             ("grid", deck.index()),
             "Grid",
             Lit::when(app.grid_bar == Some(deck)),
