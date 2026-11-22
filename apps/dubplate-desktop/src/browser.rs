@@ -35,6 +35,8 @@ const SOURCE_WIDTH: Pixels = px(96.0);
 const TITLE_SHARE: f32 = 3.0;
 const ARTIST_SHARE: f32 = 2.0;
 const LOAD_WIDTH: Pixels = px(84.0);
+/// What the source column says of a track whose file is not where rekordbox says it is.
+const MISSING_SOURCE: &str = "File missing";
 const ROW_GROUP: &str = "track-row";
 
 /// Where the library stands.
@@ -496,6 +498,7 @@ impl Browser {
             None => SharedString::default(),
         };
         let selected = self.selected == Some(track);
+        let missing = self.missing.contains(&track);
         let dragged = DraggedTrack {
             track,
             title: row.title.clone(),
@@ -544,7 +547,8 @@ impl Browser {
                     .child(
                         text_cell(row.title.clone())
                             .min_w_0()
-                            .font_weight(gpui::FontWeight::MEDIUM),
+                            .font_weight(gpui::FontWeight::MEDIUM)
+                            .when(missing, |title| title.text_color(theme::MUTED)),
                     ),
             )
             .child(
@@ -564,12 +568,20 @@ impl Browser {
                     .text_color(theme::MUTED),
             )
             .child(
-                text_cell(row.source.clone())
-                    .w(SOURCE_WIDTH)
-                    .flex_none()
-                    .px(px(8.0))
-                    .text_size(theme::SMALL_TEXT_SIZE)
-                    .text_color(theme::MUTED),
+                text_cell(if missing {
+                    MISSING_SOURCE.into()
+                } else {
+                    row.source.clone()
+                })
+                .w(SOURCE_WIDTH)
+                .flex_none()
+                .px(px(8.0))
+                .text_size(theme::SMALL_TEXT_SIZE)
+                .text_color(if missing {
+                    theme::ATTENTION
+                } else {
+                    theme::MUTED
+                }),
             )
             .when(actions != Actions::None, |row| {
                 row.child(
@@ -586,7 +598,7 @@ impl Browser {
                                 .group_hover(ROW_GROUP, |style| style.opacity(1.0))
                         })
                         .map(|buttons| {
-                            if self.missing.contains(&track) {
+                            if missing {
                                 buttons.child(relink_button(position, track, cx))
                             } else if actions == Actions::Load {
                                 buttons.children(

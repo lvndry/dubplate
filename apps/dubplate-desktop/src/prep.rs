@@ -5,11 +5,11 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use dubplate_prep::{
-    Key, PrepTrack, ProposedCues, ReadyReport, SetEntry, TrackReadiness, propose_mix_cues,
-    ready_report,
+    GridCorrection, Key, PrepTrack, ProposedCues, ReadyReport, SetEntry, TrackReadiness,
+    propose_mix_cues, ready_report,
 };
 use dubplate_rekordbox::TrackAnalysis;
-use dubplate_rekordbox::analysis::{Beat, BeatGrid, SongStructure};
+use dubplate_rekordbox::analysis::{BeatGrid, SongStructure};
 
 use crate::collection::{Collection, CollectionTrack, TrackOrigin};
 
@@ -66,49 +66,6 @@ fn prep_track(entry: &CollectionTrack) -> Option<PrepTrack> {
         bpm: entry.track.bpm.map(|bpm| bpm as f32),
         energy: None,
     })
-}
-
-/// Beats in a bar.
-const BEATS_PER_BAR: i32 = 4;
-
-/// The DJ's fix of rekordbox's beat grid for one track, kept in the set store.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct GridCorrection {
-    /// How far every beat moves, in milliseconds, later when positive.
-    pub offset_ms: i32,
-    /// How many beats the bars move, later when positive.
-    pub downbeat_shift: i32,
-}
-
-impl GridCorrection {
-    /// The correction a set entry keeps.
-    pub fn of(entry: &SetEntry) -> Self {
-        Self {
-            offset_ms: entry.grid_offset_ms,
-            downbeat_shift: entry.downbeat_shift,
-        }
-    }
-
-    /// rekordbox's grid with this correction: every beat moved by the offset, beats that would
-    /// fall before the start left out, and the bars counted from the shifted downbeat.
-    pub fn apply(self, grid: &BeatGrid) -> BeatGrid {
-        let beats = grid
-            .beats
-            .iter()
-            .filter_map(|beat| {
-                let time_ms = i64::from(beat.time_ms) + i64::from(self.offset_ms);
-                let in_bar = (i32::from(beat.beat_in_bar) - 1 - self.downbeat_shift)
-                    .rem_euclid(BEATS_PER_BAR)
-                    + 1;
-                Some(Beat {
-                    time_ms: u32::try_from(time_ms).ok()?,
-                    beat_in_bar: u16::try_from(in_bar).ok()?,
-                    ..*beat
-                })
-            })
-            .collect();
-        BeatGrid { beats }
-    }
 }
 
 /// What a set track's analysis holds for checking it: its grid, its phrases and its
@@ -311,6 +268,7 @@ impl SeamSummary {
 #[cfg(test)]
 mod tests {
     use dubplate_prep::{ProposalSource, ProposedCue};
+    use dubplate_rekordbox::analysis::Beat;
 
     use super::*;
 
@@ -392,52 +350,24 @@ mod tests {
         );
     }
 
-    fn beat(time_ms: u32, beat_in_bar: u16) -> Beat {
-        Beat {
+    #[test]
+    fn mix_cues_land_on_the_nearest_downbeat() {
+        let beat = |time_ms, beat_in_bar| Beat {
             beat_in_bar,
             tempo_hundredths: 12_000,
             time_ms,
-        }
-    }
-
-    #[test]
-    fn a_correction_moves_the_beats_and_the_bars() {
+        };
         let grid = BeatGrid {
             beats: vec![
-                beat(0, 1),
-                beat(500, 2),
-                beat(1000, 3),
-                beat(1500, 4),
-                beat(2000, 1),
+                beat(20, 4),
+                beat(520, 1),
+                beat(1020, 2),
+                beat(1520, 3),
+                beat(2020, 4),
             ],
         };
-        let later = GridCorrection {
-            offset_ms: 20,
-            downbeat_shift: 1,
-        }
-        .apply(&grid);
-        let shown: Vec<(u32, u16)> = later
-            .beats
-            .iter()
-            .map(|beat| (beat.time_ms, beat.beat_in_bar))
-            .collect();
-        assert_eq!(shown, [(20, 4), (520, 1), (1020, 2), (1520, 3), (2020, 4)]);
-        let earlier = GridCorrection {
-            offset_ms: -10,
-            downbeat_shift: -1,
-        }
-        .apply(&grid);
-        assert_eq!(
-            earlier.beats.len(),
-            4,
-            "a beat moved before the start is left out"
-        );
-        assert_eq!(
-            (earlier.beats[0].time_ms, earlier.beats[0].beat_in_bar),
-            (490, 3)
-        );
-        assert_eq!(nearest_bar_ms(&later, 1.9), Some(520));
-        assert_eq!(nearest_bar_ms(&later, 0.1), Some(520));
+        assert_eq!(nearest_bar_ms(&grid, 1.9), Some(520));
+        assert_eq!(nearest_bar_ms(&grid, 0.1), Some(520));
         assert_eq!(nearest_bar_ms(&BeatGrid { beats: Vec::new() }, 1.0), None);
     }
 

@@ -220,6 +220,8 @@ pub enum Command {
     SwitchPrepareFocus,
     /// Load the set's first track on deck A and its second on deck B, each at its mix-in.
     LoadSet,
+    /// Save the set as a rekordbox XML file for rekordbox to import.
+    ExportSet,
     /// Show or hide the list of shortcuts.
     ToggleHelp,
     /// Show or hide the library's settings: the music folders and rekordbox.

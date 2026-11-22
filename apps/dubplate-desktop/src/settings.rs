@@ -3,15 +3,11 @@
 
 use std::path::{Path, PathBuf};
 
+use dubplate_library::{DataFolder, LibrarySettings};
 use serde::{Deserialize, Serialize};
 
 use crate::controls::DEFAULT_SAMPLER_VOLUME;
 use crate::effects::EffectUnitSetting;
-
-const FILE_NAME: &str = "settings.toml";
-const LIBRARY_CACHE_NAME: &str = "library-cache.json";
-const SETS_NAME: &str = "sets.sqlite";
-const ENERGY_CACHE_NAME: &str = "energy.sqlite";
 
 /// Why the settings could not be read or written.
 #[derive(Debug, thiserror::Error)]
@@ -52,29 +48,15 @@ pub struct Settings {
     pub lock_playing_deck: bool,
     /// The sound card last used, by name.
     pub audio_device: Option<String>,
-    /// The music folders that make up the library, in the order they were added.
-    pub music_folders: Vec<PathBuf>,
-    /// Whether rekordbox's collection is part of the library.
-    pub import_rekordbox: bool,
+    /// The music folders, whether rekordbox is in the library, and the relinked files.
+    #[serde(flatten)]
+    pub library: LibrarySettings,
     /// Each effect unit's effect, target, beat and depth, FX 1 first.
     pub effect_units: Vec<EffectUnitSetting>,
     /// The Smart CFX preset SMART CFX turns on, by name.
     pub smart_cfx_preset: Option<String>,
     /// The sampler's volume and the sample in each slot.
     pub sampler: SamplerSetting,
-    /// The new places of rekordbox tracks whose files moved, which the collection plays from
-    /// instead of where rekordbox says. rekordbox itself is never written.
-    pub relinks: Vec<RelinkSetting>,
-}
-
-/// A rekordbox track's file, found at a new place.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RelinkSetting {
-    /// Where rekordbox says the file is.
-    pub from: PathBuf,
-    /// Where it is now.
-    pub to: PathBuf,
 }
 
 /// The sampler as the DJ left it.
@@ -123,12 +105,10 @@ impl Default for Settings {
         Self {
             lock_playing_deck: true,
             audio_device: None,
-            music_folders: Vec::new(),
-            import_rekordbox: false,
+            library: LibrarySettings::default(),
             effect_units: Vec::new(),
             smart_cfx_preset: None,
             sampler: SamplerSetting::default(),
-            relinks: Vec::new(),
         }
     }
 }
@@ -136,22 +116,22 @@ impl Default for Settings {
 impl Settings {
     /// Where the settings live for this user.
     pub fn default_path() -> Result<PathBuf, SettingsError> {
-        Ok(configuration_directory()?.join(FILE_NAME))
+        Ok(data_folder()?.settings())
     }
 
     /// Where the sets are kept.
     pub fn sets_path() -> Result<PathBuf, SettingsError> {
-        Ok(configuration_directory()?.join(SETS_NAME))
+        Ok(data_folder()?.sets())
     }
 
     /// Where the tracks' energy ratings are kept between launches.
     pub fn energy_cache_path() -> Result<PathBuf, SettingsError> {
-        Ok(configuration_directory()?.join(ENERGY_CACHE_NAME))
+        Ok(data_folder()?.energy_cache())
     }
 
     /// Where the scans of the music folders are kept between launches.
     pub fn library_cache_path() -> Result<PathBuf, SettingsError> {
-        Ok(configuration_directory()?.join(LIBRARY_CACHE_NAME))
+        Ok(data_folder()?.library_cache())
     }
 
     /// Reads the settings at `path`. A missing file gives the defaults.
@@ -202,14 +182,17 @@ impl Settings {
 }
 
 /// Dubplate's own folder in the user's configuration, never one of rekordbox's.
-fn configuration_directory() -> Result<PathBuf, SettingsError> {
-    let config = dirs::config_dir().ok_or(SettingsError::NoConfigurationDirectory)?;
-    Ok(config.join("dubplate"))
+fn data_folder() -> Result<DataFolder, SettingsError> {
+    DataFolder::for_user().ok_or(SettingsError::NoConfigurationDirectory)
 }
 
 #[cfg(test)]
 mod tests {
+    use dubplate_library::Relink;
+
     use super::*;
+
+    const FILE_NAME: &str = "settings.toml";
 
     #[test]
     fn settings_survive_a_save_and_a_load() {
@@ -218,11 +201,17 @@ mod tests {
         let settings = Settings {
             lock_playing_deck: false,
             audio_device: Some("Studio Speakers".to_owned()),
-            music_folders: vec![
-                PathBuf::from("/Music/House"),
-                PathBuf::from("/Music/Amapiano"),
-            ],
-            import_rekordbox: true,
+            library: LibrarySettings {
+                music_folders: vec![
+                    PathBuf::from("/Music/House"),
+                    PathBuf::from("/Music/Amapiano"),
+                ],
+                import_rekordbox: true,
+                relinks: vec![Relink {
+                    from: PathBuf::from("/Music/Old/Track.m4a"),
+                    to: PathBuf::from("/Music/New/Track.m4a"),
+                }],
+            },
             effect_units: vec![EffectUnitSetting {
                 effect: "reverb".to_owned(),
                 target: "M".to_owned(),
@@ -241,14 +230,39 @@ mod tests {
                     sync: false,
                 }],
             },
-            relinks: vec![RelinkSetting {
-                from: PathBuf::from("/Music/Old/Track.m4a"),
-                to: PathBuf::from("/Music/New/Track.m4a"),
-            }],
         };
         settings.save(&path).unwrap();
         assert_eq!(Settings::load(&path).unwrap(), settings);
+        assert_eq!(
+            LibrarySettings::load(&path).unwrap(),
+            settings.library,
+            "the library part reads back on its own, as the command line reads it"
+        );
         assert!(!path.with_extension("toml.partial").exists());
+    }
+
+    #[test]
+    fn a_file_with_every_setting_at_the_top_keeps_the_library() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join(FILE_NAME);
+        std::fs::write(
+            &path,
+            "lock_playing_deck = false\nmusic_folders = [\"/Music/House\"]\n\
+             import_rekordbox = true\n\n[[effect_units]]\neffect = \"echo\"\ntarget = \"M\"\n\
+             beat = \"1\"\ndepth = 0.5\n\n[sampler]\nvolume = 0.6\nslots = []\n\n\
+             [[relinks]]\nfrom = \"/Old/Track.m4a\"\nto = \"/New/Track.m4a\"\n",
+        )
+        .unwrap();
+        let settings = Settings::load(&path).unwrap();
+        assert!(!settings.lock_playing_deck);
+        assert_eq!(
+            settings.library.music_folders,
+            [PathBuf::from("/Music/House")]
+        );
+        assert!(settings.library.import_rekordbox);
+        assert_eq!(settings.library.relinks.len(), 1);
+        assert_eq!(settings.effect_units.len(), 1);
+        assert_eq!(settings.sampler.volume, 0.6);
     }
 
     #[test]
@@ -260,9 +274,9 @@ mod tests {
         let settings = Settings::load(&path).unwrap();
         assert!(settings.lock_playing_deck);
         assert_eq!(settings.audio_device.as_deref(), Some("Headphones"));
-        assert!(settings.music_folders.is_empty());
+        assert!(settings.library.music_folders.is_empty());
         assert!(
-            !settings.import_rekordbox,
+            !settings.library.import_rekordbox,
             "rekordbox is only read when the DJ asks"
         );
     }
@@ -295,7 +309,7 @@ mod tests {
         let settings = Settings::load(&path).unwrap();
         assert_eq!(settings.audio_device.as_deref(), Some("DDJ-FLX4"));
         assert_eq!(
-            settings.music_folders,
+            settings.library.music_folders,
             vec![PathBuf::from("/Music/Amapiano")]
         );
     }

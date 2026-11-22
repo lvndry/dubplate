@@ -227,7 +227,7 @@ impl DubplateApp {
         if accepted.is_empty() {
             return;
         }
-        self.settings.relinks = with_relocations(&self.settings.relinks, accepted);
+        self.settings.library.relinks = with_relocations(&self.settings.library.relinks, accepted);
         self.save_settings(cx);
         let mut problems = Vec::new();
         if let Some(editor) = &mut self.set_editor {

@@ -8,8 +8,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use dubplate_prep::{
-    EnergyDirection, PrepTrack, ReadyProblem, ReadyReport, SetEntry, SetTrack, SetWarning,
-    StoreError, WarningPosition, set_warnings, suggest_next,
+    EnergyDirection, GridCorrection, PrepTrack, ReadyProblem, ReadyReport, SetEntry, SetTrack,
+    SetWarning, StoreError, WarningPosition, set_warnings, suggest_next,
 };
 use gpui::{App, Context};
 
@@ -19,8 +19,7 @@ use crate::commands::{Direction, SetEdit};
 use crate::energy::{EnergyRange, direction_toward_target, set_curve};
 use crate::loading::LoadSource;
 use crate::prep::{
-    GridCorrection, SeamSummary, TrackCheck, accept_proposal, check_track, nearest_bar_ms,
-    readiness,
+    SeamSummary, TrackCheck, accept_proposal, check_track, nearest_bar_ms, readiness,
 };
 use crate::set::{SetEditor, SetTrackRef};
 
