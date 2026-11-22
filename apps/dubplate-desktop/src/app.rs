@@ -250,11 +250,13 @@ impl DubplateApp {
                 BrowserEvent::RelinkAll => this.start_relink(None, cx),
                 BrowserEvent::Relink(track) => this.start_relink(Some(track), cx),
                 BrowserEvent::SeparateStems(track) => {
-                    let path = this
-                        .collection()
-                        .and_then(|collection| collection.track(track).track.file_path.clone());
-                    if let Some(path) = path {
+                    if let Some(path) = this.track_file(track) {
                         this.separate_stems_now(path, cx);
+                    }
+                }
+                BrowserEvent::CancelStems(track) => {
+                    if let Some(path) = this.track_file(track) {
+                        this.cancel_stems(path, cx);
                     }
                 }
                 BrowserEvent::Sorted { screen, sort } => {

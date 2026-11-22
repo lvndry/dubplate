@@ -1,7 +1,7 @@
 //! The window's view of every track's stems: asking for separations, keeping the status of
 //! each track as the separation queue reports it, and the words the library and the set show.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -19,6 +19,7 @@ pub struct TrackStems {
     queue: Option<SeparationQueue>,
     statuses: StemStatuses,
     vocals: HashMap<PathBuf, VocalPresence>,
+    set_tracks: HashSet<PathBuf>,
 }
 
 impl TrackStems {
@@ -39,6 +40,7 @@ impl TrackStems {
             queue,
             statuses: Arc::default(),
             vocals: HashMap::new(),
+            set_tracks: HashSet::new(),
         }
     }
 
@@ -52,6 +54,23 @@ impl TrackStems {
         if let Some(queue) = &self.queue {
             queue.request_all(requests);
         }
+    }
+
+    /// Asks for the stems of the set's and the shortlist's tracks, and stops waiting for those
+    /// asked for earlier that left both: a track the DJ asked for by hand is not touched.
+    pub fn follow_set(&mut self, requests: Vec<(PathBuf, SeparationPriority)>) {
+        let tracks: HashSet<PathBuf> = requests.iter().map(|(track, _)| track.clone()).collect();
+        let left: Vec<PathBuf> = self
+            .set_tracks
+            .difference(&tracks)
+            .filter(|track| self.status(track).is_pending())
+            .cloned()
+            .collect();
+        for track in left {
+            self.cancel(track);
+        }
+        self.set_tracks = tracks;
+        self.request(requests);
     }
 
     /// Asks which of these tracks have stems already, without separating any.

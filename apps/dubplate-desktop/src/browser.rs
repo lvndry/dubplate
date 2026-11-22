@@ -86,6 +86,8 @@ pub enum BrowserEvent {
     Relink(TrackIndex),
     /// Separate a track into stems, ahead of every other track waiting.
     SeparateStems(TrackIndex),
+    /// Stop separating a track, or forget it if it waits.
+    CancelStems(TrackIndex),
     /// The DJ sorted a screen's tracks by another column, or went back to the crate's order.
     Sorted {
         /// The screen.
@@ -989,6 +991,7 @@ impl Browser {
                             matches!(status, StemsStatus::None | StemsStatus::Failed(_))
                                 && entry.track.file_path.is_some()
                                 && !missing;
+                        let pending = status.is_pending();
                         cell.font_family(MONO_FAMILY)
                             .text_size(theme::SMALL_TEXT_SIZE)
                             .text_color(theme::MUTED)
@@ -1006,6 +1009,16 @@ impl Browser {
                                     })
                                     .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {
                                         cx.emit(BrowserEvent::SeparateStems(track));
+                                    }))
+                            })
+                            .when(pending, |cell| {
+                                cell.cursor_pointer()
+                                    .hover(|cell| cell.text_color(theme::TEXT))
+                                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                        cx.stop_propagation()
+                                    })
+                                    .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {
+                                        cx.emit(BrowserEvent::CancelStems(track));
                                     }))
                             })
                             .when(!separable, |cell| cell.child(text))

@@ -11,6 +11,7 @@ use gpui::Context;
 
 use super::DubplateApp;
 use super::notice::NoticePlace;
+use crate::collection::TrackIndex;
 use crate::commands::StemAction;
 
 /// How often the separation queue's reports are taken.
@@ -50,12 +51,18 @@ impl DubplateApp {
             .into_iter()
             .map(|entry| (entry.track_path.clone(), SeparationPriority::Shortlist));
         let requests: Vec<(PathBuf, SeparationPriority)> = set.chain(shortlist).collect();
-        self.stems.request(requests);
+        self.stems.follow_set(requests);
     }
 
     /// Separates `track` before every other track waiting, as the DJ asked.
     pub(super) fn separate_stems_now(&mut self, track: PathBuf, cx: &mut Context<'_, Self>) {
         self.stems.request([(track, SeparationPriority::Now)]);
+        cx.notify();
+    }
+
+    /// Stops separating `track`, or forgets it if it waits.
+    pub(super) fn cancel_stems(&mut self, track: PathBuf, cx: &mut Context<'_, Self>) {
+        self.stems.cancel(track);
         cx.notify();
     }
 
@@ -142,6 +149,11 @@ impl DubplateApp {
             .ok();
         })
         .detach();
+    }
+
+    /// The file of the library's track `track`.
+    pub(super) fn track_file(&self, track: TrackIndex) -> Option<PathBuf> {
+        self.collection()?.track(track).track.file_path.clone()
     }
 
     /// The file of the track on `deck`.
