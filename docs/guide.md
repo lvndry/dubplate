@@ -108,6 +108,8 @@ Each deck's **overview** shows the whole track in rekordbox's three bands (lows 
 
 On screen, each deck also has Sync, Master, Key lock and Slip, and the compact effects strip drives the three effect units. Press ? for every keyboard shortcut.
 
+Under the channel faders, each channel has a crossfader assign switch, as on a DJM and in rekordbox's mixer: **A**, **THRU** or **B** (X and Shift+X step deck A's and deck B's). THRU takes the channel off the crossfader, so only its own fader sets its level; it is outlined in amber, the crossfader's ends show which decks are on each side, and with both channels on THRU the crossfader dims. Option+X, or Settings > Mixer > Crossfader, turns the crossfader off altogether: both channels then play as if on THRU, so it moves without changing the sound, and Smart Fader is unavailable. Smart Fader needs one deck on each side and rests otherwise. Settings > Mixer has the crossfader curve (Blend, a smooth constant-power mix; Constant, no dip in the middle; Scratch, a sharp cut) and the channel fader curve (Slow, Standard, Fast), as rekordbox's Preferences > Controller > Mixer. Dubplate remembers them.
+
 Key lock (a CDJ's Master Tempo) is on for every track you load, so moving the tempo or syncing keeps a track's pitch. Turn **Key lock on new tracks** off in Settings to load tracks without it, as rekordbox's Master Tempo default; the deck's Key lock button (or K, Shift+K) still changes it for the track on that deck. Key lock steps aside while you scratch.
 
 Drag a deck's waveform on the lanes to move it, as with a jog: a stopped deck scrubs under your hand and lands on the nearest beat when you let go (with quantize on); a playing deck is nudged, never jumped; Shift+drag searches.
