@@ -660,7 +660,7 @@ fn next_panel(
                     )
                 }),
         );
-    if pending {
+    if pending && next.is_empty() {
         panel = panel.child(
             div()
                 .text_size(theme::SMALL_TEXT_SIZE)

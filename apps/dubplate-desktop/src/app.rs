@@ -32,7 +32,7 @@ mod track_check;
 mod waveforms;
 
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -185,6 +185,7 @@ pub struct DubplateApp {
     quit_refused: bool,
     prepare_focus: PrepareFocus,
     next_cursor: usize,
+    queued_suggestions: VecDeque<usize>,
     set_scroll: ScrollHandle,
     prepare_view: Arc<prepare::PrepareViewModel>,
     prepare_generation: u64,
@@ -366,6 +367,7 @@ impl DubplateApp {
             quit_refused: false,
             prepare_focus: PrepareFocus::Library,
             next_cursor: 0,
+            queued_suggestions: VecDeque::new(),
             set_scroll: ScrollHandle::new(),
             prepare_view: Arc::default(),
             prepare_generation: 0,
