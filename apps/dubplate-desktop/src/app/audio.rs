@@ -8,7 +8,8 @@ use dubplate_engine::{
 };
 use gpui::{Context, SharedString};
 
-use super::{BUFFER_FRAMES, DubplateApp, Engine, NoticePlace, error_chain};
+use super::notice::NoticePlace;
+use super::{BUFFER_FRAMES, DubplateApp, Engine, error_chain};
 use crate::controls::{MixerPositions, master_gain_at, tempo_fader, trim_gain_at};
 
 /// Starts the engine on the sound card called `device`, or on the system's default one when
@@ -67,11 +68,7 @@ fn apply_mixer(controller: &mut Controller, mixer: &MixerPositions) -> Result<()
 fn carry_over(source: &Controller, target: &mut Controller) -> Result<(), EngineError> {
     for deck in DeckId::ALL {
         let snapshot = source.snapshot_deck(deck)?;
-        target.restore_deck(
-            deck,
-            &snapshot,
-            dubplate_engine::DeckRestorePolicy::DeviceChange,
-        )?;
+        target.restore_deck(deck, &snapshot)?;
         let tempo = source.tempo_state(deck);
         if tempo.is_master {
             target.set_master_tempo(MasterTempo::Deck(deck))?;

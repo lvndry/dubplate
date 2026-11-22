@@ -193,7 +193,9 @@ pub fn key_bindings() -> Vec<KeyBinding> {
 }
 
 /// Focused controls keep their activation and editing keys, while non-conflicting DJ
-/// shortcuts (including pad digits and Option-digit suggestions) remain available.
+/// shortcuts (including pad digits and Option-digit suggestions) remain available. A control
+/// only reads those keys bare or with Shift, so Command, Control and Option chords such as
+/// Option-Up or Command-Enter always reach the window.
 fn binding_context(shortcut: &Shortcut) -> &'static str {
     match shortcut.scope {
         Scope::Window => WINDOW_CONTEXT,
@@ -204,19 +206,24 @@ fn binding_context(shortcut: &Shortcut) -> &'static str {
                 .rsplit('-')
                 .next()
                 .unwrap_or(shortcut.keystroke);
-            if matches!(
-                key,
-                "space"
-                    | "enter"
-                    | "left"
-                    | "right"
-                    | "up"
-                    | "down"
-                    | "home"
-                    | "end"
-                    | "backspace"
-                    | "tab"
-            ) {
+            let chorded = ["cmd-", "ctrl-", "alt-"]
+                .iter()
+                .any(|modifier| shortcut.keystroke.contains(modifier));
+            if !chorded
+                && matches!(
+                    key,
+                    "space"
+                        | "enter"
+                        | "left"
+                        | "right"
+                        | "up"
+                        | "down"
+                        | "home"
+                        | "end"
+                        | "backspace"
+                        | "tab"
+                )
+            {
                 OUTSIDE_CONTROL_CONTEXT
             } else {
                 OUTSIDE_TEXT_CONTEXT
@@ -481,7 +488,16 @@ mod tests {
 
     #[test]
     fn focused_controls_keep_editing_keys_and_leave_dj_shortcuts_available() {
-        for key in ["m", "c", "1", "shift-1", "alt-1"] {
+        for key in [
+            "m",
+            "c",
+            "1",
+            "shift-1",
+            "alt-1",
+            "alt-up",
+            "cmd-enter",
+            "cmd-z",
+        ] {
             let shortcut = SHORTCUTS
                 .iter()
                 .find(|shortcut| shortcut.keystroke == key)
