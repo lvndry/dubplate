@@ -1888,6 +1888,7 @@ dependencies = [
  "criterion",
  "crossterm",
  "dubplate-fx",
+ "libc",
  "rtrb",
  "signalsmith-stretch",
  "symphonia 0.6.1",
@@ -1902,6 +1903,7 @@ dependencies = [
  "criterion",
  "dubplate-engine",
  "hound",
+ "libc",
  "tempfile",
 ]
 
