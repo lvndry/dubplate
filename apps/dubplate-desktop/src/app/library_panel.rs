@@ -136,6 +136,7 @@ fn buffer_row(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl Into
                 .child("Buffer size")
                 .child(
                     div()
+                        .id("buffer-sizes")
                         .role(gpui::Role::RadioGroup)
                         .aria_label("Buffer size")
                         .flex()
