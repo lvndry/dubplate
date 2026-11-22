@@ -1,11 +1,11 @@
 //! What the keyboard does, so the decks can be played without a controller. The key bindings
 //! and the help overlay both come from [`SHORTCUTS`].
 
-use dubplate_engine::DeckId;
+use dubplate_engine::{DeckId, Stem};
 use dubplate_prep::GridEdit;
 use gpui::{Action, KeyBinding};
 
-use crate::commands::{Command, Direction, LoopAction, Mode, PadPress, Press, SetEdit};
+use crate::commands::{Command, Direction, LoopAction, Mode, PadPress, Press, SetEdit, StemAction};
 
 /// How far one press of [ or ] moves a track's grid, in milliseconds.
 pub const GRID_NUDGE_MS: i32 = 5;
@@ -108,6 +108,9 @@ pub const SHORTCUTS: &[Shortcut] = &[
     outside_text("=", Command::NudgeTempo(DeckId::A, Direction::Up)),
     outside_text("shift--", Command::NudgeTempo(DeckId::B, Direction::Down)),
     outside_text("shift-=", Command::NudgeTempo(DeckId::B, Direction::Up)),
+    outside_text("alt-x", Command::ToggleCrossfader),
+    outside_text("z", Command::CycleCrossfaderAssign(DeckId::A)),
+    outside_text("shift-z", Command::CycleCrossfaderAssign(DeckId::B)),
     outside_text("left", Command::MoveCrossfader(Direction::Down)),
     outside_text("right", Command::MoveCrossfader(Direction::Up)),
     outside_text("shift-left", Command::LoadSelected(DeckId::A)),
@@ -175,9 +178,48 @@ pub const SHORTCUTS: &[Shortcut] = &[
     outside_text("shift-e", Command::ToggleGridBar(DeckId::B)),
     outside_text("k", Command::ToggleKeyLock(DeckId::A)),
     outside_text("shift-k", Command::ToggleKeyLock(DeckId::B)),
-    outside_text("q", Command::ToggleQuantize),
-    outside_text("v", Command::ToggleVinylMode(DeckId::A)),
-    outside_text("shift-v", Command::ToggleVinylMode(DeckId::B)),
+    outside_text(
+        "q",
+        Command::Stems(DeckId::A, StemAction::Toggle(Stem::Drums)),
+    ),
+    outside_text(
+        "shift-q",
+        Command::Stems(DeckId::B, StemAction::Toggle(Stem::Drums)),
+    ),
+    outside_text(
+        "w",
+        Command::Stems(DeckId::A, StemAction::Toggle(Stem::Bass)),
+    ),
+    outside_text(
+        "shift-w",
+        Command::Stems(DeckId::B, StemAction::Toggle(Stem::Bass)),
+    ),
+    outside_text(
+        "r",
+        Command::Stems(DeckId::A, StemAction::Toggle(Stem::Melody)),
+    ),
+    outside_text(
+        "shift-r",
+        Command::Stems(DeckId::B, StemAction::Toggle(Stem::Melody)),
+    ),
+    outside_text(
+        "v",
+        Command::Stems(DeckId::A, StemAction::Toggle(Stem::Vocals)),
+    ),
+    outside_text(
+        "shift-v",
+        Command::Stems(DeckId::B, StemAction::Toggle(Stem::Vocals)),
+    ),
+    outside_text("x", Command::Stems(DeckId::A, StemAction::Instrumental)),
+    outside_text(
+        "shift-x",
+        Command::Stems(DeckId::B, StemAction::Instrumental),
+    ),
+    outside_text("a", Command::Stems(DeckId::A, StemAction::Acapella)),
+    outside_text("shift-a", Command::Stems(DeckId::B, StemAction::Acapella)),
+    outside_text("alt-q", Command::ToggleQuantize),
+    outside_text("alt-v", Command::ToggleVinylMode(DeckId::A)),
+    outside_text("shift-alt-v", Command::ToggleVinylMode(DeckId::B)),
     outside_text("u", Command::ToggleSlip(DeckId::A)),
     outside_text("shift-u", Command::ToggleSlip(DeckId::B)),
     outside_text("m", Command::CyclePadMode(DeckId::A)),
@@ -187,6 +229,14 @@ pub const SHORTCUTS: &[Shortcut] = &[
         "shift-l",
         Command::Loop(DeckId::B, LoopAction::FourBeatOrExit),
     ),
+    outside_text("h", Command::CueLoopCall(DeckId::A, Direction::Down)),
+    outside_text("shift-h", Command::CueLoopCall(DeckId::B, Direction::Down)),
+    outside_text("j", Command::CueLoopCall(DeckId::A, Direction::Up)),
+    outside_text("shift-j", Command::CueLoopCall(DeckId::B, Direction::Up)),
+    outside_text("n", Command::StoreMemoryCue(DeckId::A)),
+    outside_text("shift-n", Command::StoreMemoryCue(DeckId::B)),
+    outside_text("alt-n", Command::DeleteMemoryCue(DeckId::A)),
+    outside_text("shift-alt-n", Command::DeleteMemoryCue(DeckId::B)),
     outside_text("?", Command::ToggleHelp),
     anywhere("cmd-,", Command::ToggleLibrary),
     anywhere("cmd-o", Command::AddMusicFolders),
@@ -316,23 +366,65 @@ pub fn help_sections() -> Vec<HelpSection> {
                 line(&["m", "shift-m"], "Next pad mode, deck A / deck B"),
                 line(&["-", "="], "Tempo down / up, deck A"),
                 line(&["shift--", "shift-="], "Tempo down / up, deck B"),
-                line(&["k", "shift-k"], "Key lock, deck A / deck B"),
+                line(
+                    &["k", "shift-k"],
+                    "Key lock for the track on deck A / deck B (new tracks: Settings)",
+                ),
+                line(&["q", "shift-q"], "Drums stem out or back, deck A / deck B"),
+                line(&["w", "shift-w"], "Bass stem out or back, deck A / deck B"),
+                line(
+                    &["r", "shift-r"],
+                    "Melody stem out or back, deck A / deck B",
+                ),
+                line(
+                    &["v", "shift-v"],
+                    "Vocals stem out or back, deck A / deck B",
+                ),
+                line(
+                    &["x", "shift-x"],
+                    "Instrumental, the vocals out, deck A / deck B",
+                ),
+                line(
+                    &["a", "shift-a"],
+                    "Acapella, only the vocals, deck A / deck B",
+                ),
                 line(
                     &["e", "shift-e"],
                     "Fix the beat grid with the grid keys, deck A / deck B",
                 ),
                 line(&["u", "shift-u"], "Slip, deck A / deck B"),
                 line(
-                    &["v", "shift-v"],
+                    &["alt-v", "shift-alt-v"],
                     "Vinyl mode (jog top scratches) or CDJ mode, deck A / deck B",
                 ),
-                line(&["q"], "Quantize on or off, both decks"),
+                line(&["alt-q"], "Quantize on or off, both decks"),
                 line(&["l", "shift-l"], "Four-beat loop or exit, deck A / deck B"),
+                line(
+                    &["h", "j"],
+                    "Call the memory cue before / after the playhead, or halve / double the loop that is on, deck A",
+                ),
+                line(
+                    &["shift-h", "shift-j"],
+                    "Call the memory cue before / after the playhead, or halve / double the loop that is on, deck B",
+                ),
+                line(
+                    &["n", "shift-n"],
+                    "Keep the cue point or the loop that is on as a memory cue, deck A / deck B",
+                ),
+                line(
+                    &["alt-n", "shift-alt-n"],
+                    "Delete the memory cue at the cue point, deck A / deck B",
+                ),
                 line(
                     &["t", "shift-t"],
                     "Tap the tempo of a track without a grid, deck A / deck B",
                 ),
                 line(&["left", "right"], "Crossfader towards deck A / deck B"),
+                line(
+                    &["z", "shift-z"],
+                    "Crossfader assign A, THRU or B, deck A / deck B",
+                ),
+                line(&["alt-x"], "Crossfader on or off"),
             ],
         },
         HelpSection {
@@ -464,11 +556,21 @@ mod tests {
                 }),
                 Command::CyclePadMode(DeckId::A) => Command::CyclePadMode(DeckId::B),
                 Command::ToggleKeyLock(DeckId::A) => Command::ToggleKeyLock(DeckId::B),
+                Command::CycleCrossfaderAssign(DeckId::A) => {
+                    Command::CycleCrossfaderAssign(DeckId::B)
+                }
+                Command::Stems(DeckId::A, action) => Command::Stems(DeckId::B, action),
                 Command::ToggleGridBar(DeckId::A) => Command::ToggleGridBar(DeckId::B),
                 Command::TapTempo(DeckId::A) => Command::TapTempo(DeckId::B),
                 Command::ToggleSlip(DeckId::A) => Command::ToggleSlip(DeckId::B),
                 Command::ToggleVinylMode(DeckId::A) => Command::ToggleVinylMode(DeckId::B),
+
                 Command::Loop(DeckId::A, action) => Command::Loop(DeckId::B, action),
+                Command::CueLoopCall(DeckId::A, direction) => {
+                    Command::CueLoopCall(DeckId::B, direction)
+                }
+                Command::StoreMemoryCue(DeckId::A) => Command::StoreMemoryCue(DeckId::B),
+                Command::DeleteMemoryCue(DeckId::A) => Command::DeleteMemoryCue(DeckId::B),
                 Command::NudgeTempo(DeckId::A, direction) => {
                     Command::NudgeTempo(DeckId::B, direction)
                 }

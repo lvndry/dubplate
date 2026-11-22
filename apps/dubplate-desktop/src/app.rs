@@ -5,11 +5,13 @@
 mod analysis;
 mod audio;
 mod audition;
+mod cues;
 mod deck_grid;
 mod deck_panel;
 mod drop_target;
 mod effects_strip;
 mod export;
+mod faders;
 mod feel;
 mod filter_reference;
 mod grid_controls;
@@ -19,13 +21,16 @@ mod knob;
 mod lane_drag;
 mod lanes;
 mod library;
+mod library_matches;
 mod library_panel;
+mod memory_cues;
 mod mixer;
 mod notice;
 mod overview;
 mod pad_grid;
 mod pads;
 mod pickup;
+mod played;
 mod prepare;
 mod recording;
 mod relink;
@@ -34,6 +39,8 @@ mod script;
 mod set_panel;
 mod slider;
 mod smart;
+mod stems;
+mod stems_strip;
 mod track_check;
 mod waveforms;
 
@@ -50,13 +57,13 @@ use dubplate_engine::{
     SyncMode, TempoRange, TempoState,
 };
 use dubplate_midi::{Feedback, PadMode};
-use dubplate_prep::{AnalysisQueue, GridCorrection, TrackGrid};
-use dubplate_rekordbox::HotCuePad;
+use dubplate_prep::{AnalysisQueue, GridCorrection, TrackGrid, TrackIdentity};
+use dubplate_rekordbox::{HotCue, HotCuePad, TrackCues};
 use gpui::component::input::{InputEvent, InputState};
 use gpui::prelude::*;
 use gpui::{
     Bounds, Context, Entity, FocusHandle, MouseButton, MouseMoveEvent, MouseUpEvent, Pixels, Point,
-    ScrollHandle, SharedString, StyleRefinement, Subscription, Task, Window, div,
+    ScrollHandle, SharedString, StyleRefinement, Subscription, Task, Window, div, px,
 };
 
 use crate::analysis::{AnalysisPriority, TrackAnalyser, TrackAnalyses};
@@ -69,11 +76,11 @@ use crate::controls::{
 };
 use crate::cue_marks::{MarkerPulse, SeenMarks};
 use crate::deck::{
-    Deck, DeckContent, GridSource, HotCues, LoadError, PreparedTrack, TrackVisuals, deck_letter,
+    Deck, DeckContent, GridSource, LoadError, PreparedTrack, TrackVisuals, deck_letter,
     prepare_track,
 };
 use crate::devices::DeviceAccess;
-use crate::effects::{EffectUnitSetting, search, step_beat, step_effect};
+use crate::effects::{EffectUnitSetting, search, step_effect, step_parameter};
 use crate::fonts::UI_FAMILY;
 use crate::frame_stats::FrameStats;
 use crate::hardware::{
@@ -91,11 +98,13 @@ use crate::set::SetEditor;
 use crate::settings::{LevelsSetting, Settings};
 use crate::shortcuts::{Perform, WINDOW_CONTEXT};
 use crate::space::{DeckOnAir, space_deck};
+use crate::stems::TrackStems;
 use crate::theme;
 use crate::transport::{self, CueDown, is_at_cue, other_deck};
 use crate::waveform::Zoom;
 use crate::waveform_cache::WaveformCache;
 use audition::Audition;
+use cues::new_cue_span;
 use notice::{NoticePlace, Notices};
 use overview::DeckOverview;
 use pads::HeldPad;
@@ -104,6 +113,10 @@ use relink::RelinkReview;
 
 /// Frames per device buffer: about 5 ms at 48 kHz.
 const BUFFER_FRAMES: u32 = 256;
+/// Below this width the header shows the controller and the sound card as dots.
+const NARROW_WINDOW_WIDTH: Pixels = px(1320.0);
+/// Below this height the lanes are lower.
+const SHORT_WINDOW_HEIGHT: Pixels = px(820.0);
 /// How often the controller lights follow the decks while nothing else updates them, for the
 /// blinking lights and the level meters.
 const LIGHTS_INTERVAL: Duration = Duration::from_millis(30);
@@ -177,7 +190,7 @@ pub struct DubplateApp {
     settings: Settings,
     settings_path: Option<PathBuf>,
     hardware: Option<Hardware>,
-    edited_hot_cues: HashMap<String, HotCues>,
+    track_cues: HashMap<TrackIdentity, Arc<TrackCues>>,
     lights_settling: bool,
     effect_focus: EffectUnitId,
     mode: Mode,
@@ -216,6 +229,10 @@ pub struct DubplateApp {
     waveform_cache: WaveformCache,
     check_cursor_seconds: f64,
     catalogue: Arc<Catalogue>,
+    /// What the library's Match column was last worked out for.
+    match_source: Option<library_matches::MatchSource>,
+    /// The tracks a deck played this session, by file.
+    played_tracks: Arc<HashSet<PathBuf>>,
     missing: Arc<Vec<Missing>>,
     relinking: bool,
     relink_review: Option<RelinkReview>,
@@ -223,6 +240,8 @@ pub struct DubplateApp {
     audition_generation: u64,
     analyses: TrackAnalyses,
     analysis_collecting: bool,
+    stems: TrackStems,
+    stems_changed: bool,
     recording: Option<Recording>,
     recording_skip_reported: bool,
     smart_cfx_menu: bool,
@@ -240,6 +259,8 @@ pub struct DubplateApp {
     focus_handle: FocusHandle,
     last_frame: Instant,
     frame_stats: Option<Rc<RefCell<FrameStats>>>,
+    /// The window's size at the last frame, for the layout of small windows.
+    window_size: gpui::Size<Pixels>,
     /// Whether the sound cards and controllers may be opened.
     devices: DeviceAccess,
     _subscriptions: Vec<Subscription>,
@@ -267,6 +288,16 @@ impl DubplateApp {
                 BrowserEvent::ImportRekordbox => this.set_rekordbox_import(true, cx),
                 BrowserEvent::RelinkAll => this.start_relink(None, cx),
                 BrowserEvent::Relink(track) => this.start_relink(Some(track), cx),
+                BrowserEvent::SeparateStems(track) => {
+                    if let Some(path) = this.track_file(track) {
+                        this.separate_stems_now(path, cx);
+                    }
+                }
+                BrowserEvent::CancelStems(track) => {
+                    if let Some(path) = this.track_file(track) {
+                        this.cancel_stems(path, cx);
+                    }
+                }
                 BrowserEvent::Sorted { screen, sort } => {
                     this.settings
                         .library_sort
@@ -328,8 +359,18 @@ impl DubplateApp {
             ..MixerPositions::default()
         });
         let mode = settings.screen();
-        let (engine, audio_problem) =
+        let (mut engine, audio_problem) =
             audio::start_engine(&mixer, settings.audio_device.as_deref(), &devices);
+        if let Ok(engine) = &mut engine {
+            for deck in DeckId::ALL {
+                if let Err(problem) = engine
+                    .controller
+                    .set_key_lock(deck, settings.key_lock_on_new_tracks)
+                {
+                    problems.push(format!("Key lock could not be set: {problem}"));
+                }
+            }
+        }
         problems.extend(audio_problem);
         let hardware = match &devices {
             DeviceAccess::Offline { script } => {
@@ -355,6 +396,19 @@ impl DubplateApp {
             .and_then(|path| AnalysisQueue::start(path).map_err(|error| error.to_string()))
             .map_err(|problem| problems.push(format!("Tracks cannot be analysed: {problem}")))
             .ok();
+        let stems = match Settings::stems_location() {
+            Ok(location) => {
+                let (stems, problem) = TrackStems::start(location);
+                if let Some(problem) = problem {
+                    problems.push(format!("Tracks cannot be separated into stems: {problem}"));
+                }
+                stems
+            }
+            Err(error) => {
+                problems.push(format!("Tracks cannot be separated into stems: {error}"));
+                TrackStems::start_unavailable()
+            }
+        };
         let sources = LibrarySources::new(
             settings.library.music_folders.clone(),
             settings.library.import_rekordbox,
@@ -376,7 +430,7 @@ impl DubplateApp {
             settings,
             settings_path,
             hardware,
-            edited_hot_cues: HashMap::new(),
+            track_cues: HashMap::new(),
             lights_settling: false,
             effect_focus: EffectUnitId::ALL[0],
             mode,
@@ -413,6 +467,8 @@ impl DubplateApp {
             waveform_cache: WaveformCache::default(),
             check_cursor_seconds: 0.0,
             catalogue: Arc::default(),
+            match_source: None,
+            played_tracks: Arc::default(),
             missing: Arc::default(),
             relinking: false,
             relink_review: None,
@@ -422,6 +478,8 @@ impl DubplateApp {
                 analysis_queue.map(|queue| Box::new(queue) as Box<dyn TrackAnalyser>),
             ),
             analysis_collecting: false,
+            stems,
+            stems_changed: true,
             recording: None,
             recording_skip_reported: false,
             smart_cfx_menu: false,
@@ -442,6 +500,7 @@ impl DubplateApp {
             focus_handle,
             last_frame: Instant::now(),
             frame_stats: FrameStats::from_environment().map(|stats| Rc::new(RefCell::new(stats))),
+            window_size: window.viewport_size(),
             devices,
             _subscriptions: vec![subscription, search_subscription, quit_subscription],
         };
@@ -449,15 +508,29 @@ impl DubplateApp {
             .update(cx, |browser, cx| browser.show_screen(mode, cx));
         app.restore_effect_units(cx);
         app.restore_jog_and_quantize(cx);
+        app.restore_mixer_switches(cx);
         app.restore_smart_cfx(cx);
         app.restore_sampler(cx);
         app.restore_library_sorts(cx);
         app.start_library(cx);
         app.start_set_session(cx);
+        Self::keep_collecting_stems(cx);
         if let Some(problem) = problems.into_iter().next() {
             app.show_notice(NoticePlace::Window, problem, cx);
         }
         app
+    }
+
+    /// Whether the window is too narrow for the header to spell out the controller and the
+    /// sound card: they shrink to their status dots, named in tooltips.
+    pub(super) fn narrow_window(&self) -> bool {
+        self.window_size.width < NARROW_WINDOW_WIDTH
+    }
+
+    /// Whether the window is too short for full-height lanes: they get lower so the library
+    /// keeps some rows.
+    pub(super) fn short_window(&self) -> bool {
+        self.window_size.height < SHORT_WINDOW_HEIGHT
     }
 
     /// Turns Lock playing deck on or off and remembers it.
@@ -545,8 +618,8 @@ impl DubplateApp {
                 self.show_notice(
                     NoticePlace::Window,
                     format!(
-                        "The set was not saved: {problem}. Dubplate stayed open; review the set \
-                         before quitting again."
+                        "Not everything was saved: {problem}. Dubplate stayed open; review the \
+                         set and the cues before quitting again."
                     ),
                     cx,
                 );
@@ -558,21 +631,23 @@ impl DubplateApp {
     /// Opens and migrates set storage off the UI thread, then starts its serialized worker.
     fn start_set_session(&mut self, cx: &mut Context<'_, Self>) {
         cx.spawn(async move |this, cx| {
-            let session = cx
+            let opened = cx
                 .background_executor()
                 .spawn(async {
                     let path = Settings::sets_path().map_err(|error| error.to_string())?;
                     let editor = SetEditor::open(&path).map_err(|error| error.to_string())?;
                     let grids = editor.track_grids().map_err(|error| error.to_string())?;
+                    let track_cues = editor.track_cues().map_err(|error| error.to_string())?;
                     let session = dubplate_prep::SetSession::new(editor)
                         .map_err(|error| error.to_string())?;
-                    Ok::<_, String>((session, grids))
+                    Ok::<_, String>((session, grids, track_cues))
                 })
                 .await;
-            this.update(cx, |this, cx| match session {
-                Ok((session, grids)) => {
+            this.update(cx, |this, cx| match opened {
+                Ok((session, grids, track_cues)) => {
                     this.set_editor = Some(session);
                     this.take_track_grids(grids, cx);
+                    this.restore_track_cues(track_cues);
                     this.set_changed(cx);
                     // The first library build may have completed before set storage opened.
                     this.rebuild_collection(cx);
@@ -741,12 +816,8 @@ impl DubplateApp {
             }
         };
         check_deck_free(deck, self.deck_state(deck).playing, self.lock_playing_deck)?;
-        let hot_cues = self
-            .edited_hot_cues
-            .get(&track.identity())
-            .copied()
-            .unwrap_or_else(|| HotCues::of(&track));
-        let generation = self.decks[deck.index()].begin_load(Arc::clone(&track), hot_cues);
+        let cues = self.cues_of(&track);
+        let generation = self.decks[deck.index()].begin_load(Arc::clone(&track), cues);
         Ok((track, generation))
     }
 
@@ -776,6 +847,7 @@ impl DubplateApp {
             Ok(visuals) => {
                 let needs_waveform = visuals.zoomed.is_none();
                 self.decks[deck.index()].commit_load(generation, visuals, grid_source);
+                self.reset_deck_stems(deck, cx);
                 self.signal_controllers(Feedback::TrackLoaded(controller_deck(deck)));
                 self.give_deck_analysed_grid(deck, cx);
                 self.refresh_filter_reference(cx);
@@ -801,6 +873,7 @@ impl DubplateApp {
         deck: DeckId,
         mut prepared: PreparedTrack,
     ) -> Result<TrackVisuals, LoadError> {
+        let key_lock = self.settings.key_lock_on_new_tracks;
         let engine = self
             .engine
             .as_mut()
@@ -809,6 +882,7 @@ impl DubplateApp {
         engine
             .controller
             .load_prepared_track(deck, prepared.audio, prepared.beat_grid)?;
+        engine.controller.set_key_lock(deck, key_lock)?;
         // Loading clears transient pad gestures on the audio thread in the same command.
         self.held_pads[deck.index()] = None;
         Ok(visuals)
@@ -855,6 +929,9 @@ impl DubplateApp {
             Command::ToggleLockPlayingDeck => self.toggle_lock_playing_deck(cx),
             Command::ToggleVinylMode(deck) => self.toggle_vinyl_mode(deck, cx),
             Command::Loop(deck, action) => self.loop_button(deck, action, cx),
+            Command::CueLoopCall(deck, direction) => self.cue_loop_call(deck, direction, cx),
+            Command::StoreMemoryCue(deck) => self.store_memory_cue(deck, cx),
+            Command::DeleteMemoryCue(deck) => self.delete_memory_cue(deck, cx),
             Command::ToggleHeadphoneCue(deck) => {
                 let cued = self
                     .headphones()
@@ -921,6 +998,11 @@ impl DubplateApp {
             Command::MakeTempoMaster(deck) => self.engine_command(cx, |controller| {
                 controller.set_master_tempo(MasterTempo::Deck(deck))
             }),
+            Command::SetKeyLockOnNewTracks(on) => {
+                self.settings.key_lock_on_new_tracks = on;
+                self.save_settings(cx);
+            }
+            Command::Stems(deck, action) => self.apply_stem_action(deck, action, cx),
             Command::ToggleKeyLock(deck) => {
                 let locked = self.key_lock(deck);
                 self.engine_command(cx, |controller| controller.set_key_lock(deck, !locked));
@@ -934,6 +1016,13 @@ impl DubplateApp {
                 let position = self.mixer.crossfader + CROSSFADER_STEP * direction.sign() as f32;
                 self.set_control(Control::Crossfader, position.clamp(0.0, 1.0), cx);
             }
+            Command::SetCrossfaderAssign(deck, assign) => {
+                self.set_crossfader_assign(deck, assign, cx);
+            }
+            Command::CycleCrossfaderAssign(deck) => self.cycle_crossfader_assign(deck, cx),
+            Command::ToggleCrossfader => self.toggle_crossfader(cx),
+            Command::SetCrossfaderCurve(curve) => self.set_crossfader_curve(curve, cx),
+            Command::SetChannelFaderCurve(curve) => self.set_channel_fader_curve(curve, cx),
             Command::MoveSelection(direction) => match (self.mode, self.prepare_focus) {
                 (Mode::Prepare, PrepareFocus::Set) => {
                     self.move_set_selection(direction, cx);
@@ -1065,35 +1154,35 @@ impl DubplateApp {
     }
 
     /// A hot cue pad, as in rekordbox: a set pad plays from its cue, whether the deck was
-    /// playing or not; an empty pad takes the beat nearest to what the DJ hears now.
+    /// playing or not, and a hot loop starts its loop; an empty pad keeps the loop that is on
+    /// as a hot loop, else takes the beat nearest to what the DJ hears now.
     fn press_hot_cue(&mut self, deck: DeckId, pad: HotCuePad, cx: &mut Context<'_, Self>) {
         if self.deck(deck).visuals().is_none() {
             return;
         }
-        match self.deck(deck).hot_cues.get(pad) {
-            Some(seconds) => {
+        let called = self
+            .deck(deck)
+            .cues
+            .hot_cue(pad)
+            .map(|cue| (cue.start_seconds(), cue.loop_end_seconds()));
+        match called {
+            Some((start, loop_end)) => {
                 self.decks[deck.index()].cue_preview = false;
-                self.engine_command(cx, |controller| controller.hot_cue(deck, seconds));
+                self.engine_command(cx, |controller| match loop_end {
+                    Some(end) => controller.hot_loop(deck, start, end),
+                    None => controller.hot_cue(deck, start),
+                });
             }
             None => {
-                let seconds = self.quantized(deck, self.heard_seconds(deck));
-                self.edit_hot_cues(deck, |hot_cues| hot_cues.set(pad, seconds));
+                let heard = self.quantized(deck, self.heard_seconds(deck));
+                let (start_ms, loop_end_ms) = new_cue_span(self.active_loop(deck), heard);
+                let cue = HotCue {
+                    loop_end_ms,
+                    ..HotCue::at(start_ms)
+                };
+                self.edit_cues(deck, |cues| cues.set_hot_cue(pad, cue), cx);
             }
         }
-    }
-
-    /// Changes the hot cues of the track on `deck`, and keeps the change for the next time the
-    /// track is loaded in this session.
-    fn edit_hot_cues(&mut self, deck: DeckId, edit: impl FnOnce(&mut HotCues)) {
-        let side = &mut self.decks[deck.index()];
-        let Some(track) = side.track.as_ref() else {
-            return;
-        };
-        if side.visuals().is_none() {
-            return;
-        }
-        edit(&mut side.hot_cues);
-        self.edited_hot_cues.insert(track.identity(), side.hot_cues);
     }
 
     /// Where the music a deck plays reaches the speakers now: the engine's position less what
@@ -1139,7 +1228,7 @@ impl DubplateApp {
             self.show_notice(NoticePlace::Deck(deck), refusal.to_string(), cx);
             return;
         }
-        let hot_cues = self.deck(source).hot_cues;
+        let cues = Arc::clone(&self.deck(source).cues);
         let mut doubled = false;
         self.engine_command(cx, |controller| {
             doubled = transport::double(controller, source, deck)?;
@@ -1151,7 +1240,7 @@ impl DubplateApp {
         let grid_source = self.deck(source).grid_source;
         let needs_waveform = visuals.zoomed.is_none();
         let side = &mut self.decks[deck.index()];
-        let generation = side.begin_load(track, hot_cues);
+        let generation = side.begin_load(track, cues);
         side.commit_load(generation, visuals, grid_source);
         if needs_waveform {
             self.draw_waveform_from_audio(deck, generation, cx);
@@ -1237,6 +1326,7 @@ impl DubplateApp {
                 self.remember_levels(cx);
                 self.engine_command(cx, |controller| controller.set_headphone_level(fraction));
             }
+            Control::StemLevel(deck, stem) => self.set_stem_level(deck, stem, fraction, cx),
             Control::SamplerVolume => {
                 self.mixer.sampler_volume = fraction;
                 self.settings.sampler.volume = fraction;
@@ -1360,7 +1450,8 @@ impl DubplateApp {
                 channel_fader: self.mixer.channel_faders[deck.index()],
                 is_tempo_master: self.tempo_state(deck).is_some_and(|state| state.is_master),
             }),
-            self.mixer.crossfader,
+            &self.crossfader(),
+            self.channel_fader_curve(),
         )
     }
 
@@ -1417,14 +1508,19 @@ impl DubplateApp {
             EffectEdit::StepKind(steps) => {
                 controller.set_effect_kind(unit, step_effect(state.kind, steps))
             }
-            EffectEdit::Beat(direction) => {
-                controller.set_effect_beat(unit, step_beat(state.beat, direction))
+            EffectEdit::Parameter(direction) => {
+                match step_parameter(state.kind, state.parameter, direction) {
+                    Some(value) => controller.set_effect_parameter(unit, value),
+                    None => Ok(()),
+                }
             }
             EffectEdit::Target(target) => controller.set_effect_target(unit, target),
             EffectEdit::Depth(depth) => controller.set_effect_depth(unit, depth.clamp(0.0, 1.0)),
             EffectEdit::Toggle => controller.toggle_effect(unit),
+            EffectEdit::Release(held) => controller.hold_release_fx(unit, held),
+            EffectEdit::NextRelease => controller.set_release_fx(unit, state.release.next()),
         });
-        if !matches!(edit, EffectEdit::Toggle) {
+        if !matches!(edit, EffectEdit::Toggle | EffectEdit::Release(_)) {
             self.remember_effect_units(cx);
         }
         if matches!(edit, EffectEdit::StepKind(_)) {
@@ -1547,8 +1643,11 @@ impl DubplateApp {
                 if let Some(target) = setting.target() {
                     controller.set_effect_target(unit, target)?;
                 }
-                if let Some(beat) = setting.beat() {
-                    controller.set_effect_beat(unit, beat)?;
+                if let Some(value) = setting.parameter() {
+                    controller.set_effect_parameter(unit, value)?;
+                }
+                if let Some(release) = setting.release() {
+                    controller.set_release_fx(unit, release)?;
                 }
                 match setting.depth() {
                     Some(depth) => controller.set_effect_depth(unit, depth),
@@ -1635,6 +1734,7 @@ impl DubplateApp {
             cue,
             pad_mode: self.pad_modes[deck.index()],
             pads: pad_lights.pads,
+            shift_pads: self.stem_pad_lights(deck),
             headphone_cue: self
                 .headphones()
                 .is_some_and(|headphones| headphones.is_cued(deck)),
@@ -1840,11 +1940,11 @@ fn notice_new_cue(side: &mut Deck, cue_point: f64, now: Instant) {
     let marks = SeenMarks {
         load_generation: side.load_generation(),
         cue_point,
-        hot_cues: side.hot_cues,
+        cues: Arc::clone(&side.cues),
     };
     if let Some(seconds) = side
         .seen_marks
-        .replace(marks)
+        .replace(marks.clone())
         .and_then(|seen| seen.newly_set(&marks))
     {
         side.marker_pulse = Some(MarkerPulse {
@@ -1968,7 +2068,10 @@ impl Render for DubplateApp {
             self.refocus_window = false;
         }
         self.modal_active = modal_open;
+        self.window_size = window.viewport_size();
         let frames = self.advance_frame(window);
+        self.mark_played(&frames, cx);
+        self.follow_library_matches(cx);
         let root = div()
             .key_context(WINDOW_CONTEXT)
             .track_focus(&self.focus_handle)

@@ -61,98 +61,144 @@ const SECTION_HEADER_SIZE: usize = 12;
 const PATH_LENGTH_POSITION: usize = 0x0c;
 const PATH_POSITION: usize = 0x10;
 
+/// A section exactly as it is in its file, header included, for copying it into another file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RawSection {
+    /// The section's code.
+    pub fourcc: FourCc,
+    /// The whole section, from its code to its last byte.
+    pub bytes: Vec<u8>,
+}
+
+/// A section's place in its file, before its content is read.
+struct SectionSlice<'data> {
+    fourcc: FourCc,
+    offset: usize,
+    declared_length: u32,
+    bytes: &'data [u8],
+}
+
 impl AnalysisFile {
     /// Reads the bytes of an analysis file.
     ///
     /// Sections of unknown kinds are kept as [`Section::Skipped`]. A known section whose bytes do
     /// not match its layout is an error, so nothing half-read is ever returned.
     pub fn parse(bytes: &[u8]) -> Result<Self, AnalysisError> {
-        if let Some(magic) = bytes.get(..4)
-            && magic != FourCc::FILE_MAGIC.0
-        {
-            return Err(AnalysisError::NotAnalysisFile {
-                found: FourCc([magic[0], magic[1], magic[2], magic[3]]),
-            });
-        }
-        if bytes.len() < FILE_HEADER_MINIMUM {
-            return Err(AnalysisError::BadFileHeader {
-                reason: format!(
-                    "the file is {} bytes, shorter than the {FILE_HEADER_MINIMUM}-byte header",
-                    bytes.len()
-                ),
-            });
-        }
-        let header_length = read_u32(bytes, 4);
-        let file_length = read_u32(bytes, 8);
-        if usize::try_from(file_length).ok() != Some(bytes.len()) {
-            return Err(AnalysisError::FileLengthMismatch {
-                declared: file_length,
-                actual: bytes.len(),
-            });
-        }
-        let header_length = usize::try_from(header_length).unwrap_or(usize::MAX);
-        if !(FILE_HEADER_MINIMUM..=bytes.len()).contains(&header_length) {
-            return Err(AnalysisError::BadFileHeader {
-                reason: format!(
-                    "the header says it is {header_length} bytes long, which does not fit \
-                     between {FILE_HEADER_MINIMUM} bytes and the file's {} bytes",
-                    bytes.len()
-                ),
-            });
-        }
-
-        let mut sections = Vec::new();
-        let mut offset = header_length;
-        while offset < bytes.len() {
-            let remaining = &bytes[offset..];
-            if remaining.len() < SECTION_HEADER_SIZE {
-                return Err(AnalysisError::BadFileHeader {
-                    reason: format!(
-                        "{} bytes are left at byte {offset:#x}, too few for a section header",
-                        remaining.len()
-                    ),
-                });
-            }
-            let fourcc = FourCc([remaining[0], remaining[1], remaining[2], remaining[3]]);
-            let section_header_length = read_u32(remaining, 4);
-            let declared = read_u32(remaining, 8);
-            let section_length = usize::try_from(declared).unwrap_or(usize::MAX);
-            if section_length < SECTION_HEADER_SIZE {
-                return Err(AnalysisError::Malformed {
-                    fourcc,
-                    offset,
-                    reason: format!(
-                        "it says it is {declared} bytes long, shorter than the \
-                         {SECTION_HEADER_SIZE}-byte section header"
-                    ),
-                });
-            }
-            if section_length > remaining.len() {
-                return Err(AnalysisError::SectionTruncated {
-                    fourcc,
-                    offset,
-                    declared,
-                    available: remaining.len(),
-                });
-            }
-            if usize::try_from(section_header_length).map_or(true, |length| {
-                !(SECTION_HEADER_SIZE..=section_length).contains(&length)
-            }) {
-                return Err(AnalysisError::Malformed {
-                    fourcc,
-                    offset,
-                    reason: format!(
-                        "its header length {section_header_length} does not fit between \
-                         {SECTION_HEADER_SIZE} bytes and its length of {declared} bytes"
-                    ),
-                });
-            }
-            let reader = SectionReader::new(fourcc, offset, &remaining[..section_length]);
-            sections.push(parse_section(&reader, declared)?);
-            offset += section_length;
-        }
+        let sections = split_sections(bytes)?
+            .into_iter()
+            .map(|slice| {
+                let reader = SectionReader::new(slice.fourcc, slice.offset, slice.bytes);
+                parse_section(&reader, slice.declared_length)
+            })
+            .collect::<Result<_, _>>()?;
         Ok(Self { sections })
     }
+
+    /// The sections of an analysis file as they are, without reading what they hold, so they
+    /// can be copied into another file byte for byte. The file and section headers are checked
+    /// as [`Self::parse`] checks them.
+    pub fn raw_sections(bytes: &[u8]) -> Result<Vec<RawSection>, AnalysisError> {
+        Ok(split_sections(bytes)?
+            .into_iter()
+            .map(|slice| RawSection {
+                fourcc: slice.fourcc,
+                bytes: slice.bytes.to_vec(),
+            })
+            .collect())
+    }
+}
+
+/// Checks the file header and cuts the rest of the file into its sections.
+fn split_sections(bytes: &[u8]) -> Result<Vec<SectionSlice<'_>>, AnalysisError> {
+    if let Some(magic) = bytes.get(..4)
+        && magic != FourCc::FILE_MAGIC.0
+    {
+        return Err(AnalysisError::NotAnalysisFile {
+            found: FourCc([magic[0], magic[1], magic[2], magic[3]]),
+        });
+    }
+    if bytes.len() < FILE_HEADER_MINIMUM {
+        return Err(AnalysisError::BadFileHeader {
+            reason: format!(
+                "the file is {} bytes, shorter than the {FILE_HEADER_MINIMUM}-byte header",
+                bytes.len()
+            ),
+        });
+    }
+    let header_length = read_u32(bytes, 4);
+    let file_length = read_u32(bytes, 8);
+    if usize::try_from(file_length).ok() != Some(bytes.len()) {
+        return Err(AnalysisError::FileLengthMismatch {
+            declared: file_length,
+            actual: bytes.len(),
+        });
+    }
+    let header_length = usize::try_from(header_length).unwrap_or(usize::MAX);
+    if !(FILE_HEADER_MINIMUM..=bytes.len()).contains(&header_length) {
+        return Err(AnalysisError::BadFileHeader {
+            reason: format!(
+                "the header says it is {header_length} bytes long, which does not fit \
+                 between {FILE_HEADER_MINIMUM} bytes and the file's {} bytes",
+                bytes.len()
+            ),
+        });
+    }
+
+    let mut sections = Vec::new();
+    let mut offset = header_length;
+    while offset < bytes.len() {
+        let remaining = &bytes[offset..];
+        if remaining.len() < SECTION_HEADER_SIZE {
+            return Err(AnalysisError::BadFileHeader {
+                reason: format!(
+                    "{} bytes are left at byte {offset:#x}, too few for a section header",
+                    remaining.len()
+                ),
+            });
+        }
+        let fourcc = FourCc([remaining[0], remaining[1], remaining[2], remaining[3]]);
+        let section_header_length = read_u32(remaining, 4);
+        let declared = read_u32(remaining, 8);
+        let section_length = usize::try_from(declared).unwrap_or(usize::MAX);
+        if section_length < SECTION_HEADER_SIZE {
+            return Err(AnalysisError::Malformed {
+                fourcc,
+                offset,
+                reason: format!(
+                    "it says it is {declared} bytes long, shorter than the \
+                     {SECTION_HEADER_SIZE}-byte section header"
+                ),
+            });
+        }
+        if section_length > remaining.len() {
+            return Err(AnalysisError::SectionTruncated {
+                fourcc,
+                offset,
+                declared,
+                available: remaining.len(),
+            });
+        }
+        if usize::try_from(section_header_length).map_or(true, |length| {
+            !(SECTION_HEADER_SIZE..=section_length).contains(&length)
+        }) {
+            return Err(AnalysisError::Malformed {
+                fourcc,
+                offset,
+                reason: format!(
+                    "its header length {section_header_length} does not fit between \
+                     {SECTION_HEADER_SIZE} bytes and its length of {declared} bytes"
+                ),
+            });
+        }
+        sections.push(SectionSlice {
+            fourcc,
+            offset,
+            declared_length: declared,
+            bytes: &remaining[..section_length],
+        });
+        offset += section_length;
+    }
+    Ok(sections)
 }
 
 fn parse_section(reader: &SectionReader<'_>, length: u32) -> Result<Section, AnalysisError> {

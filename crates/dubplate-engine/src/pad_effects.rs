@@ -1,4 +1,4 @@
-use dubplate_fx::{BeatLength, Effect, EffectKind, create};
+use dubplate_fx::{Effect, EffectKind, ParameterValue, create};
 
 use crate::effects::{effect_config, effect_context};
 use crate::processor::{ProcessContext, StereoBlock};
@@ -10,8 +10,9 @@ const KIND_COUNT: usize = EffectKind::ALL.len();
 pub struct PadEffect {
     /// The effect.
     pub kind: EffectKind,
-    /// Its beat length: the echo time, the sweep period, the gate step or the stop time.
-    pub beat: BeatLength,
+    /// Its parameter: the echo time, sweep period, gate step or stop time in beats, or a
+    /// reverb's size. `None`, or a value in another unit than the effect's, leaves it as it is.
+    pub parameter: Option<ParameterValue>,
     /// Its level and depth, from 0 to 1.
     pub depth: f32,
 }
@@ -47,7 +48,9 @@ impl PadEffects {
         }
         if let Some(effect) = self.effect(pad.kind) {
             effect.set_depth(pad.depth);
-            effect.set_beat(pad.beat);
+            if let Some(value) = pad.parameter {
+                effect.set_parameter(value);
+            }
             effect.set_enabled(true);
         }
         self.held = Some(pad.kind);

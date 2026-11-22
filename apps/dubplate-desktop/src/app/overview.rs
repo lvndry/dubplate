@@ -10,6 +10,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use dubplate_engine::DeckId;
+use dubplate_rekordbox::{HotCuePad, TrackCues};
 use gpui::prelude::*;
 use gpui::{
     Bounds, Context, FontWeight, MouseButton, MouseDownEvent, MouseMoveEvent, PathBuilder, Pixels,
@@ -19,12 +20,12 @@ use gpui::{
 use super::{DeckFrame, DubplateApp};
 use crate::collection::{CollectionTrack, clock};
 use crate::controls::{Orientation, fraction_at};
-use crate::deck::{HotCues, OverviewBars, deck_letter, pad_position};
+use crate::deck::{OverviewBars, deck_letter};
 use crate::fonts::MONO_FAMILY;
 use crate::phrases::{PhraseSpan, Section, phrase_at};
 use crate::theme;
 use crate::waveform::{BandLevels, LaneLoop, LoopLook};
-use crate::widgets::{InteractiveControl, adjusted_value};
+use crate::widgets::{InteractiveControl, adjusted_value, tooltip};
 
 /// The overview's height: the cue row, the bands and the phrase strip.
 pub(super) const OVERVIEW_HEIGHT: Pixels = px(42.0);
@@ -39,6 +40,10 @@ pub(super) const ENDING_SECONDS: f64 = 30.0;
 const SECONDS_PER_MINUTE: f64 = 60.0;
 const HOT_CUE_LETTER_WIDTH: f32 = 10.0;
 const ACTIVE_LOOP_FILL: f32 = 0.35;
+const PLAYHEAD_WIDTH: f32 = 2.0;
+/// The half width of the small triangles that cap the playhead top and bottom, as rekordbox
+/// draws them, so it stands out over loud bars.
+const PLAYHEAD_CAP: f32 = 4.0;
 
 /// What the cached part of a deck's overview draws. Built each frame without allocating and
 /// compared with what is drawn, so the view is painted again only when something changed.
@@ -47,7 +52,7 @@ pub(super) struct OverviewContent {
     bars: Option<Rc<RefCell<OverviewBars>>>,
     track: Arc<CollectionTrack>,
     phrases: Arc<[PhraseSpan]>,
-    hot_cues: HotCues,
+    cues: Arc<TrackCues>,
     mix_in: Option<f64>,
     mix_out: Option<f64>,
     duration: f64,
@@ -63,7 +68,7 @@ impl PartialEq for OverviewContent {
         same_bars
             && Arc::ptr_eq(&self.track, &other.track)
             && Arc::ptr_eq(&self.phrases, &other.phrases)
-            && self.hot_cues == other.hot_cues
+            && Arc::ptr_eq(&self.cues, &other.cues)
             && self.mix_in == other.mix_in
             && self.mix_out == other.mix_out
             && self.duration == other.duration
@@ -79,10 +84,18 @@ pub(super) struct DeckOverview {
 impl DeckOverview {
     /// Shows `content`, painting again only when it differs from what is shown.
     fn show(&mut self, content: Option<OverviewContent>, cx: &mut Context<'_, Self>) {
-        if self.content != content {
-            self.content = content;
+        if self.take(content) {
             cx.notify();
         }
+    }
+
+    /// Keeps `content`, returning whether it differs from what is shown and so needs drawing.
+    fn take(&mut self, content: Option<OverviewContent>) -> bool {
+        let changed = self.content != content;
+        if changed {
+            self.content = content;
+        }
+        changed
     }
 }
 
@@ -91,14 +104,15 @@ impl Render for DeckOverview {
         let Some(content) = self.content.clone() else {
             return div().size_full();
         };
-        let letters: Vec<(f32, char, Rgba)> = content
-            .hot_cues
-            .iter()
-            .map(|(pad, seconds)| {
+        let letters: Vec<(f32, HotCuePad, Rgba, String)> = content
+            .cues
+            .hot_cues()
+            .map(|(pad, cue)| {
                 (
-                    (seconds / content.duration).clamp(0.0, 1.0) as f32,
-                    pad.letter(),
-                    theme::HOT_CUE_TINTS[pad_position(pad)],
+                    (cue.start_seconds() / content.duration).clamp(0.0, 1.0) as f32,
+                    pad,
+                    theme::hot_cue_colour(pad, cue),
+                    cue.name.clone(),
                 )
             })
             .collect();
@@ -113,8 +127,9 @@ impl Render for DeckOverview {
                 .absolute()
                 .size_full(),
             )
-            .children(letters.into_iter().map(|(fraction, letter, tint)| {
+            .children(letters.into_iter().map(|(fraction, pad, tint, name)| {
                 div()
+                    .id(("overview-hot-cue", pad.index()))
                     .absolute()
                     .top_0()
                     .left(relative(fraction))
@@ -131,7 +146,8 @@ impl Render for DeckOverview {
                     .line_height(px(CUE_ROW - 1.0))
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(theme::ON_DECK)
-                    .child(letter.to_string())
+                    .when(!name.is_empty(), |letter| letter.tooltip(tooltip(name)))
+                    .child(pad.letter().to_string())
             }))
     }
 }
@@ -180,6 +196,14 @@ impl OverviewArea {
         )
     }
 
+    /// Where the playhead's line starts at `progress` through the track: kept whole inside the
+    /// overview, so it shows at the very start and the very end, where the rounded corners clip.
+    fn playhead_left(&self, progress: f32) -> f32 {
+        let inset = PLAYHEAD_CAP;
+        let centre = (progress.clamp(0.0, 1.0) * self.width).clamp(inset, self.width - inset);
+        centre - PLAYHEAD_WIDTH / 2.0
+    }
+
     /// A rectangle the full height of the bands.
     fn band_span(&self, left: f32, width: f32) -> Bounds<Pixels> {
         self.rect(
@@ -199,9 +223,9 @@ fn paint_content(bounds: Bounds<Pixels>, content: &OverviewContent, window: &mut
         area.band_span(ending_from, area.width - ending_from),
         theme::ENDING_TINT,
     ));
-    for &(start, end) in &content.track.saved_loops {
-        let left = area.x_of(start);
-        let width = (area.x_of(end) - left).max(1.0);
+    for (start_ms, end_ms) in content.cues.loops() {
+        let left = area.x_of(seconds(start_ms));
+        let width = (area.x_of(seconds(end_ms)) - left).max(1.0);
         window.paint_quad(fill(
             area.band_span(left, width),
             theme::faded(theme::SAVED_LOOP, 0.14),
@@ -233,8 +257,16 @@ fn paint_content(bounds: Bounds<Pixels>, content: &OverviewContent, window: &mut
             paint_triangle(&area, x, area.bands_top, colour, window);
         }
     }
-    for &seconds in &content.track.memory_cues {
-        paint_triangle(&area, area.x_of(seconds), 1.0, theme::MEMORY_CUE, window);
+    for cue in content.cues.memory_cues() {
+        if cue.loop_end_ms.is_none() {
+            paint_triangle(
+                &area,
+                area.x_of(cue.start_seconds()),
+                1.0,
+                theme::memory_cue_colour(cue),
+                window,
+            );
+        }
     }
     let strip_top = area.bands_bottom + 1.0;
     for phrase in content.phrases.iter() {
@@ -245,6 +277,10 @@ fn paint_content(bounds: Bounds<Pixels>, content: &OverviewContent, window: &mut
             section_colour(phrase.section),
         ));
     }
+}
+
+fn seconds(milliseconds: u32) -> f64 {
+    f64::from(milliseconds) / 1000.0
 }
 
 /// A small triangle pointing down at `x`, its top edge at `top`.
@@ -316,10 +352,7 @@ fn paint_motion(bounds: Bounds<Pixels>, motion: OverviewMotion, window: &mut Win
     if let Some(progress) = motion.progress {
         let played = progress * area.width;
         window.paint_quad(fill(area.band_span(0.0, played), theme::PLAYED_SHADE));
-        window.paint_quad(fill(
-            area.rect(played - 1.0, 0.0, 2.0, f32::from(bounds.size.height)),
-            theme::PLAYHEAD,
-        ));
+        paint_playhead(&area, area.playhead_left(progress), window);
     }
     if let Some(cue_point) = motion.cue_point {
         let x = area.x_of(cue_point);
@@ -345,6 +378,27 @@ fn paint_motion(bounds: Bounds<Pixels>, motion: OverviewMotion, window: &mut Win
             area.band_span(hover * area.width, 1.0),
             theme::faded(theme::TEXT, 0.6),
         ));
+    }
+}
+
+/// The playhead: a line the overview's height with a small triangle at each end.
+fn paint_playhead(area: &OverviewArea, left: f32, window: &mut Window) {
+    let height = f32::from(area.bounds.size.height);
+    window.paint_quad(fill(
+        area.rect(left, 0.0, PLAYHEAD_WIDTH, height),
+        theme::PLAYHEAD,
+    ));
+    let centre = left + PLAYHEAD_WIDTH / 2.0;
+    let origin = area.bounds.origin;
+    for (edge, tip) in [(0.0, PLAYHEAD_CAP), (height, height - PLAYHEAD_CAP)] {
+        let mut cap = PathBuilder::fill();
+        cap.move_to(origin + point(px(centre - PLAYHEAD_CAP), px(edge)));
+        cap.line_to(origin + point(px(centre + PLAYHEAD_CAP), px(edge)));
+        cap.line_to(origin + point(px(centre), px(tip)));
+        cap.close();
+        if let Ok(path) = cap.build() {
+            window.paint_path(path, theme::PLAYHEAD);
+        }
     }
 }
 
@@ -386,7 +440,7 @@ pub(super) fn render(
                     bars: visuals.overview.clone(),
                     track: Arc::clone(track),
                     phrases: Arc::clone(&visuals.phrases),
-                    hot_cues: side.hot_cues,
+                    cues: Arc::clone(&side.cues),
                     mix_in,
                     mix_out,
                     duration,
@@ -492,6 +546,8 @@ pub(super) fn render(
                 move |bounds, (), window, _| paint_motion(bounds, motion, window),
             )
             .absolute()
+            .top_0()
+            .left_0()
             .size_full(),
         )
         .children(hover_label.map(|(fraction, label)| {
@@ -529,5 +585,48 @@ mod tests {
         );
         assert_eq!(area.bands_top, CUE_ROW);
         assert_eq!(area.bands_bottom, 42.0 - PHRASE_STRIP - 1.0);
+    }
+
+    #[test]
+    fn the_playhead_shows_whole_at_the_start_and_the_end_and_moves_between() {
+        let bounds = Bounds::new(point(px(0.0), px(0.0)), size(px(600.0), px(42.0)));
+        let area = OverviewArea::new(bounds, 300.0);
+        let at_start = area.playhead_left(0.0);
+        let at_end = area.playhead_left(1.0);
+        assert!(
+            at_start - PLAYHEAD_CAP + PLAYHEAD_WIDTH / 2.0 >= 0.0,
+            "{at_start}"
+        );
+        assert!(
+            at_end + PLAYHEAD_WIDTH / 2.0 + PLAYHEAD_CAP <= 600.0,
+            "{at_end}"
+        );
+        assert_eq!(area.playhead_left(0.5), 299.0);
+        assert!(area.playhead_left(0.25) < area.playhead_left(0.5));
+    }
+
+    #[test]
+    fn a_moving_playhead_keeps_the_cached_bars() {
+        let content = OverviewContent {
+            bars: None,
+            track: Arc::new(CollectionTrack::from_file(std::path::Path::new("a.mp3"))),
+            phrases: Arc::default(),
+            cues: Arc::default(),
+            mix_in: None,
+            mix_out: None,
+            duration: 300.0,
+        };
+        let mut overview = DeckOverview::default();
+        assert!(
+            overview.take(Some(content.clone())),
+            "the first content is drawn"
+        );
+        assert!(
+            !overview.take(Some(content.clone())),
+            "the same track and marks are not drawn again as the playhead moves"
+        );
+        let bounds = Bounds::new(point(px(0.0), px(0.0)), size(px(600.0), px(42.0)));
+        let area = OverviewArea::new(bounds, content.duration);
+        assert_ne!(area.playhead_left(0.1), area.playhead_left(0.2));
     }
 }

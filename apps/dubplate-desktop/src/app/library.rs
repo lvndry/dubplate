@@ -284,6 +284,7 @@ impl DubplateApp {
                     this.forget_track_checks();
                     this.set_changed(cx);
                     this.request_library_analysis(cx);
+                    this.probe_library_stems();
                 }
             })
             .ok();
