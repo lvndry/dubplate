@@ -671,16 +671,13 @@ impl PadFxSlotSetting {
 
     fn slot(&self) -> Option<PadFxSlot> {
         let sound: PadSound = self.sound.parse().ok()?;
-        let parameter = match sound.parameter() {
-            Some(spec) => Some(
-                self.parameter
-                    .parse()
-                    .ok()
-                    .filter(|value| spec.accepts(*value))
-                    .unwrap_or(spec.default),
-            ),
-            None => None,
-        };
+        let parameter = sound.parameter().map(|spec| {
+            self.parameter
+                .parse()
+                .ok()
+                .filter(|value| spec.accepts(*value))
+                .unwrap_or(spec.default)
+        });
         Some(PadFxSlot {
             sound,
             parameter,
