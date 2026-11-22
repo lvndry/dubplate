@@ -52,6 +52,15 @@ pub enum EngineError {
         unit_count: usize,
     },
 
+    /// A sampler slot past the last slot.
+    #[error("sampler slot {slot} does not exist; there are {slot_count} slots")]
+    InvalidSamplerSlot {
+        /// Slot that was requested, counted from 0.
+        slot: usize,
+        /// Number of sampler slots.
+        slot_count: usize,
+    },
+
     /// No audio output device is available.
     #[error("no audio output device is available")]
     NoOutputDevice,

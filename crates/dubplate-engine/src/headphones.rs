@@ -96,6 +96,11 @@ impl Headphones {
         }
     }
 
+    /// Adds a source whose own CUE button is on, such as the sampler, to the cue bus.
+    pub(crate) fn listen_to(&mut self, block: &StereoBlock) {
+        self.cue_block.add(block);
+    }
+
     /// Mixes the cue bus with `master` into the headphone block, with `preview` added after
     /// the cue mix and before the level.
     pub(crate) fn finish(&mut self, master: &StereoBlock, preview: &StereoBlock) {
