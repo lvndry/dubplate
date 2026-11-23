@@ -15,7 +15,6 @@ mod deck;
 mod devices;
 mod effects;
 mod energy;
-mod finder;
 mod folder_picker;
 mod folder_tree;
 mod fonts;

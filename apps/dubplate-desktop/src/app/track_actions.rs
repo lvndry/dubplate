@@ -12,7 +12,6 @@ use super::notice::NoticePlace;
 use super::prepare::PrepareFocus;
 use crate::collection::TrackIndex;
 use crate::commands::Mode;
-use crate::finder;
 
 impl DubplateApp {
     /// The track the keys act on: the selected set track while the keys are on the set in
@@ -57,13 +56,18 @@ impl DubplateApp {
             );
             return;
         }
-        if let Err(problem) = finder::reveal(&path) {
+        #[cfg(target_os = "macos")]
+        if path.to_str().is_none() {
             self.show_notice(
                 NoticePlace::Window,
-                format!("Finder could not show the file: {problem}"),
+                format!("{} is not a path Finder can open", path.display()),
                 cx,
             );
+            return;
         }
+        // GPUI reveals the file off the macOS input thread. A synchronous Finder call
+        // can run a nested event loop while this handler still borrows the app.
+        cx.reveal_path(&path);
     }
 
     /// Copies the selected track's file path.
