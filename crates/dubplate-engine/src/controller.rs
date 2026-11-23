@@ -881,7 +881,8 @@ impl Controller {
     }
 
     /// Puts a sample in a sampler slot, counted from 0, with its settings. Any sample there
-    /// stops. Slots 0 to 7 sit on the left pads of a DDJ-FLX4 and 8 to 15 on the right.
+    /// stops. Slot `bank * BANK_SLOTS + n` is slot `n + 1` of a bank: 0 to 7 sit on the left
+    /// pads of a DDJ-FLX4 and 8 to 15 on the right.
     pub fn load_sample(
         &mut self,
         slot: usize,
