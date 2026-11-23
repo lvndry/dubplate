@@ -15,7 +15,9 @@ use thiserror::Error;
 use crate::analysis::{AnalysedGrid, AudioAnalysis, analysis_version};
 use crate::energy::TrackEnergy;
 use crate::loudness::Lufs;
-use crate::sql::{execute_cached, query_row_cached};
+use dubplate_library::unix_millis;
+
+use crate::sql::{execute_cached, now_unix_millis, query_row_cached};
 use crate::store::is_inside_rekordbox;
 
 /// The highest schema version the cache can bring a database to.
@@ -272,14 +274,6 @@ fn analysis_of_columns(columns: AnalysisColumns) -> Result<AudioAnalysis, Analys
     })
 }
 
-/// The current time as Unix milliseconds.
-fn now_unix_millis() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_millis().min(i64::MAX as u128) as i64)
-        .unwrap_or(0)
-}
-
 /// The file's current size and modification time in milliseconds, or None when it has no
 /// readable metadata.
 fn file_fingerprint(path: &Path) -> Result<Option<(i64, i64)>, AnalysisCacheError> {
@@ -287,10 +281,6 @@ fn file_fingerprint(path: &Path) -> Result<Option<(i64, i64)>, AnalysisCacheErro
         return Ok(None);
     };
     let size = i64::try_from(metadata.len()).unwrap_or(i64::MAX);
-    let modified = metadata
-        .modified()?
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_millis().min(i64::MAX as u128) as i64)
-        .unwrap_or(0);
+    let modified = i64::try_from(unix_millis(metadata.modified()?)).unwrap_or(i64::MAX);
     Ok(Some((size, modified)))
 }
