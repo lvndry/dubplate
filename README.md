@@ -54,7 +54,7 @@ The first build takes a few minutes; after a change, a few seconds. Then follow 
 
 ## Learn more
 
-Open `website/index.html` in a browser for the live mixing overview. The Features page covers set preparation and transition rehearsal.
+Visit the [Dubplate website](https://lvndry.github.io/dubplate/) for the live mixing overview. The [Features page](https://lvndry.github.io/dubplate/features.html) covers set preparation and transition rehearsal.
 
 - [Prepare a set and mix it](docs/guide.md): the DJ's walkthrough.
 - [How the engine works](docs/engine.md): every feature of the audio engine, with the measurements behind each choice.
