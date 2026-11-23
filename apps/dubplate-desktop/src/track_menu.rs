@@ -235,20 +235,25 @@ fn add_choices(menu: PopupMenu, choices: &[Choice]) -> PopupMenu {
 }
 
 fn add_tag_groups(menu: PopupMenu, groups: &[TagGroup]) -> PopupMenu {
-    if groups.is_empty() {
-        return menu.label("No My Tags yet");
-    }
-    groups
-        .iter()
-        .enumerate()
-        .fold(menu, |menu, (position, group)| {
-            let menu = if position == 0 {
-                menu
-            } else {
-                menu.separator()
-            };
-            add_choices(menu.label(group.category.clone()), &group.tags)
-        })
+    let menu = if groups.is_empty() {
+        menu.label("No My Tags yet")
+    } else {
+        groups
+            .iter()
+            .enumerate()
+            .fold(menu, |menu, (position, group)| {
+                let menu = if position == 0 {
+                    menu
+                } else {
+                    menu.separator()
+                };
+                add_choices(menu.label(group.category.clone()), &group.tags)
+            })
+    };
+    menu.separator().menu(
+        "Edit My Tags\u{2026}",
+        Box::new(Perform(Command::OpenTagManager)),
+    )
 }
 
 /// `menu` filled with the entries for `facts`, its commands sent from `keys`, the focus whose
