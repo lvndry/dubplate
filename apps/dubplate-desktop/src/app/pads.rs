@@ -135,12 +135,16 @@ fn pad_fx_action(
 }
 
 impl DubplateApp {
-    /// A pad press in the mode the controller sent it in, or the deck's mode. A controller's
-    /// mode wins: the deck takes it, as the pads are where the DJ's hands are.
+    /// Routes a pad press to the deck’s current mode or the mode in a controller note.
     pub(super) fn press_pad(&mut self, press: PadPress, cx: &mut Context<'_, Self>) {
         let deck = press.deck;
-        if let Some(mode) = press.mode {
-            self.set_pad_mode(deck, mode, cx);
+        let index = deck.index();
+        if press.press != Press::Up {
+            let chosen = crate::pads::pad_mode_for_press(self.pad_modes[index], press.mode);
+            if let Some(sent) = press.mode {
+                self.controller_pad_modes[index] = sent;
+            }
+            self.set_pad_mode(deck, chosen, cx);
         }
         let mode = self.pad_modes[deck.index()];
         if mode == PadMode::Sampler {
@@ -152,6 +156,24 @@ impl DubplateApp {
         }
         if matches!(mode, PadMode::PadFx1 | PadMode::PadFx2) {
             self.press_pad_fx(press, mode, cx);
+            return;
+        }
+        if crate::pads::is_slicer_mode(mode) {
+            let held = self.held_slices[index];
+            if press.press == Press::Up
+                || (press.press == Press::Tap && held.is_some_and(|(pad, _)| pad == press.pad))
+            {
+                if held.is_some_and(|(pad, _)| pad == press.pad) {
+                    self.release_held_slice(deck, cx);
+                }
+            } else if let Some((slice, roll)) = crate::pads::slicer_pad_target(
+                press.pad,
+                press.shift,
+                self.slicer_state(deck).and_then(|s| s.slice),
+            ) {
+                self.engine_command(cx, |c| c.slicer_pad(deck, slice, true, roll));
+                self.held_slices[index] = Some((press.pad, slice));
+            }
             return;
         }
         if !matches!(press.press, Press::Down | Press::Tap) {
@@ -234,16 +256,111 @@ impl DubplateApp {
                     self.apply_stem_action(deck, action, cx);
                 }
             }
-            PadMode::PadFx1 | PadMode::PadFx2 | PadMode::Sampler => {}
+            PadMode::PadFx1
+            | PadMode::PadFx2
+            | PadMode::Sampler
+            | PadMode::Slicer
+            | PadMode::SlicerLoop => {}
         }
     }
 
     /// Puts a deck's pads in `mode`, letting go of a pad effect held in the mode it leaves.
     pub(super) fn set_pad_mode(&mut self, deck: DeckId, mode: PadMode, cx: &mut Context<'_, Self>) {
-        if self.pad_modes[deck.index()] != mode {
-            self.release_held_pad(deck, cx);
+        let index = deck.index();
+        if self.pad_modes[index] == mode {
+            return;
+        }
+        self.release_held_pad(deck, cx);
+        self.release_held_slice(deck, cx);
+        if let Some(slicer) = crate::pads::slicer_engine_mode(mode) {
+            let domain = self.slicer_domains[index];
+            let result = self
+                .engine
+                .as_mut()
+                .map_err(|e| e.to_string())
+                .and_then(|e| {
+                    e.controller
+                        .slicer_on(deck, slicer, domain)
+                        .map_err(|e| e.to_string())
+                });
+            if let Err(error) = result {
+                self.show_notice(NoticePlace::Deck(deck), error, cx);
+                return;
+            }
+            self.slicer_updated_at = Some(Instant::now());
+        } else if crate::pads::is_slicer_mode(self.pad_modes[index]) {
+            self.engine_command(cx, |c| c.slicer_off(deck));
         }
         self.pad_modes[deck.index()] = mode;
+    }
+
+    pub(super) fn reset_slicer_without_grid(&mut self, deck: DeckId) {
+        let index = deck.index();
+        if crate::pads::is_slicer_mode(self.pad_modes[index])
+            && self
+                .engine
+                .as_ref()
+                .ok()
+                .and_then(|e| e.controller.beat_grid(deck))
+                .is_none()
+        {
+            self.forget_slicer(deck);
+        }
+    }
+
+    pub(super) fn forget_slicer(&mut self, deck: DeckId) {
+        let index = deck.index();
+        if crate::pads::is_slicer_mode(self.pad_modes[index]) {
+            self.pad_modes[index] = self.controller_pad_modes[index];
+            self.held_slices[index] = None;
+        }
+    }
+
+    pub(super) fn set_slicer_domain(
+        &mut self,
+        deck: DeckId,
+        domain: dubplate_engine::SlicerDomain,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let index = deck.index();
+        if domain == self.slicer_domains[index] {
+            return;
+        }
+        let Some(mode) = crate::pads::slicer_engine_mode(self.pad_modes[index]) else {
+            return;
+        };
+        self.release_held_slice(deck, cx);
+        let result = self
+            .engine
+            .as_mut()
+            .map_err(|e| e.to_string())
+            .and_then(|engine| {
+                engine
+                    .controller
+                    .slicer_on(deck, mode, domain)
+                    .map_err(|e| e.to_string())
+            });
+        match result {
+            Ok(()) => {
+                self.slicer_domains[index] = domain;
+                self.slicer_updated_at = Some(Instant::now());
+            }
+            Err(error) => self.show_notice(NoticePlace::Deck(deck), error, cx),
+        }
+        cx.notify();
+    }
+
+    fn release_held_slice(&mut self, deck: DeckId, cx: &mut Context<'_, Self>) {
+        if let Some((_, slice)) = self.held_slices[deck.index()].take() {
+            self.engine_command(cx, |c| c.slicer_pad(deck, slice, false, None));
+        }
+    }
+
+    pub(super) fn slicer_state(&self, deck: DeckId) -> Option<dubplate_engine::SlicerState> {
+        self.engine
+            .as_ref()
+            .ok()
+            .map(|e| e.controller.slicer_state(deck))
     }
 
     /// A Pad FX pad, as [`pad_fx_action`] decides.
@@ -430,6 +547,11 @@ impl DubplateApp {
                     for (pad, lit) in pads.iter_mut().enumerate() {
                         let semitones = key_pad_semitones(pad, offset);
                         *lit = semitones.is_some() && (semitones != Some(shift) || blink);
+                    }
+                }
+                PadMode::Slicer | PadMode::SlicerLoop => {
+                    if let Some(slice) = self.slicer_state(deck).and_then(|s| s.slice) {
+                        pads[usize::from(slice.index())] = true;
                     }
                 }
                 PadMode::Sampler => {}

@@ -53,6 +53,8 @@ pub(super) fn render(
             div()
                 .flex()
                 .justify_between()
+                .flex_wrap()
+                .gap(px(4.0))
                 .items_center()
                 .child(mode_tabs(app, deck, cx))
                 .map(|row| {
@@ -67,7 +69,52 @@ pub(super) fn render(
             PadFxLayer::of(app.pad_modes[deck.index()], app.pads_shifted(deck)),
             |section, layer| section.child(pad_fx_layers(app, deck, layer, cx)),
         )
+        .when(
+            crate::pads::is_slicer_mode(app.pad_modes[deck.index()]),
+            |section| section.child(slicer_controls(app, deck, cx)),
+        )
         .child(pads(app, deck, cx))
+}
+
+fn slicer_controls(
+    app: &DubplateApp,
+    deck: DeckId,
+    cx: &mut Context<'_, DubplateApp>,
+) -> impl IntoElement + use<> {
+    use dubplate_engine::SlicerDomain;
+
+    let current = app.slicer_domains[deck.index()];
+    div()
+        .flex()
+        .items_center()
+        .gap(px(4.0))
+        .text_size(theme::SMALL_TEXT_SIZE)
+        .child("Beats")
+        .children(
+            SlicerDomain::ALL
+                .into_iter()
+                .enumerate()
+                .map(|(index, domain)| {
+                    let chosen = current == domain;
+                    div()
+                        .id((
+                            "slicer-domain",
+                            deck.index() * SlicerDomain::ALL.len() + index,
+                        ))
+                        .accessible_toggle(format!("{} beats", domain.beats()), chosen)
+                        .flex()
+                        .items_center()
+                        .h(TAB_HEIGHT)
+                        .px(px(6.0))
+                        .rounded(theme::SMALL_RADIUS)
+                        .cursor_pointer()
+                        .when(chosen, |button| button.bg(theme::active().raised))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.set_slicer_domain(deck, domain, cx)
+                        }))
+                        .child(crate::pads::domain_label(domain))
+                }),
+        )
 }
 
 /// The Pad FX layers of the mode: pads 1 to 8 and, behind SHIFT, the next eight, the one the
@@ -155,8 +202,7 @@ fn pad_fx_layers(
         )
 }
 
-/// The four mode buttons. Each shows its SHIFT mode when the pads are in it; a click picks the
-/// button's mode and a shift-click its SHIFT mode, as on the controller.
+/// The pad modes, with shift-click available for the controller buttons' alternate modes.
 fn mode_tabs(
     app: &DubplateApp,
     deck: DeckId,
@@ -165,6 +211,7 @@ fn mode_tabs(
     let current = app.pad_modes[deck.index()];
     div()
         .flex()
+        .flex_wrap()
         .gap(px(2.0))
         .children(
             mode_buttons()
@@ -177,7 +224,7 @@ fn mode_tabs(
                         mode
                     };
                     div()
-                        .id(("pad-mode", deck.index() * 4 + button))
+                        .id(("pad-mode", deck.index() * mode_buttons().count() + button))
                         .accessible_toggle(
                             format!(
                                 "Deck {} {} pad mode",
@@ -203,11 +250,11 @@ fn mode_tabs(
                                     .hover(|tab| tab.text_color(theme::active().text))
                             }
                         })
-                        .aria_description(
-                            "Enter selects this pad mode. Shift Enter selects its alternate mode.",
-                        )
+                        .when(mode != shift_mode, |tab| {
+                            tab.aria_description("Shift Enter selects the alternate pad mode.")
+                        })
                         .on_key_down(cx.listener(move |this, event, window, cx| {
-                            if shift_activation(event) {
+                            if mode != shift_mode && shift_activation(event) {
                                 this.perform(Command::SetPadMode(deck, shift_mode), window, cx);
                                 cx.stop_propagation();
                             }
@@ -388,6 +435,7 @@ fn pads(
 ) -> impl IntoElement + use<> {
     let loaded =
         app.deck(deck).visuals().is_some() || app.pad_modes[deck.index()] == PadMode::Sampler;
+    let slicer = crate::pads::is_slicer_mode(app.pad_modes[deck.index()]);
     let faces = faces(app, deck);
     let held: [bool; PAD_COUNT] =
         std::array::from_fn(|pad| app.shows_pressed(HeldControl::Pad(deck, pad)));
@@ -396,7 +444,8 @@ fn pads(
         .gap(px(4.0))
         .children(faces.into_iter().enumerate().map(|(pad, face)| {
             let playable = loaded && face.playable;
-            let pressed = held.get(pad).copied().unwrap_or(false);
+            let pressed = held[pad]
+                || (slicer && app.held_slices[deck.index()].is_some_and(|(held, _)| held == pad));
             div()
                 .id(("pad", deck.index() * PAD_COUNT + pad))
                 .when(playable, |button| {
@@ -449,8 +498,20 @@ fn pads(
                                 cx.stop_propagation();
                             }
                         }))
-                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .on_mouse_down(MouseButton::Left, cx.listener(move |this, event: &gpui::MouseDownEvent, window, cx| {
+                            cx.stop_propagation();
+                            if slicer {
+                                this.slicer_mouse_pad = Some((deck, pad));
+                                let shift = event.modifiers.shift || this.pads_shifted(deck);
+                                this.perform(Command::Pad(PadPress {
+                                    deck, pad, mode: None, press: Press::Down, shift,
+                                }), window, cx);
+                            }
+                        }))
                         .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
+                            if slicer && matches!(event, ClickEvent::Mouse(_)) {
+                                return;
+                            }
                             let press = PadPress {
                                 deck,
                                 pad,
@@ -505,6 +566,9 @@ fn faces(app: &DubplateApp, deck: DeckId) -> Vec<PadFace> {
         .and_then(|state| state.length);
     let sampler = app.sampler_state();
     let shifted = app.pads_shifted(deck);
+    let playing_slice = crate::pads::is_slicer_mode(mode)
+        .then(|| app.slicer_state(deck).and_then(|state| state.slice))
+        .flatten();
     let labelled = |title: &str, detail: &str| PadFace {
         title: SharedString::from(title.to_owned()),
         detail: SharedString::from(detail.to_owned()),
@@ -614,6 +678,34 @@ fn faces(app: &DubplateApp, deck: DeckId) -> Vec<PadFace> {
                     dot: on.then(|| theme::deck_colour(deck)),
                     lit: on,
                     playable: semitones.is_some(),
+                }
+            }
+            PadMode::Slicer | PadMode::SlicerLoop => {
+                let target = crate::pads::slicer_pad_target(pad, shifted, playing_slice);
+                let lit = if shifted {
+                    app.held_slices[deck.index()].is_some_and(|(p, _)| p == pad)
+                } else {
+                    playing_slice.is_some_and(|slice| usize::from(slice.index()) == pad)
+                };
+                PadFace {
+                    title: if shifted {
+                        target
+                            .and_then(|(_, r)| r)
+                            .map(crate::pads::roll_label)
+                            .unwrap_or("")
+                            .into()
+                    } else {
+                        format!("Slice {}", pad + 1).into()
+                    },
+                    detail: if shifted && pad < crate::pads::SLICER_ROLL_PADS {
+                        "roll"
+                    } else {
+                        ""
+                    }
+                    .into(),
+                    lit,
+                    dot: lit.then(|| theme::deck_colour(deck)),
+                    playable: target.is_some(),
                 }
             }
             PadMode::Sampler => {

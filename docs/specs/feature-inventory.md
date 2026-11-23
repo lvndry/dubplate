@@ -32,8 +32,8 @@ Some controls appear twice, once in their area and once in the FLX4 table, so th
 
 | Status | Rows | P0 | P1 | P2 | P3 |
 | --- | --- | --- | --- | --- | --- |
-| Done | 193 | 99 | 62 | 24 | 8 |
-| Partial | 129 | 11 | 46 | 50 | 22 |
+| Done | 194 | 99 | 62 | 25 | 8 |
+| Partial | 128 | 11 | 46 | 49 | 22 |
 | In progress | 2 | 2 | 0 | 0 | 0 |
 | Missing | 301 | 7 | 57 | 98 | 139 |
 | n/a | 3 | 0 | 0 | 0 | 3 |
@@ -484,7 +484,7 @@ These are features of the players. Dubplate prepares for them once it writes USB
 | Saved loops | Memory loops and hot loops, 10 per track, orange icon. | MEMORY CUE, HOT CUE | Free | Partial: drawn on the overview, called and saved as memory and hot loops; no limit on hot loops beyond the 8 pads | P1 |
 | Active loop | A saved loop marked active engages when the playhead reaches it; SHIFT + 4 BEAT/EXIT toggles it. | FLX4 SHIFT + 4 BEAT/EXIT | Free (FLX4) | Missing | P2 |
 | Loop roll | Rolls of 1/32 to 4 beats while held, slipping back in time. | PAD FX, BEAT FX ROLL | Free (FLX4) | Done (1/16 to 8 beats) | P1 |
-| Slicer | 8 slices of a 2 to 16 bar range on the pads, rolls of 1/64 to 1/8 of the range, slicer or slicer loop mode. | SLICER pad mode | Free | Partial: engine done; no pad mode in the app yet | P2 |
+| Slicer | 8 slices of a 2 to 16 bar range on the pads, rolls of 1/64 to 1/8 of the range, slicer or slicer loop mode. | SLICER pad mode | Free | Done (on-screen modes and shortcuts, 4 to 64 beats, lane slice highlight and FLX4 pads) | P2 |
 | Beat jump pads | 1, 2, 4 and 8 beats each way; SHIFT + pads 7 and 8 change the sizes. | FLX4 BEAT JUMP | Free (FLX4) | Done | P0 |
 | Beat jump values | FINE (5 ms), 1/8 to 128 beats; a playing loop moves with it. | BEAT JUMP pad mode | Free | Partial: scaled from 1/8 to 64 beats; no FINE 5 ms | P2 |
 | Beat jump on screen | Buttons each side of an amount on the deck. | Deck | Free | Missing (keys and pads only) | P3 |

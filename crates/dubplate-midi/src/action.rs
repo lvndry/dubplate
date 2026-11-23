@@ -58,6 +58,12 @@ pub enum PadMode {
     BeatLoop,
     /// Shift the key of the track.
     KeyShift,
+    /// Play the slices of the beats around the playhead. The FLX4 has no button for it, so it
+    /// is chosen on screen or with the keys; no mapping sends it.
+    Slicer,
+    /// Like [`PadMode::Slicer`], with the slices going round their range. Chosen on screen or
+    /// with the keys.
+    SlicerLoop,
 }
 
 impl fmt::Display for PadMode {
@@ -71,6 +77,8 @@ impl fmt::Display for PadMode {
             PadMode::PadFx2 => "pad FX 2",
             PadMode::BeatLoop => "beat loop",
             PadMode::KeyShift => "key shift",
+            PadMode::Slicer => "slicer",
+            PadMode::SlicerLoop => "slicer loop",
         })
     }
 }
