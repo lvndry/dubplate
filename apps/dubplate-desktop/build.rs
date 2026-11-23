@@ -7,12 +7,13 @@ use std::path::{Path, PathBuf};
 const ICON_SIZE: u32 = 1024;
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let artwork = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/logo/app-icon.svg");
+    // Cargo runs the build script from the package directory of the active checkout.
+    let artwork = Path::new("../../assets/logo/app-icon.svg");
     println!("cargo::rerun-if-changed={}", artwork.display());
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("macos") {
         return Ok(());
     }
-    let svg = std::fs::read(&artwork)?;
+    let svg = std::fs::read(artwork)?;
     let tree = resvg::usvg::Tree::from_data(&svg, &resvg::usvg::Options::default())?;
     let mut pixmap =
         resvg::tiny_skia::Pixmap::new(ICON_SIZE, ICON_SIZE).ok_or("the icon size is zero")?;
