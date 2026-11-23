@@ -63,15 +63,6 @@ pub(crate) struct DeckRender {
     pub(crate) starved: bool,
 }
 
-/// Which beat a beat loop that is not already on starts from.
-#[derive(Debug, Clone, Copy)]
-enum LoopSnap {
-    /// The beat nearest to what the DJ hears, as a beat loop on a CDJ.
-    Nearest,
-    /// The beat just passed, so a loop roll repeats what was just heard.
-    Previous,
-}
-
 /// The audio-thread side of a deck.
 pub(crate) struct Deck {
     voice: Voice,
@@ -411,17 +402,6 @@ impl Deck {
         self.snap_to_grain(frame, 1.0)
     }
 
-    /// The last multiple of `grain` beats at or before `frame` with quantize on and a grid,
-    /// otherwise `frame` itself.
-    fn previous_grain(&self, frame: f64, grain: f64) -> f64 {
-        if self.quantizes() {
-            let beat = (self.beat_at_frame(frame) / grain).floor() * grain;
-            self.clamp_position(self.frame_at_beat(beat))
-        } else {
-            frame
-        }
-    }
-
     /// The nearest multiple of `grain` beats to `frame` with quantize on and a grid, otherwise
     /// `frame` itself.
     fn snap_to_grain(&self, frame: f64, grain: f64) -> f64 {
@@ -549,31 +529,20 @@ impl Deck {
     /// may be just ahead of the playhead, or from exactly there without. With a loop on, changes its length from its start instead.
     pub(crate) fn beat_loop(&mut self, length: BeatLength, retire: &mut RetireQueue) {
         self.start_slipping_loop();
-        self.start_beat_loop(length, LoopSnap::Nearest, retire);
-    }
-
-    fn start_beat_loop(&mut self, length: BeatLength, snap: LoopSnap, retire: &mut RetireQueue) {
         let start = match self.looping.active_loop() {
             Some(region) => region.start,
-            None => {
-                let grain = length.beats().min(1.0);
-                let heard = self.heard_position();
-                match snap {
-                    LoopSnap::Nearest => self.snap_to_grain(heard, grain),
-                    LoopSnap::Previous => self.previous_grain(heard, grain),
-                }
-            }
+            None => self.snap_to_grain(self.heard_position(), length.beats().min(1.0)),
         };
-        let end = self.frame_at_beat(self.beat_at_frame(start) + length.beats());
-        self.set_loop(
-            LoopRegion {
-                start,
-                end,
-                active: true,
-                length: Some(length),
-            },
-            retire,
-        );
+        self.set_loop(self.beat_loop_region(start, length), retire);
+    }
+
+    fn beat_loop_region(&self, start: f64, length: BeatLength) -> LoopRegion {
+        LoopRegion {
+            start,
+            end: self.frame_at_beat(self.beat_at_frame(start) + length.beats()),
+            active: true,
+            length: Some(length),
+        }
     }
 
     /// Loops made before the grid arrived used 120 BPM. Keep their in points and use the new
@@ -696,7 +665,11 @@ impl Deck {
                     self.roll = Some(self.looping.region.take());
                     self.slip.begin(self.voice.position);
                 }
-                self.start_beat_loop(length, LoopSnap::Previous, retire);
+                if let Some(region) = self.looping.active_loop() {
+                    self.set_loop(self.beat_loop_region(region.start, length), retire);
+                } else {
+                    self.start_roll(length, retire);
+                }
             }
             None => {
                 if let Some(previous) = self.roll.take() {
@@ -705,6 +678,32 @@ impl Deck {
                     self.fold_past_loop_end(retire);
                 }
             }
+        }
+    }
+
+    /// Plays the preceding segment immediately, keeping the rendered playhead's beat phase.
+    /// With too little track before the press, the roll plays from the start of the track.
+    fn start_roll(&mut self, length: BeatLength, retire: &mut RetireQueue) {
+        let beats = length.beats();
+        let heard_beat = self.beat_at_frame(self.heard_position());
+        let grain = beats.min(1.0);
+        let end_beat = if self.quantizes() {
+            (heard_beat / grain).floor() * grain
+        } else {
+            heard_beat
+        };
+        let start = self.clamp_position(self.frame_at_beat(end_beat - beats));
+        let region = self.beat_loop_region(start, length);
+        let start_beat = self.beat_at_frame(start);
+        let target = if self.voice.position < region.end {
+            start
+        } else {
+            let beat = self.beat_at_frame(self.voice.position);
+            self.frame_at_beat(start_beat + (beat - start_beat).rem_euclid(beats))
+        };
+        self.looping.region = Some(region);
+        if self.voice.position != target {
+            self.jump_to_frame(target, retire);
         }
     }
 

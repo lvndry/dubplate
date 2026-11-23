@@ -199,6 +199,7 @@ const KNOB_TRAVEL: f32 = 160.0;
 struct DeckFrame {
     state: DeckState,
     playhead_seconds: f64,
+    slip_shadow: Option<f64>,
     duration_seconds: Option<f64>,
 }
 
@@ -2348,9 +2349,15 @@ impl DubplateApp {
         let frames = DeckId::ALL.map(|deck| {
             self.reset_slicer_without_grid(deck);
             let state = self.deck_state(deck);
+            let slip_shadow = self.slip_shadow(deck);
             DeckFrame {
                 state,
-                playhead_seconds: self.decks[deck.index()].clock.position(&state, now),
+                playhead_seconds: self.decks[deck.index()].clock.position(
+                    &state,
+                    slip_shadow.is_some(),
+                    now,
+                ),
+                slip_shadow,
                 duration_seconds: self.duration_seconds(deck),
             }
         });
