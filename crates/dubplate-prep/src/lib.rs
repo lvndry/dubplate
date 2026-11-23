@@ -22,6 +22,7 @@ mod identity;
 mod loudness;
 mod ready;
 mod session;
+mod set_check;
 mod sql;
 mod store;
 mod suggestion;
@@ -48,6 +49,7 @@ pub use identity::TrackIdentity;
 pub use loudness::{Lufs, integrated_loudness};
 pub use ready::{ReadyProblem, ReadyReport, Severity, TrackReadiness, ready_report};
 pub use session::{SetCompletion, SetJob, SetSession, SetSessionError};
+pub use set_check::{SetCheckReport, SetCheckRow, SetCheckTrack, check_set};
 pub use store::{
     CueSource, EqIntent, ImportedHistory, Play, PlayDeck, PlayId, Playlist, PlaylistEdit,
     PlaylistEdited, PlaylistId, PlaylistKind, PlaylistTrack, PlaylistTree, RecordedPlay, Seam,
@@ -55,5 +57,5 @@ pub use store::{
     TagCategoryId, TagId, TrackColour, TrackMetadata, TrackTagEdit, TrackTagEdited,
 };
 pub use suggestion::{KeyFit, Suggestion, suggest_next};
-pub use track::PrepTrack;
+pub use track::{PrepTrack, preferred_track_value};
 pub use warnings::{SetTrack, SetWarning, WarningKind, WarningPosition, set_warnings};

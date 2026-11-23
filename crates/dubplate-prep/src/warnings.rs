@@ -108,13 +108,27 @@ pub struct SetWarning {
 /// track that is a duplicate is not also reported as a similar version. Fewer
 /// than two entries gives no seam warnings.
 pub fn set_warnings(entries: &[SetTrack<'_>]) -> Vec<SetWarning> {
+    warnings_for_slots(entries.len(), |index| {
+        let entry = entries[index];
+        Some((entry, entry.track.energy))
+    })
+}
+
+/// Keeps unresolved tracks in their positions so warnings refer to the main set order.
+pub(crate) fn warnings_for_slots<'track>(
+    length: usize,
+    entry: impl Fn(usize) -> Option<(SetTrack<'track>, Option<f32>)>,
+) -> Vec<SetWarning> {
     let mut warnings = Vec::new();
-    for outgoing_index in 0..entries.len().saturating_sub(1) {
-        let outgoing = &entries[outgoing_index];
+    for outgoing_index in 0..length.saturating_sub(1) {
+        let (Some((outgoing, outgoing_energy)), Some((incoming, incoming_energy))) =
+            (entry(outgoing_index), entry(outgoing_index + 1))
+        else {
+            continue;
+        };
         if outgoing.free_into_next {
             continue;
         }
-        let incoming = &entries[outgoing_index + 1];
         let position = WarningPosition::Seam {
             after: outgoing_index,
         };
@@ -146,9 +160,7 @@ pub fn set_warnings(entries: &[SetTrack<'_>]) -> Vec<SetWarning> {
                 kind: WarningKind::VocalsOverlap,
             });
         }
-        if let (Some(outgoing_energy), Some(incoming_energy)) =
-            (outgoing.track.energy, incoming.track.energy)
-        {
+        if let (Some(outgoing_energy), Some(incoming_energy)) = (outgoing_energy, incoming_energy) {
             let energy_drop = outgoing_energy - incoming_energy;
             if energy_drop >= 3.0 {
                 warnings.push(SetWarning {
@@ -158,12 +170,23 @@ pub fn set_warnings(entries: &[SetTrack<'_>]) -> Vec<SetWarning> {
             }
         }
     }
-    for later_index in 0..entries.len() {
-        let kind = duplicate_position(entries, later_index)
-            .map(|first_position| WarningKind::Duplicate { first_position })
+    for later_index in 0..length {
+        let Some((later, _)) = entry(later_index) else {
+            continue;
+        };
+        let earlier = || {
+            (0..later_index).filter_map(|index| {
+                let (earlier, _) = entry(index)?;
+                Some((index, earlier.track))
+            })
+        };
+        let kind = earlier()
+            .find(|(_, track)| track.track_path == later.track.track_path)
+            .map(|(first_position, _)| WarningKind::Duplicate { first_position })
             .or_else(|| {
-                similar_version_position(entries, later_index)
-                    .map(|first_position| WarningKind::SimilarVersion { first_position })
+                earlier()
+                    .find(|(_, track)| is_similar_version(track, later.track))
+                    .map(|(first_position, _)| WarningKind::SimilarVersion { first_position })
             });
         if let Some(kind) = kind {
             warnings.push(SetWarning {
@@ -173,20 +196,6 @@ pub fn set_warnings(entries: &[SetTrack<'_>]) -> Vec<SetWarning> {
         }
     }
     warnings
-}
-
-/// The earliest earlier entry with the same file, if any.
-fn duplicate_position(entries: &[SetTrack<'_>], later_index: usize) -> Option<usize> {
-    (0..later_index).find(|earlier_index| {
-        entries[*earlier_index].track.track_path == entries[later_index].track.track_path
-    })
-}
-
-/// The earliest earlier entry that is another version of this track, if any.
-fn similar_version_position(entries: &[SetTrack<'_>], later_index: usize) -> Option<usize> {
-    (0..later_index).find(|earlier_index| {
-        is_similar_version(entries[*earlier_index].track, entries[later_index].track)
-    })
 }
 
 /// Whether two tracks are versions of the same song: a different file,

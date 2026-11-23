@@ -30,7 +30,8 @@ pub use relocate::{
     search_folders_for,
 };
 pub use scan::{
-    AUDIO_EXTENSIONS, FolderScan, LibraryTrack, ScanError, ScanProblem, is_audio_file, scan_folder,
+    AUDIO_EXTENSIONS, FolderScan, LibraryTrack, ScanError, ScanProblem, is_audio_file,
+    read_audio_metadata, scan_folder,
 };
 pub use settings::{DataFolder, LibrarySettings, LibrarySettingsError, Relink};
 pub use traktor::{

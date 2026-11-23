@@ -28,6 +28,25 @@ cargo cli set list
 cargo cli set export "Friday" --xml friday.xml
 ```
 
+### Check a set before a gig
+
+Run the check on a set saved in the desktop app. The report lists each track in play order with its missing file, unconfirmed grid, missing mix-in or mix-out cue, or unknown key. It lists backup tracks separately. Transition and duplicate warnings use the same rules as Prepare. A transition marked Free skips the musical warnings for that pair.
+
+```sh
+cargo cli set check "Friday"
+cargo cli set check "Friday" --json
+```
+
+The check reads saved metadata and available analysis. It does not run new track analysis or stem separation. Use `--library /path/to/master.db` to choose a rekordbox library. JSON positions start at 1 within the main or backup list. Transition warnings identify the outgoing and incoming positions with `from` and `to`.
+
+| Exit | Meaning |
+|---|---|
+| 0 | Every main track is ready. Transition warnings and backup issues are advisory. |
+| 2 | At least one main track needs attention, or the set has no main tracks. |
+| 1 | The check could not open or find the requested set, or another runtime error prevented a report. |
+
+### Export a set to USB
+
 A set can also go straight to a USB stick, or a folder, that CDJs and XDJs read as a rekordbox export: the audio under `Contents`, each track's beat grid, hot cues, memory cues, loops and waveforms under `PIONEER/USBANLZ`, and the set as a playlist (with a second one for its backups) in `PIONEER/rekordbox/export.pdb`:
 
 ```
@@ -36,6 +55,8 @@ cargo cli usb export "Friday" --to ~/Desktop/stick-test
 ```
 
 A stick that already holds a library rekordbox wrote is refused, so nothing of it changes; a stick Dubplate exported to before is added to, and a playlist of the same name is replaced. Dubplate never replaces or deletes a file it did not write, and never writes inside rekordbox's own folders. Folder tracks take Dubplate's beat grid, analysed on the spot when Dubplate has not analysed them yet.
+
+### Analyse audio files
 
 Dubplate analyses the tracks rekordbox never did (tempo, beat grid with downbeats, key and energy, with Euphoria's detectors). The same analysis runs on audio files or whole folders from the command line, and can be compared with rekordbox's BPM, key and grid for the tracks rekordbox also holds. Audio files and rekordbox's files are only read:
 

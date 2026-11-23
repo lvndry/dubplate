@@ -55,7 +55,7 @@ struct IndexFile {
 
 /// The tracks whose stems Dubplate put in the cache.
 #[derive(Debug)]
-pub(crate) struct StemsIndex {
+pub struct StemsIndex {
     cache: PathBuf,
     entries: HashMap<PathBuf, IndexEntry>,
 }
@@ -63,7 +63,7 @@ pub(crate) struct StemsIndex {
 impl StemsIndex {
     /// Reads the index of the cache folder `cache`. An index that is missing, unreadable or
     /// from another version starts empty: tracks are then found in the cache when asked for.
-    pub(crate) fn open(cache: &Path) -> Self {
+    pub fn open(cache: &Path) -> Self {
         let entries = std::fs::read(cache.join(INDEX_FILE_NAME))
             .ok()
             .and_then(|bytes| serde_json::from_slice::<IndexFile>(&bytes).ok())
@@ -83,7 +83,7 @@ impl StemsIndex {
 
     /// The stems of `track` when Dubplate separated it, the file has not changed since and its
     /// stems are still in the cache.
-    pub(crate) fn lookup(&self, track: &Path) -> Option<StemFiles> {
+    pub fn lookup(&self, track: &Path) -> Option<StemFiles> {
         let entry = self.entries.get(track)?;
         if FileStamp::of(track).ok()? != entry.stamp {
             return None;

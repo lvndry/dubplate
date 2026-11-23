@@ -406,13 +406,19 @@ impl<'a> ExportLibrary<'a> {
             .collect()
     }
 
-    fn rekordbox_track(&self, entry: &SetEntry) -> Option<&'a Track> {
+    /// The rekordbox track corresponding to the saved id or path of `entry`.
+    pub fn rekordbox_track(&self, entry: &SetEntry) -> Option<&'a Track> {
         entry
             .rekordbox_id
             .as_deref()
             .and_then(|id| self.rekordbox_by_id.get(id))
             .or_else(|| self.rekordbox_by_path.get(&entry.track_path))
             .copied()
+    }
+
+    /// The track from a configured music folder's scan at `path`.
+    pub fn scanned_track(&self, path: &Path) -> Option<&'a LibraryTrack> {
+        self.folder_tracks.get(path).copied()
     }
 
     fn resolve(&self, entry: &SetEntry, problems: &mut Vec<String>) -> ExportTrack {
@@ -441,9 +447,8 @@ impl<'a> ExportLibrary<'a> {
             };
         }
         let track = self
-            .folder_tracks
-            .get(current_path.as_path())
-            .map(|found| folder_track(found))
+            .scanned_track(&current_path)
+            .map(folder_track)
             .unwrap_or_else(|| file_track(&current_path));
         ExportTrack {
             entry: entry.clone(),

@@ -13,7 +13,7 @@ use gpui::{
 };
 
 use super::DubplateApp;
-use super::prepare::{NextSuggestions, PrepareFocus, SetRow, set_ready};
+use super::prepare::{NextSuggestions, PrepareFocus, SetRow};
 use crate::audition::AUDITION_LENGTH;
 use crate::browser::DraggedTrack;
 use crate::commands::{Command, Direction, SetEdit};
@@ -154,7 +154,7 @@ fn summary(
         _ => "No tempo yet".to_owned(),
     };
     let ready = rows.iter().filter(|row| row.ready.is_ready()).count();
-    let all_ready = set_ready(rows);
+    let all_ready = app.prepare_view.ready;
     let readiness = if all_ready {
         String::new()
     } else {
