@@ -274,7 +274,6 @@ fn analysis_of_columns(columns: AnalysisColumns) -> Result<AudioAnalysis, Analys
     })
 }
 
-
 /// The file's current size and modification time in milliseconds, or None when it has no
 /// readable metadata.
 fn file_fingerprint(path: &Path) -> Result<Option<(i64, i64)>, AnalysisCacheError> {
@@ -287,3 +286,5 @@ fn file_fingerprint(path: &Path) -> Result<Option<(i64, i64)>, AnalysisCacheErro
         .duration_since(std::time::UNIX_EPOCH)
         .map(millis_i64)
         .unwrap_or(0);
+    Ok(Some((size, modified)))
+}
