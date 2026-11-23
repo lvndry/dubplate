@@ -24,6 +24,7 @@ use crate::effects::delays::tape::{DEFAULT_DEPTH, TrailLevel, read_taps};
 use crate::unit::{Controls, Frame, Kernel, MixLaw, Unit, implement_effect};
 
 const FEEDBACK_SMOOTHING_SECONDS: f32 = 0.02;
+const HISTORY_ENTRY_SECONDS: f32 = 0.004;
 const TRAIL_MARGIN_SECONDS: f32 = 0.05;
 
 /// What makes one echo of the family sound the way it does.
@@ -35,6 +36,9 @@ pub(crate) trait Voicing: Send + 'static {
     /// Whether a new delay time glides there however far it is, bending the trail's pitch,
     /// instead of crossfading.
     const GLIDES: bool = false;
+
+    /// Whether the delay keeps a dry history ready before the effect is switched on.
+    const KEEPS_HISTORY: bool = false;
 
     /// Which effect this voicing makes.
     fn kind(&self) -> EffectKind;
@@ -90,6 +94,7 @@ pub(crate) struct EchoLoop<V> {
     time: DelayTime,
     pub(crate) beat: BeatLength,
     pub(crate) feedback: Smoothed,
+    history_entry: Smoothed,
     sample_rate: f32,
 }
 
@@ -108,6 +113,7 @@ impl<V: Voicing> EchoLoop<V> {
             },
             beat,
             feedback: Smoothed::new(feedback, FEEDBACK_SMOOTHING_SECONDS),
+            history_entry: Smoothed::new(0.0, HISTORY_ENTRY_SECONDS),
             sample_rate: 0.0,
         }
     }
@@ -115,12 +121,16 @@ impl<V: Voicing> EchoLoop<V> {
 
 impl<V: Voicing> Kernel for EchoLoop<V> {
     const TRAILS: bool = true;
+    const LISTENS_WHEN_OFF: bool = V::KEEPS_HISTORY;
     const MIX_LAW: MixLaw = V::MIX_LAW;
 
     fn begin_block(&mut self, timing: &BlockTiming) {
         if timing.sample_rate != self.sample_rate {
             self.sample_rate = timing.sample_rate;
             self.feedback.prepare(timing.sample_rate);
+            if V::KEEPS_HISTORY {
+                self.history_entry.prepare(timing.sample_rate);
+            }
             self.trail_level.prepare(timing.sample_rate);
             self.voicing.prepare(timing.sample_rate);
         }
@@ -153,7 +163,25 @@ impl<V: Voicing> Kernel for EchoLoop<V> {
         for ((line, channel_sent), repeat) in self.lines.iter_mut().zip(sent).zip(repeats) {
             line.write(flush_denormal(channel_sent + repeat * gains.feedback));
         }
-        delayed.map(|channel_delayed| channel_delayed * gains.output)
+        if V::KEEPS_HISTORY {
+            // A prefilled fader echo enters immediately. Soften its transients even on the
+            // first repeat, where the ordinary echo plays the delayed signal unchanged.
+            let entry = self.history_entry.next();
+            repeats.map(|sample| sample * gains.output * entry)
+        } else {
+            delayed.map(|sample| sample * gains.output)
+        }
+    }
+
+    #[inline]
+    fn listen(&mut self, input: Frame, _beat_position: f64) {
+        if self.history_entry.target() != 0.0 {
+            self.history_entry.set_target(0.0);
+            self.history_entry.snap_to_target();
+        }
+        for (line, sample) in self.lines.iter_mut().zip(input) {
+            line.write(sample);
+        }
     }
 
     fn reset(&mut self) {
@@ -170,6 +198,9 @@ impl<V: Voicing> Kernel for EchoLoop<V> {
     }
 
     fn switched_on(&mut self) {
+        if V::KEEPS_HISTORY {
+            self.history_entry.set_target(1.0);
+        }
         self.voicing.switched_on();
     }
 

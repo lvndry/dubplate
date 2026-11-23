@@ -66,11 +66,13 @@ impl Voicing for Single {
 
 /// Tape-aged repeats with a trail that lengthens as the knob turns: the Echo.
 #[derive(Default)]
-pub(crate) struct Aged {
+pub(crate) struct Aged<const HISTORY: bool = false> {
     tape: Tape,
 }
 
-impl Voicing for Aged {
+impl<const HISTORY: bool> Voicing for Aged<HISTORY> {
+    const KEEPS_HISTORY: bool = HISTORY;
+
     fn kind(&self) -> EffectKind {
         EffectKind::Echo
     }

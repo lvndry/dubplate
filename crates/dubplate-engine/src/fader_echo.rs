@@ -2,7 +2,7 @@
 //! its music while it goes, the afro house echo out, and the echoes ring on after the fader is
 //! shut. The echo listens after the fader, so it only hears what is still let through.
 
-use dubplate_fx::{BeatLength, Effect, EffectKind, create};
+use dubplate_fx::{BeatLength, Echo, Effect};
 
 use crate::effects::{effect_config, effect_context};
 use crate::processor::{ProcessContext, StereoBlock};
@@ -12,15 +12,15 @@ const ARMED_BELOW: f32 = 0.8;
 /// The smallest drop in gain from one block to the next that counts as closing, so a fader
 /// left where it is never echoes.
 const CLOSING_STEP: f32 = 1e-3;
-/// A fader at or below this gain is shut: its echo rings on however long it stays there.
+/// A fader at or below this gain is shut: stop sending music and let the echo ring out.
 const SHUT_BELOW: f32 = 0.02;
 /// A fader that stops closing above [`SHUT_BELOW`] for this long lets its echo go, so a fader
 /// pulled half way and left there does not echo the music on and on.
 const PAUSE_SECONDS: f32 = 0.25;
 /// The echo's time.
 const ECHO_BEAT: BeatLength = BeatLength::HALF;
-/// The echo's depth: repeats as loud as the music on top of it, fading over about two beats.
-const ECHO_DEPTH: f32 = 0.6;
+/// Keep the repeats about 7 dB below the captured music so they leave room for later Beat FX.
+const ECHO_DEPTH: f32 = 0.33;
 
 /// A deck's fader echo, built up front with the deck.
 pub(crate) struct FaderEcho {
@@ -33,11 +33,11 @@ impl FaderEcho {
     /// Builds the echo for `sample_rate`. This allocates, so it runs before the renderer
     /// reaches the audio thread.
     pub(crate) fn new(sample_rate: u32) -> Self {
-        let mut echo = create(EffectKind::Echo, &effect_config(sample_rate));
+        let mut echo = Echo::with_history(&effect_config(sample_rate));
         echo.set_beat(ECHO_BEAT);
         echo.set_depth(ECHO_DEPTH);
         Self {
-            echo,
+            echo: Box::new(echo),
             last_gain: 1.0,
             paused_seconds: 0.0,
         }
@@ -65,12 +65,10 @@ impl FaderEcho {
         };
         if enabled && closing && gain < ARMED_BELOW {
             self.echo.set_enabled(true);
-        } else if opening || !enabled || self.paused_seconds > PAUSE_SECONDS {
+        } else if opening || gain <= SHUT_BELOW || !enabled || self.paused_seconds > PAUSE_SECONDS {
             self.echo.set_enabled(false);
         }
-        if self.echo.is_enabled() || self.echo.is_active() {
-            let (left, right) = block.channels_mut();
-            self.echo.process(left, right, &effect_context(context));
-        }
+        let (left, right) = block.channels_mut();
+        self.echo.process(left, right, &effect_context(context));
     }
 }
