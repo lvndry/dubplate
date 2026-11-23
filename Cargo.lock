@@ -1879,9 +1879,11 @@ dependencies = [
  "dubplate-midi",
  "dubplate-prep",
  "dubplate-rekordbox",
+ "dubplate-stems",
  "dubplate-usb",
  "jiff",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

@@ -9,7 +9,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use euphoria_core::Key;
-use rusqlite::{Connection, OptionalExtension, Row, params};
+use rusqlite::config::DbConfig;
+use rusqlite::{Connection, OpenFlags, OptionalExtension, Row, params};
 use thiserror::Error;
 
 use crate::analysis::{AnalysedGrid, AudioAnalysis, analysis_version, millis_i64};
@@ -59,6 +60,11 @@ const SELECT_FRESH_ANALYSIS: &str = "SELECT duration_seconds, bpm, grid_bpm, \
     FROM analysis
     WHERE track_path = ?1 AND file_size = ?2 AND modified_ms = ?3 AND analysis_version = ?4";
 
+const SELECT_FRESH_ANALYSIS_V1: &str = "SELECT duration_seconds, bpm, grid_bpm, \
+    grid_first_downbeat_seconds, camelot_key, energy_rating, energy_score, energy_curve_json, NULL
+    FROM analysis
+    WHERE track_path = ?1 AND file_size = ?2 AND modified_ms = ?3 AND analysis_version = ?4";
+
 /// Errors opening or using Dubplate's analysis cache.
 #[derive(Debug, Error)]
 pub enum AnalysisCacheError {
@@ -90,6 +96,7 @@ pub enum AnalysisCacheError {
 pub struct AnalysisCache {
     connection: Connection,
     version: String,
+    fresh_query: &'static str,
 }
 
 impl AnalysisCache {
@@ -111,19 +118,7 @@ impl AnalysisCache {
         let connection = Connection::open(path)?;
         connection.pragma_update(None, "journal_mode", "wal")?;
 
-        let user_version: i64 =
-            connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-        let user_version =
-            u32::try_from(user_version).map_err(|_| AnalysisCacheError::NewerSchema {
-                found: u32::MAX,
-                known: SCHEMA_VERSION,
-            })?;
-        if user_version > SCHEMA_VERSION {
-            return Err(AnalysisCacheError::NewerSchema {
-                found: user_version,
-                known: SCHEMA_VERSION,
-            });
-        }
+        let user_version = user_version(&connection)?;
 
         for (index, migration) in MIGRATIONS.iter().enumerate() {
             let target_version = u32::try_from(index).unwrap_or(u32::MAX).saturating_add(1);
@@ -135,6 +130,30 @@ impl AnalysisCache {
         Ok(Self {
             connection,
             version: analysis_version(),
+            fresh_query: SELECT_FRESH_ANALYSIS,
+        })
+    }
+
+    /// Opens an existing cache without creating or migrating it. Cached rows from before
+    /// loudness was stored are available with no loudness value.
+    pub fn open_read_only(path: &Path) -> Result<Self, AnalysisCacheError> {
+        if is_inside_rekordbox(path) {
+            return Err(AnalysisCacheError::InsideRekordbox(path.to_path_buf()));
+        }
+        let connection = Connection::open_with_flags(
+            std::path::absolute(path)?,
+            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )?;
+        connection.set_db_config(DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, true)?;
+        let fresh_query = if user_version(&connection)? == 1 {
+            SELECT_FRESH_ANALYSIS_V1
+        } else {
+            SELECT_FRESH_ANALYSIS
+        };
+        Ok(Self {
+            connection,
+            version: analysis_version(),
+            fresh_query,
         })
     }
 
@@ -147,7 +166,7 @@ impl AnalysisCache {
         };
         let row = query_row_cached(
             &self.connection,
-            SELECT_FRESH_ANALYSIS,
+            self.fresh_query,
             params![path.to_string_lossy(), file_size, modified_ms, self.version],
             analysis_columns_of_row,
         )
@@ -214,6 +233,18 @@ impl AnalysisCache {
         )?;
         Ok(())
     }
+}
+
+fn user_version(connection: &Connection) -> Result<u32, AnalysisCacheError> {
+    let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+    let version = u32::try_from(version).unwrap_or(u32::MAX);
+    if version > SCHEMA_VERSION {
+        return Err(AnalysisCacheError::NewerSchema {
+            found: version,
+            known: SCHEMA_VERSION,
+        });
+    }
+    Ok(version)
 }
 
 /// A cached row's columns, as SQLite holds them.

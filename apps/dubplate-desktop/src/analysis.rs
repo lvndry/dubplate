@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use dubplate_prep::{AnalysisQueue, AudioAnalysis, Key, Priority};
+use dubplate_prep::{AnalysisQueue, AudioAnalysis, Key, Priority, preferred_track_value};
 use gpui::SharedString;
 
 use crate::collection::{CollectionTrack, TrackOrigin};
@@ -234,10 +234,7 @@ pub fn preferred<Value>(
     own: Option<Value>,
     analysed: Option<Value>,
 ) -> Option<Value> {
-    match origin {
-        TrackOrigin::Rekordbox => own.or(analysed),
-        TrackOrigin::Folder | TrackOrigin::File => analysed.or(own),
-    }
+    preferred_track_value(origin == TrackOrigin::Rekordbox, own, analysed)
 }
 
 /// The text of a tempo or key cell: the preferred value, blank while a track that would show

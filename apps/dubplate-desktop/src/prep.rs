@@ -6,8 +6,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use dubplate_prep::{
-    AudioAnalysis, GridCorrection, Key, PrepTrack, ProposedCues, ReadyReport, SetEntry,
-    TrackReadiness, propose_mix_cues, ready_report,
+    AudioAnalysis, GridCorrection, Key, PrepTrack, ProposedCues, SetEntry, propose_mix_cues,
 };
 use dubplate_rekordbox::TrackAnalysis;
 use dubplate_rekordbox::analysis::{BeatGrid, SongStructure};
@@ -223,18 +222,6 @@ pub fn check_track(
     }
 }
 
-/// Whether a set track is ready to mix: its grid confirmed by the DJ, both mix cues, a known
-/// key and its file. A track not checked yet is reported by what is known without the disk.
-pub fn readiness(track: &PrepTrack, check: Option<&TrackCheck>, entry: &SetEntry) -> ReadyReport {
-    ready_report(&TrackReadiness {
-        file_found: check.is_none_or(|check| check.file_found),
-        grid_confirmed: entry.grid_confirmed,
-        has_mix_in_cue: entry.mix_in_ms.is_some(),
-        has_mix_out_cue: entry.mix_out_ms.is_some(),
-        key_known: track.key.is_some(),
-    })
-}
-
 /// The mix-in and mix-out a proposal would leave the entry with, keeping any cue already set.
 pub fn accept_proposal(entry: &SetEntry, proposal: ProposedCues) -> (Option<u32>, Option<u32>) {
     (
@@ -336,51 +323,6 @@ mod tests {
         let unknown =
             SeamSummary::between(&track(None, Some(120.0)), &track(Some("8A"), Some(120.0)));
         assert_eq!(unknown.line(false, false), "Key unknown \u{b7} +0.0%");
-    }
-
-    #[test]
-    fn a_track_is_ready_with_a_file_a_grid_both_cues_and_a_key() {
-        let known = track(Some("8A"), Some(120.0));
-        let check = TrackCheck {
-            file_found: true,
-            has_grid: true,
-            proposal: ProposedCues {
-                mix_in: None,
-                mix_out: None,
-            },
-        };
-        let cues = SetEntry {
-            mix_in_ms: Some(1),
-            mix_out_ms: Some(2),
-            grid_confirmed: true,
-            ..SetEntry::default()
-        };
-        assert!(readiness(&known, Some(&check), &cues).is_ready());
-        assert_eq!(
-            readiness(&known, Some(&check), &SetEntry::default()).badge(),
-            "Grid unconfirmed, and 2 more"
-        );
-        let unconfirmed = SetEntry {
-            grid_confirmed: false,
-            ..cues.clone()
-        };
-        assert_eq!(
-            readiness(&known, Some(&check), &unconfirmed).badge(),
-            "Grid unconfirmed",
-            "a grid rekordbox analysed still waits for the DJ to confirm it"
-        );
-        let missing = TrackCheck {
-            file_found: false,
-            ..check
-        };
-        assert_eq!(
-            readiness(&known, Some(&missing), &cues).badge(),
-            "File missing"
-        );
-        assert_eq!(
-            readiness(&track(None, None), None, &cues).badge(),
-            "Key unknown"
-        );
     }
 
     fn analysed(bpm: f32) -> AudioAnalysis {

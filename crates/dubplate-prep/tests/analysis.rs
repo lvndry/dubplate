@@ -232,6 +232,33 @@ fn the_cache_is_stale_after_the_file_changes() {
 }
 
 #[test]
+fn the_read_only_cache_uses_current_rows_and_rejects_file_changes() {
+    let directory = temp_dir();
+    let path = directory.path().join("track.wav");
+    fs::write(&path, b"audio").expect("the track exists");
+    let cache_path = directory.path().join("cache.db");
+    assert!(AnalysisCache::open_read_only(&cache_path).is_err());
+    assert!(!cache_path.exists());
+    let mut writer = AnalysisCache::open(&cache_path).expect("the cache opens");
+    let analysis = AudioAnalysis {
+        duration_seconds: 120.0,
+        bpm: Some(125.0),
+        key: Key::parse_file_key("8A"),
+        beat_grid: None,
+        energy: None,
+        loudness: None,
+    };
+    writer
+        .put(&path, &analysis)
+        .expect("the analysis is stored");
+
+    let reader = AnalysisCache::open_read_only(&cache_path).expect("the cache can be read");
+    assert_eq!(reader.get(&path).expect("the fresh row"), Some(analysis));
+    fs::write(&path, b"different audio").expect("the track changes");
+    assert_eq!(reader.get(&path).expect("the stale row"), None);
+}
+
+#[test]
 fn the_cache_is_stale_under_another_analysis_version() {
     let directory = temp_dir();
     let path = directory.path().join("track.wav");

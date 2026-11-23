@@ -171,7 +171,7 @@ pub fn scan_folder(
                 continue;
             }
             progress.fetch_add(1, Ordering::Relaxed);
-            match read_track(&path, &known) {
+            match read_track(&path, |path| known.get(path).copied()) {
                 Ok(track) => {
                     if seen_files.insert(track.path.clone()) {
                         tracks.push(track);
@@ -230,10 +230,20 @@ fn problem(path: &Path, error: &dyn std::fmt::Display) -> ScanProblem {
     }
 }
 
-/// The track at `path`, reusing what `known` read when the file has not changed.
-pub(crate) fn read_track(
+/// Reads the audio file's tags and duration, reusing `previous` if it describes the same
+/// unchanged file.
+pub fn read_audio_metadata(
     path: &Path,
-    known: &HashMap<&Path, &LibraryTrack>,
+    previous: Option<&LibraryTrack>,
+) -> Result<LibraryTrack, String> {
+    read_track(path, |canonical| {
+        previous.filter(|track| track.path == canonical)
+    })
+}
+
+fn read_track<'a>(
+    path: &Path,
+    known: impl FnOnce(&Path) -> Option<&'a LibraryTrack>,
 ) -> Result<LibraryTrack, String> {
     let path = path.canonicalize().map_err(|error| error.to_string())?;
     let metadata = std::fs::metadata(&path).map_err(|error| error.to_string())?;
@@ -242,11 +252,11 @@ pub(crate) fn read_track(
     }
     let size = metadata.len();
     let modified_ms = metadata.modified().map(unix_millis).unwrap_or_default();
-    if let Some(track) = known.get(path.as_path())
+    if let Some(track) = known(&path)
         && track.size == size
         && track.modified_ms == modified_ms
     {
-        return Ok((*track).clone());
+        return Ok(track.clone());
     }
     let tagged = lofty::read_from_path(&path).map_err(|error| error.to_string())?;
     let duration = tagged.properties().duration();

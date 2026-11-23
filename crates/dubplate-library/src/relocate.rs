@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use crate::scan::{LibraryTrack, is_audio_file, is_hidden, read_track};
+use crate::scan::{LibraryTrack, is_audio_file, is_hidden, read_audio_metadata};
 
 /// A rekordbox track whose file is not where rekordbox says it is.
 #[derive(Debug, Clone, PartialEq)]
@@ -183,13 +183,12 @@ pub fn search_folders_for(names: &HashSet<String>, folders: &[PathBuf]) -> Vec<P
 ///
 /// A path that cannot be read, or that is not an audio file, is skipped.
 pub fn candidates_from_paths(paths: &[PathBuf]) -> Vec<LibraryTrack> {
-    let none: HashMap<&Path, &LibraryTrack> = HashMap::new();
     let mut candidates = Vec::with_capacity(paths.len());
     for path in paths {
         if !is_audio_file(path) {
             continue;
         }
-        if let Ok(track) = read_track(path, &none) {
+        if let Ok(track) = read_audio_metadata(path, None) {
             candidates.push(track);
         }
     }

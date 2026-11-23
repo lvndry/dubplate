@@ -3,7 +3,9 @@
 use std::path::{Path, PathBuf};
 
 use dubplate_engine::{EngineError, Stem, StemTracks};
+use euphoria_core::energy::{ENERGY_CURVE_HOP_SECONDS, ENERGY_CURVE_WINDOW_SECONDS};
 use euphoria_core::stems as separation;
+use serde::Deserialize;
 
 /// How far into a track, from either end, a seam's overlap reaches: 32 seconds, 16 bars at
 /// 120 BPM, the longest blend a set plans.
@@ -144,15 +146,49 @@ impl StemFiles {
             directory: self.directory.clone(),
             reason: error.to_string(),
         })?;
-        Ok(VocalPresence::from_windows(activity.windows.iter().map(
-            |window| (window.start_seconds, window.duration_seconds, window.active),
-        )))
+        Ok(vocals_from_activity(&activity))
+    }
+
+    /// Reads vocal presence from current cached levels, without measuring or writing anything.
+    pub fn cached_vocal_presence(&self) -> Option<VocalPresence> {
+        let bytes =
+            std::fs::read(self.directory.join(separation::VOCAL_ACTIVITY_FILE_NAME)).ok()?;
+        let header: VocalLevelsHeader = serde_json::from_slice(&bytes).ok()?;
+        let vocals_bytes = std::fs::metadata(self.path(Stem::Vocals)).ok()?.len();
+        if header.version != 1
+            || header.window_seconds != ENERGY_CURVE_WINDOW_SECONDS
+            || header.hop_seconds != ENERGY_CURVE_HOP_SECONDS
+            || header.vocals_bytes != vocals_bytes
+        {
+            return None;
+        }
+        let levels: separation::VocalLevels = serde_json::from_slice(&bytes).ok()?;
+        Some(vocals_from_activity(&levels.activity()))
     }
 
     /// The name of the folder inside the cache, which names the model and the track's content.
     pub(crate) fn entry_name(&self) -> Option<&str> {
         self.directory.file_name()?.to_str()
     }
+}
+
+// The pinned Euphoria version exposes the levels and their interpretation, but its cache
+// freshness check is private to the API that remeasures and writes on a miss.
+#[derive(Deserialize)]
+struct VocalLevelsHeader {
+    version: u32,
+    window_seconds: f32,
+    hop_seconds: f32,
+    vocals_bytes: u64,
+}
+
+fn vocals_from_activity(activity: &separation::VocalActivity) -> VocalPresence {
+    VocalPresence::from_windows(
+        activity
+            .windows
+            .iter()
+            .map(|window| (window.start_seconds, window.duration_seconds, window.active)),
+    )
 }
 
 /// The interleaved 16-bit samples of the stereo WAV file at `path`, which must be at
@@ -311,6 +347,27 @@ mod tests {
                 at_end: true
             }
         );
+    }
+
+    #[test]
+    fn cached_vocals_are_read_without_measuring_and_rejected_when_stale() {
+        let folder = tempfile::tempdir().unwrap();
+        let files = StemFiles {
+            directory: folder.path().to_path_buf(),
+        };
+        let vocals = files.path(Stem::Vocals);
+        let sidecar = folder.path().join(separation::VOCAL_ACTIVITY_FILE_NAME);
+        write_stem(&vocals, &[12_000; 88_200], STEMS_SAMPLE_RATE);
+        assert_eq!(files.cached_vocal_presence(), None);
+        assert!(!sidecar.exists());
+
+        let measured = files.vocal_presence().unwrap();
+        assert!(measured.at_start && measured.at_end);
+        assert_eq!(files.cached_vocal_presence(), Some(measured));
+        let previous = std::fs::read(&sidecar).unwrap();
+        write_stem(&vocals, &[0; 44_100], STEMS_SAMPLE_RATE);
+        assert_eq!(files.cached_vocal_presence(), None);
+        assert_eq!(std::fs::read(sidecar).unwrap(), previous);
     }
 
     #[test]

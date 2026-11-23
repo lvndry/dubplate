@@ -52,3 +52,16 @@ impl MixTrack for PrepTrack {
         self.energy
     }
 }
+
+/// The tempo or key a track shows when both its library and Dubplate have a value.
+pub fn preferred_track_value<Value>(
+    in_rekordbox: bool,
+    source: Option<Value>,
+    analysed: Option<Value>,
+) -> Option<Value> {
+    if in_rekordbox {
+        source.or(analysed)
+    } else {
+        analysed.or(source)
+    }
+}

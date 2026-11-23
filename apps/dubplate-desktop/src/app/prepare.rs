@@ -9,10 +9,11 @@ use std::time::{Duration, Instant};
 
 use dubplate_engine::DeckId;
 use dubplate_prep::{
-    AudioAnalysis, EnergyDirection, GridCorrection, PrepTrack, ReadyProblem, ReadyReport, SetEntry,
-    SetTrack, SetWarning, StoreError, WarningPosition, set_warnings, suggest_next,
+    AudioAnalysis, EnergyDirection, GridCorrection, PrepTrack, ReadyProblem, ReadyReport,
+    SetCheckReport, SetCheckRow, SetCheckTrack, SetEntry, SetWarning, StoreError, check_set,
+    suggest_next,
 };
-use dubplate_stems::{StemsStatus, VocalPresence};
+use dubplate_stems::StemsStatus;
 use gpui::{App, Context, SharedString};
 
 use super::DubplateApp;
@@ -22,9 +23,7 @@ use crate::commands::{Direction, Mode, SetEdit};
 use crate::deck::deck_letter;
 use crate::energy::{EnergyRange, direction_toward_target, set_curve};
 use crate::loading::{LoadSource, check_present};
-use crate::prep::{
-    SeamSummary, TrackCheck, accept_proposal, check_track, nearest_bar_ms, readiness,
-};
+use crate::prep::{SeamSummary, TrackCheck, accept_proposal, check_track, nearest_bar_ms};
 use crate::set::{SetEditor, SetTrackRef};
 use crate::stems::stems_cell;
 use crate::track_menu::{RowFacts, RowPlace};
@@ -72,8 +71,6 @@ pub(super) struct SetRow {
     pub free_into_next: bool,
     /// Where its stems stand, as the Stems column says it.
     pub stems: SharedString,
-    /// Where the vocals sound near its start and end, known once it has stems.
-    pub vocals: Option<VocalPresence>,
     /// What its context menu offers.
     pub menu: RowFacts,
 }
@@ -128,6 +125,7 @@ impl NextSuggestions {
 #[derive(Default, Clone)]
 pub(super) struct PrepareViewModel {
     pub rows: Vec<SetRow>,
+    pub ready: bool,
     pub seams: Vec<Option<SeamSummary>>,
     pub warnings: Vec<SetWarning>,
     pub next: NextSuggestions,
@@ -652,24 +650,45 @@ impl DubplateApp {
         .detach();
     }
 
+    /// Checks readiness and warnings from the existing catalogue and background checks.
+    fn set_report(&self) -> SetCheckReport {
+        let Some(editor) = &self.set_editor else {
+            return SetCheckReport::default();
+        };
+        check_set(editor.set(), |entry| {
+            let track = self.catalogue.get(&entry.track_path);
+            let check = self.track_checks.get(&entry.track_path);
+            let vocals = self.stems.vocals(&entry.track_path);
+            SetCheckTrack {
+                track,
+                file_found: check.map_or(track.is_some(), |check| check.file_found),
+                vocals_at_start: vocals.is_some_and(|vocals| vocals.at_start),
+                vocals_at_end: vocals.is_some_and(|vocals| vocals.at_end),
+            }
+        })
+    }
+
     /// The set's tracks as the panel shows them.
-    pub(super) fn set_rows(&self) -> Vec<SetRow> {
+    fn set_rows(&self, checked: Vec<SetCheckRow>) -> Vec<SetRow> {
         let Some(editor) = &self.set_editor else {
             return Vec::new();
         };
         editor
-            .tracks()
-            .iter()
+            .set()
+            .main_entries()
+            .zip(checked)
             .enumerate()
-            .map(|(position, entry)| {
-                let track = self.catalogue.get(&entry.track_path).cloned();
+            .map(|(position, (entry, checked))| {
+                let track = self
+                    .catalogue
+                    .get(&entry.track_path)
+                    .cloned()
+                    .map(|mut track| {
+                        track.energy = entry.energy_override.or(track.energy);
+                        track
+                    });
                 let check = self.track_checks.get(&entry.track_path);
-                let ready = match &track {
-                    Some(track) => readiness(track, check, entry),
-                    None => ReadyReport {
-                        problems: vec![ReadyProblem::FileMissing],
-                    },
-                };
+                let ready = checked.ready;
                 let duration = self
                     .collection()
                     .and_then(|collection| {
@@ -679,10 +698,11 @@ impl DubplateApp {
                     })
                     .and_then(|track| track.track.length_seconds)
                     .map(|seconds| Duration::from_secs(u64::from(seconds)));
-                let file_present = !ready
-                    .problems
-                    .iter()
-                    .any(|problem| matches!(problem, ReadyProblem::FileMissing));
+                let file_present = track.is_some()
+                    && !ready
+                        .problems
+                        .iter()
+                        .any(|problem| matches!(problem, ReadyProblem::FileMissing));
                 let menu = RowFacts {
                     place: RowPlace::Set,
                     file_present,
@@ -700,7 +720,6 @@ impl DubplateApp {
                     has_proposal: check.is_some_and(|check| can_propose(entry, check)),
                     free_into_next: editor.is_free_after(position),
                     stems: stems_cell(self.stems.status(&entry.track_path)),
-                    vocals: self.stems.vocals(&entry.track_path),
                     menu,
                 }
             })
@@ -713,38 +732,6 @@ impl DubplateApp {
             .map(|pair| match (&pair[0].track, &pair[1].track) {
                 (Some(outgoing), Some(incoming)) => Some(SeamSummary::between(outgoing, incoming)),
                 _ => None,
-            })
-            .collect()
-    }
-
-    /// The set's warnings: key clashes, tempo gaps, energy drops and duplicates, at the
-    /// positions the panel shows.
-    pub(super) fn warnings(rows: &[SetRow]) -> Vec<SetWarning> {
-        let known: Vec<(usize, &PrepTrack, &SetRow)> = rows
-            .iter()
-            .filter_map(|row| Some((row.position, row.track.as_ref()?, row)))
-            .collect();
-        let entries: Vec<SetTrack<'_>> = known
-            .iter()
-            .map(|(_, track, row)| SetTrack {
-                track,
-                vocals_at_start: row.vocals.is_some_and(|vocals| vocals.at_start),
-                vocals_at_end: row.vocals.is_some_and(|vocals| vocals.at_end),
-                free_into_next: row.free_into_next,
-            })
-            .collect();
-        set_warnings(&entries)
-            .into_iter()
-            .map(|warning| SetWarning {
-                position: match warning.position {
-                    WarningPosition::Seam { after } => WarningPosition::Seam {
-                        after: known[after].0,
-                    },
-                    WarningPosition::Track { index } => WarningPosition::Track {
-                        index: known[index].0,
-                    },
-                },
-                kind: warning.kind,
             })
             .collect()
     }
@@ -769,16 +756,18 @@ impl DubplateApp {
     pub(super) fn refresh_prepare_view(&mut self, cx: &mut Context<'_, Self>) {
         self.prepare_generation += 1;
         let generation = self.prepare_generation;
-        let rows = self.set_rows();
-        let was_ready = set_ready(&self.prepare_view.rows);
-        if !self.prepare_view.rows.is_empty() && !was_ready && set_ready(&rows) {
+        let report = self.set_report();
+        let ready = report.is_ready();
+        let rows = self.set_rows(report.tracks);
+        if !self.prepare_view.rows.is_empty() && !self.prepare_view.ready && ready {
             self.set_ready_at = Some(Instant::now());
         }
         let mut view = PrepareViewModel {
             seams: Self::seams(&rows),
-            warnings: Self::warnings(&rows),
+            warnings: report.warnings,
             backups: self.backup_titles(),
             rows,
+            ready,
             ..Default::default()
         };
         let reference = self
@@ -1048,11 +1037,6 @@ fn file_title(path: &Path) -> String {
     path.file_stem()
         .map(|stem| stem.to_string_lossy().into_owned())
         .unwrap_or_default()
-}
-
-/// Whether the set has tracks and every one of them is ready to play.
-pub(super) fn set_ready(rows: &[SetRow]) -> bool {
-    !rows.is_empty() && rows.iter().all(|row| row.ready.is_ready())
 }
 
 #[cfg(test)]

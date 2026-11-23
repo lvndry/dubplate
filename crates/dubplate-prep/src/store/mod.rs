@@ -10,8 +10,11 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
-use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior};
+use rusqlite::backup::Backup;
+use rusqlite::config::DbConfig;
+use rusqlite::{Connection, OpenFlags, OptionalExtension, Transaction, TransactionBehavior};
 use thiserror::Error;
 
 use crate::grid::{GridCorrection, TrackGrid};
@@ -319,7 +322,7 @@ pub enum StoreError {
 
 /// Dubplate's own database of sets, seam plans, snapshots, play history and track cues.
 ///
-/// One `SetStore` owns one SQLite file in WAL mode. Every mutating method runs
+/// A writable `SetStore` uses a SQLite file in WAL mode. Every set edit runs
 /// in a transaction and refreshes the set's `updated_at`.
 pub struct SetStore {
     connection: Connection,
@@ -358,18 +361,7 @@ impl SetStore {
         connection.pragma_update(None, "foreign_keys", true)?;
         connection.set_prepared_statement_cache_capacity(STATEMENT_CACHE_CAPACITY);
 
-        let user_version: i64 =
-            connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-        let user_version = u32::try_from(user_version).map_err(|_| StoreError::NewerSchema {
-            found: u32::MAX,
-            known: SCHEMA_VERSION,
-        })?;
-        if user_version > SCHEMA_VERSION {
-            return Err(StoreError::NewerSchema {
-                found: user_version,
-                known: SCHEMA_VERSION,
-            });
-        }
+        let user_version = schema_version(&connection)?;
 
         let migrations_pending = user_version < SCHEMA_VERSION;
         if existing && migrations_pending {
@@ -392,14 +384,7 @@ impl SetStore {
             trim_backups(&backups_folder, MAX_BACKUPS)?;
         }
 
-        for (index, migration) in MIGRATIONS.iter().enumerate() {
-            let target_version = u32::try_from(index).unwrap_or(u32::MAX).saturating_add(1);
-            if target_version > user_version {
-                let transaction = connection.transaction()?;
-                transaction.execute_batch(migration)?;
-                transaction.commit()?;
-            }
-        }
+        migrate(&mut connection, user_version)?;
 
         Ok(Self {
             connection,
@@ -407,7 +392,50 @@ impl SetStore {
         })
     }
 
-    /// The path of the file this store is open on.
+    /// Opens a read-only snapshot of the existing set database at `path`.
+    ///
+    /// Includes committed changes in SQLite's WAL. An older schema is migrated in
+    /// memory using the same migrations as [`Self::open`]. The source database is
+    /// opened read-only, with SQLite's usual WAL coordination files.
+    pub fn open_read_only(path: &Path) -> Result<Self, StoreError> {
+        if is_inside_rekordbox(path) {
+            return Err(StoreError::InsideRekordbox(path.to_path_buf()));
+        }
+
+        let source = Connection::open_with_flags(
+            std::path::absolute(path)?,
+            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )?;
+        source.set_db_config(DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, true)?;
+        // Keep the version check and subsequent reads on the same SQLite snapshot.
+        source.execute_batch("BEGIN DEFERRED")?;
+        let user_version = schema_version(&source)?;
+        let connection = if user_version == SCHEMA_VERSION {
+            source
+        } else {
+            let mut copy = Connection::open_in_memory()?;
+            let page_size: u32 = source.pragma_query_value(None, "page_size", |row| row.get(0))?;
+            copy.pragma_update(None, "page_size", page_size)?;
+            Backup::new(&source, &mut copy)?.run_to_completion(
+                128,
+                Duration::from_millis(10),
+                None,
+            )?;
+            drop(source);
+            copy.pragma_update(None, "foreign_keys", true)?;
+            migrate(&mut copy, user_version)?;
+            copy
+        };
+        connection.pragma_update(None, "query_only", true)?;
+        connection.set_prepared_statement_cache_capacity(STATEMENT_CACHE_CAPACITY);
+
+        Ok(Self {
+            connection,
+            database_path: path.to_path_buf(),
+        })
+    }
+
+    /// The path of this store's source file.
     pub fn path(&self) -> &Path {
         &self.database_path
     }
@@ -771,6 +799,28 @@ impl SetStore {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?)
     }
+}
+
+fn schema_version(connection: &Connection) -> Result<u32, StoreError> {
+    let user_version: i64 =
+        connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
+    let user_version = u32::try_from(user_version).unwrap_or(u32::MAX);
+    if user_version > SCHEMA_VERSION {
+        return Err(StoreError::NewerSchema {
+            found: user_version,
+            known: SCHEMA_VERSION,
+        });
+    }
+    Ok(user_version)
+}
+
+fn migrate(connection: &mut Connection, user_version: u32) -> Result<(), StoreError> {
+    for migration in MIGRATIONS.iter().skip(user_version as usize) {
+        let transaction = connection.transaction()?;
+        transaction.execute_batch(migration)?;
+        transaction.commit()?;
+    }
+    Ok(())
 }
 
 /// Keeps only the newest `max_backups` files in the backups folder, deleting

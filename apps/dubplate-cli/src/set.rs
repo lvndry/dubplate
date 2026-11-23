@@ -3,6 +3,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::process::ExitCode;
 use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
@@ -16,10 +17,24 @@ use dubplate_rekordbox::{Cue, Library, Track, TrackCues};
 
 use crate::{master_db_or_default, open_library};
 
+mod check;
+mod check_sources;
+
 #[derive(Subcommand)]
 pub(crate) enum SetCommand {
     /// List the sets prepared in Dubplate.
     List,
+    /// Check track readiness and transition warnings before playing a saved set.
+    Check {
+        /// The saved set's name.
+        name: String,
+        /// Print the report as JSON, with one-based track positions.
+        #[arg(long)]
+        json: bool,
+        /// The rekordbox master.db to consult for library metadata.
+        #[arg(long)]
+        library: Option<PathBuf>,
+    },
     /// Write a set to a rekordbox XML file for rekordbox to import: the set as a playlist, each
     /// track with its corrected beat grid, its mix-in and mix-out as memory cues, and its cues:
     /// the ones made in Dubplate, else the ones rekordbox already had. rekordbox's own files are
@@ -36,11 +51,17 @@ pub(crate) enum SetCommand {
     },
 }
 
-pub(crate) fn run(command: SetCommand) -> Result<()> {
+pub(crate) fn run(command: SetCommand) -> Result<ExitCode> {
     match command {
         SetCommand::List => list(),
+        SetCommand::Check {
+            name,
+            json,
+            library,
+        } => return check::run(&name, json, library),
         SetCommand::Export { name, xml, library } => export(&name, xml, library),
-    }
+    }?;
+    Ok(ExitCode::SUCCESS)
 }
 
 pub(crate) fn data_folder() -> Result<DataFolder> {

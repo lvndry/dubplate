@@ -124,11 +124,47 @@ fn refuses_a_database_newer_than_this_build() {
     connection.pragma_update(None, "user_version", 99).unwrap();
     drop(connection);
 
-    let result = SetStore::open(&database_path);
-    assert!(matches!(
-        result,
-        Err(StoreError::NewerSchema { found: 99, known }) if known == SetStore::SCHEMA_VERSION
-    ));
+    for open in [SetStore::open, SetStore::open_read_only] {
+        assert!(matches!(
+            open(&database_path),
+            Err(StoreError::NewerSchema { found: 99, known }) if known == SetStore::SCHEMA_VERSION
+        ));
+    }
+}
+
+#[test]
+fn read_only_open_does_not_create_a_missing_database() {
+    let root = tempfile::tempdir().unwrap();
+    let directory = root.path().join("missing");
+    assert!(SetStore::open_read_only(&directory.join("sets.sqlite")).is_err());
+    assert!(!directory.exists());
+}
+
+#[test]
+fn read_only_open_reads_committed_wal_data_in_a_consistent_snapshot() {
+    let root = tempfile::tempdir().unwrap();
+    let (_directory_holder, database_path, mut writer) = open_store(root.path());
+    let set = writer.create_set("Before", 60).unwrap();
+    writer
+        .insert_entry(set, SetList::Main, 0, entry("track-a", false))
+        .unwrap();
+    let bytes = fs::read(&database_path).unwrap();
+    let wal_path = database_path.with_file_name("dubplate.db-wal");
+    let wal = fs::read(&wal_path).unwrap();
+    assert!(!wal.is_empty());
+
+    let mut reader = SetStore::open_read_only(&database_path).unwrap();
+    assert_eq!(reader.path(), database_path);
+    assert_eq!(reader.list_sets().unwrap(), [(set, "Before".to_owned(), 1)]);
+    assert!(reader.create_set("Unwritable", 60).is_err());
+    assert_eq!(fs::read(&database_path).unwrap(), bytes);
+    assert_eq!(fs::read(&wal_path).unwrap(), wal);
+
+    writer.rename_set(set, "After").unwrap();
+    assert_eq!(reader.load_set(set).unwrap().name, "Before");
+    drop(reader);
+    let current = SetStore::open_read_only(&database_path).unwrap();
+    assert_eq!(current.load_set(set).unwrap().name, "After");
 }
 
 #[test]
@@ -576,6 +612,40 @@ fn version_two_file(database_path: &Path, play_rows: &str) {
              PRAGMA user_version = 2;"
         ))
         .unwrap();
+}
+
+#[test]
+fn read_only_open_migrates_older_data_in_memory() {
+    let root = tempfile::tempdir().unwrap();
+    let database_path = root.path().join("dubplate.db");
+    version_two_file(&database_path, "");
+    let writer = Connection::open(&database_path).unwrap();
+    writer.pragma_update(None, "page_size", 1024).unwrap();
+    writer
+        .execute_batch("VACUUM; PRAGMA journal_mode = WAL;")
+        .unwrap();
+    writer
+        .execute_batch("UPDATE set_entry SET grid_confirmed = 1, grid_offset_ms = -12")
+        .unwrap();
+    let bytes = fs::read(&database_path).unwrap();
+    let wal_path = database_path.with_file_name("dubplate.db-wal");
+    let wal = fs::read(&wal_path).unwrap();
+
+    let mut store = SetStore::open_read_only(&database_path).unwrap();
+    let set = store.load_set(SetId(1)).unwrap();
+    assert_eq!(set.name, "Friday");
+    assert!(set.entries[0].grid_confirmed);
+    assert_eq!(set.entries[0].grid_offset_ms, -12);
+    assert!(store.create_set("Unwritable", 60).is_err());
+    drop(store);
+
+    let version: u32 = writer
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap();
+    assert_eq!(version, 2);
+    assert_eq!(fs::read(&database_path).unwrap(), bytes);
+    assert_eq!(fs::read(&wal_path).unwrap(), wal);
+    assert!(!root.path().join("backups").exists());
 }
 
 #[test]

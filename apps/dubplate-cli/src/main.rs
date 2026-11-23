@@ -1,6 +1,7 @@
 //! The `dubplate` command line tool.
 
 use std::path::{Path, PathBuf};
+use std::process::ExitCode;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -70,7 +71,7 @@ enum RekordboxCommand {
     },
 }
 
-fn main() -> Result<()> {
+fn main() -> Result<ExitCode> {
     match Cli::parse().command {
         Command::Rekordbox(RekordboxCommand::Inspect {
             library,
@@ -83,10 +84,11 @@ fn main() -> Result<()> {
             json,
         }) => analysis(&master_db_or_default(library)?, &track, json),
         Command::Midi(command) => midi::run(command),
-        Command::Set(command) => set::run(command),
+        Command::Set(command) => return set::run(command),
         Command::Usb(command) => usb::run(command),
         Command::Analyse(arguments) => analyse::run(arguments),
-    }
+    }?;
+    Ok(ExitCode::SUCCESS)
 }
 
 pub(crate) fn master_db_or_default(library: Option<PathBuf>) -> Result<PathBuf> {
