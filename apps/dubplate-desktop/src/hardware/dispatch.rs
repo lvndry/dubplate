@@ -140,7 +140,7 @@ pub struct Dispatcher {
     lever_contacts: [bool; DECK_COUNT],
     beat_fx: BeatFxSection,
     master_pickup: Pickup,
-    release_held: bool,
+    release_unit: Option<EffectUnitId>,
     /// Which buttons with a twin on screen are down, for the screen to show the press.
     pub held: HeldControls,
 }
@@ -153,7 +153,7 @@ impl Default for Dispatcher {
             lever_contacts: [false; DECK_COUNT],
             beat_fx: BeatFxSection::default(),
             master_pickup: Pickup::default(),
-            release_held: false,
+            release_unit: None,
             held: HeldControls::default(),
         }
     }
@@ -165,9 +165,17 @@ impl Dispatcher {
         self.beat_fx
     }
 
-    /// Forgets where the controller's controls sit, when it is unplugged or plugged in again.
-    pub fn forget_positions(&mut self) {
+    /// Forgets the disconnected controller's controls and lets go of its Release FX.
+    pub fn forget_positions(&mut self) -> Option<Command> {
+        let release = self.end_release();
         *self = Self::default();
+        release
+    }
+
+    fn end_release(&mut self) -> Option<Command> {
+        self.release_unit
+            .take()
+            .map(|unit| Command::Effect(unit, EffectEdit::Release(false)))
     }
 
     /// Where a deck's TEMPO slider sits while it waits to reach the tempo on screen at
@@ -297,24 +305,16 @@ impl Dispatcher {
                     Arrow::Right => 1,
                 }))
             }
-            (Button::BeatFxOn, Layer::Normal) if pressed => {
+            (Button::BeatFxOn, Layer::Normal) if pressed && self.release_unit.is_none() => {
                 Some(Command::Effect(surface.focused_effect?, EffectEdit::Toggle))
             }
-            (Button::BeatFxOn, Layer::Shift) if pressed => {
-                self.release_held = true;
-                Some(Command::Effect(
-                    surface.focused_effect?,
-                    EffectEdit::Release(true),
-                ))
+            (Button::BeatFxOn, Layer::Shift) if pressed && self.release_unit.is_none() => {
+                let unit = surface.focused_effect?;
+                self.release_unit = Some(unit);
+                Some(Command::Effect(unit, EffectEdit::Release(true)))
             }
-            // The release ends with the button, whether SHIFT is still down or was let go first.
-            (Button::BeatFxOn, _) if !pressed && self.release_held => {
-                self.release_held = false;
-                Some(Command::Effect(
-                    surface.focused_effect?,
-                    EffectEdit::Release(false),
-                ))
-            }
+            // The same unit ends its release even if the DJ changed focus or let go of SHIFT.
+            (Button::BeatFxOn, _) if !pressed => self.end_release(),
             (Button::SmartCfx, Layer::Normal) if pressed => Some(Command::ToggleSmartCfx),
             (Button::SmartCfx, Layer::Shift) if pressed => Some(Command::NextSmartCfx),
             (Button::SmartFader, Layer::Normal) if pressed => Some(Command::ToggleSmartFader),
@@ -374,7 +374,14 @@ impl Dispatcher {
         position: Position,
         surface: &Surface,
     ) -> Option<Command> {
-        let fraction = position.fraction();
+        // Centre-detent knobs must report exactly 0.5 so Smart Fader can take over LOW.
+        let fraction = if matches!(control, Continuous::Eq { .. } | Continuous::Filter(_))
+            && position.bipolar() == 0.0
+        {
+            0.5
+        } else {
+            position.fraction()
+        };
         let control = match control {
             Continuous::ChannelFader(deck) => Control::ChannelFader(deck_id(deck)),
             Continuous::Crossfader => Control::Crossfader,
@@ -988,6 +995,56 @@ mod tests {
                 Command::Effect(unit, EffectEdit::Toggle),
             ]
         );
+    }
+
+    #[test]
+    fn release_fx_ends_on_the_original_unit_after_a_focus_change_or_disconnect() {
+        let mut dispatcher = Dispatcher::default();
+        let initial = fx_surface();
+        let unit = initial.focused_effect.unwrap();
+        let changed = Surface {
+            focused_effect: Some(EffectUnitId::ALL[2]),
+            ..initial
+        };
+        let down = shift_press(Button::BeatFxOn);
+        let up = release(Button::BeatFxOn);
+        let start = Command::Effect(unit, EffectEdit::Release(true));
+        let end = Command::Effect(unit, EffectEdit::Release(false));
+
+        assert_eq!(run(&mut dispatcher, &initial, &[down]), [start]);
+        assert!(run(&mut dispatcher, &changed, &[down]).is_empty());
+        assert_eq!(run(&mut dispatcher, &changed, &[up]), [end]);
+        assert_eq!(run(&mut dispatcher, &initial, &[down]), [start]);
+        assert_eq!(dispatcher.forget_positions(), Some(end));
+        assert!(run(&mut dispatcher, &changed, &[up]).is_empty());
+    }
+
+    #[test]
+    fn physical_eq_and_cfx_detents_send_the_exact_neutral_position() {
+        let mut dispatcher = Dispatcher::default();
+        let surface = Surface::default();
+        for (hardware, app) in [
+            (
+                Continuous::Eq {
+                    deck: Deck::A,
+                    band: dubplate_midi::EqBand::Low,
+                },
+                Control::Eq(DeckId::A, dubplate_engine::EqBand::Low),
+            ),
+            (Continuous::Filter(Deck::B), Control::Filter(DeckId::B)),
+        ] {
+            let center = moved(hardware, 0.5);
+            let left = moved(hardware, 0.25);
+            let right = moved(hardware, 0.75);
+            let commands = run(&mut dispatcher, &surface, &[left, center, right]);
+            assert!(
+                matches!(commands[0], Command::SetControl(control, v) if control == app && v < 0.5)
+            );
+            assert_eq!(commands[1], Command::SetControl(app, 0.5));
+            assert!(
+                matches!(commands[2], Command::SetControl(control, v) if control == app && v > 0.5)
+            );
+        }
     }
 
     #[test]

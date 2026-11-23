@@ -1750,7 +1750,15 @@ impl DubplateApp {
                     if let Some(hardware) = self.hardware.as_mut()
                         && !hardware.is_connected()
                     {
-                        hardware.dispatcher.forget_positions();
+                        if let Some(command) = hardware.dispatcher.forget_positions() {
+                            self.perform(command, window, cx);
+                        }
+                        self.shift_held = [false; DECK_COUNT];
+                        for deck in DeckId::ALL {
+                            if self.held_pads[deck.index()].is_some_and(|pad| !pad.latched) {
+                                self.release_held_pad(deck, cx);
+                            }
+                        }
                     }
                     self.show_notice(NoticePlace::Window, format!("{name} disconnected"), cx);
                 }
