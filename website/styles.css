@@ -166,3 +166,20 @@ svg.paused .decks-scroll {
     transform-origin: center;
   }
 }
+
+.genre-cycle { display: inline-grid; vertical-align: top; }
+.genre-cycle > span { grid-area: 1 / 1; opacity: 0; white-space: nowrap; }
+.genre-cycle > span:first-child { opacity: 1; }
+@media (prefers-reduced-motion: no-preference) {
+  .genre-cycle.animated > span {
+    animation: genre-change var(--cycle-duration) linear infinite;
+  }
+  .genre-cycle.animated.paused > span { animation-play-state: paused; }
+}
+@keyframes genre-change {
+  0% { opacity: .25; transform: translateY(.055em); }
+  2%, 18% { opacity: 1; transform: translateY(0); }
+  20%, 100% { opacity: 0; transform: translateY(-.045em); }
+}
+.genre-cycle.paused > span { animation: none; opacity: 0; transform: none; }
+.genre-cycle.paused > span:first-child { opacity: 1; }
