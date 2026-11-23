@@ -52,6 +52,18 @@ cargo app
 
 The first build takes a few minutes; after a change, a few seconds. Then follow [the guide](docs/guide.md): add your music, prepare a set, mix it on the FLX4 and record it.
 
+## Run the website locally
+
+With Node.js 24 and Bun installed, start the Astro development server and open `/dubplate/` at the address it prints.
+
+```sh
+cd website
+bun install --frozen-lockfile
+bun run dev
+```
+
+From `website/`, run `bun run check` and `bun run build` to reproduce the CI checks. The build writes to `website/dist/` from the repository root. Run `bun run preview` to serve that build locally.
+
 ## Learn more
 
 Visit the [Dubplate website](https://lvndry.github.io/dubplate/) for the live mixing overview. The [Features page](https://lvndry.github.io/dubplate/features.html) covers set preparation and transition rehearsal.

@@ -444,7 +444,7 @@ static GRAPHITE: Theme = Theme::new(&Palette {
     track_colours: DARK_TRACK_COLOURS,
 });
 
-// The two signals and their detail colours come from the deck illustration in website/index.html.
+// The two signals and their detail colours come from the deck illustration in website/src/pages/index.astro.
 static SET_ATLAS: Theme = Theme {
     deck_b_bands: Some(BandColours::new([0x61B7A2, 0xA8E1C7, 0xD8E8D8])),
     played_opacity: 0.65,
