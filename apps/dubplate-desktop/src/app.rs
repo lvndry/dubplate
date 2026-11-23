@@ -5,6 +5,7 @@
 mod analysis;
 mod audio;
 mod audition;
+mod auto_gain;
 mod cueing;
 mod cues;
 mod deck_grid;
@@ -73,6 +74,7 @@ use gpui::{
 };
 
 use crate::analysis::{AnalysisPriority, TrackAnalyser, TrackAnalyses};
+use crate::auto_gain::AutoGain;
 use crate::browser::{Browser, BrowserEvent, LibraryStatus};
 use crate::collection::{Collection, CollectionTrack, TrackIndex};
 use crate::commands::{
@@ -80,7 +82,7 @@ use crate::commands::{
 };
 use crate::controls::{
     CROSSFADER_STEP, Control, MixerPositions, Orientation, Slider, fraction_at, master_gain_at,
-    nudged_tempo_slider, tempo_fader, trim_gain_at,
+    nudged_tempo_slider, tempo_fader,
 };
 use crate::cue_marks::{MarkerPulse, SeenMarks};
 use crate::deck::{
@@ -273,6 +275,7 @@ pub struct DubplateApp {
     stems_changed: bool,
     recording: Option<Recording>,
     recording_skip_reported: bool,
+    auto_gains: [Option<AutoGain>; DECK_COUNT],
     play_history: PlayHistory,
     play_watches: [PlayWatch<SessionRecord>; DECK_COUNT],
     time_zone: jiff::tz::TimeZone,
@@ -550,6 +553,7 @@ impl DubplateApp {
             stems_changed: true,
             recording: None,
             recording_skip_reported: false,
+            auto_gains: [None; DECK_COUNT],
             play_history: PlayHistory::new(SystemTime::now()),
             play_watches: Default::default(),
             time_zone: jiff::tz::TimeZone::system(),
@@ -986,6 +990,7 @@ impl DubplateApp {
                 self.reset_deck_stems(deck, cx);
                 self.signal_controllers(Feedback::TrackLoaded(controller_deck(deck)));
                 self.give_deck_analysed_grid(deck, cx);
+                self.level_deck(deck, cx);
                 self.refresh_filter_reference(cx);
                 if needs_waveform {
                     self.draw_waveform_from_audio(deck, generation, cx);
@@ -1159,6 +1164,7 @@ impl DubplateApp {
                 self.save_settings(cx);
                 self.engine_command(cx, |controller| controller.set_fader_echo(on));
             }
+            Command::SetAutoGain(on) => self.set_auto_gain(on, cx),
             Command::Stems(deck, action) => self.apply_stem_action(deck, action, cx),
             Command::ToggleKeyLock(deck) => {
                 let locked = self.key_lock(deck);
@@ -1435,6 +1441,7 @@ impl DubplateApp {
         if needs_waveform {
             self.draw_waveform_from_audio(deck, generation, cx);
         }
+        self.level_deck(deck, cx);
         self.mixer.tempo_sliders[deck.index()] = self.mixer.tempo_sliders[source.index()];
         self.signal_controllers(Feedback::TrackLoaded(controller_deck(deck)));
     }
@@ -1494,9 +1501,7 @@ impl DubplateApp {
             }
             Control::Trim(deck) => {
                 self.mixer.trims[deck.index()] = fraction;
-                self.engine_command(cx, |controller| {
-                    controller.set_gain(deck, trim_gain_at(fraction))
-                });
+                self.apply_trim(deck, cx);
             }
             Control::Eq(deck, band) => {
                 self.mixer.eqs[deck.index()][band.index()] = fraction;

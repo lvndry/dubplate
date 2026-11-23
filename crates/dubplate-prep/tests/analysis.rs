@@ -152,7 +152,7 @@ fn a_held_a_minor_chord_reads_as_eight_a() {
 }
 
 #[test]
-fn silence_has_no_tempo_grid_key_or_energy() {
+fn silence_has_no_tempo_grid_key_energy_or_loudness() {
     let directory = temp_dir();
     let path = directory.path().join("silence.wav");
     write_wav(&path, &silent_samples());
@@ -161,6 +161,7 @@ fn silence_has_no_tempo_grid_key_or_energy() {
     assert_eq!(analysis.beat_grid, None);
     assert_eq!(analysis.key, None);
     assert_eq!(analysis.energy, None);
+    assert_eq!(analysis.loudness, None);
 }
 
 #[test]
@@ -192,6 +193,8 @@ fn the_cache_returns_what_was_put() {
     assert_eq!(cached.beat_grid, analysis.beat_grid);
     assert_eq!(cached.key, analysis.key);
     assert_eq!(cached.energy, analysis.energy);
+    assert!(analysis.loudness.is_some(), "the clicks have a loudness");
+    assert_eq!(cached.loudness, analysis.loudness);
     assert!((cached.duration_seconds - analysis.duration_seconds).abs() < 1e-3);
 }
 
@@ -397,4 +400,33 @@ fn an_unreadable_track_is_answered_with_why() {
     assert_eq!(answer.path, missing);
     assert!(answer.outcome.is_err());
     assert_eq!(queue.decoded_count(), 0);
+}
+
+#[test]
+fn a_cache_from_before_loudness_opens_and_keeps_loudness_from_then_on() {
+    let directory = temp_dir();
+    let cache_path = directory.path().join("cache.db");
+    {
+        let connection = rusqlite::Connection::open(&cache_path).expect("the old cache opens");
+        connection
+            .execute_batch(
+                "CREATE TABLE analysis (track_path TEXT PRIMARY KEY, file_size INTEGER NOT NULL,
+                    modified_ms INTEGER NOT NULL, analysis_version TEXT NOT NULL,
+                    duration_seconds REAL NOT NULL, bpm REAL, grid_bpm REAL,
+                    grid_first_downbeat_seconds REAL, camelot_key TEXT, energy_rating INTEGER,
+                    energy_score REAL, energy_curve_json TEXT, analysed_at INTEGER NOT NULL);
+                 PRAGMA user_version = 1;",
+            )
+            .expect("the old schema is written");
+    }
+    let path = directory.path().join("track.wav");
+    write_wav(&path, &click_track(AFRO_HOUSE_BPM, &[]));
+    let analysis = analyse_track(&path).expect("the track is analysed");
+    let mut cache = AnalysisCache::open(&cache_path).expect("the old cache upgrades");
+    cache.put(&path, &analysis).expect("the analysis is stored");
+    let cached = cache
+        .get(&path)
+        .expect("the cached analysis is read")
+        .expect("the cached analysis is fresh");
+    assert_eq!(cached.loudness, analysis.loudness);
 }

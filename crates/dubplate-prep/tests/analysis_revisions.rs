@@ -15,6 +15,7 @@ fn coalesced_requests_echo_the_latest_revision_and_keep_earliest_priority() {
         beat_grid: None,
         key: None,
         energy: None,
+        loudness: None,
     };
     let mut cache = AnalysisCache::open(&cache_path).unwrap();
     for path in [&first, &second] {

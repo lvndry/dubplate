@@ -193,6 +193,8 @@ Statuses are as audited on 22 November 2026, on `main` with a second Dubplate ru
 
 **X8 Headphone cue.** Status: **Done.**
 
+**X11 Auto Gain.** Must: each track loads at a common loudness, rekordbox's stored Auto Gain for its tracks and Dubplate's loudness measure for folder tracks, on top of TRIM, on by default (rekordbox's Preferences > Controller > Mixer > Auto Gain). See: TRIM stays where the DJ's hand or the FLX4's TRIM knob put it, so there is nothing to pick up; a mark on the TRIM ring shows where the level really is, with `AUTO +2.5 dB` on hover. Status: **Done**; Settings > Mixer turns it off.
+
 **X9 Smart Fader.** Status: **Done**; it rests with a deck on THRU or the crossfader off, and says so.
 
 ## Sampler and recording

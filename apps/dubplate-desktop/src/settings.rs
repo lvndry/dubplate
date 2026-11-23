@@ -54,6 +54,9 @@ pub enum SettingsError {
 pub struct Settings {
     /// Whether a playing deck refuses a new track.
     pub lock_playing_deck: bool,
+    /// Whether each track loads with the gain that brings it to a common loudness, as
+    /// rekordbox's Auto Gain, on by default as there.
+    pub auto_gain: bool,
     /// Whether cues, loops and jumps land on the beat grid.
     pub quantize: bool,
     /// Whether each deck's jog top holds the record, deck A first.
@@ -340,6 +343,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             lock_playing_deck: true,
+            auto_gain: true,
             quantize: true,
             vinyl_mode: [true; DECK_COUNT],
             audio_device: None,
@@ -462,6 +466,7 @@ mod tests {
         let path = directory.path().join("nested").join(FILE_NAME);
         let settings = Settings {
             lock_playing_deck: false,
+            auto_gain: false,
             quantize: false,
             vinyl_mode: [true, false],
             audio_device: Some("Studio Speakers".to_owned()),
@@ -621,6 +626,10 @@ mod tests {
         std::fs::write(&path, "audio_device = \"Headphones\"\n").unwrap();
         let settings = Settings::load(&path).unwrap();
         assert!(settings.lock_playing_deck);
+        assert!(
+            settings.auto_gain,
+            "Auto Gain is on until the DJ turns it off, as in rekordbox"
+        );
         assert!(
             settings.key_lock_on_new_tracks,
             "key lock is on for new tracks unless the DJ turned it off"
