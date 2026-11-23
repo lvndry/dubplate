@@ -209,13 +209,19 @@ fn audition_echo_out(pad: Option<PadRelease>, hold_seconds: f64) -> Vec<f32> {
             [0.4 * (std::f64::consts::TAU * time * hz).sin() as f32; 2]
         })
         .collect();
-    let track = Track::from_interleaved_stereo(&samples, SAMPLE_RATE).unwrap();
-    controller.load_track(DeckId::A, track).unwrap();
+    let track =
+        Track::from_interleaved_stereo(&samples, SAMPLE_RATE).expect("valid stereo test track");
     controller
-        .set_beat_grid(DeckId::A, Some(BeatGrid::new(120.0, 0.0).unwrap()))
-        .unwrap();
-    controller.set_crossfader(0.0).unwrap();
-    controller.play(DeckId::A).unwrap();
+        .load_track(DeckId::A, track)
+        .expect("load test track");
+    controller
+        .set_beat_grid(
+            DeckId::A,
+            Some(BeatGrid::new(120.0, 0.0).expect("valid beat grid")),
+        )
+        .expect("assign beat grid");
+    controller.set_crossfader(0.0).expect("set crossfader");
+    controller.play(DeckId::A).expect("start deck");
     seconds(&mut renderer, 0.5);
     if let Some(release) = pad {
         controller
@@ -228,12 +234,14 @@ fn audition_echo_out(pad: Option<PadRelease>, hold_seconds: f64) -> Vec<f32> {
                     release,
                 },
             )
-            .unwrap();
+            .expect("press echo out");
     }
     let mut output = seconds(&mut renderer, hold_seconds);
     if hold_seconds < 1.5 {
         if pad.is_some() {
-            controller.release_pad_effect(DeckId::A).unwrap();
+            controller
+                .release_pad_effect(DeckId::A)
+                .expect("release echo out");
         }
         output.extend(seconds(&mut renderer, 1.5 - hold_seconds));
     }
