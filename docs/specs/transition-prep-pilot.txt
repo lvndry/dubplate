@@ -1,0 +1,39 @@
+TRANSITION PREP PILOT
+One-hour afro house and amapiano set, chosen from the same 30 tracks.
+
+Give the DJ this brief
+“Prepare an hour you would actually play. Choose the tracks and their order, then mark or rehearse the transitions you want to plan. Leave room to improvise wherever you normally would. Say when you'd be ready to play.”
+
+Choose 30 tracks from the participating DJ’s library. Put references to them in a folder for Dubplate and an M3U8 playlist for the comparison app. Verify that both lists resolve to the same 30 original files. Allow both tools to finish analysis, and check headphone routing before starting the clock. Give the DJ a short practice on two other tracks in any unfamiliar app. Log setup and practice separately.
+
+Flip a coin for which tool goes first. Start each run with an empty set and the same candidate pool. Save the first run before resetting. Keep its order and cues out of sight during the second run. The first run teaches the DJ the music. With a second DJ, reverse tool order. A single pair of times is directional.
+
+Observer's sheet                                Run A               Run B
+Tool and version                                __________          __________
+Prior experience with tool                      __________          __________
+Setup or analysis minutes                       __________          __________
+Start / ready-to-play time                      __________          __________
+Active prep minutes / interruptions             __________          __________
+Tracks chosen / estimated set length            __________          __________
+Transitions actually auditioned                 __________          __________
+Transitions changed after listening             __________          __________
+Warnings heard and deliberately dismissed       __________          __________
+
+Keep one line per transition the DJ reconsidered.
+Tool | outgoing → incoming | what the DJ heard | decision | audible result after change
+____ | ___________________ | _________________ | ________ | __________________________
+____ | ___________________ | _________________ | ________ | __________________________
+____ | ___________________ | _________________ | ________ | __________________________
+
+After each run, audition two transitions the DJ feels good about and one they are unsure of. Use the same headphones. Record specific evidence, e.g. an incoming vocal masks the hook, the bass handoff lands a bar late, or the intentional energy drop works. A warning counts as helpful only when the DJ hears the problem and accepts a change that improves the transition. A deliberately free transition is a valid choice.
+
+Ask before discussing results
+“Which tool would you open for your next set? Which transition made that choice for you? Where did the software get in your way?”
+
+Next-set choice __________   Reason _______________________________________________
+Biggest time sink _____________________   Missed audible clash ____________________
+
+Interpret time alongside the listening notes and the DJ's choice. Faster prep with a worse set is a loss. Record mixed results, including when the usual tool wins. Repeat with the order reversed and fresh music before claiming a product advantage.
+
+Dubplate controls for the observer
+Cmd+1 opens Prepare. Enter adds the selected track. Option+Up/Down moves a set entry. I and O set mix-in and mix-out at the playhead. S auditions the seam after the selected track in headphones for 20 seconds. F marks a seam Planned or Free.
