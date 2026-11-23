@@ -75,6 +75,8 @@ pub enum PadFxEdit {
     Close,
     /// Edit pad `1` of layer `0`, pad 0 first.
     Select(PadFxLayer, usize),
+    /// Choose a second pad to exchange assignments with.
+    Swap,
     /// Step the pad's sound through the list.
     Sound(i32),
     /// Step the pad's beat or parameter.

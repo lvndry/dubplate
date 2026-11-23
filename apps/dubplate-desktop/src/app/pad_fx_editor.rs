@@ -22,6 +22,7 @@ pub(super) struct PadFxEditing {
     pub layer: PadFxLayer,
     /// The pad, 0 for pad 1.
     pub pad: usize,
+    pub swapping: bool,
 }
 
 impl DubplateApp {
@@ -39,7 +40,11 @@ impl DubplateApp {
         };
         match (edit, editing) {
             (PadFxEdit::Toggle(layer), None) => {
-                self.pad_fx_editor = Some(PadFxEditing { layer, pad: 0 });
+                self.pad_fx_editor = Some(PadFxEditing {
+                    layer,
+                    pad: 0,
+                    swapping: false,
+                });
                 self.library_open = false;
                 self.help_open = false;
                 return;
@@ -50,8 +55,30 @@ impl DubplateApp {
             }
             (PadFxEdit::Select(layer, pad), _) => {
                 if pad < PAD_COUNT {
-                    self.pad_fx_editor = Some(PadFxEditing { layer, pad });
+                    if let Some(on) = editing.filter(|on| on.swapping) {
+                        self.pad_fx.swap(on.layer, on.pad, layer, pad);
+                        self.pad_fx_editor = Some(PadFxEditing {
+                            layer,
+                            pad,
+                            swapping: false,
+                        });
+                        self.settings.pad_fx = self.pad_fx.setting();
+                        self.save_settings_soon(cx);
+                    } else {
+                        self.pad_fx_editor = Some(PadFxEditing {
+                            layer,
+                            pad,
+                            swapping: false,
+                        });
+                    }
                 }
+                return;
+            }
+            (PadFxEdit::Swap, Some(on)) => {
+                self.pad_fx_editor = Some(PadFxEditing {
+                    swapping: !on.swapping,
+                    ..on
+                });
                 return;
             }
             (PadFxEdit::Preset(preset), _) => {
@@ -155,6 +182,7 @@ pub(super) fn render(
                         ),
                 )
                 .child(presets(preset, cx))
+                .child(div().text_size(theme::SMALL_TEXT_SIZE).child("Click a pad or tap it on your controller to edit its assignment."))
                 .child(
                     div()
                         .flex()
@@ -204,7 +232,7 @@ fn layers(
         .gap(px(10.0))
         .children(PadFxLayer::ALL.map(|layer| {
             let pads = (0..PAD_COUNT).map(|pad| {
-                let chosen = editing == PadFxEditing { layer, pad };
+                let chosen = editing.layer == layer && editing.pad == pad;
                 let slot = app.pad_fx.slot(layer, pad);
                 let (name, parameter) = slot.map(PadFxSlot::label).unwrap_or_default();
                 let detail = if slot.is_some_and(|slot| slot.trigger == PadTrigger::Latch) {
@@ -320,6 +348,27 @@ fn pad_settings(
                     editing.layer.index() * PAD_COUNT + editing.pad + 1
                 )),
         )
+        .child(
+            button(
+                "pad-fx-swap",
+                if editing.swapping {
+                    "Cancel swap"
+                } else {
+                    "Swap placement"
+                },
+                Emphasis::Secondary,
+            )
+            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                this.perform(Command::PadFx(PadFxEdit::Swap), window, cx)
+            })),
+        )
+        .when(editing.swapping, |panel| {
+            panel.child(
+                div()
+                    .text_size(theme::SMALL_TEXT_SIZE)
+                    .child("Click or tap another pad to swap both effects and their settings."),
+            )
+        })
         .child(stepper(
             "Sound",
             slot.sound.label().to_owned(),

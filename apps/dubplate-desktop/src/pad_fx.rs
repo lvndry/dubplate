@@ -642,6 +642,22 @@ impl PadFxBanks {
         }
     }
 
+    /// Exchanges two pads, including their parameters and trigger settings.
+    pub fn swap(
+        &mut self,
+        from_layer: PadFxLayer,
+        from_pad: usize,
+        to_layer: PadFxLayer,
+        to_pad: usize,
+    ) {
+        if from_pad < PAD_COUNT && to_pad < PAD_COUNT {
+            self.slots.swap(
+                from_layer.index() * PAD_COUNT + from_pad,
+                to_layer.index() * PAD_COUNT + to_pad,
+            );
+        }
+    }
+
     /// Puts pad `pad` of `layer` back as the preset has it.
     pub fn reset_pad(&mut self, layer: PadFxLayer, pad: usize) {
         if let Some(original) = self.preset.slots().get(layer.index() * PAD_COUNT + pad) {
@@ -770,6 +786,29 @@ mod tests {
     use std::collections::HashSet;
 
     use super::*;
+
+    #[test]
+    fn swapped_assignments_keep_their_settings_after_reload() {
+        let mut banks = PadFxBanks::default();
+        banks.edit(PadFxLayer::Fx1, 0, |slot| slot.step_depth(-3));
+        let from = banks.slot(PadFxLayer::Fx1, 0);
+        let to = banks.slot(PadFxLayer::Fx2Shift, 7);
+        banks.swap(PadFxLayer::Fx1, 0, PadFxLayer::Fx2Shift, 7);
+        let restored = PadFxBanks::from_setting(&banks.setting());
+        assert_eq!(restored.slot(PadFxLayer::Fx1, 0), to);
+        assert_eq!(restored.slot(PadFxLayer::Fx2Shift, 7), from);
+        for layer in PadFxLayer::ALL {
+            for pad in 0..PAD_COUNT {
+                if (layer, pad) != (PadFxLayer::Fx1, 0) && (layer, pad) != (PadFxLayer::Fx2Shift, 7)
+                {
+                    assert_eq!(
+                        restored.slot(layer, pad),
+                        PadFxBanks::default().slot(layer, pad)
+                    );
+                }
+            }
+        }
+    }
 
     #[test]
     fn every_preset_fills_all_32_pads_with_sounds_that_take_their_parameter() {
