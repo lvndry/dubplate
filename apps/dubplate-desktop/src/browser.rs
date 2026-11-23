@@ -11,7 +11,7 @@ use dubplate_engine::DeckId;
 use dubplate_prep::{AudioAnalysis, Key, PlaylistEdit, PlaylistId};
 use dubplate_stems::StemsStatus;
 use gpui::component::input::{Input, InputEvent, InputState};
-use gpui::component::menu::ContextMenuExt;
+use gpui::component::menu::{ContextMenuExt, PopupMenuItem};
 use gpui::prelude::*;
 use gpui::{
     App, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable, MouseButton,
@@ -109,6 +109,8 @@ pub enum BrowserEvent {
     TookKeys,
     /// Ask for music folders to add to the library.
     AddMusicFolders,
+    /// Rescan the music folder whose sidebar menu was opened.
+    RescanMusicFolder(PathBuf),
     /// Make rekordbox's collection part of the library.
     ImportRekordbox,
     /// Find the moved files of every missing track.
@@ -1080,7 +1082,21 @@ impl Browser {
                     this.choose_crate(crate_index, cx);
                 }))
                 .map(|row| {
-                    if entry_kind == CrateKind::Playlist {
+                    if let Some(folder) = entry.path.clone() {
+                        let browser = cx.weak_entity();
+                        row.context_menu(move |menu, _, _| {
+                            let browser = browser.clone();
+                            let folder = folder.clone();
+                            menu.item(PopupMenuItem::new("Rescan folder").on_click(
+                                move |_, _, cx| {
+                                    let _ = browser.update(cx, |_, cx| {
+                                        cx.emit(BrowserEvent::RescanMusicFolder(folder.clone()));
+                                    });
+                                },
+                            ))
+                        })
+                        .into_any_element()
+                    } else if entry_kind == CrateKind::Playlist {
                         row.context_menu(move |menu, _, _| {
                             menu.menu(
                                 "Copy to Dubplate playlist",

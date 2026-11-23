@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use dubplate_library::{FolderScan, LibraryCache};
+use dubplate_library::LibraryCache;
 use dubplate_prep::ExportLibrary;
 use gpui::{Context, PathPromptOptions};
 
@@ -16,7 +16,7 @@ use crate::browser::LibraryStatus;
 use crate::collection::{Collection, RekordboxLibrary, folder_name};
 use crate::commands::Mode;
 use crate::folder_picker::{music_start_folder, open_next_picker_in};
-use crate::library::{RekordboxSource, ScanRequest};
+use crate::library::{RekordboxSource, ScanRequest, ScanResult};
 use crate::prep;
 use crate::relink::missing_tracks;
 use crate::settings::Settings;
@@ -119,7 +119,10 @@ impl DubplateApp {
 
     /// Scans a folder again.
     pub(super) fn rescan_music_folder(&mut self, folder: PathBuf, cx: &mut Context<'_, Self>) {
-        self.scan_folders(vec![folder], cx);
+        if let Some(request) = self.sources.request_subfolder_scan(folder) {
+            self.run_scan(request, cx);
+        }
+        cx.notify();
     }
 
     /// Makes rekordbox's collection part of the library, or takes it out.
@@ -202,12 +205,17 @@ impl DubplateApp {
         .detach();
     }
 
-    fn finish_scan(
-        &mut self,
-        results: Vec<(PathBuf, Result<FolderScan, String>)>,
-        cx: &mut Context<'_, Self>,
-    ) {
-        if let Some((folder, Err(problem))) = results.iter().find(|(_, result)| result.is_err()) {
+    fn finish_scan(&mut self, results: Vec<ScanResult>, cx: &mut Context<'_, Self>) {
+        if let Some((folder, problem)) = results
+            .iter()
+            .filter(|scan| self.sources.is_current_scan_result(&scan.folder))
+            .find_map(|scan| {
+                scan.result
+                    .as_ref()
+                    .err()
+                    .map(|problem| (&scan.folder, problem))
+            })
+        {
             self.show_notice(
                 NoticePlace::Window,
                 format!("{} could not be scanned: {problem}", folder_name(folder)),
