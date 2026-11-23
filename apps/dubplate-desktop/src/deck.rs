@@ -293,6 +293,8 @@ pub struct Deck {
     pub seen_marks: Option<SeenMarks>,
     /// The cue just set, pulsing where it landed.
     pub marker_pulse: Option<MarkerPulse>,
+    /// When the jog's edge last bent the playing deck's tempo, so the BPM shows the bend.
+    pub nudged_at: Option<Instant>,
     load_generation: u64,
     committed_generation: u64,
     pending: Option<(Arc<CollectionTrack>, Arc<TrackCues>)>,
