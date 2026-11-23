@@ -1,5 +1,5 @@
 //! The Pad FX editor, over the window: the 32 Pad FX pads in their four layers, and for the pad
-//! chosen its sound, beat or parameter, depth, whether it is held or latched and what letting go
+//! chosen its sound, beat or parameter, depth, how it is triggered and what letting go
 //! does, with the built-in presets. Changes apply at once and are remembered.
 
 use dubplate_engine::{DeckId, PadRelease};
@@ -205,19 +205,17 @@ fn layers(
         .children(PadFxLayer::ALL.map(|layer| {
             let pads = (0..PAD_COUNT).map(|pad| {
                 let chosen = editing == PadFxEditing { layer, pad };
-                let (name, parameter) = app
-                    .pad_fx
-                    .slot(layer, pad)
-                    .map(PadFxSlot::label)
-                    .unwrap_or_default();
-                let latched = app
-                    .pad_fx
-                    .slot(layer, pad)
-                    .is_some_and(|slot| slot.trigger == PadTrigger::Latch);
+                let slot = app.pad_fx.slot(layer, pad);
+                let (name, parameter) = slot.map(PadFxSlot::label).unwrap_or_default();
+                let detail = if slot.is_some_and(|slot| slot.trigger == PadTrigger::Latch) {
+                    format!("{parameter} latch")
+                } else {
+                    parameter
+                };
                 div()
                     .id(("pad-fx-slot", layer.index() * PAD_COUNT + pad))
                     .accessible_button(format!(
-                        "{} pad {}: {name} {parameter}",
+                        "{} pad {}: {name} {detail}",
                         layer.label(),
                         pad + 1
                     ))
@@ -253,11 +251,7 @@ fn layers(
                             .font_family(MONO_FAMILY)
                             .text_size(theme::TINY_TEXT_SIZE)
                             .text_color(theme::active().muted)
-                            .child(if latched {
-                                format!("{parameter} latch")
-                            } else {
-                                parameter
-                            }),
+                            .child(detail),
                     )
             });
             let pads: Vec<_> = pads.collect();
@@ -300,14 +294,15 @@ fn pad_settings(
     let trigger = match slot.trigger {
         PadTrigger::Hold => "Hold",
         PadTrigger::Latch => "Latch",
+        PadTrigger::Tap => "Tap",
     };
+    let tap = slot.trigger == PadTrigger::Tap;
     let release = if !slot.sound.has_release() {
         "Lands in time"
+    } else if tap || slot.release == PadRelease::RingOut {
+        "Ring out"
     } else {
-        match slot.release {
-            PadRelease::RingOut => "Ring out",
-            PadRelease::Dry => "Back to dry",
-        }
+        "Back to dry"
     };
     div()
         .flex()
@@ -338,7 +333,7 @@ fn pad_settings(
             "Let go",
             release,
             PadFxEdit::Release,
-            slot.sound.has_release(),
+            slot.sound.has_release() && !tap,
             cx,
         ))
         .child(div().pt(px(4.0)).child(
@@ -406,7 +401,7 @@ fn stepper(
         .child(arrow("\u{203a}", 1))
 }
 
-/// A value a click switches between its two choices.
+/// A value a click cycles when it can be edited.
 fn toggle(
     name: &'static str,
     value: &'static str,
@@ -417,7 +412,6 @@ fn toggle(
     div().flex().items_center().child(field(name)).child(
         div()
             .id(SharedString::from(format!("pad-fx-{name}")))
-            .accessible_button(format!("{name}: {value}"))
             .min_w(px(178.0))
             .h(px(24.0))
             .flex()
@@ -431,6 +425,7 @@ fn toggle(
             .map(|toggle| {
                 if enabled {
                     toggle
+                        .accessible_button(format!("{name}: {value}"))
                         .cursor_pointer()
                         .hover(|toggle| toggle.bg(theme::active().raised))
                         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {

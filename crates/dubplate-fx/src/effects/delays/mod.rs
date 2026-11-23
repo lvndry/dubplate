@@ -82,6 +82,8 @@ pub(crate) trait Voicing: Send + 'static {
     /// Called each time the effect is switched off.
     fn switched_off(&mut self) {}
 
+    fn set_external_capture(&mut self, _capture: bool) {}
+
     /// How frozen the loop is, from 0 to 1: fully frozen, it takes in no new music and holds
     /// what it has forever. Read once per sample, after [`Voicing::send`].
     fn frozen(&self) -> f32 {
@@ -214,6 +216,10 @@ impl<V: Voicing> Kernel for EchoLoop<V> {
 
     fn switched_off(&mut self) {
         self.voicing.switched_off();
+    }
+
+    fn set_external_capture(&mut self, capture: bool) {
+        self.voicing.set_external_capture(capture);
     }
 
     fn tail_seconds(&self) -> f32 {

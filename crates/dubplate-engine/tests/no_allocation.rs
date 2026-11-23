@@ -314,6 +314,18 @@ fn run_session(
             )
         },
         |controller| controller.release_pad_effect(DeckId::B),
+        |controller| {
+            controller.tap_pad_effect(
+                DeckId::B,
+                PadEffect {
+                    kind: EffectKind::EchoOut,
+                    parameter: Some(ParameterValue::Beats(BeatLength::SIXTEENTH)),
+                    depth: 0.8,
+                    release: PadRelease::RingOut,
+                },
+                BeatLength::SIXTEENTH,
+            )
+        },
         |controller| controller.set_key_shift(DeckId::A, 3.0),
         |controller| controller.set_key_shift(DeckId::B, -2.0),
         |controller| controller.set_key_shift(DeckId::A, 0.0),

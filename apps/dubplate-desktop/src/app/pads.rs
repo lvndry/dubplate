@@ -3,7 +3,7 @@
 
 use std::time::{Duration, Instant};
 
-use dubplate_engine::DeckId;
+use dubplate_engine::{BeatLength, DeckId, PadEffect};
 use dubplate_midi::PadMode;
 use dubplate_rekordbox::{HotCue, HotCuePad};
 use gpui::{Context, SharedString};
@@ -98,12 +98,14 @@ enum PadFxAction {
     Nothing,
     /// The pad on lets go.
     Release,
+    /// Capture one echo interval and let the repeats fade.
+    TapEcho(PadEffect, BeatLength),
     /// This pad takes over from any pad on.
     Start(HeldPad),
 }
 
-/// The controller holds a pad while it is pressed, unless the pad is set to latch; a latched
-/// pad, or a tap from the keys or the screen, stays on until the same pad is pressed again.
+/// A Tap echo fires on press from any input. Other pads are held on the controller or
+/// toggled when latched or triggered from the keys or screen.
 /// Another pad takes over from the one on. Letting go matches the pad by number alone, so
 /// lifting SHIFT first never leaves an effect stuck on.
 fn pad_fx_action(
@@ -112,6 +114,11 @@ fn pad_fx_action(
     layer: PadFxLayer,
     slot: Option<PadFxSlot>,
 ) -> PadFxAction {
+    if press.press != Press::Up
+        && let Some((echo, interval)) = slot.and_then(|slot| slot.tap_echo())
+    {
+        return PadFxAction::TapEcho(echo, interval);
+    }
     let held = held.filter(|held| held.pad == press.pad);
     match press.press {
         Press::Up if held.is_some_and(|held| !held.latched) => PadFxAction::Release,
@@ -379,6 +386,16 @@ impl DubplateApp {
         match pad_fx_action(self.held_pads[deck.index()], press, layer, slot) {
             PadFxAction::Nothing => {}
             PadFxAction::Release => self.release_held_pad(deck, cx),
+            PadFxAction::TapEcho(echo, interval) => {
+                self.release_held_pad(deck, cx);
+                self.engine_command(cx, |controller| {
+                    controller.tap_pad_effect(deck, echo, interval)
+                });
+                self.pad_notes[deck.index()] = slot.map(|slot| {
+                    let (name, parameter) = slot.label();
+                    PadNote::flash(format!("{name} {parameter}"), Instant::now())
+                });
+            }
             PadFxAction::Start(held) => {
                 self.release_held_pad(deck, cx);
                 self.pad_notes[deck.index()] = slot.map(|slot| {
@@ -619,7 +636,7 @@ mod tests {
                 let layer = PadFxLayer::of(PadMode::PadFx1, press.shift).unwrap();
                 match pad_fx_action(held, *press, layer, banks.slot(layer, press.pad)) {
                     PadFxAction::Nothing => {}
-                    PadFxAction::Release => held = None,
+                    PadFxAction::Release | PadFxAction::TapEcho(..) => held = None,
                     PadFxAction::Start(started) => held = Some(started),
                 }
                 held.map(|held: HeldPad| (held.pad, held.layer))
@@ -653,20 +670,20 @@ mod tests {
     }
 
     #[test]
-    fn a_latched_pad_stays_on_until_pressed_again_and_a_tap_latches_any_pad() {
+    fn a_latched_pad_stays_on_until_pressed_again_and_a_screen_click_toggles_a_held_pad() {
         let mut banks = PadFxBanks::default();
-        banks.edit(PadFxLayer::Fx1, 4, PadFxSlot::toggle_trigger);
-        let latched = Some((4, PadFxLayer::Fx1));
+        banks.edit(PadFxLayer::Fx1, 5, PadFxSlot::toggle_trigger);
+        let latched = Some((5, PadFxLayer::Fx1));
         assert_eq!(
             play(
                 &banks,
                 &[
-                    press(4, Press::Down, false),
-                    press(4, Press::Up, false),
-                    press(4, Press::Down, false),
-                    press(4, Press::Up, false),
-                    press(5, Press::Tap, false),
-                    press(5, Press::Tap, false),
+                    press(5, Press::Down, false),
+                    press(5, Press::Up, false),
+                    press(5, Press::Down, false),
+                    press(5, Press::Up, false),
+                    press(3, Press::Tap, false),
+                    press(3, Press::Tap, false),
                 ]
             ),
             [
@@ -674,9 +691,26 @@ mod tests {
                 latched,
                 None,
                 None,
-                Some((5, PadFxLayer::Fx1)),
+                Some((3, PadFxLayer::Fx1)),
                 None,
             ]
+        );
+    }
+
+    #[test]
+    fn controller_and_screen_fire_each_tap_echo_once_and_pad_up_leaves_its_tail() {
+        let layer = PadFxLayer::Fx1;
+        let slot = PadFxBanks::default().slot(layer, 4);
+        for event in [Press::Down, Press::Tap, Press::Tap] {
+            let action = pad_fx_action(None, press(4, event, false), layer, slot);
+            let PadFxAction::TapEcho(echo, BeatLength::HALF) = action else {
+                panic!("expected a half-beat tap echo, got {action:?}");
+            };
+            assert_eq!(echo.kind, EffectKind::Echo);
+        }
+        assert_eq!(
+            pad_fx_action(None, press(4, Press::Up, false), layer, slot),
+            PadFxAction::Nothing
         );
     }
 
