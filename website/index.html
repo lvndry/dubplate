@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Mix live on two decks with Dubplate, free and open-source DJ software with waveform displays, headphone cueing, pad effects and DDJ-FLX4 support.">
+  <meta name="description" content="Mix live on two decks with Dubplate, free and open-source DJ software with stacked waveforms, headphone cueing, loops and pad effects.">
   <meta name="theme-color" content="#f2f4ee">
   <title>Dubplate — Two decks for live DJ mixing</title>
   <link rel="stylesheet" href="styles.css">
@@ -32,7 +32,7 @@
         Mix live.<br><em class="genre-cycle" aria-hidden="true"><span>Techno</span><span>House</span><span>Amapiano</span><span>Hardcore</span><span>Funk</span></em>
       </h1>
       <div class="intro">
-        <p>Dubplate is a free, open-source two-deck alternative to rekordbox and Traktor. Cue the next track in your headphones, line up the beats and bring it into the mix on your DDJ-FLX4 or keyboard.</p>
+        <p>Dubplate is a free, open-source two-deck alternative to rekordbox and Traktor. Cue the next track in your headphones, line up the beats and bring it into the mix when the phrase turns.</p>
         <a class="text-link" href="#get-started">Get Dubplate <span aria-hidden="true">↓</span></a>
       </div>
     </section>
@@ -122,11 +122,11 @@
       <section class="performance-split performance-mix" aria-labelledby="performance-mix-title">
         <div class="performance-copy">
           <h2 id="performance-mix-title">Cue it before the room hears it.</h2>
-          <p>Keep deck A playing while you listen to deck B in your headphones. On the DDJ-FLX4, turn on the channel CUE, then nudge the jog wheel to line up a kick or press BEAT SYNC. When the phrases line up, bring in the new track and swap the bass with the LOW EQ knobs. Or turn on Smart Fader and move the crossfader to glide between tempos and swap the bass as you blend.</p>
-          <p>The DDJ-FLX4’s jogs, faders, EQ and headphone controls are mapped. At the keyboard, press <kbd>P</kbd> to preview the selected track in your headphones before loading it onto a deck.</p>
+          <p>Keep deck A playing to the room. Cue deck B in your headphones, then nudge it into time by ear or use beat sync. When the phrases line up, bring in the new track and swap the bass with the LOW EQ knobs. Or turn on Smart Fader and move the crossfader to glide between tempos and swap the bass as you blend.</p>
+          <p>Still digging for a track? Press <kbd>P</kbd> to preview the selected track in your headphones before loading it onto a deck.</p>
         </div>
         <figure class="performance-routing">
-          <figcaption>Headphone cueing on the DDJ-FLX4</figcaption>
+          <figcaption>What you hear in a cue mix</figcaption>
           <dl>
             <div><dt>Deck A</dt><dd><span class="performance-signal" aria-hidden="true"></span>Plays to the room</dd></div>
             <div><dt>Deck B</dt><dd><span class="performance-signal" aria-hidden="true"></span>Plays in headphones with its fader down</dd></div>
@@ -142,11 +142,11 @@
             <p class="performance-lead">A four-beat loop buys you another bar for the handoff. Beat Jump moves the playhead by a set number of beats, and Hot Cue takes you straight to a marked point in the track.</p>
             <figure class="performance-beats">
               <div aria-hidden="true"><span>1</span><span>2</span><span>3</span><span>4</span></div>
-              <figcaption>Press <b>4 BEAT/EXIT</b> to loop these four beats. Press it again to let the track play through.</figcaption>
+              <figcaption>Start a four-beat loop on the first kick. Exit the loop when the incoming phrase lands.</figcaption>
             </figure>
           </div>
           <dl class="performance-pad-moves">
-            <div><dt>Catch the last hit.</dt><dd>Tap pad 5 in Pad FX 1 right on a hit. With any of the factory banks, the resulting echo fades over the playing track after you release the pad.</dd></div>
+            <div><dt>Catch the last hit.</dt><dd>Tap the echo pad on a snare and release it. The repeats fade over the track as it keeps playing.</dd></div>
             <div><dt>Make space for the next track.</dt><dd>Select the Sweep preset in Smart CFX and turn the CFX knob to the right to narrow the outgoing track to a band-pass. With <b>Echo out on the faders</b> enabled, close the channel fader quickly to leave a half-beat echo behind.</dd></div>
             <div><dt>Build your own FX bank.</dt><dd>Start with Classic, Afro house or Amapiano. Edit any of the 32 Pad FX assignments, from the length of a roll to how an echo rings out when you release the pad.</dd></div>
           </dl>
@@ -175,7 +175,7 @@
             <li><span>Melody</span><span>Playing</span></li>
             <li><span>Vocals</span><span>Muted</span></li>
           </ul>
-          <p>On the DDJ-FLX4, select Beat Loop and hold <kbd>SHIFT</kbd>. Pad 1 toggles vocals. Pad 8 brings all four stems back.</p>
+          <p>Mute Vocals on the outgoing deck. When the incoming vocal finishes, bring the original voice back without interrupting the drums.</p>
         </figure>
       </section>
 
@@ -224,8 +224,8 @@ brew install --cask dubplate</code></pre>
           <p>Import reads a copy of the collection and its analysis files. Your playlists, cues and beat grids come across. Dubplate saves subsequent edits separately, so you can keep using rekordbox. The import requires your rekordbox database key. <a href="https://github.com/lvndry/dubplate/blob/main/docs/cli.md">Library setup guide</a></p>
         </details>
         <details>
-          <summary>How do I cue through my FLX4 headphones?</summary>
-          <p>Select <strong>DDJ-FLX4</strong> as the sound card in Settings, plug headphones into the controller and press the incoming channel’s CUE button. The audience hears the master output while you check the next track.</p>
+          <summary>Which DJ controllers work with Dubplate today?</summary>
+          <p>The Pioneer DDJ-FLX4 is the first controller with a built-in mapping. Broader controller support is a project goal. You can also mix with the on-screen decks and keyboard. <a href="https://github.com/lvndry/dubplate/blob/main/docs/guide.md#4-mix">See the current controller mapping</a></p>
         </details>
         <details>
           <summary>Can I mix with just a keyboard?</summary>
