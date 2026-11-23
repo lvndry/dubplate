@@ -133,7 +133,6 @@ h1 em { color: var(--leaf); }
 .deck-sheet { margin-bottom: 22px; padding-bottom: 16px; }
 .deck-sheet > svg { display: block; width: 100%; height: auto; margin-block: 16px 4px; }
 .deck-legend { display: flex; justify-content: space-between; align-items: center; color: var(--chart-muted); font: 12px var(--mono); }
-.deck-legend button { border: 1px solid #78978b; border-radius: 3px; padding: 8px 12px; background: transparent; color: var(--chart-text); font: inherit; cursor: pointer; }
 @keyframes enter-deck-title { from { transform: translateY(.16em); } to { transform: translateY(0); } }
 @media (prefers-reduced-motion: no-preference) { body:has(.deck-sheet) h1 { animation: enter-deck-title .6s ease-out both; } }
 @media (max-width: 680px) {
@@ -146,9 +145,6 @@ h1 em { color: var(--leaf); }
 }
 @keyframes decks-scroll {
   to { transform: translateX(-1056px); }
-}
-svg.paused .decks-scroll {
-  animation-play-state: paused;
 }
 @media (prefers-reduced-motion: reduce) {
   .decks-scroll { animation: none; }
@@ -170,15 +166,12 @@ svg.paused .decks-scroll {
   .genre-cycle.animated > span {
     animation: genre-change var(--cycle-duration) linear infinite;
   }
-  .genre-cycle.animated.paused > span { animation-play-state: paused; }
 }
 @keyframes genre-change {
   0% { opacity: .25; transform: translateY(.055em); }
   2%, 18% { opacity: 1; transform: translateY(0); }
   20%, 100% { opacity: 0; transform: translateY(-.045em); }
 }
-.genre-cycle.paused > span { animation: none; opacity: 0; transform: none; }
-.genre-cycle.paused > span:first-child { opacity: 1; }
 
 .setup-questions { display: grid; grid-template-columns: 1fr 1.18fr; gap: clamp(30px, 8vw, 130px); padding: clamp(48px, 7vw, 100px) 0; }
 .setup-questions h2 { font: 400 clamp(36px, 4.6vw, 72px)/1 var(--serif); letter-spacing: -.055em; }
