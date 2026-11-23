@@ -15,7 +15,12 @@ const HIDDEN_PIONEER: &str = ".PIONEER";
 const REKORDBOX: &str = "rekordbox";
 const EXPORT_PDB: &str = "export.pdb";
 const EXPORT_EXT_PDB: &str = "exportExt.pdb";
-const ONE_LIBRARY: &str = "exportLibrary.db";
+const ONE_LIBRARY_FILES: [&str; 4] = [
+    "exportLibrary.db",
+    "exportLibrary.db-wal",
+    "exportLibrary.db-shm",
+    "exportLibrary.db-journal",
+];
 const MANIFEST: &str = "dubplate-export.json";
 const MANIFEST_FORMAT: u32 = 1;
 /// The files players and rekordbox keep in `PIONEER` for the players' settings, which say
@@ -115,6 +120,12 @@ impl Stick {
         if !pioneer.exists() {
             return Ok((StickLibrary::Empty, Manifest::default()));
         }
+        if let Some(found) = one_library_file(&pioneer)? {
+            return Err(UsbExportError::OneLibrary {
+                destination: self.root.clone(),
+                found,
+            });
+        }
         let manifest_path = self.manifest_path();
         if !manifest_path.is_file() {
             let found = foreign_entries(&pioneer)?;
@@ -125,11 +136,6 @@ impl Stick {
             };
         }
         let manifest = Manifest::read(&manifest_path)?;
-        if self.rekordbox_folder().join(ONE_LIBRARY).exists() {
-            return Err(foreign(format!(
-                "a rekordbox 7 {ONE_LIBRARY} beside Dubplate's library"
-            )));
-        }
         let export_pdb = self.export_pdb();
         let library = match std::fs::read(&export_pdb) {
             Ok(bytes) => DeviceLibrary::parse_export_pdb(&bytes).map_err(|source| {
@@ -168,6 +174,31 @@ impl Stick {
         })?;
         write_atomically(&path, &json)
     }
+}
+
+/// Detect either the OneLibrary catalog or a sidecar from a OneLibrary transaction.
+fn one_library_file(pioneer: &Path) -> Result<Option<String>, UsbExportError> {
+    for entry in std::fs::read_dir(pioneer).map_err(UsbExportError::io(pioneer))? {
+        let entry = entry.map_err(UsbExportError::io(pioneer))?;
+        if !entry
+            .file_name()
+            .eq_ignore_ascii_case(std::ffi::OsStr::new(REKORDBOX))
+        {
+            continue;
+        }
+        let rekordbox = entry.path();
+        for file in std::fs::read_dir(&rekordbox).map_err(UsbExportError::io(&rekordbox))? {
+            let file = file.map_err(UsbExportError::io(&rekordbox))?;
+            let name = file.file_name();
+            if ONE_LIBRARY_FILES
+                .iter()
+                .any(|marker| name.eq_ignore_ascii_case(std::ffi::OsStr::new(marker)))
+            {
+                return Ok(Some(name.to_string_lossy().into_owned()));
+            }
+        }
+    }
+    Ok(None)
 }
 
 /// The entries of `PIONEER` other than players' setting files.

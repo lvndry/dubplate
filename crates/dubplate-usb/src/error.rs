@@ -24,6 +24,16 @@ pub enum UsbExportError {
         /// What was found there.
         found: String,
     },
+    /// Updating only the classic part of this stick would leave OneLibrary out of sync.
+    #[error(
+        "{destination} contains a OneLibrary file ({found}). Choose a different stick or folder."
+    )]
+    OneLibrary {
+        /// The stick or folder.
+        destination: PathBuf,
+        /// The OneLibrary catalog or sidecar that was found.
+        found: String,
+    },
     /// The library Dubplate wrote to the stick before can no longer be read, so it is left as it
     /// is.
     #[error("the library Dubplate wrote to {path} can no longer be read: {source}")]

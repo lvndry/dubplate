@@ -3,7 +3,9 @@ use std::collections::{BTreeMap, HashSet};
 use serde::Serialize;
 
 use super::TableKind;
-use super::database::{DatabaseFile, EncodedRow, TableRows, align4, write_database};
+use super::database::{
+    DatabaseFile, EncodedRow, TableRows, align4, append_database, write_database,
+};
 use super::error::DeviceLibraryError;
 use super::fixed;
 use super::ids::{
@@ -472,6 +474,111 @@ impl DeviceLibrary {
         write_database(&tables)
     }
 
+    /// Builds an updated classic database from the original file and this extended library.
+    /// Existing rows must remain unchanged and in their original read order. Tables and row
+    /// fields outside Dubplate's model remain in the file as read.
+    ///
+    /// Fails for an unfamiliar database layout, a change to an existing row, or an invalid
+    /// reference. The caller can check the result before changing any files on the USB.
+    pub fn append_to_export_pdb(&self, original: Vec<u8>) -> Result<Vec<u8>, DeviceLibraryError> {
+        let before = Self::parse_export_pdb(&original)?;
+        let unsupported = |reason: &str| DeviceLibraryError::UnsupportedAppend(reason.to_owned());
+        if before.tracks.is_empty() {
+            return Err(unsupported(
+                "the existing library has no track to identify it",
+            ));
+        }
+        if self.library_id != before.library_id
+            || self.created != before.created
+            || self.preserved != before.preserved
+            || self.artwork != before.artwork
+        {
+            return Err(unsupported("existing library metadata changed"));
+        }
+        before.check_references()?;
+        self.check_references()?;
+        let tracks = appended(&before.tracks, &self.tracks)?;
+        let old_history: HashSet<TrackId> = before
+            .histories()?
+            .into_iter()
+            .flat_map(|history| history.tracks)
+            .collect();
+        if tracks.iter().any(|track| old_history.contains(&track.id)) {
+            return Err(unsupported(
+                "a new track id already appears in a player history",
+            ));
+        }
+        let additions = [
+            (
+                TableKind::Tracks,
+                tracks
+                    .iter()
+                    .map(|row| rows::encode_track(row, self.library_id))
+                    .collect::<Result<Vec<_>, _>>()?,
+            ),
+            (
+                TableKind::Genres,
+                appended(&before.genres, &self.genres)?
+                    .iter()
+                    .map(|row| rows::encode_id_and_text(row.id.get(), &row.name))
+                    .collect::<Result<Vec<_>, _>>()?,
+            ),
+            (
+                TableKind::Artists,
+                appended(&before.artists, &self.artists)?
+                    .iter()
+                    .map(rows::encode_artist)
+                    .collect::<Result<Vec<_>, _>>()?,
+            ),
+            (
+                TableKind::Albums,
+                appended(&before.albums, &self.albums)?
+                    .iter()
+                    .map(rows::encode_album)
+                    .collect::<Result<Vec<_>, _>>()?,
+            ),
+            (
+                TableKind::Labels,
+                appended(&before.labels, &self.labels)?
+                    .iter()
+                    .map(|row| rows::encode_id_and_text(row.id.get(), &row.name))
+                    .collect::<Result<Vec<_>, _>>()?,
+            ),
+            (
+                TableKind::Keys,
+                appended(&before.keys, &self.keys)?
+                    .iter()
+                    .map(rows::encode_key)
+                    .collect::<Result<Vec<_>, _>>()?,
+            ),
+            (
+                TableKind::PlaylistTree,
+                appended(&before.playlists, &self.playlists)?
+                    .iter()
+                    .map(rows::encode_playlist)
+                    .collect::<Result<Vec<_>, _>>()?,
+            ),
+            (
+                TableKind::PlaylistEntries,
+                appended(&before.playlist_entries, &self.playlist_entries)?
+                    .iter()
+                    .map(rows::encode_playlist_entry)
+                    .collect(),
+            ),
+        ]
+        .map(|(kind, rows)| TableRows {
+            type_number: kind.type_number(),
+            rows,
+        });
+        let updated = append_database(original, &additions)?;
+        if &Self::parse_export_pdb(&updated)? != self {
+            return Err(unsupported(
+                "the updated database could not be read back as expected",
+            ));
+        }
+        Ok(updated)
+    }
+
     fn rows_of(&self, kind: TableKind) -> Result<Vec<EncodedRow>, DeviceLibraryError> {
         let rows = match kind {
             TableKind::Tracks => sorted(&self.tracks, |track| track.id)
@@ -626,6 +733,12 @@ impl DeviceLibrary {
             preserved,
         })
     }
+}
+
+fn appended<'a, T: PartialEq>(before: &[T], after: &'a [T]) -> Result<&'a [T], DeviceLibraryError> {
+    after.strip_prefix(before).ok_or_else(|| {
+        DeviceLibraryError::UnsupportedAppend("an existing row was changed or removed".to_owned())
+    })
 }
 
 fn sorted<Item, Key: Ord>(

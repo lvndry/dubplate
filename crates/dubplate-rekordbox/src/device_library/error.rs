@@ -26,6 +26,9 @@ pub enum DeviceLibraryError {
     /// The bytes are not a DeviceSQL database.
     #[error("not a DeviceSQL database: {0}")]
     NotADatabase(String),
+    /// The classic library cannot be extended using the supported layout.
+    #[error("cannot safely add to this Device Library: {0}")]
+    UnsupportedAppend(String),
     /// A page is cut short, out of the file or contradicts itself.
     #[error("page {page} is malformed: {reason}")]
     MalformedPage {
