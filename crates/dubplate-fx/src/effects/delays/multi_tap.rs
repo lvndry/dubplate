@@ -13,7 +13,8 @@ const GAIN_SMOOTHING_SECONDS: f32 = 0.02;
 const TRAIL_MARGIN_SECONDS: f32 = 0.05;
 
 /// A multi-tap delay: up to seven repeats an eighth of a beat apart, as many as fit in the beat
-/// length, each a little quieter than the one before, laid over the music.
+/// length, each a little quieter than the one before, laid over the music. Beat lengths shorter
+/// than an eighth produce a single tap at the selected length.
 ///
 /// The depth knob raises the odd repeats (the 1st, 3rd, 5th and 7th) over its first half and
 /// the even ones over its second half, so it starts as a sparse, syncopated delay and fills in
@@ -89,11 +90,13 @@ impl Kernel for MultiTapKernel {
         for gain in &mut self.tap_gains {
             gain.prepare(timing.sample_rate);
         }
-        let fitting = (self.beat.beats() / TAP_SPACING_BEATS).round() as usize;
+        let beats = self.beat.beats();
+        let spacing = beats.min(TAP_SPACING_BEATS);
+        let fitting = (beats / spacing).floor() as usize;
         self.tap_count = fitting.clamp(1, MOST_TAPS);
         let longest = (self.lines[0].max_delay() / self.tap_count as f32).max(MIN_DELAY_SAMPLES);
         self.spacing_samples =
-            (timing.beats_to_samples(TAP_SPACING_BEATS) as f32).clamp(MIN_DELAY_SAMPLES, longest);
+            (timing.beats_to_samples(spacing) as f32).clamp(MIN_DELAY_SAMPLES, longest);
     }
 
     #[inline]

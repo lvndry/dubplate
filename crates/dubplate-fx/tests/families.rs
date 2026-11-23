@@ -183,6 +183,26 @@ fn multi_tap_delay_repeats_every_eighth_of_a_beat_up_to_the_beat_length() {
 }
 
 #[test]
+fn multi_tap_delay_respects_the_sixteenth_beat_setting() {
+    let mut delay = effect(EffectKind::MtDelay, 1.0);
+    delay.set_beat(BeatLength::SIXTEENTH);
+    let pulse = 4_800;
+    let mut audio = Stereo::silence(BEAT_FRAMES);
+    audio.left[pulse] = 0.5;
+    play(delay.as_mut(), &mut audio);
+
+    let sixteenth = pulse + BEAT_FRAMES / 16;
+    assert!(
+        audio.left[sixteenth] > 0.45,
+        "the selected tap arrived late"
+    );
+    assert!(
+        peak(&audio.left[sixteenth + 1..]) < 0.001,
+        "an extra tap escaped the selected beat length"
+    );
+}
+
+#[test]
 fn rev_delay_plays_each_beat_length_backwards() {
     let mut delay = effect(EffectKind::RevDelay, 1.0);
     delay.set_beat(BeatLength::HALF);
@@ -204,6 +224,38 @@ fn rev_delay_plays_each_beat_length_backwards() {
     assert!(
         falling > rising * 2,
         "rising ramps came back rising: {rising} rising, {falling} falling"
+    );
+}
+
+#[test]
+fn reverse_delay_replays_each_captured_note_once_in_the_next_slice() {
+    let mut delay = effect(EffectKind::RevDelay, 1.0);
+    let frames = BEAT_FRAMES * 3;
+    let mut audio = burst(400.0, frames, 4_800, 960);
+    let second_note = burst(800.0, frames, 14_400, 960);
+    for (channel, other) in [
+        (&mut audio.left, second_note.left),
+        (&mut audio.right, second_note.right),
+    ] {
+        for (original, note) in channel.iter_mut().zip(other) {
+            *original += note;
+        }
+    }
+    play(delay.as_mut(), &mut audio);
+
+    assert!(
+        peak(&audio.left[..BEAT_FRAMES]) < 0.001,
+        "a reversed note leaked into its capture slice"
+    );
+    for (start, hz) in [(14_400, 800.0), (4_800, 400.0)] {
+        let reversed = 2 * BEAT_FRAMES - start - 960;
+        let window = &audio.left[reversed..reversed + 960];
+        assert!(rms(window) > 0.1, "missing reversed {hz} Hz note");
+        assert_eq!(strongest(window, &[400.0, 800.0]), hz);
+    }
+    assert!(
+        peak(&audio.left[2 * BEAT_FRAMES..]) < 0.001,
+        "the delay replayed a note twice"
     );
 }
 
@@ -351,6 +403,15 @@ fn helix_fully_right_holds_its_loop_without_fading() {
         late > early * 0.9,
         "the frozen loop faded from {early} to {late}"
     );
+
+    helix.set_enabled(false);
+    let mut released = Stereo::silence(BEAT_FRAMES * 96);
+    deck.play(helix.as_mut(), &mut released);
+    assert!(
+        rms(&released.left[..BEAT_FRAMES]) > 0.02,
+        "the held sound should ring after release"
+    );
+    assert!(!helix.is_active(), "the frozen loop never ended");
 }
 
 #[test]
@@ -502,6 +563,35 @@ fn mobius_sounds_over_silence_and_enigma_jet_moves_the_sound() {
         assert!(
             changed > 0.02,
             "the enigma jet barely changed the noise: {changed}"
+        );
+    }
+}
+
+#[test]
+fn beat_fx_rolls_adopt_a_tempo_change_at_the_next_repeat() {
+    let switch = 60_120;
+    let next_repeat = 3 * BEAT_FRAMES;
+    let new_length = (f64::from(SAMPLE_RATE) * 30.0 / 133.0).round() as usize;
+    for kind in [EffectKind::Roll, EffectKind::SlipRoll, EffectKind::RevRoll] {
+        let mut roll = effect(kind, 1.0);
+        let frames = 4 * BEAT_FRAMES;
+        let mut changed = Stereo::mono(sine(443.0, 0.4, frames));
+        let mut reference = changed.clone();
+        let mut deck = Deck::new(TEMPO_BPM);
+        deck.play_range(roll.as_mut(), &mut changed, 0, switch);
+        deck.tempo_bpm = 133.0;
+        deck.play_range(roll.as_mut(), &mut changed, switch, frames);
+        play(effect(kind, 1.0).as_mut(), &mut reference);
+
+        assert_eq!(
+            &changed.left[switch..next_repeat],
+            &reference.left[switch..next_repeat],
+            "{kind} jumped in the middle of a repeat"
+        );
+        assert_eq!(
+            &changed.left[next_repeat + 500..next_repeat + 1_500],
+            &changed.left[next_repeat + new_length + 500..next_repeat + new_length + 1_500],
+            "{kind} failed to retime the next repeat"
         );
     }
 }
