@@ -403,6 +403,8 @@ pub(crate) struct Noise {
     source: WhiteNoise,
     band: [Svf; 2],
     tape: Tape,
+    enabled: bool,
+    enabled_level: f32,
     level: Smoothed,
     centre_octaves: Smoothed,
     coefficients: SvfCoefficients,
@@ -415,6 +417,8 @@ impl Noise {
             source: WhiteNoise::default(),
             band: [Svf::default(); 2],
             tape: Tape::default(),
+            enabled: false,
+            enabled_level: 0.0,
             level: Smoothed::new(0.0, CUTOFF_SMOOTHING_SECONDS),
             centre_octaves: Smoothed::new(NOISE_LOWEST_HZ.log2(), CUTOFF_SMOOTHING_SECONDS),
             coefficients: SvfCoefficients::new(NOISE_LOWEST_HZ, NOISE_QUALITY, 48_000.0),
@@ -446,10 +450,24 @@ impl Voicing for Noise {
     }
 
     fn set_depth(&mut self, depth: f32) {
-        self.level.set_target(NOISE_LEVEL * depth.sqrt());
+        self.enabled_level = NOISE_LEVEL * depth.sqrt();
+        if self.enabled {
+            self.level.set_target(self.enabled_level);
+        }
         self.centre_octaves.set_target(
             NOISE_LOWEST_HZ.log2() + (NOISE_HIGHEST_HZ.log2() - NOISE_LOWEST_HZ.log2()) * depth,
         );
+    }
+
+    fn switched_on(&mut self) {
+        self.enabled = true;
+        self.level.set_target(self.enabled_level);
+    }
+
+    fn switched_off(&mut self) {
+        // This send generates its own noise, so fading the deck input does not stop it.
+        self.enabled = false;
+        self.level.set_target(0.0);
     }
 
     #[inline]
