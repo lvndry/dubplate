@@ -2160,6 +2160,7 @@ impl DubplateApp {
                 .as_ref()
                 .is_some_and(|hardware| hardware.dispatcher.held.any_shown(now))
             || self.pad_notes.iter().flatten().any(|note| note.shows(now))
+            || self.recording.is_some()
             || self
                 .set_ready_at
                 .is_some_and(|at| now.duration_since(at) < set_panel::SET_READY_DRAW);
