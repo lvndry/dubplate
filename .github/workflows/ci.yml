@@ -71,9 +71,17 @@ jobs:
             macOS-*) asset=universal-apple-darwin ;;
             *) echo "unsupported runner ${{ runner.os }}-${{ runner.arch }}"; exit 1 ;;
           esac
-          curl -fsSL --retry 3 \
-            "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-${NEXTEST_VERSION}/cargo-nextest-${NEXTEST_VERSION}-${asset}.tar.gz" \
-            | tar xz
+          # GitHub's release CDN occasionally answers 403/503 briefly; curl
+          # --retry does not cover those, so retry the whole download.
+          for attempt in 1 2 3 4 5; do
+            if curl -fsSL --retry 2 \
+              "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-${NEXTEST_VERSION}/cargo-nextest-${NEXTEST_VERSION}-${asset}.tar.gz" \
+              | tar xz; then
+              break
+            fi
+            if [ "$attempt" = 5 ]; then exit 1; fi
+            sleep 15
+          done
           sudo install cargo-nextest /usr/local/bin/cargo-nextest
       # Tests run in parallel across every test binary, so a workspace run
       # takes a fraction of the sequential cargo test.
