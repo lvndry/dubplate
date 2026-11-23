@@ -457,6 +457,7 @@ fn lane(
                     paint_lane(
                         bounds,
                         LaneContent {
+                            deck,
                             zoomed: zoomed.as_deref(),
                             beats: beats.as_deref(),
                             marks: Some(&marks),
@@ -553,25 +554,9 @@ fn record_paint(stats: Option<&Rc<RefCell<FrameStats>>>, started: Instant) {
     }
 }
 
-/// The colours of the three bands, unplayed or played.
-struct BandColours {
-    low: Rgba,
-    mid: Rgba,
-    high: Rgba,
-}
-
-impl BandColours {
-    fn at_opacity(opacity: f32) -> Self {
-        Self {
-            low: theme::faded(theme::active().band_low, opacity),
-            mid: theme::faded(theme::active().band_mid, opacity),
-            high: theme::faded(theme::active().band_high, opacity),
-        }
-    }
-}
-
 /// What a lane draws: the waveform, the beat grid and the marks over them.
 pub(super) struct LaneContent<'content> {
+    pub deck: DeckId,
     pub zoomed: Option<&'content ZoomedWaveform>,
     pub beats: Option<&'content BeatMarks>,
     pub marks: Option<&'content LaneMarks>,
@@ -584,6 +569,7 @@ pub(super) fn paint_lane(
     window: &mut Window,
 ) {
     let LaneContent {
+        deck,
         zoomed,
         beats,
         marks,
@@ -594,7 +580,7 @@ pub(super) fn paint_lane(
         paint_loop_band(bounds, &view, lane_loop, marks.colour, window);
     }
     if let Some(zoomed) = zoomed {
-        paint_waveform(bounds, zoomed, &view, window);
+        paint_waveform(bounds, zoomed, &view, deck, window);
     }
     if let Some(beats) = beats {
         for mark in beats.within(view.seconds_on_screen()) {
@@ -819,12 +805,14 @@ fn paint_waveform(
     bounds: Bounds<Pixels>,
     zoomed: &ZoomedWaveform,
     view: &LaneView,
+    deck: DeckId,
     window: &mut Window,
 ) {
     let width = f32::from(bounds.size.width);
     let height = f32::from(bounds.size.height);
-    let unplayed = BandColours::at_opacity(1.0);
-    let played = BandColours::at_opacity(theme::PLAYED_OPACITY);
+    let theme = theme::active();
+    let unplayed = theme.waveform_bands(deck);
+    let played = unplayed.at_opacity(theme.played_opacity);
     let centre_x = width / 2.0;
     let area = BandArea {
         origin: bounds.origin,
@@ -883,7 +871,7 @@ impl BandArea {
         x: f32,
         width: f32,
         levels: BandLevels,
-        colours: &BandColours,
+        colours: &theme::BandColours,
         window: &mut Window,
     ) {
         for (level, colour) in [

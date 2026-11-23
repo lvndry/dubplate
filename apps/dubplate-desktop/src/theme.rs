@@ -38,8 +38,6 @@ const fn hex_all(values: [u32; 8]) -> [Rgba; 8] {
     colours
 }
 
-/// How much of its colour the part of a waveform already played keeps.
-pub const PLAYED_OPACITY: f32 = 0.32;
 /// Body text size.
 pub const TEXT_SIZE: Pixels = px(13.0);
 /// Size of labels and table headers.
@@ -83,14 +81,44 @@ struct Palette {
 const DARK_TRACK_COLOURS: [u32; 8] = [
     0xF870F8, 0xE83838, 0xF8A030, 0xF8E330, 0x40D040, 0x40D0D0, 0x4078F8, 0xA050F8,
 ];
-/// The track colours on Cobalt, whose deep blue swallows the plain red, blue and purple.
-const COBALT_TRACK_COLOURS: [u32; 8] = [
+/// The track colours on dark, saturated backgrounds that obscure the plain red, blue and purple.
+const BRIGHT_TRACK_COLOURS: [u32; 8] = [
     0xF870F8, 0xFF6B6B, 0xF8A030, 0xF8E330, 0x40D040, 0x40D0D0, 0x8DB4FF, 0xC393FF,
 ];
 /// The track colours on light themes, deepened so each still stands out on white.
 const LIGHT_TRACK_COLOURS: [u32; 8] = [
     0xC22DC2, 0xD42020, 0xC46A00, 0x8A7400, 0x1E8A1E, 0x0A8585, 0x2B5FE0, 0x7F3BDB,
 ];
+
+/// The colours of the layers in a three-band waveform, from back to front.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BandColours {
+    /// The low band.
+    pub low: Rgba,
+    /// The mid band.
+    pub mid: Rgba,
+    /// The high band.
+    pub high: Rgba,
+}
+
+impl BandColours {
+    const fn new([low, mid, high]: [u32; 3]) -> Self {
+        Self {
+            low: hex(low),
+            mid: hex(mid),
+            high: hex(high),
+        }
+    }
+
+    /// Fades all three bands by the same amount.
+    pub fn at_opacity(self, opacity: f32) -> Self {
+        Self {
+            low: faded(self.low, opacity),
+            mid: faded(self.mid, opacity),
+            high: faded(self.high, opacity),
+        }
+    }
+}
 
 /// Every colour the views draw with, in one theme.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -119,12 +147,10 @@ pub struct Theme {
     pub bar_line: Rgba,
     /// Phrase lines on a whole-track overview, every eight bars.
     pub phrase_line: Rgba,
-    /// The low band of a 3-band waveform.
-    pub band_low: Rgba,
-    /// The mid band of a 3-band waveform.
-    pub band_mid: Rgba,
-    /// The high band of a 3-band waveform.
-    pub band_high: Rgba,
+    bands: BandColours,
+    deck_b_bands: Option<BandColours>,
+    /// How much of its colour the played part of the zoomed waveform keeps.
+    pub played_opacity: f32,
     /// Text on a deck colour, such as the deck badge.
     pub on_deck: Rgba,
     /// Things that are fine, such as a library that loaded.
@@ -199,6 +225,14 @@ impl Theme {
         self.track_colours[colour_rank(colour)]
     }
 
+    /// The waveform colours for a deck. Themes can give Deck B a separate palette.
+    pub fn waveform_bands(&self, deck: DeckId) -> BandColours {
+        match deck {
+            DeckId::A => self.bands,
+            DeckId::B => self.deck_b_bands.unwrap_or(self.bands),
+        }
+    }
+
     const fn new(palette: &Palette) -> Self {
         // Lines need more ink to show on a light surface.
         let lines = if palette.light { 1.8 } else { 1.0 };
@@ -215,9 +249,9 @@ impl Theme {
             downbeat_line: with_alpha(palette.ink, 0.55),
             bar_line: with_alpha(palette.ink, 0.05 * lines),
             phrase_line: with_alpha(palette.ink, 0.1 * lines),
-            band_low: hex(palette.bands[0]),
-            band_mid: hex(palette.bands[1]),
-            band_high: hex(palette.bands[2]),
+            bands: BandColours::new(palette.bands),
+            deck_b_bands: None,
+            played_opacity: 0.32,
             on_deck: hex(palette.on_deck),
             ok: hex(palette.ok),
             attention: hex(palette.attention),
@@ -287,12 +321,15 @@ pub enum ThemeId {
     Midnight,
     /// Charcoal with orange and blue decks, after Traktor's colours.
     Ember,
+    /// Dark green with lime and mint waveforms, after the Dubplate website.
+    SetAtlas,
 }
 
 impl ThemeId {
     /// Every theme, in the order Settings lists them.
-    pub const ALL: [Self; 14] = [
+    pub const ALL: [Self; 15] = [
         Self::Graphite,
+        Self::SetAtlas,
         Self::Booth,
         Self::Club,
         Self::Console,
@@ -325,6 +362,7 @@ impl ThemeId {
             Self::Paper => "Paper",
             Self::Midnight => "Midnight",
             Self::Ember => "Ember",
+            Self::SetAtlas => "Set Atlas",
         }
     }
 
@@ -345,6 +383,7 @@ impl ThemeId {
             Self::Paper => "paper",
             Self::Midnight => "midnight",
             Self::Ember => "ember",
+            Self::SetAtlas => "set-atlas",
         }
     }
 
@@ -370,6 +409,7 @@ impl ThemeId {
             Self::Paper => &PAPER,
             Self::Midnight => &MIDNIGHT,
             Self::Ember => &EMBER,
+            Self::SetAtlas => &SET_ATLAS,
         }
     }
 
@@ -403,6 +443,35 @@ static GRAPHITE: Theme = Theme::new(&Palette {
     phrase_breakdown: 0x8FD3C8,
     track_colours: DARK_TRACK_COLOURS,
 });
+
+// The two signals and their detail colours come from the deck illustration in website/index.html.
+static SET_ATLAS: Theme = Theme {
+    deck_b_bands: Some(BandColours::new([0x61B7A2, 0xA8E1C7, 0xD8E8D8])),
+    played_opacity: 0.65,
+    played_shade: with_alpha(0x063530, 0.24),
+    ..Theme::new(&Palette {
+        light: false,
+        background: 0x063530,
+        panel: 0x073E39,
+        raised: 0x124E46,
+        ink: 0xF5F9DF,
+        text: 0xECF4D9,
+        muted: 0xC2D8C6,
+        thumb: 0xECF4D9,
+        decks: [0xE7F89E, 0xA8E1C7],
+        on_deck: 0x063530,
+        ok: 0xA8E1C7,
+        attention: 0xF2C46D,
+        alert: 0xFF8C83,
+        bands: [0xADD166, 0xE7F89E, 0xEDFCA0],
+        cue_point: 0xFF9F43,
+        mix_out: 0xEDFCA0,
+        saved_loop: 0xF2D48A,
+        phrase_intro: 0x78978B,
+        phrase_breakdown: 0x61B7A2,
+        track_colours: BRIGHT_TRACK_COLOURS,
+    })
+};
 
 static BOOTH: Theme = Theme::new(&Palette {
     light: false,
@@ -585,7 +654,7 @@ static COBALT: Theme = Theme::new(&Palette {
     saved_loop: 0xFFE27A,
     phrase_intro: 0x6F84E8,
     phrase_breakdown: 0x9FF0E0,
-    track_colours: COBALT_TRACK_COLOURS,
+    track_colours: BRIGHT_TRACK_COLOURS,
 });
 
 static MIDNIGHT: Theme = Theme::new(&Palette {
@@ -837,7 +906,10 @@ mod tests {
         assert_eq!(graphite.background, hex(0x0B0C0E));
         assert_eq!(graphite.line, with_alpha(0xFFFFFF, 0.07));
         assert_eq!(graphite.memory_cue, graphite.alert);
-        assert_eq!(graphite.phrase_build, graphite.band_low);
+        assert_eq!(
+            graphite.phrase_build,
+            graphite.waveform_bands(DeckId::A).low
+        );
         assert_eq!(ThemeId::default(), ThemeId::Graphite);
     }
 
@@ -889,6 +961,32 @@ mod tests {
             check(id, "playhead".to_owned(), playhead, 3.0);
         }
         assert!(problems.is_empty(), "{}", problems.join("\n"));
+    }
+
+    #[test]
+    fn set_atlas_keeps_both_decks_and_played_waveforms_readable() {
+        fn over(top: Rgba, bottom: Rgba) -> Rgba {
+            let blend = |front, back| front * top.a + back * (1.0 - top.a);
+            Rgba {
+                r: blend(top.r, bottom.r),
+                g: blend(top.g, bottom.g),
+                b: blend(top.b, bottom.b),
+                a: 1.0,
+            }
+        }
+        let theme = ThemeId::SetAtlas.theme();
+        assert_eq!(theme.background, hex(0x063530));
+        let a = theme.waveform_bands(DeckId::A);
+        let b = theme.waveform_bands(DeckId::B);
+        assert_eq!([a.low, a.mid], [hex(0xADD166), hex(0xE7F89E)]);
+        assert_eq!([b.low, b.mid], [hex(0x61B7A2), hex(0xA8E1C7)]);
+        let shaded_overview = over(theme.played_shade, theme.raised);
+        for band in [a.low, a.mid, a.high, b.low, b.mid, b.high] {
+            let played = over(faded(band, theme.played_opacity), theme.background);
+            let shaded = over(theme.played_shade, band);
+            assert!(contrast(played, theme.background) >= 3.0);
+            assert!(contrast(shaded, shaded_overview) >= 3.0);
+        }
     }
 
     #[test]

@@ -6,6 +6,7 @@ use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use dubplate_engine::DeckId;
 use dubplate_prep::{GridCorrection, SetEntry, TrackGrid};
 use gpui::prelude::*;
 use gpui::{
@@ -65,7 +66,7 @@ impl DubplateApp {
     /// Where the track check stands in the track: the playhead of a deck playing it, or where
     /// the DJ last clicked on its overview.
     pub(super) fn check_playhead(&self, path: &Path) -> f64 {
-        dubplate_engine::DeckId::ALL
+        DeckId::ALL
             .into_iter()
             .find(|deck| {
                 self.deck(*deck)
@@ -326,6 +327,7 @@ fn lane(
                     lanes::paint_lane(
                         bounds,
                         lanes::LaneContent {
+                            deck: DeckId::A,
                             zoomed: zoomed.as_deref(),
                             beats: Some(&marks),
                             marks: None,

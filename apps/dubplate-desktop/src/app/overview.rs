@@ -49,6 +49,8 @@ const PLAYHEAD_CAP: f32 = 4.0;
 /// compared with what is drawn, so the view is painted again only when something changed.
 #[derive(Clone)]
 pub(super) struct OverviewContent {
+    deck: DeckId,
+    theme: theme::ThemeId,
     bars: Option<Rc<RefCell<OverviewBars>>>,
     track: Arc<CollectionTrack>,
     phrases: Arc<[PhraseSpan]>,
@@ -66,6 +68,8 @@ impl PartialEq for OverviewContent {
             _ => false,
         };
         same_bars
+            && self.deck == other.deck
+            && self.theme == other.theme
             && Arc::ptr_eq(&self.track, &other.track)
             && Arc::ptr_eq(&self.phrases, &other.phrases)
             && Arc::ptr_eq(&self.cues, &other.cues)
@@ -237,7 +241,12 @@ fn paint_content(bounds: Bounds<Pixels>, content: &OverviewContent, window: &mut
     }
     if let Some(bars) = &content.bars {
         let bar_count = (area.width / BAR_SPACING).floor().max(0.0) as usize;
-        paint_band_bars(&area, bars.borrow_mut().bars(bar_count), window);
+        paint_band_bars(
+            &area,
+            bars.borrow_mut().bars(bar_count),
+            content.theme.theme().waveform_bands(content.deck),
+            window,
+        );
     }
     let minutes = (content.duration / SECONDS_PER_MINUTE).floor() as usize;
     for minute in 1..=minutes {
@@ -298,14 +307,19 @@ fn paint_triangle(area: &OverviewArea, x: f32, top: f32, colour: Rgba, window: &
 
 /// The three bands of each bar, standing on the bottom of the band area: lows behind, highs
 /// in front, as rekordbox draws its 3-band overview.
-fn paint_band_bars(area: &OverviewArea, bars: &[BandLevels], window: &mut Window) {
+fn paint_band_bars(
+    area: &OverviewArea,
+    bars: &[BandLevels],
+    colours: theme::BandColours,
+    window: &mut Window,
+) {
     let tallest = area.bands_bottom - area.bands_top;
     for (index, levels) in bars.iter().enumerate() {
         let left = index as f32 * BAR_SPACING;
         for (level, colour) in [
-            (levels.low, theme::active().band_low),
-            (levels.mid, theme::active().band_mid),
-            (levels.high, theme::active().band_high),
+            (levels.low, colours.low),
+            (levels.mid, colours.mid),
+            (levels.high, colours.high),
         ] {
             let height = (level * tallest).max(0.0);
             if height < 0.5 {
@@ -440,6 +454,8 @@ pub(super) fn render(
             .map(|((track, visuals), duration)| {
                 let (mix_in, mix_out) = app.set_mix_cues(track);
                 OverviewContent {
+                    deck,
+                    theme: theme::active_id(),
                     bars: visuals.overview.clone(),
                     track: Arc::clone(track),
                     phrases: Arc::clone(&visuals.phrases),
@@ -609,8 +625,10 @@ mod tests {
     }
 
     #[test]
-    fn a_moving_playhead_keeps_the_cached_bars() {
+    fn a_theme_change_redraws_the_cached_bars_and_a_moving_playhead_keeps_them() {
         let content = OverviewContent {
+            deck: DeckId::A,
+            theme: theme::ThemeId::Graphite,
             bars: None,
             track: Arc::new(CollectionTrack::from_file(std::path::Path::new("a.mp3"))),
             phrases: Arc::default(),
@@ -631,5 +649,12 @@ mod tests {
         let bounds = Bounds::new(point(px(0.0), px(0.0)), size(px(600.0), px(42.0)));
         let area = OverviewArea::new(bounds, content.duration);
         assert_ne!(area.playhead_left(0.1), area.playhead_left(0.2));
+        assert!(
+            overview.take(Some(OverviewContent {
+                theme: theme::ThemeId::SetAtlas,
+                ..content
+            })),
+            "the same track is drawn again when its theme changes"
+        );
     }
 }

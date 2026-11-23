@@ -22,7 +22,7 @@ use crate::pad_fx::PadFxLayer;
 use crate::theme::{self, ThemeId};
 use crate::widgets::InteractiveControl;
 use crate::widgets::{Emphasis, button};
-use dubplate_engine::{ChannelFaderCurve, CrossfaderCurve, OutputDevice, SmartFaderSource};
+use dubplate_engine::{ChannelFaderCurve, CrossfaderCurve, DeckId, OutputDevice, SmartFaderSource};
 
 pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoElement {
     let mut output_rows = Vec::new();
@@ -239,7 +239,7 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
         )
 }
 
-/// A swatch per theme, showing its background and deck colours; a click wears it.
+/// A swatch per theme, showing its waveform colours; a click wears it.
 fn theme_picker(cx: &mut Context<'_, DubplateApp>) -> impl IntoElement + use<> {
     let chosen = theme::active_id();
     div()
@@ -252,6 +252,8 @@ fn theme_picker(cx: &mut Context<'_, DubplateApp>) -> impl IntoElement + use<> {
         .gap(px(6.0))
         .children(ThemeId::ALL.into_iter().map(|choice| {
             let colours = choice.theme();
+            let first_swatch = colours.waveform_bands(DeckId::A).low;
+            let second_swatch = colours.waveform_bands(DeckId::B).mid;
             let selected = choice == chosen;
             div()
                 .id(("theme", choice as usize))
@@ -289,8 +291,8 @@ fn theme_picker(cx: &mut Context<'_, DubplateApp>) -> impl IntoElement + use<> {
                         .border_1()
                         .border_color(theme::active().line)
                         .bg(colours.background)
-                        .child(div().w(px(7.0)).h_full().bg(colours.band_low))
-                        .child(div().w(px(7.0)).h_full().bg(colours.band_mid)),
+                        .child(div().w(px(7.0)).h_full().bg(first_swatch))
+                        .child(div().w(px(7.0)).h_full().bg(second_swatch)),
                 )
                 .child(choice.label())
         }))
