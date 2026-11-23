@@ -242,6 +242,8 @@ pub struct DubplateApp {
     shift_layer_shown: [bool; DECK_COUNT],
     key_pad_offsets: [i32; DECK_COUNT],
     keyboard_cues: [HotCuePad; DECK_COUNT],
+    sample_load_versions: [u64; dubplate_engine::SAMPLER_SLOTS],
+    held_sample_slots: [[Option<usize>; crate::pads::PAD_COUNT]; DECK_COUNT],
     selected_samples: [usize; DECK_COUNT],
     set_editor: Option<dubplate_prep::SetSession>,
     /// Every track's grid fix, by its file, as the set store keeps them.
@@ -579,6 +581,8 @@ impl DubplateApp {
             shift_layer_shown: [false; DECK_COUNT],
             key_pad_offsets: [0; DECK_COUNT],
             keyboard_cues: [HotCuePad::ALL[0]; DECK_COUNT],
+            sample_load_versions: [0; dubplate_engine::SAMPLER_SLOTS],
+            held_sample_slots: [[None; crate::pads::PAD_COUNT]; DECK_COUNT],
             selected_samples: [0; DECK_COUNT],
             set_editor: None,
             track_grids: HashMap::new(),
@@ -1158,6 +1162,7 @@ impl DubplateApp {
                 }
             }
             Command::Pad(press) => self.press_pad(press, cx),
+            Command::LoadBuiltInSample(slot, sound) => self.load_synth_sound(slot, sound, cx),
             Command::ControllerPadMode(deck, mode) => {
                 self.controller_pad_modes[deck.index()] = mode;
                 self.set_pad_mode(deck, mode, cx);

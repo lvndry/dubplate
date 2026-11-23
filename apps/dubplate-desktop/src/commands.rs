@@ -4,7 +4,7 @@
 
 use dubplate_engine::{
     ChannelFaderCurve, CrossfaderAssign, CrossfaderCurve, DeckId, EffectKind, EffectTarget,
-    EffectUnitId, SmartCfx, SmartFaderSource, Stem, StemSettings,
+    EffectUnitId, SmartCfx, SmartFaderSource, Stem, StemSettings, SynthSound,
 };
 use dubplate_midi::{FaderStart, PadMode};
 use dubplate_prep::{GridEdit, TagId, TrackColour};
@@ -259,6 +259,8 @@ pub enum Command {
     JumpToStart(DeckId),
     /// A performance pad, doing what its pad mode says.
     Pad(PadPress),
+    /// Load a built-in sound into an absolute sampler slot.
+    LoadBuiltInSample(usize, SynthSound),
     /// Put a deck's pads in a pad mode.
     SetPadMode(DeckId, PadMode),
     ControllerPadMode(DeckId, PadMode),

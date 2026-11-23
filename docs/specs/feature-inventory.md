@@ -32,10 +32,10 @@ Some controls appear twice, once in their area and once in the FLX4 table, so th
 
 | Status | Rows | P0 | P1 | P2 | P3 |
 | --- | --- | --- | --- | --- | --- |
-| Done | 194 | 99 | 62 | 25 | 8 |
-| Partial | 128 | 11 | 46 | 49 | 22 |
+| Done | 196 | 99 | 62 | 27 | 8 |
+| Partial | 127 | 11 | 46 | 48 | 22 |
 | In progress | 2 | 2 | 0 | 0 | 0 |
-| Missing | 301 | 7 | 57 | 98 | 139 |
+| Missing | 300 | 7 | 57 | 97 | 139 |
 | n/a | 3 | 0 | 0 | 0 | 3 |
 | Total | 628 | 119 | 165 | 172 | 172 |
 
@@ -549,8 +549,8 @@ These are features of the players. Dubplate prepares for them once it writes USB
 | Sample scratch | Loads a sampler slot's sound onto the deck to scratch it. | SP.SCRATCH pad mode | Core (FLX4 unlocks) | Missing | P3 |
 | STEMS pad mode | Stem mute, solo and stem FX on pads. | Pad editor | Free | Missing | P2 |
 | SEQ. CALL pad mode | Up to 8 saved sequences on the pads. | Pad mode | Creative (saving) | Missing | P3 |
-| Sampler slots and banks | 16 slots per bank, 4 banks (64 slots), 20 voices. | Sampler deck | Free (FLX4) | Partial: 16 slots, one bank | P2 |
-| Load and unload a slot | Drag a track into a slot; eject on hover; slots kept after quitting. | Sampler deck | Free (FLX4) | Done (selected track via SHIFT + pad; kept after quitting) | P1 |
+| Sampler slots and banks | 16 slots per bank, 4 banks (64 slots), 20 voices. | Sampler deck | Free (FLX4) | Done (four banks of 16 slots, with bank selection remembered) | P2 |
+| Load and unload a slot | Drag a track into a slot; eject on hover; slots kept after quitting. | Sampler deck | Free (FLX4) | Done (selected track via SHIFT + pad, built-in sounds via slot menu; kept after quitting) | P1 |
 | One-shot, loop and gate | Slot play modes, with a gate that plays only while held. | Slot EDIT | Free (FLX4) | Done | P1 |
 | Slot sync and BPM | Loop slots follow the master BPM; sampler BPM editable; x2 and /2. | Sampler deck, slot EDIT | Free (FLX4) | Partial: synced slots follow the master (half or double when closer); no sampler BPM or x2 controls | P2 |
 | Slot gain and master tempo | Per-slot gain and key lock. | Slot EDIT | Free (FLX4) | Partial: per-slot gain; no slot key lock | P3 |
@@ -558,7 +558,7 @@ These are features of the players. Dubplate prepares for them once it writes USB
 | Sampler volume and CUE | Sampler level and headphone cue. | Sampler deck | Free (FLX4) | Done | P1 |
 | Sampler as sync master | The sampler can lead tempo. | Sampler deck | Free | Missing | P3 |
 | Sample packs | Download or import sample packs; first 16 tracks of a playlist into a bank. | [File] > Additional contents | Free | Missing | P2 |
-| OSC sampler | Oscillator sounds (sirens, horns) on the sampler. | Sampler deck | Free | Missing | P2 |
+| OSC sampler | Oscillator sounds (sirens, horns) on the sampler. | Sampler deck | Free | Done (air horn, siren, riser and log drum from slot menus) | P2 |
 | Loop capture | Captures the playing loop or slicer range into a sampler slot. | Enlarged waveform CAPTURE | Free | Missing | P2 |
 | Sequencer | Records 1, 2 or 4-bar patterns of one-shot slots with mute, erase and metronome; loads a sequence onto a deck. | Sequencer panel | Free (saving: Creative) | Missing | P3 |
 | Remix decks | Traktor: 4 slots, sets of 64 cells, loop or one-shot, capture. | Not in rekordbox | n/a | Missing | P3 |

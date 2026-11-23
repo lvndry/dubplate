@@ -5,14 +5,15 @@
 
 use std::path::{Path, PathBuf};
 
-use dubplate_engine::{DeckId, SAMPLER_SLOTS, SampleMode, SampleSettings, SamplerState};
+use dubplate_engine::{DeckId, SampleMode, SampleSettings, SamplerState};
 use gpui::{Context, SharedString};
 
 use super::DubplateApp;
 use super::notice::NoticePlace;
-use crate::commands::{PadPress, Press};
+use crate::commands::{Command, PadPress, Press};
 use crate::pads::PAD_COUNT;
-use crate::settings::SampleSlotSetting;
+use crate::settings::{SampleSlotSetting, SampleSource};
+use dubplate_engine::{BANK_SLOTS, SAMPLER_BANKS, SynthSound};
 
 /// A slot setting the sampler controls switch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -26,8 +27,15 @@ pub(super) enum SampleOption {
 }
 
 /// The slot a deck's sampler pad plays.
-pub(super) fn sampler_slot(deck: DeckId, pad: usize) -> usize {
-    deck.index() * PAD_COUNT + pad
+pub(super) fn sampler_slot(bank: usize, deck: DeckId, pad: usize) -> usize {
+    bank.min(SAMPLER_BANKS - 1) * BANK_SLOTS + deck.index() * PAD_COUNT + pad
+}
+
+/// The sounds offered by a slot's context menu.
+pub(super) fn built_in_sample_choices(
+    slot: usize,
+) -> [(&'static str, Command); SynthSound::ALL.len()] {
+    SynthSound::ALL.map(|sound| (sound.name(), Command::LoadBuiltInSample(slot, sound)))
 }
 
 /// A saved slot's settings as the engine takes them.
@@ -48,26 +56,22 @@ fn engine_settings(setting: &SampleSlotSetting) -> SampleSettings {
 impl DubplateApp {
     /// A pad in Sampler mode.
     pub(super) fn press_sampler_pad(&mut self, press: PadPress, cx: &mut Context<'_, Self>) {
-        let slot = sampler_slot(press.deck, press.pad);
-        if slot >= SAMPLER_SLOTS {
+        if press.pad >= PAD_COUNT || press.press == Press::Up {
             return;
         }
-        let state = self
-            .sampler_state()
-            .and_then(|state| state.slots[slot].as_ref().copied());
-        if matches!(press.press, Press::Down | Press::Tap) {
-            self.selected_samples[press.deck.index()] = press.pad;
-        }
+        let slot = sampler_slot(self.settings.sampler.bank, press.deck, press.pad);
+        let state = self.sampler_state().and_then(|state| state.slots[slot]);
+        self.selected_samples[press.deck.index()] = press.pad;
         match (press.press, press.shift, state) {
             (Press::Down | Press::Tap, true, Some(slot_state)) if slot_state.playing => {
                 self.engine_command(cx, |controller| controller.stop_sample(slot));
             }
             (Press::Down | Press::Tap, true, _) => self.load_selected_into_slot(slot, cx),
-            (Press::Down, false, Some(_)) => {
+            (Press::Down, false, Some(state)) => {
+                if state.settings.gate {
+                    self.held_sample_slots[press.deck.index()][press.pad] = Some(slot);
+                }
                 self.engine_command(cx, |controller| controller.trigger_sample(slot));
-            }
-            (Press::Up, false, Some(slot_state)) if slot_state.settings.gate => {
-                self.engine_command(cx, |controller| controller.release_sample(slot));
             }
             (Press::Tap, false, Some(slot_state))
                 if slot_state.settings.gate && slot_state.playing =>
@@ -81,7 +85,7 @@ impl DubplateApp {
                 NoticePlace::Deck(press.deck),
                 format!(
                     "Slot {} is empty: SHIFT and its pad load the selected track.",
-                    slot + 1
+                    slot % BANK_SLOTS + 1
                 ),
                 cx,
             ),
@@ -98,6 +102,23 @@ impl DubplateApp {
             .map(|engine| engine.controller.sampler_state())
     }
 
+    /// Releases the slot the controller triggered, even after changing banks or pad modes.
+    pub(super) fn release_sampler_pad(
+        &mut self,
+        deck: DeckId,
+        pad: usize,
+        cx: &mut Context<'_, Self>,
+    ) -> bool {
+        let Some(slot) = self.held_sample_slots[deck.index()]
+            .get_mut(pad)
+            .and_then(Option::take)
+        else {
+            return false;
+        };
+        self.engine_command(cx, |controller| controller.release_sample(slot));
+        true
+    }
+
     /// The title of the sample saved in `slot`.
     pub(super) fn sample_title(&self, slot: usize) -> Option<SharedString> {
         let setting = self
@@ -106,7 +127,10 @@ impl DubplateApp {
             .slots
             .iter()
             .find(|setting| setting.slot == slot)?;
-        Some(self.title_of(&setting.path).into())
+        Some(match &setting.source {
+            SampleSource::File { path } => self.title_of(path).into(),
+            SampleSource::BuiltIn { sound } => SynthSound::from_key(sound)?.name().into(),
+        })
     }
 
     /// Switches one setting of the slot last pressed on `deck`.
@@ -116,7 +140,11 @@ impl DubplateApp {
         option: SampleOption,
         cx: &mut Context<'_, Self>,
     ) {
-        let slot = sampler_slot(deck, self.selected_samples[deck.index()]);
+        let slot = sampler_slot(
+            self.settings.sampler.bank,
+            deck,
+            self.selected_samples[deck.index()],
+        );
         let Some(setting) = self
             .settings
             .sampler
@@ -149,7 +177,11 @@ impl DubplateApp {
 
     /// The saved settings of the slot last pressed on `deck`, when it holds a sample.
     pub(super) fn selected_sample(&self, deck: DeckId) -> Option<&SampleSlotSetting> {
-        let slot = sampler_slot(deck, self.selected_samples[deck.index()]);
+        let slot = sampler_slot(
+            self.settings.sampler.bank,
+            deck,
+            self.selected_samples[deck.index()],
+        );
         self.settings
             .sampler
             .slots
@@ -187,7 +219,7 @@ impl DubplateApp {
         self.load_into_slot(
             SampleSlotSetting {
                 slot,
-                path,
+                source: SampleSource::File { path },
                 bpm,
                 looped: false,
                 gate: false,
@@ -197,24 +229,62 @@ impl DubplateApp {
         );
     }
 
-    /// Opens the sample's file off the interface thread and puts it in its slot.
+    /// Loads a built-in sound into the slot whose menu was opened.
+    pub(super) fn load_synth_sound(
+        &mut self,
+        slot: usize,
+        sound: SynthSound,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let defaults = sound.settings();
+        self.load_into_slot(
+            SampleSlotSetting {
+                slot,
+                source: SampleSource::BuiltIn {
+                    sound: sound.key().to_owned(),
+                },
+                bpm: defaults.bpm,
+                gate: defaults.gate,
+                sync: defaults.sync,
+                looped: defaults.mode == SampleMode::Loop,
+            },
+            cx,
+        );
+    }
+
+    /// Prepares the sample off the interface thread and puts it in its slot.
     fn load_into_slot(&mut self, setting: SampleSlotSetting, cx: &mut Context<'_, Self>) {
-        let path = setting.path.clone();
+        let Some(version) = self.sample_load_versions.get_mut(setting.slot) else {
+            return;
+        };
+        *version += 1;
+        let version = *version;
+        let source = setting.source.clone();
         cx.spawn(async move |this, cx| {
             let track = cx
                 .background_executor()
-                .spawn(async move { dubplate_engine::decode_file(&path) })
+                .spawn(async move {
+                    match source {
+                        SampleSource::File { path } => dubplate_engine::decode_file(&path)
+                            .map_err(|e| format!("{}: {e}", file_title(&path))),
+                        SampleSource::BuiltIn { sound } => SynthSound::from_key(&sound)
+                            .ok_or_else(|| format!("Unknown sampler sound {sound}"))
+                            .and_then(|s| s.track(48_000).map_err(|e| e.to_string())),
+                    }
+                })
                 .await;
-            this.update(cx, |this, cx| match track {
-                Ok(track) => this.put_in_slot(setting, track, cx),
-                Err(error) => this.show_notice(
-                    NoticePlace::Window,
-                    format!(
-                        "{} could not go in the sampler: {error}",
-                        file_title(&setting.path)
+            this.update(cx, |this, cx| {
+                if this.sample_load_versions[setting.slot] != version {
+                    return;
+                }
+                match track {
+                    Ok(track) => this.put_in_slot(setting, track, cx),
+                    Err(error) => this.show_notice(
+                        NoticePlace::Window,
+                        format!("Could not load sample: {error}"),
+                        cx,
                     ),
-                    cx,
-                ),
+                }
             })
             .ok();
         })
@@ -273,18 +343,43 @@ mod tests {
 
     #[test]
     fn the_left_deck_plays_slots_1_to_8_and_the_right_9_to_16() {
-        assert_eq!(sampler_slot(DeckId::A, 0), 0);
-        assert_eq!(sampler_slot(DeckId::A, 7), 7);
-        assert_eq!(sampler_slot(DeckId::B, 0), 8);
-        assert_eq!(sampler_slot(DeckId::B, 7), 15);
-        assert_eq!(dubplate_engine::BANK_SLOTS, 16);
+        assert_eq!(sampler_slot(0, DeckId::A, 0), 0);
+        assert_eq!(sampler_slot(0, DeckId::A, 7), 7);
+        assert_eq!(sampler_slot(0, DeckId::B, 0), 8);
+        assert_eq!(sampler_slot(0, DeckId::B, 7), 15);
+        assert_eq!(
+            sampler_slot(3, DeckId::B, 7),
+            dubplate_engine::SAMPLER_SLOTS - 1
+        );
+    }
+
+    #[test]
+    fn a_slot_menu_targets_the_selected_bank_and_pad_for_every_sound() {
+        let slot = sampler_slot(2, DeckId::B, 5);
+        assert_eq!(
+            built_in_sample_choices(slot),
+            [
+                (
+                    "Air horn",
+                    Command::LoadBuiltInSample(45, SynthSound::AirHorn)
+                ),
+                ("Siren", Command::LoadBuiltInSample(45, SynthSound::Siren)),
+                ("Riser", Command::LoadBuiltInSample(45, SynthSound::Riser)),
+                (
+                    "Log drum",
+                    Command::LoadBuiltInSample(45, SynthSound::LogDrum)
+                ),
+            ],
+        );
     }
 
     #[test]
     fn a_sample_syncs_only_with_a_tempo() {
         let setting = SampleSlotSetting {
             slot: 0,
-            path: PathBuf::from("/Samples/Horn.wav"),
+            source: SampleSource::File {
+                path: PathBuf::from("/Samples/Horn.wav"),
+            },
             bpm: None,
             looped: true,
             gate: true,
