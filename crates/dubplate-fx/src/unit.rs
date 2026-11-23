@@ -67,6 +67,9 @@ pub(crate) trait Kernel: Send {
     /// Called each time the effect is switched on.
     fn switched_on(&mut self) {}
 
+    /// Called each time the effect is switched off, before any trail fades out.
+    fn switched_off(&mut self) {}
+
     /// How long the output must stay silent before a switched-off trail is over.
     fn tail_seconds(&self) -> f32 {
         0.0
@@ -126,6 +129,8 @@ impl<K: Kernel> Unit<K> {
             self.idle = false;
             self.quiet_samples = 0;
             self.kernel.switched_on();
+        } else {
+            self.kernel.switched_off();
         }
     }
 

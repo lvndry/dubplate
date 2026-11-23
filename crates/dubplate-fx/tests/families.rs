@@ -279,6 +279,50 @@ fn noise_rises_over_silence() {
 }
 
 #[test]
+fn noise_ring_out_plays_from_the_delay_then_goes_idle() {
+    let mut noise = effect(EffectKind::Noise, 0.85);
+    let mut deck = Deck::new(TEMPO_BPM);
+    let mut pressed = Stereo::silence(BEAT_FRAMES / 4);
+    deck.play(noise.as_mut(), &mut pressed);
+    assert!(
+        peak(&pressed.left) < 1e-6,
+        "noise reached the output before the delay"
+    );
+
+    noise.set_enabled(false);
+    let mut released = Stereo::silence(BEAT_FRAMES * 16);
+    deck.play(noise.as_mut(), &mut released);
+    assert!(
+        rms(&released.left[BEAT_FRAMES / 4..BEAT_FRAMES / 2]) > 0.01,
+        "the recorded noise did not ring out"
+    );
+    assert!(
+        peak(&released.left[BEAT_FRAMES * 15..]) < 1e-5,
+        "the noise kept playing after release"
+    );
+    assert!(!noise.is_active(), "the noise tail never went idle");
+}
+
+#[test]
+fn noise_back_to_dry_mutes_and_goes_idle() {
+    let mut noise = effect(EffectKind::Noise, 0.85);
+    let mut deck = Deck::new(TEMPO_BPM);
+    let mut pressed = Stereo::silence(BEAT_FRAMES * 2);
+    deck.play(noise.as_mut(), &mut pressed);
+    assert!(rms(&pressed.left[BEAT_FRAMES..]) > 0.01);
+
+    noise.switch_off_dry();
+    noise.set_depth(1.0);
+    let mut released = Stereo::silence(BEAT_FRAMES * 16);
+    deck.play(noise.as_mut(), &mut released);
+    assert!(
+        peak(&released.left[BEAT_FRAMES / 4..]) < 1e-5,
+        "the noise was still audible after switching to dry"
+    );
+    assert!(!noise.is_active(), "the muted noise tail never went idle");
+}
+
+#[test]
 fn helix_fully_right_holds_its_loop_without_fading() {
     let mut helix = effect(EffectKind::Helix, 1.0);
     let frames = BEAT_FRAMES * 12;

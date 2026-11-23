@@ -69,6 +69,9 @@ pub(crate) trait Voicing: Send + 'static {
     /// Called each time the effect is switched on.
     fn switched_on(&mut self) {}
 
+    /// Called each time the effect is switched off.
+    fn switched_off(&mut self) {}
+
     /// How frozen the loop is, from 0 to 1: fully frozen, it takes in no new music and holds
     /// what it has forever. Read once per sample, after [`Voicing::send`].
     fn frozen(&self) -> f32 {
@@ -168,6 +171,10 @@ impl<V: Voicing> Kernel for EchoLoop<V> {
 
     fn switched_on(&mut self) {
         self.voicing.switched_on();
+    }
+
+    fn switched_off(&mut self) {
+        self.voicing.switched_off();
     }
 
     fn tail_seconds(&self) -> f32 {
