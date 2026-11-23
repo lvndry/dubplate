@@ -5,11 +5,13 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use dubplate_engine::DeckId;
+use dubplate_prep::TrackColour;
 use dubplate_rekordbox::{HotCue, HotCuePad, MemoryCue, Rgb};
 use gpui::component::{Theme as ComponentTheme, ThemeMode};
 use gpui::{App, Pixels, Rgba, px};
 
 use crate::fonts::{MONO_FAMILY, UI_FAMILY};
+use crate::track_metadata::colour_rank;
 
 /// An opaque colour from its `0xRRGGBB` value.
 const fn hex(value: u32) -> Rgba {
@@ -24,6 +26,16 @@ const fn with_alpha(value: u32, alpha: f32) -> Rgba {
         b: (value & 0xff) as f32 / 255.0,
         a: alpha,
     }
+}
+
+const fn hex_all(values: [u32; 8]) -> [Rgba; 8] {
+    let mut colours = [hex(0); 8];
+    let mut position = 0;
+    while position < values.len() {
+        colours[position] = hex(values[position]);
+        position += 1;
+    }
+    colours
 }
 
 /// How much of its colour the part of a waveform already played keeps.
@@ -63,7 +75,22 @@ struct Palette {
     saved_loop: u32,
     phrase_intro: u32,
     phrase_breakdown: u32,
+    /// The eight track colours, in rekordbox's palette order.
+    track_colours: [u32; 8],
 }
+
+/// The track colours on dark themes, close to rekordbox's own.
+const DARK_TRACK_COLOURS: [u32; 8] = [
+    0xF870F8, 0xE83838, 0xF8A030, 0xF8E330, 0x40D040, 0x40D0D0, 0x4078F8, 0xA050F8,
+];
+/// The track colours on Cobalt, whose deep blue swallows the plain red, blue and purple.
+const COBALT_TRACK_COLOURS: [u32; 8] = [
+    0xF870F8, 0xFF6B6B, 0xF8A030, 0xF8E330, 0x40D040, 0x40D0D0, 0x8DB4FF, 0xC393FF,
+];
+/// The track colours on light themes, deepened so each still stands out on white.
+const LIGHT_TRACK_COLOURS: [u32; 8] = [
+    0xC22DC2, 0xD42020, 0xC46A00, 0x8A7400, 0x1E8A1E, 0x0A8585, 0x2B5FE0, 0x7F3BDB,
+];
 
 /// Every colour the views draw with, in one theme.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -160,10 +187,18 @@ pub struct Theme {
     pub phrase_outro: Rgba,
     /// The phrase strip's unnamed sections.
     pub phrase_other: Rgba,
+    /// The eight track colours, in rekordbox's palette order: pink, red, orange, yellow, green,
+    /// aqua, blue and purple. Read one with [`Theme::track_colour`].
+    pub track_colours: [Rgba; 8],
     decks: [Rgba; 2],
 }
 
 impl Theme {
+    /// The swatch of a track colour.
+    pub fn track_colour(&self, colour: TrackColour) -> Rgba {
+        self.track_colours[colour_rank(colour)]
+    }
+
     const fn new(palette: &Palette) -> Self {
         // Lines need more ink to show on a light surface.
         let lines = if palette.light { 1.8 } else { 1.0 };
@@ -214,6 +249,7 @@ impl Theme {
             phrase_breakdown: hex(palette.phrase_breakdown),
             phrase_outro: hex(palette.muted),
             phrase_other: with_alpha(palette.ink, 0.2),
+            track_colours: hex_all(palette.track_colours),
             decks: [hex(palette.decks[0]), hex(palette.decks[1])],
         }
     }
@@ -365,6 +401,7 @@ static GRAPHITE: Theme = Theme::new(&Palette {
     saved_loop: 0xF2D48A,
     phrase_intro: 0x5E6B8C,
     phrase_breakdown: 0x8FD3C8,
+    track_colours: DARK_TRACK_COLOURS,
 });
 
 static BOOTH: Theme = Theme::new(&Palette {
@@ -387,6 +424,7 @@ static BOOTH: Theme = Theme::new(&Palette {
     saved_loop: 0xF2D48A,
     phrase_intro: 0x5E6B8C,
     phrase_breakdown: 0x8FD3C8,
+    track_colours: DARK_TRACK_COLOURS,
 });
 
 static CLUB: Theme = Theme::new(&Palette {
@@ -409,6 +447,7 @@ static CLUB: Theme = Theme::new(&Palette {
     saved_loop: 0xF5D33C,
     phrase_intro: 0x5A5A7A,
     phrase_breakdown: 0x6EE7D0,
+    track_colours: DARK_TRACK_COLOURS,
 });
 
 static CONSOLE: Theme = Theme::new(&Palette {
@@ -431,6 +470,7 @@ static CONSOLE: Theme = Theme::new(&Palette {
     saved_loop: 0xF2D48A,
     phrase_intro: 0x5E6478,
     phrase_breakdown: 0x8FD3C8,
+    track_colours: DARK_TRACK_COLOURS,
 });
 
 static GLASS: Theme = Theme::new(&Palette {
@@ -453,6 +493,7 @@ static GLASS: Theme = Theme::new(&Palette {
     saved_loop: 0xFFD98A,
     phrase_intro: 0x5E6B8C,
     phrase_breakdown: 0x7FD8E0,
+    track_colours: DARK_TRACK_COLOURS,
 });
 
 static GROOVE: Theme = Theme::new(&Palette {
@@ -475,6 +516,7 @@ static GROOVE: Theme = Theme::new(&Palette {
     saved_loop: 0xE8C97A,
     phrase_intro: 0x6E675E,
     phrase_breakdown: 0x8EC5C0,
+    track_colours: DARK_TRACK_COLOURS,
 });
 
 static PLATTER: Theme = Theme::new(&Palette {
@@ -497,6 +539,7 @@ static PLATTER: Theme = Theme::new(&Palette {
     saved_loop: 0xF2D48A,
     phrase_intro: 0x5E6470,
     phrase_breakdown: 0x8FD3C8,
+    track_colours: DARK_TRACK_COLOURS,
 });
 
 static SPECTRAL: Theme = Theme::new(&Palette {
@@ -519,6 +562,7 @@ static SPECTRAL: Theme = Theme::new(&Palette {
     saved_loop: 0xFFF3C4,
     phrase_intro: 0x3B4560,
     phrase_breakdown: 0x3ED6E8,
+    track_colours: DARK_TRACK_COLOURS,
 });
 
 static COBALT: Theme = Theme::new(&Palette {
@@ -541,6 +585,7 @@ static COBALT: Theme = Theme::new(&Palette {
     saved_loop: 0xFFE27A,
     phrase_intro: 0x6F84E8,
     phrase_breakdown: 0x9FF0E0,
+    track_colours: COBALT_TRACK_COLOURS,
 });
 
 static MIDNIGHT: Theme = Theme::new(&Palette {
@@ -563,6 +608,7 @@ static MIDNIGHT: Theme = Theme::new(&Palette {
     saved_loop: 0xF2DD3A,
     phrase_intro: 0x4A5568,
     phrase_breakdown: 0x28D2C9,
+    track_colours: DARK_TRACK_COLOURS,
 });
 
 static EMBER: Theme = Theme::new(&Palette {
@@ -585,6 +631,7 @@ static EMBER: Theme = Theme::new(&Palette {
     saved_loop: 0xFFD966,
     phrase_intro: 0x4D5566,
     phrase_breakdown: 0x4DD2C2,
+    track_colours: DARK_TRACK_COLOURS,
 });
 
 static CHASSIS: Theme = Theme::new(&Palette {
@@ -607,6 +654,7 @@ static CHASSIS: Theme = Theme::new(&Palette {
     saved_loop: 0x8F6A00,
     phrase_intro: 0x8A93AA,
     phrase_breakdown: 0x2C8C80,
+    track_colours: LIGHT_TRACK_COLOURS,
 });
 
 static INSTRUMENT: Theme = Theme::new(&Palette {
@@ -629,6 +677,7 @@ static INSTRUMENT: Theme = Theme::new(&Palette {
     saved_loop: 0x8F6A00,
     phrase_intro: 0x8F8A82,
     phrase_breakdown: 0x2C8C80,
+    track_colours: LIGHT_TRACK_COLOURS,
 });
 
 static PAPER: Theme = Theme::new(&Palette {
@@ -651,6 +700,7 @@ static PAPER: Theme = Theme::new(&Palette {
     saved_loop: 0x8A6A00,
     phrase_intro: 0x9A958C,
     phrase_breakdown: 0x2C8C80,
+    track_colours: LIGHT_TRACK_COLOURS,
 });
 
 /// The theme the views draw with now, as its place in [`ThemeId::ALL`].
@@ -827,10 +877,32 @@ mod tests {
                 let mark = format!("deck {} on panel", deck.index());
                 check(id, mark, contrast(colour, theme.panel), 3.0);
             }
+            for (position, swatch) in theme.track_colours.into_iter().enumerate() {
+                for (surface_name, surface) in
+                    [("background", theme.background), ("panel", theme.panel)]
+                {
+                    let what = format!("track colour {position} on {surface_name}");
+                    check(id, what, contrast(swatch, surface), 3.0);
+                }
+            }
             let playhead = contrast(theme.playhead, theme.background);
             check(id, "playhead".to_owned(), playhead, 3.0);
         }
         assert!(problems.is_empty(), "{}", problems.join("\n"));
+    }
+
+    #[test]
+    fn every_theme_has_eight_distinct_track_colours() {
+        for id in ThemeId::ALL {
+            let colours = id.theme().track_colours;
+            for (position, colour) in colours.iter().enumerate() {
+                assert!(
+                    !colours[position + 1..].contains(colour),
+                    "{} repeats a track colour",
+                    id.label()
+                );
+            }
+        }
     }
 
     #[test]

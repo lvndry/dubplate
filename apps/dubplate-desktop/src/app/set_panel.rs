@@ -530,7 +530,9 @@ fn track_row(
                     }),
             )
         })
-        .context_menu(move |menu, _, _| track_menu::build(menu, menu_facts, keys.clone()))
+        .context_menu(move |menu, window, cx| {
+            track_menu::build(menu, menu_facts, None, keys.clone(), window, cx)
+        })
 }
 
 /// Ready in green, a missing file in red and anything else to fix in amber, always as words,

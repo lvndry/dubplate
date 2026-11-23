@@ -4,9 +4,68 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use dubplate_prep::{TagCategory, TrackColour, TrackIdentity, TrackMetadata};
+use dubplate_prep::{TagCategory, TagId, TrackColour, TrackIdentity, TrackMetadata};
 
 use crate::search_filter::TrackFilterMetadata;
+
+/// The eight track colours in rekordbox's palette order, which the Colour column sorts by and
+/// the menu lists.
+pub const TRACK_COLOURS: [TrackColour; 8] = [
+    TrackColour::Pink,
+    TrackColour::Red,
+    TrackColour::Orange,
+    TrackColour::Yellow,
+    TrackColour::Green,
+    TrackColour::Aqua,
+    TrackColour::Blue,
+    TrackColour::Purple,
+];
+
+/// The most stars a track can have.
+pub const MAX_RATING: u8 = 5;
+
+/// The colour's name, as the menu and the Colour column say it.
+pub fn colour_name(colour: TrackColour) -> &'static str {
+    match colour {
+        TrackColour::Pink => "Pink",
+        TrackColour::Red => "Red",
+        TrackColour::Orange => "Orange",
+        TrackColour::Yellow => "Yellow",
+        TrackColour::Green => "Green",
+        TrackColour::Aqua => "Aqua",
+        TrackColour::Blue => "Blue",
+        TrackColour::Purple => "Purple",
+    }
+}
+
+/// Where the colour comes in rekordbox's palette order, 0 for pink.
+pub fn colour_rank(colour: TrackColour) -> usize {
+    TRACK_COLOURS
+        .iter()
+        .position(|candidate| *candidate == colour)
+        .unwrap_or(TRACK_COLOURS.len())
+}
+
+/// The colour a Colour cell's text names, or `None` for an empty cell.
+pub fn colour_named(name: &str) -> Option<TrackColour> {
+    TRACK_COLOURS
+        .into_iter()
+        .find(|colour| colour_name(*colour) == name)
+}
+
+/// A rating as the Rating column shows it: one ★ a star, nothing for an unrated track.
+pub fn rating_stars(rating: u8) -> String {
+    "\u{2605}".repeat(usize::from(rating.min(MAX_RATING)))
+}
+
+/// A rating in words, for a screen reader: `4 stars`.
+pub fn rating_description(rating: u8) -> String {
+    match rating.min(MAX_RATING) {
+        0 => "Not rated".to_owned(),
+        1 => "1 star".to_owned(),
+        stars => format!("{stars} stars"),
+    }
+}
 
 /// What the filters read of one track, kept by the cache.
 #[derive(Debug, Clone)]
@@ -17,6 +76,8 @@ pub struct StoredTrackMetadata {
     pub colour: Option<TrackColour>,
     /// The names of the track's My Tags.
     pub tags: Vec<String>,
+    /// The ids of the track's My Tags.
+    pub tag_ids: Vec<TagId>,
     /// The comment.
     pub comment: String,
 }
@@ -27,6 +88,7 @@ impl From<&TrackMetadata> for StoredTrackMetadata {
             rating: stored.rating,
             colour: stored.colour,
             tags: stored.tags.iter().map(|tag| tag.name.clone()).collect(),
+            tag_ids: stored.tags.iter().map(|tag| tag.id).collect(),
             comment: stored.comment.clone(),
         }
     }
@@ -38,6 +100,7 @@ impl From<&TrackMetadata> for StoredTrackMetadata {
 pub struct TrackMetadataCache {
     by_identity: HashMap<TrackIdentity, Arc<StoredTrackMetadata>>,
     tag_names: Vec<String>,
+    categories: Vec<TagCategory>,
 }
 
 impl TrackMetadataCache {
@@ -58,6 +121,7 @@ impl TrackMetadataCache {
         Self {
             by_identity,
             tag_names,
+            categories: categories.to_vec(),
         }
     }
 
@@ -82,6 +146,11 @@ impl TrackMetadataCache {
     /// The names of the DJ's My Tags, in the order of the categories.
     pub fn tag_names(&self) -> &[String] {
         &self.tag_names
+    }
+
+    /// The DJ's My Tag categories and their tags, in the DJ's order.
+    pub fn categories(&self) -> &[TagCategory] {
+        &self.categories
     }
 }
 
@@ -110,6 +179,32 @@ mod tests {
             date_added: None,
             auto_gain_db: None,
         }
+    }
+
+    #[test]
+    fn a_rating_shows_as_that_many_stars_and_none_as_nothing() {
+        assert_eq!(rating_stars(0), "");
+        assert_eq!(rating_stars(4), "\u{2605}\u{2605}\u{2605}\u{2605}");
+        assert_eq!(rating_stars(9), rating_stars(5));
+        assert_eq!(rating_description(0), "Not rated");
+        assert_eq!(rating_description(1), "1 star");
+        assert_eq!(rating_description(3), "3 stars");
+    }
+
+    #[test]
+    fn colours_keep_rekordbox_palette_order_and_names() {
+        let names: Vec<&str> = TRACK_COLOURS.into_iter().map(colour_name).collect();
+        assert_eq!(
+            names,
+            [
+                "Pink", "Red", "Orange", "Yellow", "Green", "Aqua", "Blue", "Purple"
+            ]
+        );
+        for (position, colour) in TRACK_COLOURS.into_iter().enumerate() {
+            assert_eq!(colour_rank(colour), position);
+            assert_eq!(colour_named(colour_name(colour)), Some(colour));
+        }
+        assert_eq!(colour_named(""), None);
     }
 
     #[test]

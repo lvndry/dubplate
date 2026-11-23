@@ -10,6 +10,7 @@ use gpui::SharedString;
 use serde::{Deserialize, Serialize};
 
 use crate::commands::{Direction, Mode};
+use crate::track_metadata::{colour_named, colour_rank};
 
 /// A column of the library's track table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -26,6 +27,10 @@ pub enum Column {
     Key,
     /// The energy, from 1 to 10.
     Energy,
+    /// The rating, from no stars to five.
+    Rating,
+    /// The colour label.
+    Colour,
     /// How the track mixes after the tempo master's, ranked as the Next suggestions are.
     Match,
     /// Whether the track's stems are separated, being separated or not asked for.
@@ -38,13 +43,15 @@ pub enum Column {
 
 impl Column {
     /// Every column, in the table's order.
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 12] = [
         Self::Title,
         Self::Artist,
         Self::Genre,
         Self::Bpm,
         Self::Key,
         Self::Energy,
+        Self::Rating,
+        Self::Colour,
         Self::Match,
         Self::Stems,
         Self::Time,
@@ -52,7 +59,7 @@ impl Column {
     ];
 
     /// The columns a narrow window keeps, what a DJ reads while mixing: without the genre, the
-    /// stems and the source, so the title and artist keep room to read and every header stays
+    /// rating, the colour, the stems and the source, so the title and artist keep room to read and every header stays
     /// a whole word.
     pub const NARROW: [Self; 7] = [
         Self::Title,
@@ -73,6 +80,8 @@ impl Column {
             Self::Bpm => "BPM",
             Self::Key => "Key",
             Self::Energy => "Energy",
+            Self::Rating => "Rating",
+            Self::Colour => "Colour",
             Self::Match => "Match",
             Self::Stems => "Stems",
             Self::Time => "Time",
@@ -89,6 +98,8 @@ impl Column {
             Self::Bpm => "bpm",
             Self::Key => "key",
             Self::Energy => "energy",
+            Self::Rating => "rating",
+            Self::Colour => "colour",
             Self::Match => "match",
             Self::Stems => "stems",
             Self::Time => "time",
@@ -120,6 +131,21 @@ impl Column {
                 Key::parse_file_key(text).map(|key| CellValue::Number(wheel_position(key)))
             }
             Self::Time => clock_seconds(text).map(CellValue::Number),
+            Self::Rating => Some(CellValue::Number(
+                text.chars().filter(|star| *star == '\u{2605}').count() as f64,
+            )),
+            Self::Colour => {
+                colour_named(text).map(|colour| CellValue::Number(colour_rank(colour) as f64))
+            }
+        }
+    }
+
+    /// Which way the first click on the header sorts: the best rating first, as rekordbox
+    /// does, and every other column from its start.
+    fn first_direction(self) -> SortDirection {
+        match self {
+            Self::Rating => SortDirection::Descending,
+            _ => SortDirection::Ascending,
         }
     }
 }
@@ -184,16 +210,22 @@ impl Sort {
     /// go back to the crate's own order.
     pub fn after_click(current: Option<Self>, column: Column) -> Option<Self> {
         match current {
-            Some(sort) if sort.column == column => match sort.direction {
-                SortDirection::Ascending => Some(Self {
-                    column,
-                    direction: SortDirection::Descending,
-                }),
-                SortDirection::Descending => None,
-            },
+            Some(sort) if sort.column == column => {
+                if sort.direction == column.first_direction() {
+                    Some(Self {
+                        column,
+                        direction: match sort.direction {
+                            SortDirection::Ascending => SortDirection::Descending,
+                            SortDirection::Descending => SortDirection::Ascending,
+                        },
+                    })
+                } else {
+                    None
+                }
+            }
             _ => Some(Self {
                 column,
-                direction: SortDirection::Ascending,
+                direction: column.first_direction(),
             }),
         }
     }
@@ -569,6 +601,48 @@ mod tests {
         assert_eq!(
             Sort::after_click(descending, Column::Key).map(|sort| sort.column),
             Some(Column::Key)
+        );
+    }
+
+    #[test]
+    fn rating_sorts_the_best_first_and_unrated_tracks_last() {
+        let ratings = [
+            "\u{2605}\u{2605}",
+            "",
+            "\u{2605}\u{2605}\u{2605}\u{2605}\u{2605}",
+            "\u{2605}",
+        ];
+        assert_eq!(
+            sorted(Column::Rating, SortDirection::Descending, &ratings),
+            [2, 0, 3, 1]
+        );
+        assert_eq!(
+            sorted(Column::Rating, SortDirection::Ascending, &ratings),
+            [3, 0, 2, 1]
+        );
+        let first = Sort::after_click(None, Column::Rating);
+        assert_eq!(
+            first.map(|sort| sort.direction),
+            Some(SortDirection::Descending)
+        );
+        let second = Sort::after_click(first, Column::Rating);
+        assert_eq!(
+            second.map(|sort| sort.direction),
+            Some(SortDirection::Ascending)
+        );
+        assert_eq!(Sort::after_click(second, Column::Rating), None);
+    }
+
+    #[test]
+    fn colour_sorts_in_rekordbox_palette_order_and_none_goes_last() {
+        let colours = ["Blue", "", "Pink", "Purple", "Orange", "Red"];
+        assert_eq!(
+            sorted(Column::Colour, SortDirection::Ascending, &colours),
+            [2, 5, 4, 0, 3, 1]
+        );
+        assert_eq!(
+            sorted(Column::Colour, SortDirection::Descending, &colours),
+            [3, 0, 4, 5, 2, 1]
         );
     }
 

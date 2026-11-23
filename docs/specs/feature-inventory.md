@@ -126,8 +126,8 @@ Ranked by what stops the owner from playing a club night with Dubplate alone, th
 | Title, Artist, Genre, BPM, Key, Time columns | The core columns. | Track list | Free | Done | P0 |
 | Album, Album artist, Original artist, Remixer, Composer, Label columns | Release metadata columns. | Track list | Free | Missing | P1 |
 | Comments column | Free text, often holds Mixed In Key or My Tag text. | Track list | Free | Missing as a column (comments are searched) | P1 |
-| Rating column | 0 to 5 stars. | Track list | Free | Missing | P1 |
-| Colour column | One of 8 track colours. | Track list | Free | Missing | P1 |
+| Rating column | 0 to 5 stars. | Track list | Free | Done (stars in a sortable column, best first, dropped in a narrow window) | P1 |
+| Colour column | One of 8 track colours. | Track list | Free | Done (a swatch in a sortable column, in rekordbox's colour order, dropped in a narrow window) | P1 |
 | My Tag column | The track's My Tags. | Track list | Free | Missing | P1 |
 | Date Added column | Import date, the usual "new music" sort. | Track list | Free | Missing | P1 |
 | Release year and date columns | Year and release date. | Track list | Free | Missing | P2 |
@@ -193,9 +193,9 @@ Ranked by what stops the owner from playing a club night with Dubplate alone, th
 | Reload tags | Re-reads the file's tags. | Context menu | Free | Partial: a folder rescan rereads tags | P3 |
 | Write tags to files | rekordbox writes only the key to ID3 (option); other edits stay in its database. | Preferences > Analysis > Key Analysis | Free | Missing | P3 |
 | Artwork | Shown in the deck, the list and the CDJ jog; add JPEG or PNG by drag. | Info window > Artwork | Free | Missing | P2 |
-| Rating | 0 to 5 stars, editable in the list and on the CDJ-3000X. | Rating column | Free | Missing (read from rekordbox, not shown) | P1 |
-| Track colour | One of 8 colours (Pink, Red, Orange, Yellow, Green, Aqua, Blue, Purple) with a comment per colour shown on CDJs. | Colour column, Preferences > Advanced > Browse > Color | Free | Missing | P1 |
-| My Tag | Categories of user tags (for example Genre, Components, Situation), several tags per track, editable in a window. | My Tag window | Free | Missing (not read from rekordbox) | P1 |
+| Rating | 0 to 5 stars, editable in the list and on the CDJ-3000X. | Rating column | Free | Done (shown in the Rating column; set from the track's menu or with Ctrl+0 to Ctrl+5) | P1 |
+| Track colour | One of 8 colours (Pink, Red, Orange, Yellow, Green, Aqua, Blue, Purple) with a comment per colour shown on CDJs. | Colour column, Preferences > Advanced > Browse > Color | Free | Done for the colour itself, set from the track's menu (the comment per colour is not) | P1 |
+| My Tag | Categories of user tags (for example Genre, Components, Situation), several tags per track, editable in a window. | My Tag window | Free | Partial: tags are put on and taken off a track from its menu, grouped by category, and searched with `tag:`; no window to make or rename categories and tags yet, and none are read from rekordbox | P1 |
 | My Tag into comments | Appends My Tag names to the comment. | Preferences > Advanced > Browse | Free | Missing | P3 |
 | Comments | Free-text comment per track. | Info window | Free | Partial: searched, never shown or edited | P1 |
 | Multi-value genre | Split "Afro House; Amapiano" into separate genres; asked for, not in rekordbox. | Not in rekordbox | n/a | Missing | P3 |
