@@ -1,6 +1,7 @@
 use std::f32::consts::FRAC_1_SQRT_2;
 
 use crate::context::BlockTiming;
+use crate::dsp::coefficients::CachedCoefficients;
 use crate::dsp::filters::{Svf, SvfCoefficients, SvfOutput};
 use crate::dsp::smoothing::Smoothed;
 use crate::effect::EffectKind;
@@ -245,8 +246,7 @@ pub(crate) struct FilterKernel {
     cutoff_octaves: Smoothed,
     resonance: Smoothed,
     stages: FilterStages,
-    coefficients: (SvfCoefficients, SvfCoefficients),
-    coefficient_inputs: (f32, f32, FilterSlope),
+    coefficients: CachedCoefficients<FilterSlope, (SvfCoefficients, SvfCoefficients)>,
     sample_rate: f32,
 }
 
@@ -263,11 +263,13 @@ impl FilterKernel {
                 RESONANCE_SMOOTHING_SECONDS,
             ),
             stages: FilterStages::default(),
-            coefficients: (
-                SvfCoefficients::new(DEFAULT_CUTOFF_HZ, FRAC_1_SQRT_2, 48_000.0),
-                SvfCoefficients::new(DEFAULT_CUTOFF_HZ, FRAC_1_SQRT_2, 48_000.0),
+            coefficients: CachedCoefficients::new(
+                FilterSlope::TwelveDecibels,
+                (
+                    SvfCoefficients::new(DEFAULT_CUTOFF_HZ, FRAC_1_SQRT_2, 48_000.0),
+                    SvfCoefficients::new(DEFAULT_CUTOFF_HZ, FRAC_1_SQRT_2, 48_000.0),
+                ),
             ),
-            coefficient_inputs: (f32::NAN, f32::NAN, FilterSlope::TwelveDecibels),
             sample_rate: 0.0,
         }
     }
@@ -291,10 +293,10 @@ impl Kernel for FilterKernel {
     fn begin_block(&mut self, timing: &BlockTiming) {
         if timing.sample_rate != self.sample_rate {
             self.sample_rate = timing.sample_rate;
+            self.coefficients.invalidate();
             self.weights.prepare(timing.sample_rate);
             self.cutoff_octaves.prepare(timing.sample_rate);
             self.resonance.prepare(timing.sample_rate);
-            self.coefficient_inputs.0 = f32::NAN;
         }
     }
 
@@ -302,25 +304,20 @@ impl Kernel for FilterKernel {
     fn tick(&mut self, input: Frame, _beat_position: f64) -> Frame {
         let cutoff_octaves = self.cutoff_octaves.next();
         let resonance = self.resonance.next();
-        let inputs = (cutoff_octaves, resonance, self.slope);
-        if inputs != self.coefficient_inputs {
-            self.coefficient_inputs = inputs;
-            let cutoff = cutoff_octaves.exp2();
-            let (first_quality, second_quality) = stage_qualities(self.slope, resonance);
-            self.coefficients = (
-                SvfCoefficients::new(cutoff, first_quality, self.sample_rate),
-                SvfCoefficients::new(cutoff, second_quality, self.sample_rate),
-            );
-        }
+        let coefficients =
+            self.coefficients
+                .current((cutoff_octaves, resonance, self.slope), || {
+                    let cutoff = cutoff_octaves.exp2();
+                    let (first_quality, second_quality) = stage_qualities(self.slope, resonance);
+                    (
+                        SvfCoefficients::new(cutoff, first_quality, self.sample_rate),
+                        SvfCoefficients::new(cutoff, second_quality, self.sample_rate),
+                    )
+                });
         let weights = self.weights.next();
         [0, 1].map(|channel| {
-            self.stages.tick(
-                channel,
-                input[channel],
-                self.slope,
-                &self.coefficients,
-                weights,
-            )
+            self.stages
+                .tick(channel, input[channel], self.slope, coefficients, weights)
         })
     }
 

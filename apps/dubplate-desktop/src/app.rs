@@ -374,6 +374,9 @@ impl DubplateApp {
         let effect_search = cx.new(|cx| InputState::new(window, cx).placeholder("Find an effect"));
         let quit_subscription = cx.on_app_quit(|this: &mut Self, cx| {
             this.finish_recording_on_quit();
+            // A debounced settings write may still be running; without waiting, a quit inside
+            // that window drops the last changes.
+            let saving = this.settings_saving.take();
             this.finish_plays(cx);
             let barrier = this
                 .set_editor
@@ -385,6 +388,9 @@ impl DubplateApp {
                 }
             });
             async move {
+                if let Some(saving) = saving {
+                    saving.await;
+                }
                 task.await;
             }
         });
@@ -609,7 +615,7 @@ impl DubplateApp {
         app.start_library(cx);
         app.start_set_session(cx);
         Self::keep_collecting_stems(cx);
-        if let Some(problem) = problems.into_iter().next() {
+        for problem in problems {
             app.show_notice(NoticePlace::Window, problem, cx);
         }
         app

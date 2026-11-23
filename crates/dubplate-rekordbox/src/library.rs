@@ -182,38 +182,51 @@ impl Library {
              WHERE rb_local_deleted = 0
              ORDER BY ParentID, Seq, ID",
         )?;
+        let mut shells = Vec::new();
+        for shell in playlist_statement.query_map([], |row| {
+            let parent_id: Option<String> = row.get(1)?;
+            Ok(Playlist {
+                id: row.get(0)?,
+                parent_id: parent_id.filter(|parent| parent != "root"),
+                name: row.get::<_, Option<String>>(2)?.unwrap_or_default(),
+                kind: PlaylistKind::from_attribute(row.get::<_, Option<i64>>(3)?.unwrap_or(0)),
+                position: row.get::<_, Option<i64>>(4)?.unwrap_or(0),
+                track_ids: Vec::new(),
+            })
+        })? {
+            shells.push(shell?);
+        }
+        // The entries of every live playlist in one query, instead of one per playlist on
+        // every library read.
         let mut entry_statement = self.connection.prepare(
-            "SELECT entry.ContentID
-             FROM djmdSongPlaylist AS entry
+            "SELECT entry.ContentID, playlist.ID
+             FROM djmdPlaylist AS playlist
+             JOIN djmdSongPlaylist AS entry ON entry.PlaylistID = playlist.ID
              JOIN djmdContent AS content ON content.ID = entry.ContentID
-             WHERE entry.PlaylistID = ?1
+             WHERE playlist.rb_local_deleted = 0
                AND entry.rb_local_deleted = 0
                AND content.rb_local_deleted = 0
-             ORDER BY entry.TrackNo, entry.ID",
+             ORDER BY playlist.ID, entry.TrackNo, entry.ID",
         )?;
-        let shells = playlist_statement
+        let entries: Vec<(String, String)> = entry_statement
             .query_map([], |row| {
-                let parent_id: Option<String> = row.get(1)?;
-                Ok(Playlist {
-                    id: row.get(0)?,
-                    parent_id: parent_id.filter(|parent| parent != "root"),
-                    name: row.get::<_, Option<String>>(2)?.unwrap_or_default(),
-                    kind: PlaylistKind::from_attribute(row.get::<_, Option<i64>>(3)?.unwrap_or(0)),
-                    position: row.get::<_, Option<i64>>(4)?.unwrap_or(0),
-                    track_ids: Vec::new(),
-                })
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
             })?
-            .collect::<Result<Vec<_>, _>>()?;
-        let mut playlists = Vec::with_capacity(shells.len());
-        for mut playlist in shells {
-            if playlist.kind == PlaylistKind::Playlist {
-                playlist.track_ids = entry_statement
-                    .query_map([&playlist.id], |row| row.get(0))?
-                    .collect::<Result<Vec<String>, _>>()?;
-            }
-            playlists.push(playlist);
+            .collect::<Result<_, _>>()?;
+        let mut tracks_by_playlist: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
+        for (content_id, playlist_id) in entries {
+            tracks_by_playlist
+                .entry(playlist_id)
+                .or_default()
+                .push(content_id);
         }
-        Ok(playlists)
+        for playlist in &mut shells {
+            if playlist.kind == PlaylistKind::Playlist {
+                playlist.track_ids = tracks_by_playlist.remove(&playlist.id).unwrap_or_default();
+            }
+        }
+        Ok(shells)
     }
 
     fn count_live(&self, table: &str) -> Result<u64, Error> {

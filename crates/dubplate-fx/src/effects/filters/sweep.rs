@@ -1,5 +1,6 @@
 use crate::context::BlockTiming;
 use crate::context::ProcessContext;
+use crate::dsp::coefficients::CachedCoefficients;
 use crate::dsp::filters::SvfCoefficients;
 use crate::dsp::shaping::smoothstep;
 use crate::dsp::smoothing::Smoothed;
@@ -82,15 +83,18 @@ impl Default for SweepFilter {
     }
 }
 
+type SweepCoefficients = (
+    (SvfCoefficients, SvfCoefficients),
+    (SvfCoefficients, SvfCoefficients),
+);
+
 pub(crate) struct SweepKernel {
     position: Smoothed,
     resonance: Smoothed,
     slope: FilterSlope,
     low_pass: FilterStages,
     high_pass: FilterStages,
-    low_coefficients: (SvfCoefficients, SvfCoefficients),
-    high_coefficients: (SvfCoefficients, SvfCoefficients),
-    coefficient_inputs: (f32, f32, FilterSlope),
+    coefficients: CachedCoefficients<FilterSlope, SweepCoefficients>,
     sample_rate: f32,
 }
 
@@ -103,23 +107,12 @@ impl SweepKernel {
             slope: FilterSlope::TwentyFourDecibels,
             low_pass: FilterStages::default(),
             high_pass: FilterStages::default(),
-            low_coefficients: (placeholder, placeholder),
-            high_coefficients: (placeholder, placeholder),
-            coefficient_inputs: (f32::NAN, f32::NAN, FilterSlope::TwentyFourDecibels),
+            coefficients: CachedCoefficients::new(
+                FilterSlope::TwentyFourDecibels,
+                ((placeholder, placeholder), (placeholder, placeholder)),
+            ),
             sample_rate: 0.0,
         }
-    }
-
-    fn coefficients_for(
-        &self,
-        cutoff_hz: f32,
-        resonance: f32,
-    ) -> (SvfCoefficients, SvfCoefficients) {
-        let (first_quality, second_quality) = stage_qualities(self.slope, resonance);
-        (
-            SvfCoefficients::new(cutoff_hz, first_quality, self.sample_rate),
-            SvfCoefficients::new(cutoff_hz, second_quality, self.sample_rate),
-        )
     }
 }
 
@@ -141,7 +134,7 @@ impl Kernel for SweepKernel {
             self.sample_rate = timing.sample_rate;
             self.position.prepare(timing.sample_rate);
             self.resonance.prepare(timing.sample_rate);
-            self.coefficient_inputs.0 = f32::NAN;
+            self.coefficients.invalidate();
         }
     }
 
@@ -152,47 +145,50 @@ impl Kernel for SweepKernel {
         let amount = travel(position);
         let low_side = position < 0.0;
 
-        let inputs = (position, resonance, self.slope);
-        if inputs != self.coefficient_inputs {
-            self.coefficient_inputs = inputs;
-            let singing = resonance * smoothstep(amount / RESONANCE_TRAVEL);
-            let (low_cutoff, low_resonance) = if low_side {
+        let (low_coefficients, high_coefficients) = {
+            let slope = self.slope;
+            let sample_rate = self.sample_rate;
+            self.coefficients.current((position, resonance, slope), || {
+                let coefficients_for = |cutoff_hz: f32, resonance: f32| {
+                    let (first_quality, second_quality) = stage_qualities(slope, resonance);
+                    (
+                        SvfCoefficients::new(cutoff_hz, first_quality, sample_rate),
+                        SvfCoefficients::new(cutoff_hz, second_quality, sample_rate),
+                    )
+                };
+                let singing = resonance * smoothstep(amount / RESONANCE_TRAVEL);
+                let (low_cutoff, low_resonance) = if low_side {
+                    (
+                        exponential(LOW_PASS_OPEN_HZ, LOW_PASS_CLOSED_HZ, amount),
+                        singing,
+                    )
+                } else {
+                    (LOW_PASS_OPEN_HZ, 0.0)
+                };
+                let (high_cutoff, high_resonance) = if low_side {
+                    (HIGH_PASS_OPEN_HZ, 0.0)
+                } else {
+                    (
+                        exponential(HIGH_PASS_OPEN_HZ, HIGH_PASS_CLOSED_HZ, amount),
+                        singing,
+                    )
+                };
                 (
-                    exponential(LOW_PASS_OPEN_HZ, LOW_PASS_CLOSED_HZ, amount),
-                    singing,
+                    coefficients_for(low_cutoff, low_resonance),
+                    coefficients_for(high_cutoff, high_resonance),
                 )
-            } else {
-                (LOW_PASS_OPEN_HZ, 0.0)
-            };
-            let (high_cutoff, high_resonance) = if low_side {
-                (HIGH_PASS_OPEN_HZ, 0.0)
-            } else {
-                (
-                    exponential(HIGH_PASS_OPEN_HZ, HIGH_PASS_CLOSED_HZ, amount),
-                    singing,
-                )
-            };
-            self.low_coefficients = self.coefficients_for(low_cutoff, low_resonance);
-            self.high_coefficients = self.coefficients_for(high_cutoff, high_resonance);
-        }
+            })
+        };
 
         let engage = smoothstep(amount / ENGAGE_TRAVEL);
         [0, 1].map(|channel| {
             let dry = input[channel];
-            let low = self.low_pass.tick(
-                channel,
-                dry,
-                self.slope,
-                &self.low_coefficients,
-                LOW_WEIGHTS,
-            );
-            let high = self.high_pass.tick(
-                channel,
-                dry,
-                self.slope,
-                &self.high_coefficients,
-                HIGH_WEIGHTS,
-            );
+            let low = self
+                .low_pass
+                .tick(channel, dry, self.slope, low_coefficients, LOW_WEIGHTS);
+            let high =
+                self.high_pass
+                    .tick(channel, dry, self.slope, high_coefficients, HIGH_WEIGHTS);
             if engage == 0.0 {
                 dry
             } else {

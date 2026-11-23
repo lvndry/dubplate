@@ -83,10 +83,8 @@ impl StretchKernel {
     /// share of the time it did not play.
     fn lag(&self) -> f32 {
         let lag = self.since_trigger * (1.0 - 1.0 / self.slowdown);
-        lag.clamp(
-            MIN_DELAY_SAMPLES,
-            self.lines[0].max_delay() - self.grain_samples,
-        )
+        let upper = (self.lines[0].max_delay() - self.grain_samples).max(MIN_DELAY_SAMPLES);
+        lag.clamp(MIN_DELAY_SAMPLES, upper)
     }
 }
 
@@ -142,5 +140,31 @@ impl Kernel for StretchKernel {
         self.since_trigger = 0.0;
         self.grain_phase = 0.0;
         self.grain_delays = [MIN_DELAY_SAMPLES; 2];
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::StretchKernel;
+    use crate::config::EffectConfig;
+    use crate::context::BlockTiming;
+    use crate::unit::Kernel;
+
+    #[test]
+    fn lag_stays_clamped_when_the_line_is_shorter_than_the_grain() {
+        let mut kernel = StretchKernel::new(&EffectConfig {
+            max_sample_rate: 48_000.0,
+            max_delay_seconds: 0.0,
+        });
+        let timing = BlockTiming {
+            sample_rate: 48_000.0,
+            beat_position: 0.0,
+            beats_per_sample: 120.0 / 60.0 / 48_000.0,
+        };
+        kernel.begin_block(&timing);
+        kernel.since_trigger = 1_000.0;
+        kernel.slowdown = 4.0;
+        let lag = kernel.lag();
+        assert!(lag >= super::MIN_DELAY_SAMPLES);
     }
 }

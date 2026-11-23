@@ -92,7 +92,7 @@ const TABLE_18: [[u16; 4]; 17] = [
 const HISTORY_SYNC_SUBTYPE: u16 = 0x0280;
 const HISTORY_SYNC_VERSION: &str = "1000";
 const HISTORY_SYNC_ROW_LENGTH: usize = 40;
-const HISTORY_SYNC_DATE_POSITION: usize = 0x0c;
+pub(crate) const HISTORY_SYNC_DATE_POSITION: usize = 0x0c;
 
 pub(crate) fn color_rows() -> Result<Vec<EncodedRow>, DeviceLibraryError> {
     DeviceColor::ALL

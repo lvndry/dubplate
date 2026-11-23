@@ -11,7 +11,9 @@ use std::sync::mpsc::channel;
 use anyhow::{Context, Result, bail};
 use dubplate_library::{is_audio_file, scan_folder};
 use dubplate_prep::{AudioAnalysis, Key, analyse_track};
-use dubplate_rekordbox::{DatabaseKey, Library, Track};
+use dubplate_rekordbox::{Library, Track};
+
+use crate::open_library;
 
 /// Two tempos this close, in BPM, agree.
 const SAME_TEMPO_BPM: f32 = 0.5;
@@ -162,9 +164,7 @@ impl RekordboxReadings {
 
 /// Reads a copy of the library at `master_db` and each track's BPM, key and first downbeat.
 fn rekordbox_readings(master_db: PathBuf) -> Result<RekordboxReadings> {
-    let key = DatabaseKey::from_user_configuration()?;
-    let library = Library::open_copy(&master_db, &key)
-        .with_context(|| format!("reading {}", master_db.display()))?;
+    let library = open_library(&master_db)?;
     let mut readings = RekordboxReadings {
         by_path: HashMap::new(),
         by_name: HashMap::new(),
@@ -285,10 +285,10 @@ impl GridAgreement {
         self.offset_ms.abs() > self.beat_ms / 4.0
     }
 
-    /// Whether the analysed grid's bars start where rekordbox's do: its beats on rekordbox's
-    /// and its downbeat on rekordbox's downbeat.
+    /// Whether the analysed grid's bars start where rekordbox's do: its downbeat on
+    /// rekordbox's downbeat, and its beats on rekordbox's beats.
     fn same_bars(self) -> bool {
-        self.same_downbeat && !self.on_the_off_beat()
+        self.same_downbeat && self.on_the_beat()
     }
 
     fn describe(self) -> String {
@@ -307,9 +307,13 @@ fn grid_agreement(analysis: &AudioAnalysis, reading: &RekordboxReading) -> Optio
     let rekordbox_seconds = f64::from(reading.first_downbeat_ms?) / 1000.0;
     let beats = ((rekordbox_seconds - grid.first_downbeat_seconds) / grid.beat_seconds()).round();
     let nearest_seconds = grid.first_downbeat_seconds + beats * grid.beat_seconds();
+    let offset_ms = (rekordbox_seconds - nearest_seconds) * 1000.0;
     Some(GridAgreement {
-        offset_ms: (rekordbox_seconds - nearest_seconds) * 1000.0,
-        same_downbeat: (beats as i64).rem_euclid(BEATS_PER_BAR) == 0,
+        offset_ms,
+        // A downbeat is the one the analysed grid actually sits on. A grid a whole beat off
+        // is far from its own downbeats, so its nearest beat is not one: the readout shows
+        // the offset without pretending the bars start together.
+        same_downbeat: offset_ms.abs() <= ON_THE_BEAT_MS && beats as i64 % BEATS_PER_BAR == 0,
         beat_ms: grid.beat_seconds() * 1000.0,
     })
 }
@@ -555,7 +559,7 @@ mod tests {
             energy: None,
             loudness: None,
         };
-        let reading = |first_downbeat_ms| RekordboxReading {
+        let reading = |first_downbeat_ms: u32| RekordboxReading {
             bpm: Some(120.0),
             key: None,
             first_downbeat_ms: Some(first_downbeat_ms),
@@ -566,6 +570,10 @@ mod tests {
         assert!(same.same_bars() && same.on_the_beat());
         let shifted = grid_agreement(&analysis, &reading(1_000)).unwrap();
         assert!(!shifted.same_downbeat && !shifted.same_bars());
+        let whole_beat_off = grid_agreement(&analysis, &reading(3_010)).unwrap();
+        assert!((whole_beat_off.offset_ms - 10.0).abs() < 1e-6);
+        assert!(!whole_beat_off.same_downbeat && !whole_beat_off.same_bars());
+        assert_eq!(whole_beat_off.describe(), "~+10ms");
         let off_beat = grid_agreement(&analysis, &reading(2_750)).unwrap();
         assert!(off_beat.on_the_off_beat() && !off_beat.same_bars());
         let other_tempo = RekordboxReading {

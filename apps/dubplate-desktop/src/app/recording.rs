@@ -16,6 +16,8 @@ use crate::set::running_time;
 const TAP_BUFFER_SECONDS: f64 = 4.0;
 /// How often the header's time and the writer's health are looked at.
 const CHECK_INTERVAL: Duration = Duration::from_millis(500);
+/// How long quitting waits for the writer to close the file before letting it finish on its own.
+const QUIT_FINISH_LIMIT: Duration = Duration::from_millis(500);
 
 /// What the header shows about a recording in progress.
 pub(super) struct RecordingStatus {
@@ -106,13 +108,14 @@ impl DubplateApp {
         .detach();
     }
 
-    /// Closes the file before the app quits, so the recording is complete.
+    /// Closes the file before the app quits, so the recording is complete: briefly, so a slow
+    /// disk finishing what it wrote cannot hold the app while quitting.
     pub(super) fn finish_recording_on_quit(&mut self) {
         if let Some(recording) = self.recording.take() {
             if let Ok(engine) = &mut self.engine {
                 engine.controller.stop_recording().ok();
             }
-            recording.finish().ok();
+            recording.finish_within(QUIT_FINISH_LIMIT);
         }
     }
 

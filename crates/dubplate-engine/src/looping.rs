@@ -1,5 +1,8 @@
 use dubplate_fx::BeatLength;
 
+use crate::mixer::RetireQueue;
+use crate::voice::Voice;
+
 /// A loop on a deck, in track frames.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct LoopRegion {
@@ -51,6 +54,54 @@ impl LoopRegion {
             self.start + (position - self.start).rem_euclid(length)
         }
     }
+}
+
+/// What one frame's advance did to a playhead against a loop or a track's end: the caller
+/// finishes the work each needs, a wrap jump or a stopped sample.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum BoundFrame {
+    /// The playhead crossed a loop's end while inside it: it goes round, still at its old
+    /// position, and the caller wraps it.
+    Wrapped,
+    /// The playhead reached the track's end; its position is clamped on it, and its sound is
+    /// handed to a declick tail and its transport stopped when `stop` was set, so the last
+    /// beat never clicks.
+    ReachedEnd,
+    /// The playhead is where it belongs.
+    Within,
+}
+
+/// Moves a playhead on by `step` for one frame and bounds it against a loop and the track's
+/// end. The caller finishes each crossing: a deck wraps with a jump, and a sampler wraps
+/// around its sample and stops its slot at the track's end. Stopped voices still advance,
+/// which is what lets a scratch back over the end.
+pub(crate) fn advance_and_bound(
+    voice: &mut Voice,
+    previous: f64,
+    step: f64,
+    loop_: Option<&LoopRegion>,
+    end: Option<f64>,
+    stop: bool,
+    retire: &mut RetireQueue,
+) -> BoundFrame {
+    voice.position = (previous + step).max(0.0);
+    if let Some(region) = loop_
+        && region.wrap(previous, voice.position).is_some()
+    {
+        return BoundFrame::Wrapped;
+    }
+    if let Some(end) = end
+        && voice.position >= end
+    {
+        voice.position = end;
+        if stop {
+            // The tail is started before the transport is stopped, so it carries the gain
+            // the playhead dies with.
+            voice.start_tail_with_wrap(step, false, retire);
+        }
+        return BoundFrame::ReachedEnd;
+    }
+    BoundFrame::Within
 }
 
 /// A deck's loop and the loop in point waiting for its loop out.

@@ -91,7 +91,7 @@ impl Kernel for MultiTapKernel {
         }
         let fitting = (self.beat.beats() / TAP_SPACING_BEATS).round() as usize;
         self.tap_count = fitting.clamp(1, MOST_TAPS);
-        let longest = self.lines[0].max_delay() / self.tap_count as f32;
+        let longest = (self.lines[0].max_delay() / self.tap_count as f32).max(MIN_DELAY_SAMPLES);
         self.spacing_samples =
             (timing.beats_to_samples(TAP_SPACING_BEATS) as f32).clamp(MIN_DELAY_SAMPLES, longest);
     }
@@ -123,5 +123,28 @@ impl Kernel for MultiTapKernel {
 
     fn tail_seconds(&self) -> f32 {
         self.spacing_samples * self.tap_count as f32 / self.sample_rate + TRAIL_MARGIN_SECONDS
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::MultiTapKernel;
+    use crate::config::EffectConfig;
+    use crate::context::BlockTiming;
+    use crate::unit::Kernel;
+
+    #[test]
+    fn begin_block_does_not_panic_with_a_tiny_delay_line() {
+        let mut kernel = MultiTapKernel::new(&EffectConfig {
+            max_sample_rate: 48_000.0,
+            max_delay_seconds: 0.0,
+        });
+        let timing = BlockTiming {
+            sample_rate: 48_000.0,
+            beat_position: 0.0,
+            beats_per_sample: 120.0 / 60.0 / 48_000.0,
+        };
+        kernel.begin_block(&timing);
+        assert!(kernel.spacing_samples >= super::MIN_DELAY_SAMPLES);
     }
 }

@@ -300,7 +300,7 @@ impl LibrarySortSetting {
 
 /// The sampler as the DJ left it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 pub struct SamplerSetting {
     /// The sampler's volume, from 0.0 to 1.0.
     pub volume: f32,
@@ -319,7 +319,6 @@ impl Default for SamplerSetting {
 
 /// One sampler slot as the DJ left it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct SampleSlotSetting {
     /// The slot, 0 for slot 1.
     pub slot: usize,
@@ -687,7 +686,10 @@ mod tests {
         std::fs::write(
             &path,
             "audio_device = \"DDJ-FLX4\"\nmusic_folders = [\"/Music/Amapiano\"]\n\
-             a_setting_from_the_future = true\n\n[another_future_table]\nlevel = 3\n",
+             a_setting_from_the_future = true\n\n[another_future_table]\nlevel = 3\n\n[sampler]\n\
+             volume = 0.8\na_samplere_feature_from_the_future = true\n\
+             [[sampler.slots]]\nslot = 0\npath = \"/Samples/Bass drop.wav\"\n\
+             played_from_a_newer_build = true\n",
         )
         .unwrap();
         let settings = Settings::load(&path).unwrap();
@@ -695,6 +697,12 @@ mod tests {
         assert_eq!(
             settings.library.music_folders,
             vec![PathBuf::from("/Music/Amapiano")]
+        );
+        assert!((settings.sampler.volume - 0.8).abs() < 1e-6);
+        assert_eq!(settings.sampler.slots.len(), 1);
+        assert_eq!(
+            settings.sampler.slots[0].path,
+            PathBuf::from("/Samples/Bass drop.wav")
         );
     }
 }
