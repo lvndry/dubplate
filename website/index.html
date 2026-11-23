@@ -124,19 +124,20 @@
     <section class="start" id="get-started" aria-labelledby="start-title">
       <div>
         <h2 id="start-title">Get Dubplate.</h2>
-        <p>Dubplate is free and open source. To build and run it on a Mac, install Git, a current stable Rust toolchain with Cargo, and the Xcode command line tools.</p>
-        <p>Open a music folder on first launch, or import your rekordbox collection. You’ll need to supply a rekordbox database key for the collection import.</p>
+        <p>Install Dubplate on your Apple silicon Mac. Download the app or install it from Terminal with Homebrew.</p>
         <div class="start-links">
-          <a href="https://github.com/lvndry/dubplate/blob/main/docs/guide.md">DJ walkthrough <span aria-hidden="true">↗</span></a>
-          <a href="https://github.com/lvndry/dubplate/blob/main/docs/development.md">Build and import details <span aria-hidden="true">↗</span></a>
+          <a href="https://github.com/lvndry/dubplate/releases/latest/download/Dubplate.dmg">Download for Mac <span aria-hidden="true">↓</span></a>
+          <a href="https://github.com/lvndry/dubplate/releases/latest">Release notes <span aria-hidden="true">↗</span></a>
         </div>
       </div>
       <div class="command">
-        <p>Run from Terminal</p>
-        <pre><code>git clone https://github.com/lvndry/dubplate.git
-cd dubplate
-cargo app</code></pre>
-        <p>The first build takes a few minutes.</p>
+        <p>Homebrew</p>
+        <pre><code>brew tap lvndry/dubplate
+brew trust lvndry/dubplate
+brew install --cask dubplate</code></pre>
+        <p>Shell installer</p>
+        <pre><code>curl -fsSL https://github.com/lvndry/dubplate/releases/latest/download/install.sh | sh</code></pre>
+        <p><a href="https://github.com/lvndry/dubplate/blob/main/scripts/install.sh">Read the installer</a></p>
       </div>
     </section>
   </main>
