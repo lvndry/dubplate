@@ -23,7 +23,7 @@ Statuses are as audited on 22 November 2026, on `main` with a second Dubplate ru
 
 ## At every window size
 
-**V1 Nothing breaks when the window is small.** Must: at the smallest window (1100 × 700) every control a DJ needs while playing stays visible and usable, and text shortens to words, not fragments. Status: **Done** for the decks, the header and the lanes: the tempo slider wraps under the buttons, titles end in "…", the header shows status dots with tooltips and keeps the count of tracks to analyse for the library chip's tooltip, and the lanes get lower in a short window. The effect strip keeps its three units on one row down to the smallest window: below 1,500 px wide each unit narrows, with one target button that steps through A, B, AB and M and short Release FX names, and the CH SELECT lever shows as a dot over its target instead of a word.
+**V1 Nothing breaks when the window is small.** Must: at the smallest window (1100 × 700) every control a DJ needs while playing stays visible and usable, and text shortens to words, not fragments. Status: **Done** for the decks, the header and the lanes: the tempo slider wraps under the buttons, the stems row tightens so Instrumental and Acapella stay on the deck, titles end in "…", the library table drops its Genre, Stems and Source columns so every header stays a whole word, the header shows status dots with tooltips and keeps the count of tracks to analyse for the library chip's tooltip, and the lanes get lower in a short window. The effect strip keeps its three units on one row down to the smallest window: below 1,500 px wide each unit narrows, with one target button that steps through A, B, AB and M and short Release FX names, and the CH SELECT lever shows as a dot over its target instead of a word.
 
 **V2 Readouts never jitter.** Must: numbers use tabular figures and fixed widths so a changing value never moves its neighbours. Status: **Done** for the deck readouts and the browser, which use the monospaced face.
 
@@ -109,7 +109,7 @@ Statuses are as audited on 22 November 2026, on `main` with a second Dubplate ru
 
 **B8 Drag the waveform.** Status: **Done** (drag the lanes to scrub a stopped deck or nudge a playing one); to check on the decks.
 
-**B9 Pitch-bend feedback.** See: while nudging, the BPM shows the bent tempo. Status: **Missing.**
+**B9 Pitch-bend feedback.** See: while nudging, the BPM shows the bent tempo. Status: **Done**: while the jog's edge bends a playing deck, its BPM follows the record's speed in the deck's colour, and settles back to the set tempo in white once the bend has faded.
 
 ## Waveforms
 
@@ -157,9 +157,9 @@ Statuses are as audited on 22 November 2026, on `main` with a second Dubplate ru
 
 **O5 Loop roll.** Status: **Done.**
 
-**O6 Loop adjust.** Status: **Missing** ([inventory 18](feature-inventory.md#top-40-gaps)).
+**O6 Loop adjust.** Status: **Missing** ([inventory 18](feature-inventory.md#top-40-gaps)) Moving a loop's in and out points needs the engine's loop code, which is being audited separately; this waits for that audit.
 
-**O7 Saved and active loops.** Status: shown on the overview; calling them **Missing** ([inventory 19](feature-inventory.md#top-40-gaps)).
+**O7 Saved and active loops.** Status: shown on the overview; calling them **Missing** ([inventory 19](feature-inventory.md#top-40-gaps)) Calling a saved loop and an active loop that engages by itself wait for the same loop audit.
 
 ## Beat jump and slip
 
@@ -187,7 +187,7 @@ Statuses are as audited on 22 November 2026, on `main` with a second Dubplate ru
 
 **X3 Channel fader curve**, **X4 Crossfader curve**, **X5 Crossfader assign (A, THRU, B)**, **X10 Crossfader off**: Status: **Done** (Settings > Mixer has the curves and the crossfader switch, as rekordbox's Preferences > Controller > Mixer; the assign switches sit under the channel faders, as in its mixer panel).
 
-**X6 Meters.** Channel meters before the fader and a master meter. Status: **Done.** A clip light and peak hold: **Missing.**
+**X6 Meters.** Channel meters before the fader and a master meter. Status: **Done.** The highest peak stays lit for 1.5 s above the falling level, then falls; a peak at full scale turns the top segment red for 2 s, a clip light on every channel meter and the master.
 
 **X7 Master level and limiter.** Status: **Done.**
 
@@ -254,7 +254,7 @@ Correctness is the floor. A DJ should also enjoy the app: it answers at once, mo
 Proposed, to agree on before building, in the Graphite look (quiet greys, deck colours as accents, no glow, no bounce):
 
 1. **Beat pulse in the deck header.** While a deck plays, its letter badge brightens for 80 ms on each beat and a little more on the downbeat. Two synced decks pulse together, a second confirmation of the beatmatch. Off when stopped.
-2. **The master meter breathes.** Segments fall back slowly (a 300 ms release) with a thin peak hold that drops after a second, so the meter moves with the music rather than flickering.
+2. **The master meter breathes.** Segments fall back slowly (a 300 ms release) with a thin peak hold that drops after a second, so the meter moves with the music rather than flickering. **Done** with the meters' peak hold (X6): they fall at 24 dB a second and hold the highest peak for 1.5 s, on every channel and the master.
 3. **Set ready.** When the last track of a set becomes Ready, the set's "18 of 20 ready" becomes a quiet green "Set ready", once, with the energy curve drawn in from left to right over half a second.
 4. **A living recording timer.** While recording, the REC dot fades slowly in and out once a second, the time counts in fixed-width figures, and the file's size sits beside it.
 5. **Phase lock.** The moment the phase meter turns green, the centre line of the lanes brightens for a beat. Once, not every beat.
