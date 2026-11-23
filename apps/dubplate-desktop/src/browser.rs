@@ -1079,17 +1079,15 @@ impl Browser {
                     this.pane = BrowserPane::Crates;
                     this.choose_crate(crate_index, cx);
                 }))
-                .context_menu(move |menu, _, _| {
-                    if entry_kind == CrateKind::Playlist {
+                .when(entry_kind == CrateKind::Playlist, |row| {
+                    row.context_menu(move |menu, _, _| {
                         menu.menu(
                             "Copy to Dubplate playlist",
                             Box::new(crate::shortcuts::Perform(
                                 crate::commands::Command::CopyPlaylist(crate_index),
                             )),
                         )
-                    } else {
-                        menu
-                    }
+                    })
                 })
             }))
             .children(
@@ -1955,7 +1953,13 @@ impl Browser {
                     return menu;
                 }
                 let tree = Arc::clone(&playlist_tree);
-                menu.submenu("Add to playlist", window, cx, move |mut submenu, _, _| {
+                let height = track_menu::menu_height(window);
+                let keys = keys.clone();
+                menu.submenu("Add to playlist", window, cx, move |submenu, _, _| {
+                    let mut submenu = submenu
+                        .action_context(keys.clone())
+                        .max_h(height)
+                        .scrollable(true);
                     for list in tree.playlists() {
                         submenu = submenu.menu(
                             playlists::playlist_label(&tree, list),

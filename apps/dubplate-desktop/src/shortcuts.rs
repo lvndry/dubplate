@@ -467,7 +467,7 @@ pub fn help_sections() -> Vec<HelpSection> {
                 line(&["cmd-a"], "Select every track shown"),
                 line(&["cmd-shift-p"], "Add selected tracks to a playlist"),
                 line(
-                    &["backspace"],
+                    &["backspace", "delete"],
                     "Remove selected tracks from a Dubplate playlist",
                 ),
                 line(

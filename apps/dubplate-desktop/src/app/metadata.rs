@@ -4,7 +4,10 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use dubplate_prep::{TrackIdentity, TrackMetadata};
+use dubplate_prep::{PlaylistTree, StoreError, TrackIdentity, TrackMetadata};
+use gpui::Context;
+
+use super::notice::NoticePlace;
 
 use super::DubplateApp;
 use crate::collection::Collection;
@@ -42,14 +45,14 @@ impl DubplateApp {
             let categories = editor.tag_categories()?;
             Ok((
                 TrackMetadataCache::from_library(seeded, &categories),
-                editor.playlists()?,
+                editor.playlists(),
             ))
         });
         let job = match job {
             Ok(job) => job,
             Err(error) => {
                 self.show_notice(
-                    super::notice::NoticePlace::Window,
+                    NoticePlace::Window,
                     format!("Could not read library metadata: {error}"),
                     cx,
                 );
@@ -72,12 +75,11 @@ impl DubplateApp {
                 }
                 match result {
                     Ok((cache, tree)) => {
-                        this.browser
-                            .update(cx, |browser, cx| browser.set_playlists(tree, cx));
+                        this.apply_playlists(tree, cx);
                         this.apply_track_metadata(cache, cx);
                     }
                     Err(error) => this.show_notice(
-                        super::notice::NoticePlace::Window,
+                        NoticePlace::Window,
                         format!("Could not read library metadata: {error}"),
                         cx,
                     ),
@@ -86,6 +88,24 @@ impl DubplateApp {
             .ok();
         })
         .detach();
+    }
+
+    /// Applies the latest saved playlists or reports a playlist-only read failure.
+    pub(super) fn apply_playlists(
+        &mut self,
+        tree: Result<PlaylistTree, StoreError>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        match tree {
+            Ok(tree) => self
+                .browser
+                .update(cx, |browser, cx| browser.set_playlists(tree, cx)),
+            Err(error) => self.show_notice(
+                NoticePlace::Window,
+                format!("Could not read playlists: {error}"),
+                cx,
+            ),
+        }
     }
 
     /// Gives the metadata read from the set store to the browser's filters.

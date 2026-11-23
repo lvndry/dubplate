@@ -840,7 +840,7 @@ impl DubplateApp {
                     let editor = SetEditor::open(&path).map_err(|error| error.to_string())?;
                     let grids = editor.track_grids().map_err(|error| error.to_string())?;
                     let track_cues = editor.track_cues().map_err(|error| error.to_string())?;
-                    let playlists = editor.playlists().map_err(|error| error.to_string())?;
+                    let playlists = editor.playlists();
                     let session = dubplate_prep::SetSession::new(editor)
                         .map_err(|error| error.to_string())?;
                     Ok::<_, String>((session, grids, track_cues, playlists))
@@ -852,8 +852,7 @@ impl DubplateApp {
                     this.take_track_grids(grids, cx);
                     this.restore_play_history(cx);
                     this.restore_track_cues(track_cues);
-                    this.browser
-                        .update(cx, |browser, cx| browser.set_playlists(playlists, cx));
+                    this.apply_playlists(playlists, cx);
                     this.set_changed(cx);
                     // The first library build may have completed before set storage opened.
                     this.rebuild_collection(cx);
