@@ -129,3 +129,40 @@ h1 em { color: var(--leaf); }
   .tracks button span, .sheet-head > span { font-size: 10px; }
   .site-footer { flex-direction: column; }
 }
+
+.deck-sheet { margin-bottom: 22px; padding-bottom: 16px; }
+.deck-sheet > svg { display: block; width: 100%; height: auto; margin-block: 16px 4px; }
+.deck-legend { display: flex; justify-content: space-between; align-items: center; color: var(--chart-muted); font: 12px var(--mono); }
+.deck-legend button { border: 1px solid #78978b; border-radius: 3px; padding: 8px 12px; background: transparent; color: var(--chart-text); font: inherit; cursor: pointer; }
+.live-tools { display: grid; grid-template-columns: repeat(3,1fr); gap: 5%; margin: 46px 0 70px; }
+.live-tools h2 { font: 400 clamp(30px,3.6vw,55px)/1.05 var(--serif); letter-spacing: -.055em; }
+.live-tools p { margin-top: 14px; max-width: 39ch; }
+@media (max-width: 680px) { .live-tools { grid-template-columns: 1fr; gap: 30px; } }
+@keyframes enter-deck-title { from { transform: translateY(.16em); } to { transform: translateY(0); } }
+@media (prefers-reduced-motion: no-preference) { body:has(.deck-sheet) h1 { animation: enter-deck-title .6s ease-out both; } }
+@media (max-width: 680px) {
+  .deck-sheet > svg { height: clamp(125px, 24vw, 165px); }
+}
+
+.decks-scroll {
+  /* Four bars of four beats at 124 BPM. */
+  animation: decks-scroll 7.741935s linear infinite;
+}
+@keyframes decks-scroll {
+  to { transform: translateX(-1056px); }
+}
+svg.paused .decks-scroll {
+  animation-play-state: paused;
+}
+@media (prefers-reduced-motion: reduce) {
+  .decks-scroll { animation: none; }
+}
+@media (max-width: 620px) {
+  .bar-label, .cue-label { display: none; }
+  .deck-letter {
+    font-size: 21px;
+    transform: scaleX(1.45);
+    transform-box: fill-box;
+    transform-origin: center;
+  }
+}
