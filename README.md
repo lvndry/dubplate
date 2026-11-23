@@ -15,7 +15,17 @@ Dubplate is free DJ software for preparing and mixing sets, 100% rekordbox compa
 - **Controller:** the Pioneer DDJ-FLX4, mapped like rekordbox, lights included.
 - **Your own folders:** tracks outside rekordbox get their tempo, beat grid, key and energy analysed.
 
-## Run it
+## Install on an Apple silicon Mac
+
+Download [Dubplate for Mac](https://github.com/lvndry/dubplate/releases/latest/download/Dubplate.dmg), or install the app through [the Homebrew tap](https://github.com/lvndry/homebrew-dubplate). The [release notes](https://github.com/lvndry/dubplate/releases/latest) give the signing status for each build.
+
+To install the app and CLI together:
+
+```sh
+curl -fsSL https://github.com/lvndry/dubplate/releases/latest/download/install.sh | sh
+```
+
+## Run from source
 
 ```sh
 cargo app
