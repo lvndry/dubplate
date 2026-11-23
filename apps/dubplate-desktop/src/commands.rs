@@ -340,6 +340,8 @@ pub enum Command {
     /// Choose whether a channel fader or crossfader closed fast echoes the outgoing deck, from
     /// Settings.
     SetFaderEcho(bool),
+    /// Auto Gain on or off, as rekordbox's Preferences > Controller > Mixer > Auto Gain.
+    SetAutoGain(bool),
     /// A stems control of a deck: mute or bring back a stem, or a one-touch mix.
     Stems(DeckId, StemAction),
     /// Move a fader or knob to a position from 0.0 to 1.0.

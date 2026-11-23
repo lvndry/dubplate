@@ -128,6 +128,17 @@ fn mode(
 }
 
 fn status(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoElement {
+    let narrow = app.narrow_window();
+    let awaited = app.analysis_awaited();
+    // A narrow window keeps the count of tracks to analyse for the chip's tooltip rather than
+    // cutting it to a fragment.
+    let library_tooltip = match &app.library {
+        LibraryStatus::Ready(collection) if narrow && awaited > 0 => Some(format!(
+            "{} tracks \u{b7} {awaited} to analyse",
+            collection.track_count()
+        )),
+        _ => None,
+    };
     let (library_colour, library_text): (Rgba, SharedString) =
         match (app.sources.files_seen(), &app.library) {
             (Some(files), _) => (
@@ -139,8 +150,9 @@ fn status(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoElem
             }
             (None, LibraryStatus::Ready(collection)) => (
                 theme::active().ok,
-                match app.analysis_awaited() {
+                match awaited {
                     0 => format!("{} tracks", collection.track_count()),
+                    _ if narrow => format!("{} tracks", collection.track_count()),
                     waiting => format!(
                         "{} tracks \u{b7} {waiting} to analyse",
                         collection.track_count()
@@ -200,11 +212,11 @@ fn status(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoElem
                 .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
                     this.perform(Command::ToggleLibrary, window, cx);
                 }))
+                .when_some(library_tooltip, |chip, text| chip.tooltip(tooltip(text)))
                 .child(dot(library_colour))
                 .child(div().truncate().child(library_text)),
         )
         .child({
-            let narrow = app.narrow_window();
             div()
                 .id("controller-status")
                 .flex()

@@ -23,7 +23,7 @@ Statuses are as audited on 22 November 2026, on `main` with a second Dubplate ru
 
 ## At every window size
 
-**V1 Nothing breaks when the window is small.** Must: at the smallest window (1100 × 700) every control a DJ needs while playing stays visible and usable, and text shortens to words, not fragments. Status: **Done** for the decks, the header and the lanes: the tempo slider wraps under the buttons, titles end in "…", the header shows status dots with tooltips, and the lanes get lower in a short window. The effect strip puts a unit that does not fit on a second row instead of cutting it.
+**V1 Nothing breaks when the window is small.** Must: at the smallest window (1100 × 700) every control a DJ needs while playing stays visible and usable, and text shortens to words, not fragments. Status: **Done** for the decks, the header and the lanes: the tempo slider wraps under the buttons, titles end in "…", the header shows status dots with tooltips and keeps the count of tracks to analyse for the library chip's tooltip, and the lanes get lower in a short window. The effect strip keeps its three units on one row down to the smallest window: below 1,500 px wide each unit narrows, with one target button that steps through A, B, AB and M and short Release FX names, and the CH SELECT lever shows as a dot over its target instead of a word.
 
 **V2 Readouts never jitter.** Must: numbers use tabular figures and fixed widths so a changing value never moves its neighbours. Status: **Done** for the deck readouts and the browser, which use the monospaced face.
 
@@ -192,6 +192,8 @@ Statuses are as audited on 22 November 2026, on `main` with a second Dubplate ru
 **X7 Master level and limiter.** Status: **Done.**
 
 **X8 Headphone cue.** Status: **Done.**
+
+**X11 Auto Gain.** Must: each track loads at a common loudness, rekordbox's stored Auto Gain for its tracks and Dubplate's loudness measure for folder tracks, on top of TRIM, on by default (rekordbox's Preferences > Controller > Mixer > Auto Gain). See: TRIM stays where the DJ's hand or the FLX4's TRIM knob put it, so there is nothing to pick up; a mark on the TRIM ring shows where the level really is, with `AUTO +2.5 dB` on hover. Status: **Done**; Settings > Mixer turns it off.
 
 **X9 Smart Fader.** Status: **Done**; it rests with a deck on THRU or the crossfader off, and says so.
 
