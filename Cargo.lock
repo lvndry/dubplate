@@ -1945,6 +1945,7 @@ dependencies = [
  "criterion",
  "dirs 7.0.0",
  "lofty",
+ "roxmltree 0.21.2",
  "serde",
  "serde_json",
  "tempfile",

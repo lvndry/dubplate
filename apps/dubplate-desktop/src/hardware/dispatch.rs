@@ -320,7 +320,7 @@ impl Dispatcher {
             (Button::SmartFader, Layer::Normal) if pressed => Some(Command::ToggleSmartFader),
             (Button::Shift(deck), _) => Some(Command::ShiftHeld(deck_id(deck), pressed)),
             (Button::PadMode { deck, mode }, _) if pressed => {
-                Some(Command::SetPadMode(deck_id(deck), mode))
+                Some(Command::ControllerPadMode(deck_id(deck), mode))
             }
             (Button::Pad { deck, mode, pad }, layer) => Some(Command::Pad(PadPress {
                 deck: deck_id(deck),
@@ -538,7 +538,7 @@ mod tests {
                 pad_press(DeckId::A, 0, PadMode::HotCue, Press::Down, false),
                 pad_press(DeckId::A, 0, PadMode::HotCue, Press::Up, false),
                 pad_press(DeckId::B, 7, PadMode::BeatJump, Press::Down, true),
-                Command::SetPadMode(DeckId::B, PadMode::BeatLoop),
+                Command::ControllerPadMode(DeckId::B, PadMode::BeatLoop),
             ]
         );
     }

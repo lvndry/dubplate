@@ -453,3 +453,106 @@ fn a_track_cue_removed_by_the_player_reads_back_as_removed() {
         "the memory cue the player deleted reads back as removed"
     );
 }
+
+fn stick_with_two_tracks(directory: &Path) -> (TrackCues, TrackCues) {
+    let mut library = DeviceLibrary::new(LibraryId(1), "2026-11-22");
+    library
+        .tracks
+        .push(track(1, "Akufanele", "/Contents/AK1.mp3"));
+    library
+        .tracks
+        .push(track(2, "Ngiyabonga", "/Contents/AK2.mp3"));
+    write_stick(directory, &library);
+    let first = vec![hot_cue(1, 1_000)];
+    let second = vec![memory_cue(5_000)];
+    write_analysis(directory, "/Contents/AK1.mp3", &first);
+    write_analysis(directory, "/Contents/AK2.mp3", &second);
+    (
+        TrackCues::from_analysis(&first),
+        TrackCues::from_analysis(&second),
+    )
+}
+
+fn corrupt_dat(directory: &Path, file_path: &str) {
+    let stored = analysis_path(file_path).file(AnalysisFileKind::Dat);
+    fs::write(
+        directory.join(stored.trim_start_matches('/')),
+        b"not an analysis file",
+    )
+    .expect("the corrupt analysis file is written");
+}
+
+#[test]
+fn one_unreadable_analysis_file_does_not_fail_the_cue_read() {
+    let stick = tempfile::tempdir().expect("a temporary stick");
+    let (_, second) = stick_with_two_tracks(stick.path());
+    corrupt_dat(stick.path(), "/Contents/AK1.mp3");
+
+    let stick_cues = stick_track_cues(stick.path()).expect("the other tracks still read");
+    assert_eq!(
+        stick_cues.get(id(2)).expect("track 2 read").cues,
+        second,
+        "the readable track keeps its cues"
+    );
+    assert!(
+        stick_cues.get(id(1)).is_none(),
+        "an unreadable track is not reported as having no cues"
+    );
+    let unreadable = stick_cues.unreadable();
+    assert_eq!(unreadable.len(), 1);
+    assert_eq!(unreadable[0].0, id(1));
+    assert!(
+        unreadable[0].1.contains("AK1") || unreadable[0].1.contains("analysis"),
+        "the reason says what failed: {}",
+        unreadable[0].1
+    );
+}
+
+#[test]
+fn one_unreadable_analysis_file_does_not_fail_the_change_read() {
+    let stick = tempfile::tempdir().expect("a temporary stick");
+    let (first, second) = stick_with_two_tracks(stick.path());
+    corrupt_dat(stick.path(), "/Contents/AK1.mp3");
+    write_analysis(stick.path(), "/Contents/AK2.mp3", &[memory_cue(6_500)]);
+
+    let changes = stick_cue_changes(stick.path(), [(id(1), first), (id(2), second)])
+        .expect("the other tracks still compare");
+    assert!(
+        move_pair(changes.get(id(2)), 5_000, 6_500),
+        "the readable track's changes are reported: {:?}",
+        changes.get(id(2))
+    );
+    assert!(changes.get(id(1)).is_empty());
+    let unreadable = changes.unreadable();
+    assert_eq!(unreadable.len(), 1, "the skipped track is reported");
+    assert_eq!(unreadable[0].0, id(1));
+}
+
+#[test]
+fn a_clean_stick_reports_no_unreadable_tracks() {
+    let stick = tempfile::tempdir().expect("a temporary stick");
+    let (first, second) = stick_with_two_tracks(stick.path());
+    let changes = stick_cue_changes(stick.path(), [(id(1), first), (id(2), second)])
+        .expect("the changes read back");
+    assert!(changes.unreadable().is_empty());
+    let stick_cues = stick_track_cues(stick.path()).expect("the cues read back");
+    assert!(stick_cues.unreadable().is_empty());
+}
+
+#[test]
+fn a_stored_analysis_path_that_is_not_one_is_reported_not_fatal() {
+    let stick = tempfile::tempdir().expect("a temporary stick");
+    let mut library = DeviceLibrary::new(LibraryId(1), "2026-11-22");
+    let mut broken = track(1, "Akufanele", "/Contents/AK1.mp3");
+    broken.analyze_path = "somewhere/else".to_owned();
+    library.tracks.push(broken);
+    library
+        .tracks
+        .push(track(2, "Ngiyabonga", "/Contents/AK2.mp3"));
+    write_stick(stick.path(), &library);
+
+    let stick_cues = stick_track_cues(stick.path()).expect("the other track still reads");
+    assert!(stick_cues.get(id(2)).is_some());
+    assert_eq!(stick_cues.unreadable().len(), 1);
+    assert_eq!(stick_cues.unreadable()[0].0, id(1));
+}

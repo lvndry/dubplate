@@ -81,7 +81,8 @@ use crate::auto_gain::AutoGain;
 use crate::browser::{Browser, BrowserEvent, LibraryStatus};
 use crate::collection::{Collection, CollectionTrack, TrackIndex};
 use crate::commands::{
-    AutoCueChoice, CfxScope, Command, Direction, EffectEdit, JogMotion, Mode, Press, SetEdit,
+    AutoCueChoice, CfxScope, Command, Direction, EffectEdit, JogMotion, Mode, PadPress, Press,
+    SetEdit,
 };
 use crate::controls::{
     CROSSFADER_STEP, Control, MixerPositions, Orientation, Slider, fraction_at, master_gain_at,
@@ -142,6 +143,8 @@ const GLITCH_NOTICE: &str = "Audio is glitching. A larger buffer in Settings > A
 pub(crate) const NARROW_WINDOW_WIDTH: Pixels = px(1320.0);
 /// Below this height the lanes are lower.
 const SHORT_WINDOW_HEIGHT: Pixels = px(820.0);
+// The lane needs a new frame when audio publishes a slicer change on a paused deck.
+const SLICER_SETTLE: Duration = Duration::from_millis(150);
 /// How often the controller lights follow the decks while nothing else updates them, for the
 /// blinking lights and the level meters.
 const LIGHTS_INTERVAL: Duration = Duration::from_millis(30);
@@ -220,6 +223,11 @@ pub struct DubplateApp {
     lights_settling: bool,
     effect_focus: EffectUnitId,
     mode: Mode,
+    controller_pad_modes: [PadMode; DECK_COUNT],
+    slicer_domains: [dubplate_engine::SlicerDomain; DECK_COUNT],
+    held_slices: [Option<(usize, dubplate_engine::SlicerSlice)>; DECK_COUNT],
+    slicer_mouse_pad: Option<(DeckId, usize)>,
+    slicer_updated_at: Option<Instant>,
     pad_modes: [PadMode; DECK_COUNT],
     beat_jump_scales: [i32; DECK_COUNT],
     held_pads: [Option<HeldPad>; DECK_COUNT],
@@ -555,6 +563,11 @@ impl DubplateApp {
             lights_settling: false,
             effect_focus: EffectUnitId::ALL[0],
             mode,
+            controller_pad_modes: [PadMode::HotCue; DECK_COUNT],
+            slicer_domains: [dubplate_engine::SlicerDomain::Eight; DECK_COUNT],
+            held_slices: [None; DECK_COUNT],
+            slicer_mouse_pad: None,
+            slicer_updated_at: None,
             pad_modes: [PadMode::HotCue; DECK_COUNT],
             beat_jump_scales: [0; DECK_COUNT],
             held_pads: [None; DECK_COUNT],
@@ -1096,6 +1109,7 @@ impl DubplateApp {
         engine.controller.set_key_lock(deck, key_lock)?;
         // Loading clears transient pad gestures on the audio thread in the same command.
         self.held_pads[deck.index()] = None;
+        self.forget_slicer(deck);
         Ok(visuals)
     }
 
@@ -1141,6 +1155,15 @@ impl DubplateApp {
                 }
             }
             Command::Pad(press) => self.press_pad(press, cx),
+            Command::ControllerPadMode(deck, mode) => {
+                self.controller_pad_modes[deck.index()] = mode;
+                self.set_pad_mode(deck, mode, cx);
+            }
+            Command::CycleSlicer(deck) => self.set_pad_mode(
+                deck,
+                crate::pads::next_slicer_mode(self.pad_modes[deck.index()]),
+                cx,
+            ),
             Command::SetPadMode(deck, mode) => self.set_pad_mode(deck, mode, cx),
             Command::CyclePadMode(deck) => {
                 self.set_pad_mode(deck, next_mode(self.pad_modes[deck.index()]), cx);
@@ -1584,6 +1607,7 @@ impl DubplateApp {
         if !doubled {
             return;
         }
+        self.forget_slicer(deck);
         let grid_source = self.deck(source).grid_source;
         let needs_waveform = visuals.zoomed.is_none();
         let side = &mut self.decks[deck.index()];
@@ -2125,7 +2149,11 @@ impl DubplateApp {
         DeckLights {
             play,
             cue,
-            pad_mode: self.pad_modes[deck.index()],
+            pad_mode: if crate::pads::is_slicer_mode(self.pad_modes[deck.index()]) {
+                self.controller_pad_modes[deck.index()]
+            } else {
+                self.pad_modes[deck.index()]
+            },
             pads: pad_lights.pads,
             shift_pads: self.stem_pad_lights(deck),
             headphone_cue: self
@@ -2256,6 +2284,19 @@ impl DubplateApp {
     }
 
     fn on_mouse_up(&mut self, _: &MouseUpEvent, window: &mut Window, cx: &mut Context<'_, Self>) {
+        if let Some((deck, pad)) = self.slicer_mouse_pad.take() {
+            self.perform(
+                Command::Pad(PadPress {
+                    deck,
+                    pad,
+                    mode: None,
+                    press: Press::Up,
+                    shift: false,
+                }),
+                window,
+                cx,
+            );
+        }
         self.end_drag(window, cx);
     }
 
@@ -2291,6 +2332,7 @@ impl DubplateApp {
             self.master_meter.update(meters.master_peak, elapsed);
         }
         let frames = DeckId::ALL.map(|deck| {
+            self.reset_slicer_without_grid(deck);
             let state = self.deck_state(deck);
             DeckFrame {
                 state,
@@ -2312,6 +2354,9 @@ impl DubplateApp {
                 .as_ref()
                 .is_some_and(|hardware| hardware.dispatcher.held.any_shown(now))
             || self.pad_notes.iter().flatten().any(|note| note.shows(now))
+            || self
+                .slicer_updated_at
+                .is_some_and(|at| now.duration_since(at) < SLICER_SETTLE)
             || self.recording.is_some()
             || self
                 .set_ready_at

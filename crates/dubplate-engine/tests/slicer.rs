@@ -408,7 +408,14 @@ fn removing_the_beat_grid_turns_the_slicer_off() {
         SlicerMode::SlicerLoop,
         SlicerDomain::Four,
     );
+    controller
+        .slicer_pad(DeckId::A, slice(1), true, None)
+        .unwrap();
+    render(&mut renderer, 5_999);
+    assert_eq!(position(&controller), 12_000);
+
     controller.set_beat_grid(DeckId::A, None).unwrap();
     render(&mut renderer, 10);
     assert!(!controller.slicer_state(DeckId::A).enabled);
+    assert_eq!(position(&controller), 36_010);
 }

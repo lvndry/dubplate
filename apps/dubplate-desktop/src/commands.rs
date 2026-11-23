@@ -261,6 +261,8 @@ pub enum Command {
     Pad(PadPress),
     /// Put a deck's pads in a pad mode.
     SetPadMode(DeckId, PadMode),
+    ControllerPadMode(DeckId, PadMode),
+    CycleSlicer(DeckId),
     /// Put a deck's pads in the next pad mode.
     CyclePadMode(DeckId),
     /// SLIP: scratches and loops let the track play on underneath, and the deck lands back on it.

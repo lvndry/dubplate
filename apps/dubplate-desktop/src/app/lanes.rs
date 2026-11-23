@@ -56,6 +56,7 @@ const MEMORY_CUE_ROWS: u8 = 5;
 /// the slip shadow.
 #[derive(Debug, Clone)]
 pub(super) struct LaneMarks {
+    pub slicer: Option<dubplate_engine::SlicerState>,
     /// The deck's loop, when it has one.
     pub lane_loop: Option<LaneLoop>,
     /// Where a slipping deck would be now.
@@ -349,6 +350,9 @@ fn lane(
     let playhead_seconds = frame.playhead_seconds;
     let tempo = frame.state.tempo;
     let marks = LaneMarks {
+        slicer: app.slicer_state(deck).filter(|state| {
+            state.enabled && crate::pads::is_slicer_mode(app.pad_modes[deck.index()])
+        }),
         lane_loop: app
             .loop_state(deck)
             .and_then(|state| LaneLoop::of(&state, playhead_seconds)),
@@ -609,6 +613,30 @@ pub(super) fn paint_lane(
     if let Some(marks) = marks {
         if let Some(lane_loop) = marks.lane_loop {
             paint_loop_edges(bounds, &view, lane_loop, marks.colour, window);
+        }
+        if let Some(s) = &marks.slicer
+            && let (Some(start), Some(end)) = (s.domain_start_seconds, s.domain_end_seconds)
+        {
+            let count = dubplate_engine::SlicerSlice::COUNT;
+            let step = (end - start) / f64::from(count);
+            for index in 0..count {
+                let slice = LaneLoop {
+                    start_seconds: start + step * f64::from(index),
+                    end_seconds: start + step * f64::from(index + 1),
+                    look: LoopLook::Active,
+                    length: None,
+                };
+                if s.slice.is_some_and(|slice| slice.index() == index) {
+                    paint_loop_band(bounds, &view, slice, marks.colour, window);
+                }
+                paint_loop_edges(
+                    bounds,
+                    &view,
+                    slice,
+                    theme::faded(marks.colour, 0.5),
+                    window,
+                );
+            }
         }
         if let Some(cues) = &marks.cues {
             for (x, colour) in memory_cue_marks(cues, &view) {
