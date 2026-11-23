@@ -46,6 +46,7 @@ mod slider;
 mod smart;
 mod stems;
 mod stems_strip;
+mod tag_manager;
 mod track_actions;
 mod track_check;
 mod track_preview;
@@ -296,6 +297,8 @@ pub struct DubplateApp {
     fx_select_presses: u64,
     refocus_window: bool,
     effect_search: Entity<InputState>,
+    tag_manager: Option<tag_manager::TagManager>,
+    tag_name_input: Entity<InputState>,
     settings_save_pending: bool,
     output_devices: Vec<OutputDevice>,
     hit_areas: Rc<HitAreas>,
@@ -425,6 +428,15 @@ impl DubplateApp {
                 InputEvent::Focus | InputEvent::Blur => {}
             },
         );
+        let tag_name_input = cx.new(|cx| InputState::new(window, cx).placeholder("Name"));
+        let tag_subscription =
+            cx.subscribe(
+                &tag_name_input,
+                |this, _, event: &InputEvent, cx| match event {
+                    InputEvent::PressEnter { .. } => this.commit_tag_name(cx),
+                    InputEvent::Change | InputEvent::Focus | InputEvent::Blur => {}
+                },
+            );
         let focus_handle = cx.focus_handle();
         window.focus(&focus_handle, cx);
         let mut problems: Vec<String> = Vec::new();
@@ -596,6 +608,8 @@ impl DubplateApp {
             fx_select_presses: 0,
             refocus_window: false,
             effect_search,
+            tag_manager: None,
+            tag_name_input,
             settings_save_pending: false,
             output_devices: Vec::new(),
             hit_areas: Rc::default(),
@@ -618,7 +632,12 @@ impl DubplateApp {
             window_size: window.viewport_size(),
             devices,
             glitches: GlitchWatch::default(),
-            _subscriptions: vec![subscription, search_subscription, quit_subscription],
+            _subscriptions: vec![
+                subscription,
+                search_subscription,
+                tag_subscription,
+                quit_subscription,
+            ],
         };
         app.browser
             .update(cx, |browser, cx| browser.show_screen(mode, cx));
@@ -1347,6 +1366,7 @@ impl DubplateApp {
                 self.help_open = false;
             }
             Command::AddMusicFolders => self.add_music_folders(cx),
+            Command::OpenTagManager => self.open_tag_manager(cx),
             Command::ShiftHeld(deck, held) => self.shift_held[deck.index()] = held,
             Command::TogglePadLayer(deck) => {
                 let shown = &mut self.shift_layer_shown[deck.index()];
@@ -1356,6 +1376,8 @@ impl DubplateApp {
             Command::Dismiss => {
                 if self.effect_menu.is_some() {
                     self.close_effect_menu(cx);
+                } else if self.tag_manager.is_some() {
+                    self.dismiss_tag_manager(cx);
                 } else if self.pad_fx_editor.is_some() {
                     self.pad_fx_editor = None;
                 } else if self.relink_review.is_some() {
@@ -2376,6 +2398,7 @@ impl Render for DubplateApp {
         let modal_open = self.help_open
             || self.library_open
             || self.relink_review.is_some()
+            || self.tag_manager.is_some()
             || self.pad_fx_editor.is_some();
         if modal_open && !self.modal_active {
             self.modal_return_focus = window.focused(cx);
@@ -2471,6 +2494,9 @@ impl Render for DubplateApp {
             )
             .when(self.library_open, |root| {
                 root.child(library_panel::render(self, cx))
+            })
+            .when_some(self.tag_manager.clone(), |root, manager| {
+                root.child(tag_manager::render(self, &manager, cx))
             });
         if let Some(stats) = &self.frame_stats {
             stats.borrow_mut().record_render(render_started.elapsed());
