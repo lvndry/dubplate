@@ -311,6 +311,8 @@ fn crossfader_row(on: bool, cx: &mut Context<'_, DubplateApp>) -> impl IntoEleme
             div()
                 .flex()
                 .flex_col()
+                .flex_1()
+                .min_w_0()
                 .gap(px(2.0))
                 .child(div().text_size(theme::SMALL_TEXT_SIZE).child("Crossfader"))
                 .child(
@@ -379,6 +381,8 @@ fn smart_fader_source_row(
             div()
                 .flex()
                 .flex_col()
+                .flex_1()
+                .min_w_0()
                 .gap(px(2.0))
                 .child(div().text_size(theme::SMALL_TEXT_SIZE).child("Smart Fader moves with"))
                 .child(

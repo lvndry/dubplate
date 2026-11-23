@@ -149,20 +149,24 @@ pub struct MixerSetting {
 
 impl Default for MixerSetting {
     fn default() -> Self {
-        Self::of(&Crossfader::default(), ChannelFaderCurve::default())
+        Self::of(&Crossfader::default(), ChannelFaderCurve::default(), true)
     }
 }
 
 impl MixerSetting {
     /// The setting that keeps `crossfader`'s switches and curve, its position aside, and
     /// the channel fader curve.
-    pub fn of(crossfader: &Crossfader, channel_fader_curve: ChannelFaderCurve) -> Self {
+    pub fn of(
+        crossfader: &Crossfader,
+        channel_fader_curve: ChannelFaderCurve,
+        fader_start: bool,
+    ) -> Self {
         Self {
             crossfader_on: crossfader.enabled,
             crossfader_curve: crossfader.curve.to_string(),
             channel_fader_curve: channel_fader_curve.to_string(),
             crossfader_assign: crossfader.assign.map(|assign| assign.to_string()),
-            fader_start: true,
+            fader_start,
         }
     }
 
@@ -574,6 +578,7 @@ mod tests {
                     assign: [CrossfaderAssign::Thru, CrossfaderAssign::A],
                 },
                 ChannelFaderCurve::Fast,
+                false,
             ),
             smart_fader_source: "channel-faders".to_owned(),
             library_sort: LibrarySortSetting {
@@ -634,7 +639,9 @@ mod tests {
                 ..Crossfader::default()
             },
             ChannelFaderCurve::Slow,
+            false,
         );
+        assert!(!kept.fader_start);
         assert!(kept.crossfader_on);
         assert_eq!(kept.crossfader_curve(), CrossfaderCurve::Constant);
         assert_eq!(kept.channel_fader_curve(), ChannelFaderCurve::Slow);

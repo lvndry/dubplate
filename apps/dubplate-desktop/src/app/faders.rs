@@ -206,7 +206,11 @@ impl DubplateApp {
         channel_fader_curve: ChannelFaderCurve,
         cx: &mut Context<'_, Self>,
     ) {
-        self.settings.mixer = MixerSetting::of(&crossfader, channel_fader_curve);
+        self.settings.mixer = MixerSetting::of(
+            &crossfader,
+            channel_fader_curve,
+            self.settings.mixer.fader_start,
+        );
         self.save_settings(cx);
         cx.notify();
     }
