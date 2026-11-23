@@ -1,8 +1,8 @@
 //! What the eight performance pads of a deck do in each pad mode, as rekordbox lays them out on
 //! the DDJ-FLX4: hot cues, beat jumps, beat loops, pad effects and rolls, the keyboard and key
-//! shift, and the sampler that waits for the engine.
+//! shift, the slicer and the sampler.
 
-use dubplate_engine::{BeatLength, PadEffect};
+use dubplate_engine::{BeatLength, PadEffect, SlicerDomain, SlicerMode, SlicerRoll, SlicerSlice};
 use dubplate_midi::PadMode;
 
 /// Pads on a deck.
@@ -57,6 +57,8 @@ pub fn mode_label(mode: PadMode) -> &'static str {
         PadMode::PadFx2 => "Pad FX 2",
         PadMode::BeatLoop => "Beat loop",
         PadMode::KeyShift => "Key shift",
+        PadMode::Slicer => "Slicer",
+        PadMode::SlicerLoop => "Slicer loop",
     }
 }
 
@@ -103,22 +105,92 @@ pub fn semitones_label(semitones: i32) -> String {
     }
 }
 
-/// The mode after `mode` in the order of the mode buttons, going round.
+/// Whether `mode` is one of the two slicer modes.
+pub fn is_slicer_mode(mode: PadMode) -> bool {
+    slicer_engine_mode(mode).is_some()
+}
+
+/// The engine's slicer mode for a pad mode, or `None` for a pad mode that is not the slicer.
+pub fn slicer_engine_mode(mode: PadMode) -> Option<SlicerMode> {
+    match mode {
+        PadMode::Slicer => Some(SlicerMode::Slicer),
+        PadMode::SlicerLoop => Some(SlicerMode::SlicerLoop),
+        _ => None,
+    }
+}
+
+/// The mode the slicer key picks next: Slicer, then Slicer loop, then back to hot cues.
+pub fn next_slicer_mode(mode: PadMode) -> PadMode {
+    match mode {
+        PadMode::Slicer => PadMode::SlicerLoop,
+        PadMode::SlicerLoop => PadMode::HotCue,
+        _ => PadMode::Slicer,
+    }
+}
+
+/// The mode after `mode` in the order of the mode buttons, going round. The slicer modes
+/// are left to their own key, and the mode after them is hot cue.
 pub fn next_mode(mode: PadMode) -> PadMode {
-    let position = PAD_MODES
-        .iter()
-        .position(|candidate| *candidate == mode)
-        .unwrap_or(0);
+    let Some(position) = PAD_MODES.iter().position(|candidate| *candidate == mode) else {
+        return PadMode::HotCue;
+    };
     PAD_MODES[(position + 1) % PAD_MODES.len()]
 }
 
-/// The four mode buttons, each as its own mode and its SHIFT mode.
+/// The on-screen modes and the alternate modes available on each button.
 pub fn mode_buttons() -> impl Iterator<Item = (PadMode, PadMode)> {
     PAD_MODES
         .as_chunks::<2>()
         .0
         .iter()
         .map(|[mode, shift_mode]| (*mode, *shift_mode))
+        .chain([
+            (PadMode::Slicer, PadMode::Slicer),
+            (PadMode::SlicerLoop, PadMode::SlicerLoop),
+        ])
+}
+
+/// The FLX4's notes still carry their physical mode while its pads play the on-screen slicer.
+pub fn pad_mode_for_press(deck_mode: PadMode, sent_mode: Option<PadMode>) -> PadMode {
+    if is_slicer_mode(deck_mode) {
+        deck_mode
+    } else {
+        sent_mode.unwrap_or(deck_mode)
+    }
+}
+
+/// How many pads roll in the slicer's SHIFT layer, pad 1 first.
+pub const SLICER_ROLL_PADS: usize = SlicerRoll::ALL.len();
+
+/// What a slicer pad plays: the slice it is, or with SHIFT a roll of the slice the playhead is
+/// in (the first when it is outside the domain), longest roll on pad 1. `None` for the pads
+/// that do nothing with SHIFT.
+pub fn slicer_pad_target(
+    pad: usize,
+    shift: bool,
+    playing: Option<SlicerSlice>,
+) -> Option<(SlicerSlice, Option<SlicerRoll>)> {
+    if shift {
+        let roll = SlicerRoll::ALL.get(pad).copied()?;
+        return Some((playing.unwrap_or(SlicerSlice::FIRST), Some(roll)));
+    }
+    let slice = SlicerSlice::from_index(u8::try_from(pad).ok()?)?;
+    Some((slice, None))
+}
+
+/// A roll as a pad shows it: `1/16`.
+pub fn roll_label(roll: SlicerRoll) -> &'static str {
+    match roll {
+        SlicerRoll::Eighth => "1/8",
+        SlicerRoll::Sixteenth => "1/16",
+        SlicerRoll::ThirtySecond => "1/32",
+        SlicerRoll::SixtyFourth => "1/64",
+    }
+}
+
+/// A slicer domain as its picker button reads: the beats.
+pub fn domain_label(domain: SlicerDomain) -> String {
+    format!("{}", domain.beats())
 }
 
 /// The beats beat jump pad `pad` moves by, at a size halved or doubled `scale` times.
@@ -167,10 +239,77 @@ mod tests {
                 (PadMode::PadFx1, PadMode::PadFx2),
                 (PadMode::BeatJump, PadMode::BeatLoop),
                 (PadMode::Sampler, PadMode::KeyShift),
+                (PadMode::Slicer, PadMode::Slicer),
+                (PadMode::SlicerLoop, PadMode::SlicerLoop),
             ]
         );
         assert_eq!(next_mode(PadMode::KeyShift), PadMode::HotCue);
         assert_eq!(next_mode(PadMode::HotCue), PadMode::Keyboard);
+        assert_eq!(next_mode(PadMode::SlicerLoop), PadMode::HotCue);
+    }
+
+    #[test]
+    fn the_slicer_key_goes_slicer_then_slicer_loop_then_back_to_hot_cues() {
+        assert_eq!(next_slicer_mode(PadMode::Sampler), PadMode::Slicer);
+        assert_eq!(next_slicer_mode(PadMode::Slicer), PadMode::SlicerLoop);
+        assert_eq!(next_slicer_mode(PadMode::SlicerLoop), PadMode::HotCue);
+        assert_eq!(
+            slicer_engine_mode(PadMode::SlicerLoop),
+            Some(SlicerMode::SlicerLoop)
+        );
+        assert_eq!(slicer_engine_mode(PadMode::BeatLoop), None);
+    }
+
+    #[test]
+    fn pads_one_to_eight_play_slices_and_shift_pads_play_rolls_of_the_playing_slice() {
+        for pad in 0..PAD_COUNT {
+            let (slice, roll) = slicer_pad_target(pad, false, None).unwrap();
+            assert_eq!(usize::from(slice.index()), pad);
+            assert_eq!(roll, None);
+        }
+        assert_eq!(slicer_pad_target(8, false, None), None);
+        let third = SlicerSlice::from_index(2);
+        let rolls: Vec<_> = (0..PAD_COUNT)
+            .map(|pad| slicer_pad_target(pad, true, third))
+            .collect();
+        assert_eq!(rolls[0], Some((third.unwrap(), Some(SlicerRoll::Eighth))));
+        assert_eq!(
+            rolls[1],
+            Some((third.unwrap(), Some(SlicerRoll::Sixteenth)))
+        );
+        assert_eq!(
+            rolls[2],
+            Some((third.unwrap(), Some(SlicerRoll::ThirtySecond)))
+        );
+        assert_eq!(
+            rolls[3],
+            Some((third.unwrap(), Some(SlicerRoll::SixtyFourth)))
+        );
+        assert!(rolls[4..].iter().all(Option::is_none));
+        assert_eq!(
+            slicer_pad_target(0, true, None),
+            Some((SlicerSlice::FIRST, Some(SlicerRoll::Eighth))),
+            "a roll outside the domain uses the first slice"
+        );
+        assert_eq!(roll_label(SlicerRoll::SixtyFourth), "1/64");
+        assert_eq!(domain_label(SlicerDomain::SixtyFour), "64");
+    }
+
+    #[test]
+    fn tagged_controller_pads_play_the_current_slicer_mode() {
+        assert_eq!(
+            pad_mode_for_press(PadMode::Slicer, Some(PadMode::HotCue)),
+            PadMode::Slicer,
+        );
+        assert_eq!(
+            pad_mode_for_press(PadMode::SlicerLoop, Some(PadMode::Sampler)),
+            PadMode::SlicerLoop,
+        );
+        assert_eq!(
+            pad_mode_for_press(PadMode::HotCue, Some(PadMode::BeatJump)),
+            PadMode::BeatJump,
+        );
+        assert_eq!(pad_mode_for_press(PadMode::Slicer, None), PadMode::Slicer);
     }
 
     #[test]

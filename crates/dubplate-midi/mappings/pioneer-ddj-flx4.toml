@@ -130,7 +130,8 @@ buttons = [
   { button = { load = "b" }, message = "96 47" },
   { button = { load = "b" }, message = "96 7A", layer = "shift" },
 
-  # 5-1 to 5-4 pad mode buttons. With SHIFT each selects the mode printed under it.
+  # 5-1 to 5-4 pad mode buttons. With SHIFT each selects the mode printed under it. All eight
+  # combinations are taken, so the slicer pad modes have no button here.
   { button = { pad-mode = { deck = "a", mode = "hot-cue" } }, message = "90 1B", light = true },
   { button = { pad-mode = { deck = "a", mode = "keyboard" } }, message = "90 69", layer = "shift", light = true },
   { button = { pad-mode = { deck = "a", mode = "pad-fx-1" } }, message = "90 1E", light = true },

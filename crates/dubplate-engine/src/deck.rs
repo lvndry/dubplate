@@ -192,7 +192,7 @@ impl Deck {
         }
         self.sync.multiple = None;
         if self.beat_grid.is_none() {
-            self.slicer.stop();
+            self.slicer_off(retire);
         }
     }
 

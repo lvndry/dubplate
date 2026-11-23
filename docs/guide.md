@@ -137,8 +137,11 @@ SHIFT never turns pages of pads on the FLX4; it gives each pad a second job, as 
 | Pad FX 1 (SHIFT + PAD FX1: Pad FX 2) | Pad FX 1 to 8 (Pad FX 2: 17 to 24) | Pad FX 9 to 16 (Pad FX 2: 25 to 32) |
 | Beat Jump (SHIFT + BEAT JUMP: Beat Loop) | Jump 1, 2, 4 and 8 beats back and forward | Pads 7 and 8 make the jumps shorter and longer |
 | Sampler (SHIFT + SAMPLER: Key Shift) | Play slots 1 to 8 (deck B: 9 to 16) | Stop the slot, or load the selected track into an empty one |
+| Slicer, Slicer Loop (on screen) | Hold pads 1 to 8 to jump to their slices | Hold pads 1 to 4 for 1/8, 1/16, 1/32 and 1/64 rolls of the current slice |
 | Keyboard, Key Shift | Pitch from ±0 to +7 semitones | Pads 7 and 8 move the range up and down a semitone |
 | Beat Loop | Loops of 1/4 to 32 beats | Stems, Dubplate's own: vocals, melody, bass and drums in or out, acapella, instrumental, groove, every stem (rekordbox maps nothing here) |
+
+**Slicer.** With a beat grid on the deck, choose **Slicer** to move through the track in groups of eight slices, or **Slicer loop** to repeat the current group. Set its length with the Beats buttons (4, 8, 16, 32 or 64 beats). The scrolling waveform outlines the group and highlights the playing slice. Release a pad to return to where the deck would be. Press D on deck A or Shift+D on deck B to cycle Slicer, Slicer Loop and Hot Cue. The FLX4 pads follow the on-screen slicer until you choose a pad mode on the controller. On the keyboard, press a slice pad key again to release it.
 
 In the Pad FX modes a row above the pads names the layer showing, **Pads 1-8** or **SHIFT 9-16**, lit in the deck's colour. Click the other one to show and play that layer with the mouse; hold SHIFT on the FLX4 and it switches while you hold it.
 

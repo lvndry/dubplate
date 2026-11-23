@@ -644,3 +644,50 @@ fn a_pad_released_with_a_real_note_off_decodes_like_its_note_on_release() {
         NORMAL,
     );
 }
+
+#[test]
+fn every_shift_and_pad_mode_combination_is_taken_so_the_slicer_has_no_button() {
+    let mapping = mapping();
+    for deck in DECKS {
+        let mut notes = HashSet::new();
+        for mode in [
+            PadMode::HotCue,
+            PadMode::PadFx1,
+            PadMode::BeatJump,
+            PadMode::Sampler,
+            PadMode::Keyboard,
+            PadMode::PadFx2,
+            PadMode::BeatLoop,
+            PadMode::KeyShift,
+        ] {
+            for layer in [NORMAL, SHIFT] {
+                let bytes = mapping.encode(Feedback::Light {
+                    button: Button::PadMode { deck, mode },
+                    layer,
+                    on: true,
+                });
+                if let Some(bytes) = bytes {
+                    notes.insert((bytes[0], bytes[1]));
+                }
+            }
+        }
+        assert_eq!(
+            notes.len(),
+            8,
+            "the four mode buttons and their SHIFT modes"
+        );
+        for mode in [PadMode::Slicer, PadMode::SlicerLoop] {
+            for layer in [NORMAL, SHIFT] {
+                assert_eq!(
+                    mapping.encode(Feedback::Light {
+                        button: Button::PadMode { deck, mode },
+                        layer,
+                        on: true,
+                    }),
+                    None,
+                    "{mode} has no FLX4 button"
+                );
+            }
+        }
+    }
+}
