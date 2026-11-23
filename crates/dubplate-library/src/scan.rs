@@ -3,10 +3,12 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::SystemTime;
 
 use lofty::prelude::{Accessor, AudioFile, ItemKey, TaggedFileExt};
 use serde::{Deserialize, Serialize};
+
+use crate::own_files::unix_millis;
 
 /// The file types Dubplate plays, by extension.
 pub const AUDIO_EXTENSIONS: [&str; 9] = [
@@ -185,7 +187,7 @@ pub fn scan_folder(
         folder: folder.to_path_buf(),
         tracks,
         problems,
-        scanned_at_ms: milliseconds_since_epoch(SystemTime::now()),
+        scanned_at_ms: unix_millis(SystemTime::now()),
     })
 }
 
@@ -228,12 +230,6 @@ fn problem(path: &Path, error: &dyn std::fmt::Display) -> ScanProblem {
     }
 }
 
-fn milliseconds_since_epoch(time: SystemTime) -> u64 {
-    time.duration_since(UNIX_EPOCH)
-        .map(|since| u64::try_from(since.as_millis()).unwrap_or(u64::MAX))
-        .unwrap_or_default()
-}
-
 /// The track at `path`, reusing what `known` read when the file has not changed.
 pub(crate) fn read_track(
     path: &Path,
@@ -245,10 +241,7 @@ pub(crate) fn read_track(
         return Err("not a regular file".to_owned());
     }
     let size = metadata.len();
-    let modified_ms = metadata
-        .modified()
-        .map(milliseconds_since_epoch)
-        .unwrap_or_default();
+    let modified_ms = metadata.modified().map(unix_millis).unwrap_or_default();
     if let Some(track) = known.get(path.as_path())
         && track.size == size
         && track.modified_ms == modified_ms

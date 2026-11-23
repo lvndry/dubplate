@@ -26,8 +26,6 @@ const SETTING_FILES: [&str; 4] = [
     "MYSETTING2.DAT",
     "DJMMYSETTING.DAT",
 ];
-/// Folder names that mark a path as belonging to rekordbox on this computer.
-const REKORDBOX_FOLDER_NAMES: [&str; 2] = ["Pioneer", "rekordbox"];
 
 /// The root of the stick or folder an export goes to.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,7 +57,7 @@ impl Stick {
         let canonical = root.canonicalize().map_err(UsbExportError::io(root))?;
         if [root, canonical.as_path()]
             .into_iter()
-            .any(is_inside_rekordbox_folder)
+            .any(dubplate_library::is_inside_rekordbox)
         {
             return Err(UsbExportError::InsideRekordbox(root.to_path_buf()));
         }
@@ -188,19 +186,6 @@ fn foreign_entries(pioneer: &Path) -> Result<Vec<String>, UsbExportError> {
     }
     found.sort();
     Ok(found)
-}
-
-/// Whether any folder in `path` is named like one of rekordbox's, `Pioneer` or `rekordbox`.
-pub fn is_inside_rekordbox_folder(path: &Path) -> bool {
-    path.components().any(|component| {
-        matches!(
-            component,
-            std::path::Component::Normal(name)
-                if REKORDBOX_FOLDER_NAMES
-                    .iter()
-                    .any(|known| name.eq_ignore_ascii_case(known))
-        )
-    })
 }
 
 /// Dubplate's record of the files it wrote to a stick, kept at `PIONEER/dubplate-export.json`.
