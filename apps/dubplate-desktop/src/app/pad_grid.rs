@@ -1,13 +1,14 @@
 //! A deck's pad section: the four pad mode buttons with their SHIFT modes, the loop buttons, and
 //! the eight pads labelled for the mode they are in.
 
-use dubplate_engine::DeckId;
+use dubplate_engine::{BANK_SLOTS, DeckId, SAMPLER_BANKS};
 use dubplate_midi::PadMode;
 use dubplate_rekordbox::{HotCue, HotCuePad};
+use gpui::component::menu::ContextMenuExt;
 use gpui::prelude::*;
 use gpui::{ClickEvent, Context, FontWeight, MouseButton, Pixels, Rgba, SharedString, div, px};
 
-use super::sampler::{SampleOption, sampler_slot};
+use super::sampler::{SampleOption, built_in_sample_choices, sampler_slot};
 use super::stems::stem_pad_action;
 use super::{DubplateApp, knob};
 use crate::collection::clock;
@@ -22,6 +23,7 @@ use crate::pads::{
     SHORTER_JUMPS_PAD, beat_jump_beats, beats_label, key_pad_semitones, mode_buttons, mode_label,
     semitones_label,
 };
+use crate::shortcuts::Perform;
 use crate::theme;
 use crate::widgets::{InteractiveControl, shift_activation};
 
@@ -65,6 +67,9 @@ pub(super) fn render(
                     }
                 }),
         )
+        .when(app.pad_modes[deck.index()] == PadMode::Sampler, |section| {
+            section.child(sampler_banks(app, deck, cx))
+        })
         .when_some(
             PadFxLayer::of(app.pad_modes[deck.index()], app.pads_shifted(deck)),
             |section, layer| section.child(pad_fx_layers(app, deck, layer, cx)),
@@ -273,6 +278,39 @@ fn mode_tabs(
         )
 }
 
+fn sampler_banks(
+    app: &DubplateApp,
+    deck: DeckId,
+    cx: &mut Context<'_, DubplateApp>,
+) -> impl IntoElement + use<> {
+    let bank = app.settings.sampler.bank.min(SAMPLER_BANKS - 1);
+    div()
+        .flex()
+        .items_center()
+        .gap(px(4.0))
+        .text_size(theme::SMALL_TEXT_SIZE)
+        .child("Bank")
+        .children((0..SAMPLER_BANKS).map(|index| {
+            div()
+                .id(("sample-bank", deck.index() * SAMPLER_BANKS + index))
+                .accessible_toggle(format!("Sampler bank {}", index + 1), index == bank)
+                .flex()
+                .items_center()
+                .h(TAB_HEIGHT)
+                .px(px(6.0))
+                .rounded(theme::SMALL_RADIUS)
+                .cursor_pointer()
+                .when(index == bank, |button| button.bg(theme::active().raised))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.settings.sampler.bank = index;
+                    this.save_settings(cx);
+                    this.update_lights();
+                    cx.notify();
+                }))
+                .child((index + 1).to_string())
+        }))
+}
+
 /// In Sampler mode: Loop, Gate and Sync for the slot last pressed, the sampler's CUE and its
 /// volume.
 fn sampler_controls(
@@ -433,8 +471,9 @@ fn pads(
     deck: DeckId,
     cx: &mut Context<'_, DubplateApp>,
 ) -> impl IntoElement + use<> {
-    let loaded =
-        app.deck(deck).visuals().is_some() || app.pad_modes[deck.index()] == PadMode::Sampler;
+    let sampler = app.pad_modes[deck.index()] == PadMode::Sampler;
+    let bank = app.settings.sampler.bank;
+    let loaded = app.deck(deck).visuals().is_some() || sampler;
     let slicer = crate::pads::is_slicer_mode(app.pad_modes[deck.index()]);
     let faces = faces(app, deck);
     let held: [bool; PAD_COUNT] =
@@ -446,7 +485,7 @@ fn pads(
             let playable = loaded && face.playable;
             let pressed = held[pad]
                 || (slicer && app.held_slices[deck.index()].is_some_and(|(held, _)| held == pad));
-            div()
+            let button = div()
                 .id(("pad", deck.index() * PAD_COUNT + pad))
                 .when(playable, |button| {
                     button.accessible_button(format!(
@@ -538,7 +577,20 @@ fn pads(
                         .text_size(theme::TINY_TEXT_SIZE)
                         .text_color(theme::active().muted)
                         .child(face.detail),
-                )
+                );
+            if sampler {
+                let slot = sampler_slot(bank, deck, pad);
+                let keys = app.focus_handle.clone();
+                button.context_menu(move |menu, _, _| {
+                    built_in_sample_choices(slot)
+                        .into_iter()
+                        .fold(menu.action_context(keys.clone()).label("Load built-in sound"), |menu, (name, command)| {
+                            menu.menu(name, Box::new(Perform(command)))
+                        })
+                }).into_any_element()
+            } else {
+                button.into_any_element()
+            }
         }))
 }
 
@@ -709,7 +761,7 @@ fn faces(app: &DubplateApp, deck: DeckId) -> Vec<PadFace> {
                 }
             }
             PadMode::Sampler => {
-                let slot = sampler_slot(deck, pad);
+                let slot = sampler_slot(app.settings.sampler.bank, deck, pad);
                 let playing = sampler
                     .as_ref()
                     .and_then(|state| state.slots.get(slot).copied().flatten())
@@ -720,14 +772,14 @@ fn faces(app: &DubplateApp, deck: DeckId) -> Vec<PadFace> {
                         detail: if shifted {
                             "stop / load".into()
                         } else {
-                            format!("slot {}", slot + 1).into()
+                            format!("slot {}", slot % BANK_SLOTS + 1).into()
                         },
                         dot: playing.then(|| theme::deck_colour(deck)),
                         lit: playing,
                         playable: true,
                     },
                     None => PadFace {
-                        title: format!("Slot {}", slot + 1).into(),
+                        title: format!("Slot {}", slot % BANK_SLOTS + 1).into(),
                         detail: if shifted { "load" } else { "empty" }.into(),
                         dot: None,
                         lit: false,

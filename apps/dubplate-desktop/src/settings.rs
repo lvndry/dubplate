@@ -323,6 +323,8 @@ pub struct SamplerSetting {
     pub volume: f32,
     /// The loaded slots; the others are empty.
     pub slots: Vec<SampleSlotSetting>,
+    /// The visible bank, 0 for bank 1.
+    pub bank: usize,
 }
 
 impl Default for SamplerSetting {
@@ -330,8 +332,17 @@ impl Default for SamplerSetting {
         Self {
             volume: DEFAULT_SAMPLER_VOLUME,
             slots: Vec::new(),
+            bank: 0,
         }
     }
+}
+
+/// The source of a saved sampler sound. File slots keep their original TOML representation.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum SampleSource {
+    File { path: PathBuf },
+    BuiltIn { sound: String },
 }
 
 /// One sampler slot as the DJ left it.
@@ -339,8 +350,8 @@ impl Default for SamplerSetting {
 pub struct SampleSlotSetting {
     /// The slot, 0 for slot 1.
     pub slot: usize,
-    /// The sample's audio file.
-    pub path: PathBuf,
+    #[serde(flatten)]
+    pub source: SampleSource,
     /// The sample's own tempo, when known, for sync.
     #[serde(default)]
     pub bpm: Option<f64>,
@@ -511,14 +522,29 @@ mod tests {
             cfx_colours: vec!["filter".to_owned(), "noise".to_owned()],
             sampler: SamplerSetting {
                 volume: 0.6,
-                slots: vec![SampleSlotSetting {
-                    slot: 9,
-                    path: PathBuf::from("/Music/Samples/Horn.wav"),
-                    bpm: Some(120.0),
-                    looped: false,
-                    gate: true,
-                    sync: false,
-                }],
+                bank: 1,
+                slots: vec![
+                    SampleSlotSetting {
+                        slot: 9,
+                        source: SampleSource::File {
+                            path: PathBuf::from("/Music/Samples/Horn.wav"),
+                        },
+                        bpm: Some(120.0),
+                        looped: false,
+                        gate: true,
+                        sync: false,
+                    },
+                    SampleSlotSetting {
+                        slot: 25,
+                        source: SampleSource::BuiltIn {
+                            sound: "siren".to_owned(),
+                        },
+                        bpm: Some(120.0),
+                        looped: true,
+                        gate: false,
+                        sync: true,
+                    },
+                ],
             },
             pad_fx: {
                 let mut banks =
@@ -723,9 +749,12 @@ mod tests {
         );
         assert!((settings.sampler.volume - 0.8).abs() < 1e-6);
         assert_eq!(settings.sampler.slots.len(), 1);
+        assert_eq!(settings.sampler.bank, 0);
         assert_eq!(
-            settings.sampler.slots[0].path,
-            PathBuf::from("/Samples/Bass drop.wav")
+            settings.sampler.slots[0].source,
+            SampleSource::File {
+                path: PathBuf::from("/Samples/Bass drop.wav")
+            }
         );
     }
 }

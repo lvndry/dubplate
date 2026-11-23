@@ -138,6 +138,12 @@ impl DubplateApp {
     /// Routes a pad press to the deck’s current mode or the mode in a controller note.
     pub(super) fn press_pad(&mut self, press: PadPress, cx: &mut Context<'_, Self>) {
         let deck = press.deck;
+        if press.press == Press::Up
+            && press.mode.is_some()
+            && self.release_sampler_pad(deck, press.pad, cx)
+        {
+            return;
+        }
         let index = deck.index();
         if press.press != Press::Up {
             let chosen = crate::pads::pad_mode_for_press(self.pad_modes[index], press.mode);
@@ -510,9 +516,12 @@ impl DubplateApp {
         if self.pad_modes[deck.index()] == PadMode::Sampler {
             let slots = self.sampler_state().map(|state| state.slots);
             for (pad, lit) in pads.iter_mut().enumerate() {
-                let slot = slots
-                    .as_ref()
-                    .and_then(|slots| slots.get(sampler_slot(deck, pad)).copied().flatten());
+                let slot = slots.as_ref().and_then(|slots| {
+                    slots
+                        .get(sampler_slot(self.settings.sampler.bank, deck, pad))
+                        .copied()
+                        .flatten()
+                });
                 *lit = slot.is_some_and(|slot| !slot.playing || blink);
             }
         } else if side.visuals().is_some() {
