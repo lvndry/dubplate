@@ -185,3 +185,18 @@ h1 em { color: var(--leaf); }
 .sample-bank button { font: inherit; background: transparent; color: var(--leaf); border: 1px solid var(--leaf); border-radius: 3px; padding: 8px 12px; margin: 0 4px 6px 0; cursor: pointer; }
 .sample-bank button::before { content: "▸"; margin-right: 6px; }
 .sample-bank button:hover, .sample-bank button.sounding { background: var(--leaf); color: var(--paper); }
+
+.groove-entrance {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 14px;
+  background: var(--sheet);
+  color: var(--signal);
+}
+.groove-entrance svg { width: 108px; height: 108px; }
+.groove-entrance span { color: var(--chart-text); font: 660 32px/1.25 var(--sans); letter-spacing: -.07em; }
+@media (prefers-reduced-motion: reduce) { .groove-entrance { display: none; } }
