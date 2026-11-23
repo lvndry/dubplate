@@ -1228,6 +1228,9 @@ impl DubplateApp {
                 .update(cx, |browser, cx| browser.switch_pane(cx)),
             Command::Jog(deck, motion, ticks) => {
                 if self.deck(deck).visuals().is_some() {
+                    if motion == JogMotion::Nudge {
+                        self.decks[deck.index()].nudged_at = Some(Instant::now());
+                    }
                     self.engine_command(cx, |controller| match motion {
                         JogMotion::Scratch => controller.jog_scratch(deck, ticks),
                         JogMotion::Nudge => controller.jog_nudge(deck, ticks),
