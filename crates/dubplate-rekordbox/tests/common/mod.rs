@@ -40,6 +40,11 @@ pub fn build_library(directory: &Path) -> PathBuf {
               NULL, '{STAMP}', '{STAMP}'),
              ('t3', 'Deleted Track', 'a1', 'k1', 12000, 300, '/Music/gone.wav', -1, 0, 1,
               NULL, '{STAMP}', '{STAMP}');
+         INSERT INTO djmdMixerParam
+             (ID, ContentID, GainHigh, GainLow, PeakHigh, PeakLow, rb_local_deleted,
+              created_at, updated_at) VALUES
+             ('m1', 't1', 16268, 52429, 16256, 0, 0, '{STAMP}', '{STAMP}'),
+             ('m2', 't2', 16128, 0, 16256, 0, 1, '{STAMP}', '{STAMP}');
          INSERT INTO djmdCue
              (ID, ContentID, Kind, InMsec, OutMsec, Color, ColorTableIndex, Comment,
               rb_local_deleted, created_at, updated_at) VALUES
