@@ -459,3 +459,216 @@ fn reads_real_rekordbox_exports() {
     }
     assert!(checked > 0, "no export.pdb found");
 }
+
+#[test]
+fn an_append_keeps_unmodeled_pages_and_fields_at_their_original_offsets() {
+    const PAGE: usize = 4096;
+    let mut base = small_library();
+    base.record_history("HISTORY 001", &[id(TrackId::new, 1)])
+        .unwrap();
+    let mut input = base.to_export_pdb().unwrap();
+    let database = DatabaseFile::parse(&input).unwrap();
+    let tracks = database.table(TableKind::Tracks.type_number()).unwrap();
+    let track_page = tracks.last_page.0 as usize * PAGE;
+    // This track field is not modeled or recovered by the parser.
+    input[track_page + 0x28 + 0x56] ^= 0x07;
+    // Treat table 17 as an unknown table type, with the same opaque rows and pages.
+    let unknown = database.table(TableKind::Unknown17.type_number()).unwrap();
+    let unknown_number = 87_u32.to_le_bytes();
+    let table_entry = 0x1c + 17 * 16;
+    input[table_entry..table_entry + 4].copy_from_slice(&unknown_number);
+    for page in &unknown.pages {
+        let page_type = page.index.0 as usize * PAGE + 8;
+        input[page_type..page_type + 4].copy_from_slice(&unknown_number);
+    }
+    let mut edited = DeviceLibrary::parse_export_pdb(&input).unwrap();
+    for number in 3..60 {
+        edited.tracks.push(track(
+            number,
+            &format!("New song {number}"),
+            &format!("/Contents/Artist/Album/song-{number}.mp3"),
+        ));
+    }
+    edited.playlists.push(PlaylistNode {
+        id: id(PlaylistId::new, 3),
+        parent: None,
+        sort_order: 1,
+        is_folder: false,
+        name: "New set".to_owned(),
+    });
+    edited.playlist_entries.push(PlaylistEntry {
+        entry_index: 1,
+        track: id(TrackId::new, 59),
+        playlist: id(PlaylistId::new, 3),
+    });
+    let updated = edited.append_to_export_pdb(input.clone()).unwrap();
+    assert_eq!(DeviceLibrary::parse_export_pdb(&updated).unwrap(), edited);
+    let result = DatabaseFile::parse(&updated).unwrap();
+    assert_eq!(result.table(87).unwrap().rows, unknown.rows);
+    assert!(result.table(0).unwrap().pages.len() > tracks.pages.len() + 1);
+    for page in database.tables.iter().flat_map(|table| &table.pages) {
+        let start = page.index.0 as usize * PAGE;
+        assert_eq!(
+            updated[start..start + PAGE],
+            input[start..start + PAGE],
+            "existing page {}",
+            page.index,
+        );
+    }
+}
+
+#[test]
+fn an_append_refuses_to_replace_existing_rows_or_nonempty_reserved_pages() {
+    const PAGE: usize = 4096;
+    let original = small_library().to_export_pdb().unwrap();
+    let mut changed = DeviceLibrary::parse_export_pdb(&original).unwrap();
+    changed.tracks[0].title.push_str(" [retagged]");
+    assert!(matches!(
+        changed.append_to_export_pdb(original.clone()),
+        Err(DeviceLibraryError::UnsupportedAppend(_))
+    ));
+
+    let mut reserved = original;
+    let database = DatabaseFile::parse(&reserved).unwrap();
+    let candidate = database.table(0).unwrap().empty_candidate.0 as usize;
+    reserved.resize(reserved.len().max((candidate + 1) * PAGE), 0);
+    reserved[candidate * PAGE + 50] = 0x42;
+    let mut changed = DeviceLibrary::parse_export_pdb(&reserved).unwrap();
+    changed
+        .tracks
+        .push(track(3, "New song", "/Contents/new.mp3"));
+    let result = changed.append_to_export_pdb(reserved);
+    assert!(
+        matches!(result, Err(DeviceLibraryError::UnsupportedAppend(ref message))
+            if message.contains("reserved page contains existing data")),
+        "{result:?}"
+    );
+}
+
+#[test]
+#[ignore = "needs a disposable copy of a rekordbox-written export.pdb"]
+fn appends_tracks_to_a_rekordbox_database_in_memory() {
+    let Some(fixture) = std::env::var_os("DUBPLATE_REKORDBOX_APPEND_SAMPLE") else {
+        return;
+    };
+    let original = std::fs::read(&fixture).unwrap();
+    let before = DeviceLibrary::parse_export_pdb(&original).unwrap();
+    let mut updated = before.clone();
+    let next_id = before.tracks.iter().map(|row| row.id.get()).max().unwrap() + 1;
+    let mut new_track = track(next_id, "Fixture track", "/Contents/fixture.mp3");
+    let artist = id(
+        ArtistId::new,
+        before
+            .artists
+            .iter()
+            .map(|row| row.id.get())
+            .max()
+            .unwrap_or(0)
+            + 1,
+    );
+    updated.artists.push(Named {
+        id: artist,
+        name: "Fixture artist".to_owned(),
+    });
+    let album = id(
+        AlbumId::new,
+        before
+            .albums
+            .iter()
+            .map(|row| row.id.get())
+            .max()
+            .unwrap_or(0)
+            + 1,
+    );
+    updated.albums.push(Album {
+        id: album,
+        artist: Some(artist),
+        name: "Fixture album".to_owned(),
+    });
+    new_track.artist = Some(artist);
+    new_track.album = Some(album);
+    updated.tracks.push(new_track);
+    let next_playlist = before
+        .playlists
+        .iter()
+        .map(|row| row.id.get())
+        .max()
+        .unwrap_or(0)
+        + 1;
+    let next_sort_order = before
+        .playlists
+        .iter()
+        .filter(|row| row.parent.is_none())
+        .map(|row| row.sort_order + 1)
+        .max()
+        .unwrap_or(0);
+    updated.playlists.push(PlaylistNode {
+        id: id(PlaylistId::new, next_playlist),
+        parent: None,
+        sort_order: next_sort_order,
+        is_folder: false,
+        name: "Fixture playlist".to_owned(),
+    });
+    updated.playlist_entries.push(PlaylistEntry {
+        entry_index: 1,
+        track: id(TrackId::new, next_id),
+        playlist: id(PlaylistId::new, next_playlist),
+    });
+    let bytes = updated.append_to_export_pdb(original.clone()).unwrap();
+    assert_eq!(DeviceLibrary::parse_export_pdb(&bytes).unwrap(), updated);
+    assert_eq!(std::fs::read(&fixture).unwrap(), original);
+}
+
+#[test]
+fn an_append_does_not_reuse_a_deleted_track_id() {
+    const PAGE: usize = 4096;
+    let mut base = small_library();
+    // Remove the playlist dependency so the deleted row has no live reference.
+    base.playlist_entries.pop();
+    let mut input = base.to_export_pdb().unwrap();
+    let database = DatabaseFile::parse(&input).unwrap();
+    let page = database.table(0).unwrap().last_page.0 as usize * PAGE;
+    // Clear the second row's presence bit while retaining its allocation and ID.
+    input[page + PAGE - 4] &= !0x02;
+    let mut updated = DeviceLibrary::parse_export_pdb(&input).unwrap();
+    assert_eq!(updated.tracks.len(), 1);
+    updated
+        .tracks
+        .push(track(2, "New song", "/Contents/new.mp3"));
+    let result = updated.append_to_export_pdb(input);
+    assert!(
+        matches!(result, Err(DeviceLibraryError::UnsupportedAppend(ref message))
+            if message.contains("reuse a deleted ID")),
+        "{result:?}"
+    );
+}
+
+#[test]
+fn an_append_allocates_the_first_data_page_of_an_empty_lookup_table() {
+    const PAGE: usize = 4096;
+    let mut base = small_library();
+    base.labels.clear();
+    for track in &mut base.tracks {
+        track.label = None;
+    }
+    let original = base.to_export_pdb().unwrap();
+    let old = DatabaseFile::parse(&original).unwrap();
+    let label_table = old.table(TableKind::Labels.type_number()).unwrap();
+    let mut updated = DeviceLibrary::parse_export_pdb(&original).unwrap();
+    updated.labels.push(Named {
+        id: id(LabelId::new, 1),
+        name: "New label".to_owned(),
+    });
+    let bytes = updated.append_to_export_pdb(original).unwrap();
+    let new = DatabaseFile::parse(&bytes).unwrap();
+    let new_label_table = new.table(label_table.type_number).unwrap();
+    assert_eq!(new_label_table.last_page, label_table.empty_candidate);
+    let pointer = label_table.first_page.0 as usize * PAGE + 0x2c;
+    assert_eq!(
+        bytes[pointer..pointer + 4],
+        label_table.empty_candidate.0.to_le_bytes()
+    );
+    let page = new_label_table.last_page.0 as usize * PAGE;
+    assert_eq!(bytes[page + 0x20..page + 0x24], [1, 0, 0, 0]);
+    assert_eq!(bytes[page + PAGE - 4..page + PAGE], [1, 0, 1, 0]);
+}

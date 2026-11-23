@@ -384,3 +384,60 @@ fn players_setting_files_alone_do_not_make_a_library() {
         b"settings"
     );
 }
+
+#[test]
+fn a_onelibrary_file_blocks_writes_even_with_a_dubplate_manifest() {
+    for (marker, keep_manifest) in [
+        ("exportLibrary.db", true),
+        ("EXPORTLIBRARY.DB-WAL", true),
+        ("exportLibrary.db", false),
+    ] {
+        let scratch = scratch();
+        export_to_usb(
+            &scratch.stick,
+            &[set(&scratch)],
+            date(2026, 11, 22),
+            &mut |_| {},
+        )
+        .unwrap();
+        if !keep_manifest {
+            std::fs::remove_file(scratch.stick.join("PIONEER/dubplate-export.json")).unwrap();
+        }
+        let rekordbox = scratch.stick.join("PIONEER/rekordbox");
+        std::fs::write(rekordbox.join(marker), b"OneLibrary data").unwrap();
+        let before = snapshot(&scratch.stick);
+        let result = export_to_usb(
+            &scratch.stick,
+            &[set(&scratch)],
+            date(2026, 11, 23),
+            &mut |_| panic!("an incompatible stick must be rejected before export starts"),
+        );
+        assert!(matches!(
+            result,
+            Err(UsbExportError::OneLibrary { found, .. }) if found == marker
+        ));
+        assert_eq!(snapshot(&scratch.stick), before);
+    }
+}
+
+#[test]
+fn a_readable_classic_library_without_a_manifest_is_still_protected() {
+    let scratch = scratch();
+    export_to_usb(
+        &scratch.stick,
+        &[set(&scratch)],
+        date(2026, 11, 22),
+        &mut |_| {},
+    )
+    .unwrap();
+    std::fs::remove_file(scratch.stick.join("PIONEER/dubplate-export.json")).unwrap();
+    let before = snapshot(&scratch.stick);
+    let result = export_to_usb(
+        &scratch.stick,
+        &[set(&scratch)],
+        date(2026, 11, 23),
+        &mut |_| panic!("a foreign classic stick must be rejected before export starts"),
+    );
+    assert!(matches!(result, Err(UsbExportError::ForeignLibrary { .. })));
+    assert_eq!(snapshot(&scratch.stick), before);
+}

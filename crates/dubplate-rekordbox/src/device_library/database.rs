@@ -4,7 +4,7 @@
 
 use std::collections::HashSet;
 
-use super::error::DeviceLibraryError;
+use super::{TableKind, error::DeviceLibraryError};
 
 /// The page size of every export rekordbox writes.
 pub(crate) const PAGE_SIZE: usize = 4096;
@@ -182,7 +182,7 @@ pub(crate) fn write_database(tables: &[TableRows]) -> Result<Vec<u8>, DeviceLibr
                 sequence,
                 rows,
             };
-            page.write(page_mut(&mut file, *page_index));
+            page.write(page_mut(&mut file, *page_index), false);
         }
     }
 
@@ -211,6 +211,175 @@ pub(crate) fn write_database(tables: &[TableRows]) -> Result<Vec<u8>, DeviceLibr
     Ok(file)
 }
 
+/// Allocates data pages from the existing tables' reserved candidates. Existing rows, deleted
+/// slots and opaque pages stay at their original offsets. Only the directory fields that link
+/// the additions and a previously empty index's first-data pointer are changed.
+pub(crate) fn append_database(
+    mut file: Vec<u8>,
+    additions: &[TableRows],
+) -> Result<Vec<u8>, DeviceLibraryError> {
+    if additions.iter().all(|table| table.rows.is_empty()) {
+        return Ok(file);
+    }
+    let unsupported = |reason: &str| DeviceLibraryError::UnsupportedAppend(reason.to_owned());
+    let database = DatabaseFile::parse(&file)?;
+    if database.page_size as usize != PAGE_SIZE
+        || !file.len().is_multiple_of(PAGE_SIZE)
+        || FILE_HEADER_LENGTH + TABLE_ENTRY_LENGTH * database.tables.len() > PAGE_SIZE
+    {
+        return Err(unsupported("the file header or page size is unfamiliar"));
+    }
+    let next = database.next_unused_page.0 as usize;
+    let page_count = file.len() / PAGE_SIZE;
+    if next < page_count || next > page_count + database.tables.len() {
+        return Err(unsupported(
+            "the next free page is outside the allocation range",
+        ));
+    }
+    let mut owned_pages = HashSet::new();
+    let mut candidates = HashSet::new();
+    let mut table_types = HashSet::new();
+    for table in &database.tables {
+        let candidate = table.empty_candidate;
+        if !table_types.insert(table.type_number)
+            || candidate.0 <= table.last_page.0
+            || candidate.0 >= database.next_unused_page.0
+            || !candidates.insert(candidate)
+            || table
+                .pages
+                .last()
+                .is_none_or(|page| page.next_page != candidate)
+        {
+            return Err(unsupported("a table has an invalid reserved page"));
+        }
+        for (index, page) in table.pages.iter().enumerate() {
+            let offset = page.index.byte_offset(PAGE_SIZE);
+            if page.index.0 == 0
+                || !owned_pages.insert(page.index)
+                || get_u32(&file, offset + 4) != Some(page.index.0)
+                || page.type_number != table.type_number
+                || (index == 0) != (page.page_type == PageType::Index)
+            {
+                return Err(unsupported("a table's page chain is unfamiliar"));
+            }
+        }
+    }
+    if !owned_pages.is_disjoint(&candidates) {
+        return Err(unsupported("a reserved page is already in use"));
+    }
+
+    let mut next = database.next_unused_page.0;
+    for table in additions.iter().filter(|table| !table.rows.is_empty()) {
+        let (position, old) = database
+            .tables
+            .iter()
+            .enumerate()
+            .find(|(_, old)| old.type_number == table.type_number)
+            .ok_or_else(|| unsupported("the file lacks a table needed for the new rows"))?;
+        check_deleted_ids(&file, old, &table.rows)?;
+        let mut page_index = old.empty_candidate;
+        let candidate_offset = page_index.byte_offset(PAGE_SIZE);
+        if file
+            .get(candidate_offset..candidate_offset + PAGE_SIZE)
+            .is_some_and(|page| page.iter().any(|&byte| byte != 0))
+        {
+            return Err(unsupported("a reserved page contains existing data"));
+        }
+        if old.first_page == old.last_page {
+            let pointer = old.first_page.byte_offset(PAGE_SIZE) + PAGE_HEADER_LENGTH + 4;
+            match get_u32(&file, pointer) {
+                Some(NO_PAGE) => put_u32(&mut file, pointer, page_index.0),
+                Some(existing) if existing == page_index.0 => {}
+                _ => {
+                    return Err(unsupported(
+                        "an empty table's index has an unfamiliar layout",
+                    ));
+                }
+            }
+        }
+        let generation = old
+            .pages
+            .iter()
+            .map(|page| page.sequence)
+            .max()
+            .unwrap_or(0)
+            .checked_add(1)
+            .ok_or_else(|| unsupported("a table's write sequence is exhausted"))?;
+        let entry = FILE_HEADER_LENGTH + position * TABLE_ENTRY_LENGTH;
+        for rows in place_rows(table)? {
+            let end = page_index.byte_offset(PAGE_SIZE) + PAGE_SIZE;
+            if file.len() < end {
+                file.resize(end, 0);
+            }
+            let page = DataPage {
+                index: page_index,
+                type_number: table.type_number,
+                next: PageIndex(next),
+                sequence: generation,
+                rows: &rows,
+            };
+            page.write(page_mut(&mut file, page_index), true);
+            put_u32(&mut file, entry + 12, page_index.0);
+            page_index = PageIndex(next);
+            next = next
+                .checked_add(1)
+                .ok_or(DeviceLibraryError::TooManyPages)?;
+        }
+        put_u32(&mut file, entry + 4, page_index.0);
+    }
+    let sequence = database
+        .sequence
+        .checked_add(1)
+        .ok_or_else(|| unsupported("the file's write sequence is exhausted"))?;
+    put_u32(&mut file, 0x0c, next);
+    put_u32(&mut file, 0x14, sequence);
+    Ok(file)
+}
+
+/// Reusing a deleted ID can reconnect an existing record that still refers to it.
+fn check_deleted_ids(
+    file: &[u8],
+    table: &TableSummary,
+    rows: &[EncodedRow],
+) -> Result<(), DeviceLibraryError> {
+    let id_offset = match TableKind::from_type_number(table.type_number) {
+        Some(TableKind::Tracks) => 0x48,
+        Some(TableKind::Artists) => 4,
+        Some(TableKind::Albums | TableKind::PlaylistTree) => 12,
+        Some(TableKind::Genres | TableKind::Keys | TableKind::Labels) => 0,
+        _ => return Ok(()),
+    };
+    let added: HashSet<u32> = rows
+        .iter()
+        .filter_map(|row| get_u32(&row.bytes, id_offset))
+        .collect();
+    for page in table
+        .pages
+        .iter()
+        .filter(|page| page.page_type == PageType::Data)
+    {
+        let start = page.index.byte_offset(PAGE_SIZE);
+        let bytes = &file[start..start + PAGE_SIZE];
+        let slots = row_slots(bytes, usize::from(page.slot_count));
+        for &(offset, present) in &slots {
+            if present {
+                continue;
+            }
+            let end = next_row_or_heap_end(&slots, offset, page.used_size);
+            let deleted_id = bytes
+                .get(offset..end)
+                .and_then(|row| get_u32(row, id_offset));
+            if deleted_id.is_some_and(|id| added.contains(&id)) {
+                return Err(DeviceLibraryError::UnsupportedAppend(format!(
+                    "a new row would reuse a deleted ID in table {}",
+                    table.type_number
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
 struct TableLayout<'rows> {
     index_page: PageIndex,
     data_pages: Vec<PageIndex>,
@@ -232,8 +401,8 @@ fn place_rows(table: &TableRows) -> Result<Vec<Vec<&EncodedRow>>, DeviceLibraryE
     for row in &table.rows {
         if !fits(row.allocation, 1) {
             return Err(DeviceLibraryError::RowTooLarge {
-                table: super::TableKind::from_type_number(table.type_number)
-                    .unwrap_or(super::TableKind::Unknown9),
+                table: TableKind::from_type_number(table.type_number)
+                    .unwrap_or(TableKind::Unknown9),
                 length: row.bytes.len(),
             });
         }
@@ -264,7 +433,7 @@ struct DataPage<'rows> {
 }
 
 impl DataPage<'_> {
-    fn write(&self, page: &mut [u8]) {
+    fn write(&self, page: &mut [u8], last_row_transaction: bool) {
         let slot_count = self.rows.len();
         let mut heap_offset = 0;
         for (slot, row) in self.rows.iter().enumerate() {
@@ -288,7 +457,13 @@ impl DataPage<'_> {
             };
             let group_base = PAGE_SIZE - group * ROW_GROUP_LENGTH;
             put_u16(page, group_base - 4, mask);
-            put_u16(page, group_base - 2, mask);
+            let last_row = slot_count - 1;
+            let dirty_mask = if last_row_transaction {
+                u16::from(group == last_row / ROWS_PER_GROUP) << (last_row % ROWS_PER_GROUP)
+            } else {
+                mask
+            };
+            put_u16(page, group_base - 2, dirty_mask);
         }
 
         let slots = slot_count as u32;
@@ -303,7 +478,12 @@ impl DataPage<'_> {
         page[0x1b] = DATA_PAGE_FLAGS;
         put_u16(page, 0x1c, free as u16);
         put_u16(page, 0x1e, heap_offset as u16);
-        put_u16(page, 0x20, slot_count as u16);
+        if last_row_transaction {
+            put_u16(page, 0x20, 1);
+            put_u16(page, 0x22, (slot_count - 1) as u16);
+        } else {
+            put_u16(page, 0x20, slot_count as u16);
+        }
     }
 }
 
@@ -553,27 +733,12 @@ fn read_rows(
             "its {slot_count} row slots need more room than the page has"
         )));
     }
-    let heap_end = PAGE_HEADER_LENGTH + usize::from(summary.used_size);
-    let mut slots = Vec::with_capacity(slot_count);
-    for slot in 0..slot_count {
-        let group_base = page_size - (slot / ROWS_PER_GROUP) * ROW_GROUP_LENGTH;
-        let present_mask = get_u16(page, group_base - 4).unwrap_or(0);
-        let offset =
-            HeapOffset(get_u16(page, group_base - 6 - 2 * (slot % ROWS_PER_GROUP)).unwrap_or(0));
-        let present = present_mask >> (slot % ROWS_PER_GROUP) & 1 == 1;
-        slots.push((offset.page_position(), present));
-    }
+    let slots = row_slots(page, slot_count);
     for &(start, present) in &slots {
         if !present {
             continue;
         }
-        let end = slots
-            .iter()
-            .map(|&(other, _)| other)
-            .filter(|&other| other > start)
-            .min()
-            .unwrap_or(heap_end)
-            .min(page_size);
+        let end = next_row_or_heap_end(&slots, start, summary.used_size).min(page_size);
         let row = page
             .get(start..end)
             .filter(|row| !row.is_empty())
@@ -581,6 +746,29 @@ fn read_rows(
         rows.push(row.to_vec());
     }
     Ok(())
+}
+
+fn row_slots(page: &[u8], slot_count: usize) -> Vec<(usize, bool)> {
+    (0..slot_count)
+        .map(|slot| {
+            let group_base = page.len() - (slot / ROWS_PER_GROUP) * ROW_GROUP_LENGTH;
+            let present_mask = get_u16(page, group_base - 4).unwrap_or(0);
+            let offset = HeapOffset(
+                get_u16(page, group_base - 6 - 2 * (slot % ROWS_PER_GROUP)).unwrap_or(0),
+            );
+            let present = present_mask >> (slot % ROWS_PER_GROUP) & 1 == 1;
+            (offset.page_position(), present)
+        })
+        .collect()
+}
+
+fn next_row_or_heap_end(slots: &[(usize, bool)], offset: usize, used_size: u16) -> usize {
+    slots
+        .iter()
+        .map(|&(other, _)| other)
+        .filter(|&other| other > offset)
+        .min()
+        .unwrap_or(PAGE_HEADER_LENGTH + usize::from(used_size))
 }
 
 #[cfg(test)]
