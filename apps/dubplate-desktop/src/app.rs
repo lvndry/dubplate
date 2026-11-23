@@ -63,7 +63,7 @@ use dubplate_engine::{
     EffectTarget, EffectUnitId, EffectUnitState, EngineError, HeadphoneSettings, MasterTempo,
     OutputDevice, SyncMode, TempoRange, TempoState,
 };
-use dubplate_midi::{Feedback, PadMode};
+use dubplate_midi::{FaderStart, Feedback, PadMode};
 use dubplate_prep::{AnalysisQueue, GridCorrection, TrackGrid, TrackIdentity};
 use dubplate_rekordbox::{HotCue, HotCuePad, TrackCues};
 use gpui::component::input::{InputEvent, InputState};
@@ -1179,6 +1179,19 @@ impl DubplateApp {
                 self.save_settings(cx);
                 self.engine_command(cx, |controller| controller.set_fader_echo(on));
             }
+            Command::SetFaderStart(on) => {
+                self.settings.mixer.fader_start = on;
+                self.save_settings(cx);
+            }
+            Command::FaderStart(deck, FaderStart::Play) => {
+                self.engine_command(cx, |controller| controller.play(deck));
+            }
+            Command::FaderStart(deck, FaderStart::Cue) => {
+                self.engine_command(cx, |controller| {
+                    transport::cue_down(controller, deck, |seconds| seconds)?;
+                    Ok(())
+                });
+            }
             Command::SetAutoGain(on) => self.set_auto_gain(on, cx),
             Command::Stems(deck, action) => self.apply_stem_action(deck, action, cx),
             Command::ToggleKeyLock(deck) => {
@@ -1589,6 +1602,8 @@ impl DubplateApp {
                     let surface = Surface {
                         positions: self.shown_positions(),
                         playing: DeckId::ALL.map(|deck| self.deck_state(deck).playing),
+                        loaded: DeckId::ALL.map(|deck| self.deck_state(deck).loaded),
+                        fader_start: self.settings.mixer.fader_start,
                         focused_effect: Some(self.effect_focus),
                     };
                     let command = self.hardware.as_mut().and_then(|hardware| {

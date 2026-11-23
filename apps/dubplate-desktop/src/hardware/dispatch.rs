@@ -25,6 +25,10 @@ pub struct Surface {
     pub positions: MixerPositions,
     /// Whether each deck is playing.
     pub playing: [bool; DECK_COUNT],
+    /// Whether each deck has a track loaded.
+    pub loaded: [bool; DECK_COUNT],
+    /// Whether fader start is on in the settings.
+    pub fader_start: bool,
     /// The effect unit the BEAT FX section drives.
     pub focused_effect: Option<EffectUnitId>,
 }
@@ -244,6 +248,11 @@ impl Dispatcher {
             (Button::Play(deck), Layer::Normal) if pressed => {
                 Some(Command::TogglePlay(deck_id(deck)))
             }
+            (Button::FaderStart { deck, start }, Layer::Shift)
+                if pressed && surface.fader_start && surface.loaded[deck_id(deck).index()] =>
+            {
+                Some(Command::FaderStart(deck_id(deck), start))
+            }
             (Button::Cue(deck), Layer::Normal) => Some(Command::Cue(deck_id(deck), press)),
             (Button::Cue(deck), Layer::Shift) if pressed => {
                 Some(Command::JumpToStart(deck_id(deck)))
@@ -416,7 +425,7 @@ impl Dispatcher {
 mod tests {
     use std::sync::Arc;
 
-    use dubplate_midi::{Decoder, Mapping, PadMode, Ticks, U14};
+    use dubplate_midi::{Decoder, FaderStart, Mapping, PadMode, Ticks, U14};
 
     use super::*;
 
@@ -591,6 +600,59 @@ mod tests {
                 Command::StoreMemoryCue(DeckId::B),
             ],
             "◀ and ▶ call, SHIFT + ▶ stores and SHIFT + ◀ deletes, as in rekordbox's FLX4 layout"
+        );
+    }
+
+    #[test]
+    fn fader_start_plays_and_cues_the_decks_only_when_it_is_on_and_a_track_is_loaded() {
+        let mapping = Mapping::built_in_for_port("DDJ-FLX4")
+            .expect("the built-in mappings parse")
+            .expect("the FLX4 has a built-in mapping");
+        let mut decoder = Decoder::new(Arc::new(mapping));
+        // The FLX4 sends these shifted notes from both the channel faders and the crossfader.
+        let messages: [[u8; 3]; 4] = [
+            [0x90, 0x66, 0x7F],
+            [0x90, 0x52, 0x7F],
+            [0x91, 0x66, 0x7F],
+            [0x91, 0x52, 0x7F],
+        ];
+        let events: Vec<ControlEvent> = messages
+            .iter()
+            .filter_map(|message| decoder.decode(message))
+            .collect();
+
+        let mut dispatcher = Dispatcher::default();
+        let surface = Surface {
+            fader_start: true,
+            loaded: [true; DECK_COUNT],
+            ..Surface::default()
+        };
+        assert_eq!(
+            run(&mut dispatcher, &surface, &events),
+            [
+                Command::FaderStart(DeckId::A, FaderStart::Play),
+                Command::FaderStart(DeckId::A, FaderStart::Cue),
+                Command::FaderStart(DeckId::B, FaderStart::Play),
+                Command::FaderStart(DeckId::B, FaderStart::Cue),
+            ]
+        );
+
+        let off = Surface {
+            fader_start: false,
+            ..surface
+        };
+        assert!(
+            run(&mut dispatcher, &off, &events).is_empty(),
+            "off in the settings"
+        );
+
+        let empty = Surface {
+            loaded: [false; DECK_COUNT],
+            ..surface
+        };
+        assert!(
+            run(&mut dispatcher, &empty, &events).is_empty(),
+            "an empty deck is ignored"
         );
     }
 

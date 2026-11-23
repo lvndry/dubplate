@@ -6,7 +6,7 @@ use dubplate_engine::{
     ChannelFaderCurve, CrossfaderAssign, CrossfaderCurve, DeckId, EffectKind, EffectTarget,
     EffectUnitId, SmartCfx, SmartFaderSource, Stem, StemSettings,
 };
-use dubplate_midi::PadMode;
+use dubplate_midi::{FaderStart, PadMode};
 use dubplate_prep::GridEdit;
 
 use crate::controls::Control;
@@ -252,6 +252,9 @@ pub enum Command {
     TogglePlayOnAir,
     /// The CDJ cue button of a deck.
     Cue(DeckId, Press),
+    /// Fader start: a fader leaving its closed end plays the deck, reaching it cues the deck
+    /// back.
+    FaderStart(DeckId, FaderStart),
     /// Go back to the start of the track, as SHIFT + CUE does.
     JumpToStart(DeckId),
     /// A performance pad, doing what its pad mode says.
@@ -340,6 +343,8 @@ pub enum Command {
     /// Choose whether a channel fader or crossfader closed fast echoes the outgoing deck, from
     /// Settings.
     SetFaderEcho(bool),
+    /// Choose whether fader start plays and cues the decks, as rekordbox's Fader Start.
+    SetFaderStart(bool),
     /// Auto Gain on or off, as rekordbox's Preferences > Controller > Mixer > Auto Gain.
     SetAutoGain(bool),
     /// A stems control of a deck: mute or bring back a stem, or a one-touch mix.

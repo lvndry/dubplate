@@ -172,6 +172,14 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
                     }),
                     cx,
                 ))
+                .child(setting_switch(
+                    "fader-start",
+                    "Fader start",
+                    "A channel fader or the crossfader left from its closed end starts its deck playing; pulled back to the closed end the deck cues and pauses, as rekordbox's Fader Start on the FLX4.",
+                    app.settings.mixer.fader_start,
+                    Command::SetFaderStart(!app.settings.mixer.fader_start),
+                    cx,
+                ))
                 .child(
                     div()
                         .text_size(theme::SMALL_TEXT_SIZE)
