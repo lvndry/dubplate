@@ -13,7 +13,6 @@ use dubplate_prep::{
     SetCheckReport, SetCheckRow, SetCheckTrack, SetEntry, SetWarning, StoreError, check_set,
     suggest_next,
 };
-use dubplate_stems::StemsStatus;
 use gpui::{App, Context, SharedString};
 
 use super::DubplateApp;
@@ -25,7 +24,7 @@ use crate::energy::{EnergyRange, direction_toward_target, set_curve};
 use crate::loading::{LoadSource, check_present};
 use crate::prep::{SeamSummary, TrackCheck, accept_proposal, check_track, nearest_bar_ms};
 use crate::set::{SetEditor, SetTrackRef};
-use crate::stems::stems_cell;
+use crate::stems::{can_separate, stems_cell};
 use crate::track_menu::{RowFacts, RowPlace};
 
 /// How many tracks the Next panel suggests.
@@ -707,10 +706,8 @@ impl DubplateApp {
                     place: RowPlace::Set,
                     file_present,
                     has_path: true,
-                    can_separate: matches!(
-                        self.stems.status(&entry.track_path),
-                        StemsStatus::None | StemsStatus::Failed(_)
-                    ),
+                    can_separate: file_present
+                        && can_separate(self.stems.status(&entry.track_path)),
                 };
                 SetRow {
                     position,

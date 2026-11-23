@@ -41,7 +41,7 @@ use crate::search_filter::{
     SuggestionContext, TrackFacts, complete, suggestions, toggle_hide_played,
 };
 use crate::selection::Selection;
-use crate::stems::{StemStatuses, stems_cell};
+use crate::stems::{StemStatuses, can_separate, stems_cell};
 use crate::theme;
 use crate::track_menu::{self, RowFacts, RowPlace, TrackTags};
 use crate::track_metadata::{TrackMetadataCache, colour_name, rating_description, rating_stars};
@@ -730,6 +730,11 @@ impl Browser {
         } else {
             Actions::RelinkOnly
         }
+    }
+
+    /// Whether the library has marked this track's audio file as missing.
+    pub fn is_track_missing(&self, track: TrackIndex) -> bool {
+        self.missing.contains(&track)
     }
 
     /// The selected track, while the tracks are shown.
@@ -1753,16 +1758,7 @@ impl Browser {
             track,
             title: entry.row.title.clone(),
         };
-        let has_path = entry.track.file_path.is_some();
-        let menu_facts = RowFacts {
-            place: RowPlace::Library,
-            file_present: has_path && !missing,
-            has_path,
-            can_separate: matches!(
-                self.stems_status(entry),
-                StemsStatus::None | StemsStatus::Failed(_)
-            ),
-        };
+        let browser = cx.weak_entity();
         let keys = self.table_focus.clone();
         let playlist_tree = Arc::clone(&self.playlists.tree);
         let menu_tags = TrackTags::new(
@@ -1904,10 +1900,9 @@ impl Browser {
                             Column::Match => cell.children(match_cell.map(MatchCell::render)),
                             Column::Stems => {
                                 let status = self.stems_status(entry);
-                                let separable =
-                                    matches!(status, StemsStatus::None | StemsStatus::Failed(_))
-                                        && entry.track.file_path.is_some()
-                                        && !missing;
+                                let separable = can_separate(status)
+                                    && entry.track.file_path.is_some()
+                                    && !missing;
                                 let pending = status.is_pending();
                                 cell.font_family(MONO_FAMILY)
                                     .text_size(theme::SMALL_TEXT_SIZE)
@@ -1997,6 +1992,20 @@ impl Browser {
                 }),
             )
             .context_menu(move |menu, window, cx| {
+                let Ok(Some(menu_facts)) = browser.read_with(cx, |browser, _| {
+                    let LibraryStatus::Ready(collection) = &browser.library else {
+                        return None;
+                    };
+                    Some(library_track_menu_facts(
+                        collection,
+                        &browser.selection,
+                        &browser.missing,
+                        &browser.stems,
+                        track,
+                    ))
+                }) else {
+                    return menu;
+                };
                 let menu =
                     track_menu::build(menu, menu_facts, Some(&menu_tags), keys.clone(), window, cx);
                 if playlist_tree.playlists().next().is_none() {
@@ -2067,6 +2076,30 @@ impl Browser {
             self.select(Some(track), cx);
         }
         cx.emit(BrowserEvent::TookKeys);
+    }
+}
+
+fn library_track_menu_facts(
+    collection: &Collection,
+    selection: &Selection<TrackIndex>,
+    missing: &HashSet<TrackIndex>,
+    stems: &StemStatuses,
+    track: TrackIndex,
+) -> RowFacts {
+    let has_path = collection.track(track).track.file_path.is_some();
+    RowFacts {
+        place: RowPlace::Library,
+        file_present: has_path && !missing.contains(&track),
+        has_path,
+        can_separate: selection.any_in_context_menu(track, |candidate| {
+            !missing.contains(&candidate)
+                && collection
+                    .track(candidate)
+                    .track
+                    .file_path
+                    .as_ref()
+                    .is_some_and(|path| can_separate(stems.get(path).unwrap_or(&StemsStatus::None)))
+        }),
     }
 }
 
@@ -2679,6 +2712,75 @@ fn message_panel(title: SharedString, detail: Option<SharedString>) -> impl Into
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn separate_stems_is_available_for_a_mixed_selection_opened_on_a_missing_track() {
+        use crate::collection::RekordboxLibrary;
+        use crate::commands::Command;
+        use crate::track_menu::MenuEntry;
+        use dubplate_prep::file_track;
+
+        let queued_path = PathBuf::from("/Music/queued.wav");
+        let collection = Collection::build(
+            Some(&RekordboxLibrary::new(
+                vec![
+                    file_track(Path::new("/Music/missing.wav")),
+                    file_track(Path::new("/Music/eligible.wav")),
+                    file_track(&queued_path),
+                ],
+                Vec::new(),
+                Vec::new(),
+                Path::new("/"),
+            )),
+            &[],
+        );
+        let rows: Vec<_> = collection
+            .indexed_tracks()
+            .map(|(index, _)| index)
+            .collect();
+        let [missing_track, eligible_track, queued_track] = rows[..] else {
+            panic!("expected three tracks");
+        };
+        let missing = HashSet::from([missing_track]);
+        let statuses = Arc::new(HashMap::from([(queued_path, StemsStatus::Queued)]));
+        let mut selection = Selection::default();
+        selection.select_all(&rows);
+
+        let menu = |selection: &Selection<TrackIndex>, track| {
+            track_menu::entries(library_track_menu_facts(
+                &collection,
+                selection,
+                &missing,
+                &statuses,
+                track,
+            ))
+        };
+        let enabled = |items: Vec<MenuEntry>, target| {
+            items.into_iter().any(|entry| {
+                matches!(entry, MenuEntry::Item { command, enabled: true, .. } if command == target)
+            })
+        };
+
+        assert!(enabled(
+            menu(&selection, missing_track),
+            Command::SeparateSelectedStems,
+        ));
+        assert!(!enabled(
+            menu(&selection, missing_track),
+            Command::LoadSelected(DeckId::A),
+        ));
+
+        selection.toggle(queued_track, &rows);
+        assert!(!enabled(
+            menu(&selection, queued_track),
+            Command::SeparateSelectedStems,
+        ));
+        selection.toggle(eligible_track, &rows);
+        assert!(!enabled(
+            menu(&selection, missing_track),
+            Command::SeparateSelectedStems,
+        ));
+    }
 
     #[test]
     fn left_and_right_in_the_sidebar_never_fall_through_to_the_crossfader() {

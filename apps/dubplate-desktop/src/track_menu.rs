@@ -45,7 +45,7 @@ pub struct RowFacts {
     pub file_present: bool,
     /// The library knows a file for the track, found or not.
     pub has_path: bool,
-    /// Its stems can be separated now: none yet, or the last try failed.
+    /// At least one track targeted by the menu can have its stems separated now.
     pub can_separate: bool,
 }
 
@@ -98,7 +98,7 @@ pub fn entries(facts: RowFacts) -> Vec<MenuEntry> {
     entries.push(item(
         "Separate Stems",
         Command::SeparateSelectedStems,
-        playable && facts.can_separate,
+        facts.can_separate,
     ));
     if facts.has_path && !facts.file_present {
         entries.push(item("Relink\u{2026}", Command::RelinkSelected, true));
@@ -384,6 +384,7 @@ mod tests {
 
         let missing = labels(RowFacts {
             file_present: false,
+            can_separate: false,
             ..library_track()
         });
         let enabled = |label: &str| {
