@@ -44,6 +44,7 @@ mod preview;
 mod processor;
 mod recording;
 mod sampler;
+mod slicer;
 mod slip;
 mod smart_cfx;
 mod smart_fader;
@@ -85,9 +86,12 @@ pub use recording::RecordingTap;
 pub use sampler::{
     BANK_SLOTS, SAMPLER_BANKS, SAMPLER_SLOTS, SampleMode, SampleSettings, SamplerState, SlotState,
 };
+pub use slicer::{SlicerDomain, SlicerMode, SlicerRoll, SlicerSlice};
 pub use smart_cfx::SmartCfx;
 pub use smart_fader::SmartFaderSource;
-pub use state::{DeckState, EngineStats, LoopState, Meters, PlatterState, SlipState, TempoState};
+pub use state::{
+    DeckState, EngineStats, LoopState, Meters, PlatterState, SlicerState, SlipState, TempoState,
+};
 pub use stems::{Stem, StemLevel, StemSettings, StemTracks};
 pub use sync::SyncMode;
 pub use synth::{SYNTH_BPM, SynthSound};

@@ -14,7 +14,8 @@ use dubplate_engine::{
     AudioProcessor, BeatGrid, BeatLength, Controller, DeckId, EffectKind, EffectTarget,
     EffectUnitId, EngineError, EqBand, GridBeat, MasterTempo, PadEffect, PadRelease,
     ParameterValue, Preview, PreviewTrack, ProcessContext, Renderer, SampleMode, SampleSettings,
-    SmartCfx, Stem, StemLevel, StemSettings, StereoBlock, SyncMode, TempoRange, offline_engine,
+    SlicerDomain, SlicerMode, SlicerRoll, SlicerSlice, SmartCfx, Stem, StemLevel, StemSettings,
+    StereoBlock, SyncMode, TempoRange, offline_engine,
 };
 
 struct CountingAllocator;
@@ -285,6 +286,22 @@ fn run_session(
         |controller| controller.beat_roll(DeckId::A, BeatLength::QUARTER),
         |controller| controller.beat_roll(DeckId::A, BeatLength::EIGHTH),
         |controller| controller.release_roll(DeckId::A),
+        |controller| controller.slicer_on(DeckId::A, SlicerMode::SlicerLoop, SlicerDomain::Four),
+        |controller| controller.slicer_pad(DeckId::A, slicer_slice(2), true, None),
+        |controller| {
+            controller.slicer_pad(
+                DeckId::A,
+                slicer_slice(5),
+                true,
+                Some(SlicerRoll::Sixteenth),
+            )
+        },
+        |controller| controller.slicer_pad(DeckId::A, slicer_slice(5), false, None),
+        |controller| controller.slicer_pad(DeckId::A, slicer_slice(2), false, None),
+        |controller| controller.slicer_on(DeckId::A, SlicerMode::Slicer, SlicerDomain::Eight),
+        |controller| controller.slicer_pad(DeckId::A, slicer_slice(7), true, None),
+        |controller| controller.slicer_off(DeckId::A),
+        |controller| controller.slicer_off(DeckId::A),
         |controller| {
             controller.hold_pad_effect(
                 DeckId::B,
@@ -390,6 +407,10 @@ fn run_session(
     let mut four_channels = vec![0.0_f32; 2048 * 4];
     render_armed(renderer, &mut four_channels, 4);
     Ok(())
+}
+
+fn slicer_slice(index: u8) -> SlicerSlice {
+    SlicerSlice::from_index(index).unwrap_or(SlicerSlice::FIRST)
 }
 
 /// Gives the track on `deck` stems as long as it, at its rate.

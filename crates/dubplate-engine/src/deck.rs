@@ -6,6 +6,7 @@ use crate::INSERT_SLOTS;
 use crate::channel::ChannelStrip;
 use crate::crossfader::ChannelFaderCurve;
 use crate::curves::Ramp;
+use crate::error::EngineError;
 use crate::grid::BeatGrid;
 use crate::jog::{BlockStart, JogInput, Platter};
 use crate::keylock::{KeyLock, KeyLockBlock};
@@ -13,6 +14,7 @@ use crate::looping::{BoundFrame, LoopRegion, Looping, advance_and_bound};
 use crate::mixer::RetireQueue;
 use crate::pad_effects::{PadEffect, PadEffects};
 use crate::processor::{AudioProcessor, ProcessContext, StereoBlock};
+use crate::slicer::{Slicer, SlicerDomain, SlicerMode, SlicerRoll, SlicerSlice, domain_around};
 use crate::slip::Slip;
 use crate::smart_cfx::SmartCfx;
 use crate::stems::{StemMix, StemSettings};
@@ -79,6 +81,7 @@ pub(crate) struct Deck {
     cue_point: f64,
     looping: Looping,
     quantize: bool,
+    slicer: Slicer,
     slip: Slip,
     slipping_loop: bool,
     slipping_touch: bool,
@@ -116,6 +119,7 @@ impl Deck {
             cue_point: 0.0,
             looping: Looping::default(),
             quantize: true,
+            slicer: Slicer::default(),
             slip: Slip::default(),
             slipping_loop: false,
             slipping_touch: false,
@@ -187,6 +191,9 @@ impl Deck {
             retire.beat_grid(previous);
         }
         self.sync.multiple = None;
+        if self.beat_grid.is_none() {
+            self.slicer.stop();
+        }
     }
 
     /// The tempo as it plays, in beats per minute, when the deck has a beat grid.
@@ -275,6 +282,7 @@ impl Deck {
         // the clean phase.
         self.phase_bend = 0.0;
         self.looping.clear();
+        self.slicer.stop();
         self.slip.clear();
         self.slipping_loop = false;
         self.slipping_touch = false;
@@ -692,6 +700,82 @@ impl Deck {
         self.slip.shadow()
     }
 
+    /// The SLICER button: the domain around the playhead goes on, from its downbeat.
+    /// Refused without a beat grid, which the domain's beats are counted on.
+    pub(crate) fn slicer_on(
+        &mut self,
+        mode: SlicerMode,
+        domain: SlicerDomain,
+    ) -> Result<(), EngineError> {
+        let Some(grid) = &self.beat_grid else {
+            return Err(EngineError::NoBeatGrid {
+                name: "turn the slicer on",
+            });
+        };
+        let (start, end) = domain_around(
+            grid,
+            self.source_rate(),
+            self.voice.position,
+            domain.beats(),
+            self.voice.end_frame(),
+        );
+        self.slicer.start(mode, domain, start, end);
+        Ok(())
+    }
+
+    /// The SLICER button released: playback returns to where the track is now, a held pad
+    /// letting go first.
+    pub(crate) fn slicer_off(&mut self, retire: &mut RetireQueue) {
+        if let Some(landing) = self.slicer.stop() {
+            self.jump_to_frame(landing, retire);
+        }
+    }
+
+    /// A slicer pad: pressing plays slice `slice`, or its first `roll` part, from the next
+    /// slice boundary, and releasing returns playback to where the track is now.
+    pub(crate) fn slicer_pad(
+        &mut self,
+        slice: SlicerSlice,
+        pressed: bool,
+        roll: Option<SlicerRoll>,
+        retire: &mut RetireQueue,
+    ) {
+        if pressed {
+            self.slicer.press(slice, roll, self.voice.position);
+        } else if let Some(landing) = self.slicer.release(slice) {
+            self.jump_to_frame(landing, retire);
+        }
+    }
+
+    pub(crate) fn slicer_enabled(&self) -> bool {
+        self.slicer.enabled()
+    }
+
+    pub(crate) fn slicer_mode(&self) -> SlicerMode {
+        self.slicer.mode()
+    }
+
+    /// The domain the slicer is on, in track frames, when it is on.
+    pub(crate) fn slicer_domain_frames(&self) -> Option<(f64, f64)> {
+        self.slicer.enabled().then(|| self.slicer.domain_frames())
+    }
+
+    /// The slice the playhead is in, for a slicer UI to draw.
+    pub(crate) fn slicer_slice(&self) -> Option<SlicerSlice> {
+        self.slicer.slice_at(self.voice.position)
+    }
+
+    /// The loop the playhead goes round: a held slicer pad's slice, or the domain in slicer
+    /// loop mode, while the slicer is on. An active loop is set aside while the slicer is on
+    /// and comes back when it is turned off.
+    fn bounded_region(&self) -> Option<LoopRegion> {
+        if self.slicer.enabled() {
+            self.slicer.active_region()
+        } else {
+            self.looping.active_loop()
+        }
+    }
+
     pub(crate) fn hold_pad_effect(&mut self, pad: PadEffect) {
         self.pad_effects.hold(pad);
     }
@@ -1075,7 +1159,8 @@ impl Deck {
         let unit_step = self.source_rate() / self.output_rate;
         let audible_step = unit_step * AUDIBLE_SPEED;
         let end_frame = self.voice.end_frame();
-        let active_loop = self.looping.active_loop();
+        let mut active_loop = self.bounded_region();
+        let source_rate = self.source_rate();
         self.slip
             .advance(motor_step * frame_count as f64, end_frame);
         let tempo_moved = (self.tempo - 1.0).abs() > KEY_LOCK_TEMPO_TOLERANCE;
@@ -1105,6 +1190,8 @@ impl Deck {
         );
         let fully_stretched = stretched && self.key_lock.is_fully_in();
         let voice = &mut self.voice;
+        let slicer = &mut self.slicer;
+        let beat_grid = self.beat_grid.as_ref();
         let key_lock = &mut self.key_lock;
         let stem_mix = &mut self.stem_mix;
         let trim = &mut self.trim;
@@ -1116,6 +1203,17 @@ impl Deck {
             .enumerate()
         {
             let step = *step;
+            let slicer_frame = slicer.advance(
+                voice.position,
+                step,
+                motor_step,
+                end_frame,
+                beat_grid,
+                source_rate,
+            );
+            if slicer_frame.domain_moved {
+                active_loop = slicer.active_region();
+            }
             let stylus_gain = (step.abs() / audible_step).min(1.0) as f32;
             let gain = voice.transport.next_value() * stylus_gain;
             let stem_gains = stem_mix.next_gains();
@@ -1154,6 +1252,9 @@ impl Deck {
                     } else {
                         voice.jump(wrapped, step, retire);
                     }
+                } else if let Some(target) = slicer_frame.jump {
+                    key_lock.jumped();
+                    voice.jump(target, step, retire);
                 } else if bound == BoundFrame::ReachedEnd && self.playing && !holding {
                     // The helper already started the declick tail and stopped the transport.
                     self.playing = false;

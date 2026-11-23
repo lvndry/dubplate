@@ -62,6 +62,17 @@ The DDJ-FLX4's pad modes map onto the engine:
 
 While a deck slips, beat sync leaves it alone, because its shadow stays in phase.
 
+## Slicer
+
+`Controller::slicer_on` cuts a domain of 4, 8 (the default), 16, 32 or 64 beats into 8 equal slices. The domain starts on the beat-grid beat that is a multiple of its length at or before the playhead, so it follows the grid through tempo changes. A deck with no beat grid refuses with `EngineError::NoBeatGrid`, and removing the grid turns the slicer off.
+
+While a pad is held, the track keeps playing silently underneath on a shadow playhead, as in slip. Pressing `slicer_pad` waits for the next slice boundary of that shadow, to the sample, then jumps to the start of the pad's slice and goes round it. With a roll of 1/8, 1/16, 1/32 or 1/64 of the domain, it goes round only that first part of the slice (1/8 is the whole slice). Releasing lands on the shadow, in rhythm. Only the held pad counts: releasing another pad changes nothing, and pressing a second pad moves to its slice at the next boundary.
+
+- **Slicer** lets the music play through the domain; once the playhead leaves it, the domain moves to the next stretch of beats, and a held pad then plays the same slice of the new domain.
+- **Slicer Loop** wraps the playhead, and the shadow, from the domain's end to its start, so the slices repeat.
+
+A loop that is active when the slicer goes on is set aside and comes back when the slicer goes off. `Controller::slicer_state` gives the domain in seconds and the slice the playhead is in, for a slicer UI to draw.
+
 ## Smart CFX
 
 `Controller::set_smart_cfx` turns a channel's filter knob into a one-knob macro: the filter and a second effect move together, and the knob's centre still leaves the music untouched. There are six presets: Space (reverb), Dub Echo (a 3/4-beat echo), Crush (bit crusher), Chop (a 1/8-beat gate), Jet (a 4-beat flanger) and Phase (a 2-beat phaser). All of them are the effects of the beat FX, with no second copy of their DSP.

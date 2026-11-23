@@ -87,6 +87,13 @@ pub enum EngineError {
     #[error("the track has its stems already")]
     StemsAlreadyAttached,
 
+    /// The command needs the track's beat grid and the deck does not have one.
+    #[error("the deck has no beat grid, so it cannot {name}")]
+    NoBeatGrid {
+        /// The command that was refused.
+        name: &'static str,
+    },
+
     /// No audio output device is available.
     #[error("no audio output device is available")]
     NoOutputDevice,

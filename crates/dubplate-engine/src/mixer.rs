@@ -18,10 +18,12 @@ use crate::preview::{PreviewBus, PreviewPlan};
 use crate::processor::{AudioProcessor, ProcessContext, StereoBlock};
 use crate::recording::RecordingSink;
 use crate::sampler::{SampleSettings, Sampler};
+use crate::slicer::{SlicerDomain, SlicerMode, SlicerRoll, SlicerSlice};
 use crate::smart_cfx::SmartCfx;
 use crate::smart_fader::{
     SmartFaderSource, TEMPO_GLIDE_SECONDS, bass_swap, blend_position, shared_bpm,
 };
+use crate::state::NO_SLICE;
 use crate::state::{GapDetector, SharedState, encode_loop_length, raise_peak};
 use crate::stems::StemSettings;
 use crate::sync::SyncMode;
@@ -192,6 +194,18 @@ pub(crate) enum Command {
     SetSlip {
         deck: DeckId,
         enabled: bool,
+    },
+    SlicerOn {
+        deck: DeckId,
+        mode: SlicerMode,
+        domain: SlicerDomain,
+    },
+    SlicerOff(DeckId),
+    SlicerPad {
+        deck: DeckId,
+        slice: SlicerSlice,
+        pressed: bool,
+        roll: Option<SlicerRoll>,
     },
     BeatRoll {
         deck: DeckId,
@@ -783,6 +797,20 @@ impl Renderer {
             Command::StopSample(slot) => self.sampler.stop(slot, &mut self.retire),
             Command::SetSamplerVolume(position) => self.sampler.set_volume(position),
             Command::SetSamplerCue(enabled) => self.sampler.set_cue(enabled),
+            Command::SlicerOn { deck, mode, domain } => {
+                // Refused commands, such as turning the slicer on without a beat grid, are
+                // dropped on the audio thread: the queue is fire and forget.
+                let _ = self.decks[deck.index()].slicer_on(mode, domain);
+            }
+            Command::SlicerOff(deck) => self.decks[deck.index()].slicer_off(&mut self.retire),
+            Command::SlicerPad {
+                deck,
+                slice,
+                pressed,
+                roll,
+            } => {
+                self.decks[deck.index()].slicer_pad(slice, pressed, roll, &mut self.retire);
+            }
             Command::Preview(plan) => self.preview.set(plan, &mut self.retire),
             Command::SetRecording(sink) => {
                 if let Some(previous) = std::mem::replace(&mut self.recording, sink) {
@@ -897,6 +925,25 @@ impl Renderer {
             shared.slip_shadow_seconds.store(
                 deck.slip_shadow()
                     .map_or(f64::NAN, |frames| deck.frames_to_seconds(frames)),
+            );
+            shared
+                .slicer_enabled
+                .store(deck.slicer_enabled(), Ordering::Relaxed);
+            shared
+                .slicer_mode
+                .store(deck.slicer_mode().index(), Ordering::Relaxed);
+            let domain = deck
+                .slicer_domain_frames()
+                .map(|(start, end)| (deck.frames_to_seconds(start), deck.frames_to_seconds(end)));
+            shared
+                .slicer_domain_start_seconds
+                .store(domain.map_or(f64::NAN, |(start, _)| start));
+            shared
+                .slicer_domain_end_seconds
+                .store(domain.map_or(f64::NAN, |(_, end)| end));
+            shared.slicer_slice.store(
+                deck.slicer_slice().map_or(NO_SLICE, |slice| slice.index()),
+                Ordering::Relaxed,
             );
             let region = deck.loop_region();
             let seconds_or_none = |frames: Option<f64>| {
