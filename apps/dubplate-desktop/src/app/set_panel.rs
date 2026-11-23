@@ -2,7 +2,7 @@
 //! range and readiness, its tracks with a seam row between each pair, the backups, and the Next
 //! suggestions.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use dubplate_prep::{SetWarning, Severity, WarningKind, WarningPosition};
 use gpui::component::menu::ContextMenuExt;
@@ -13,7 +13,7 @@ use gpui::{
 };
 
 use super::DubplateApp;
-use super::prepare::{NextSuggestions, PrepareFocus, SetRow};
+use super::prepare::{NextSuggestions, PrepareFocus, SetRow, set_ready};
 use crate::audition::AUDITION_LENGTH;
 use crate::browser::DraggedTrack;
 use crate::commands::{Command, Direction, SetEdit};
@@ -34,6 +34,8 @@ const CURVE_HEIGHT: Pixels = px(36.0);
 const CURVE_STROKE: Pixels = px(1.5);
 /// Line segments for the target curve, enough for a smooth line at the panel's width.
 const TARGET_SEGMENTS: usize = 60;
+/// How long the energy curve takes to draw in, left to right, when the set becomes ready.
+pub(super) const SET_READY_DRAW: Duration = Duration::from_millis(500);
 
 /// A set track being dragged to another place in the set.
 #[derive(Debug, Clone)]
@@ -152,6 +154,12 @@ fn summary(
         _ => "No tempo yet".to_owned(),
     };
     let ready = rows.iter().filter(|row| row.ready.is_ready()).count();
+    let all_ready = set_ready(rows);
+    let readiness = if all_ready {
+        String::new()
+    } else {
+        format!(" \u{b7} {ready} of {} ready", rows.len())
+    };
     let over = !target.is_zero() && total > target;
     div()
         .flex()
@@ -197,18 +205,29 @@ fn summary(
                 .text_size(theme::SMALL_TEXT_SIZE)
                 .text_color(theme::active().muted)
                 .child(div().flex_1().min_w_0().truncate().child(format!(
-                    "{} track{} \u{b7} {range} \u{b7} {ready} of {} ready",
+                    "{} track{} \u{b7} {range}{readiness}",
                     rows.len(),
                     if rows.len() == 1 { "" } else { "s" },
-                    rows.len()
                 )))
+                .when(all_ready, |line| {
+                    line.child(
+                        div()
+                            .flex_none()
+                            .text_color(theme::active().ok)
+                            .child("Set ready"),
+                    )
+                })
                 .when(!rows.is_empty(), |line| {
                     line.child(export_button(cx)).child(usb_button(cx))
                 }),
         )
         .when(!rows.is_empty(), |summary| {
             let range = app.prepare_view.energy_range;
-            summary.child(energy_curve(rows, target, range))
+            let drawn = app.set_ready_at.map_or(1.0, |at| {
+                (Instant::now().duration_since(at).as_secs_f32() / SET_READY_DRAW.as_secs_f32())
+                    .min(1.0)
+            });
+            summary.child(energy_curve(rows, target, range, drawn))
         })
 }
 
@@ -250,7 +269,14 @@ fn usb_button(cx: &mut Context<'_, DubplateApp>) -> impl IntoElement + use<> {
 
 /// The set's energy track by track as steps, over the target it should follow, across the
 /// target length or the set's when it runs over.
-fn energy_curve(rows: &[SetRow], target: Duration, range: EnergyRange) -> impl IntoElement + use<> {
+/// `drawn` is how much of the energy line shows, from the left: less than 1.0 only while it
+/// draws in as the set becomes ready.
+fn energy_curve(
+    rows: &[SetRow],
+    target: Duration,
+    range: EnergyRange,
+    drawn: f32,
+) -> impl IntoElement + use<> {
     let tracks: Vec<(Option<Duration>, Option<f32>)> = rows
         .iter()
         .map(|row| {
@@ -310,7 +336,7 @@ fn energy_curve(rows: &[SetRow], target: Duration, range: EnergyRange) -> impl I
                     }
                     let mut energy_line = PathBuilder::stroke(CURVE_STROKE);
                     let mut drawing = false;
-                    for step in &steps {
+                    for step in steps.iter().filter(|step| step.start < drawn) {
                         let Some(rating) = step.rating else {
                             drawing = false;
                             continue;
@@ -320,7 +346,7 @@ fn energy_curve(rows: &[SetRow], target: Duration, range: EnergyRange) -> impl I
                         } else {
                             energy_line.move_to(at(step.start, rating));
                         }
-                        energy_line.line_to(at(step.end, rating));
+                        energy_line.line_to(at(step.end.min(drawn), rating));
                         drawing = true;
                     }
                     if let Ok(path) = energy_line.build() {
