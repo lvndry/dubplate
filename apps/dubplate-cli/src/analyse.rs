@@ -1,5 +1,6 @@
-//! `dubplate analyse`: Dubplate's own analysis of audio files (tempo, beat grid, key and
-//! energy), optionally compared with rekordbox's for the tracks it also holds.
+//! `dubplate analyse`: Dubplate's own analysis of audio files (tempo, beat grid, key, energy
+//! and loudness), optionally compared with rekordbox's for the tracks it also holds, including
+//! the loudness rekordbox's Auto Gain levels them to.
 
 use std::collections::{BTreeMap, HashMap};
 use std::num::NonZeroUsize;
@@ -49,6 +50,7 @@ struct RekordboxReading {
     bpm: Option<f32>,
     key: Option<Key>,
     first_downbeat_ms: Option<u32>,
+    auto_gain_db: Option<f32>,
 }
 
 pub(crate) fn run(arguments: AnalyseArgs) -> Result<()> {
@@ -72,8 +74,8 @@ pub(crate) fn run(arguments: AnalyseArgs) -> Result<()> {
 
     let mut comparison = Comparison::default();
     println!(
-        "{:>7} {:>4} {:>8} {:>3}  {:>7} {:>4} {:>6}  File",
-        "BPM", "Key", "Downbeat", "En", "rb BPM", "rb", "Grid"
+        "{:>7} {:>4} {:>8} {:>3} {:>6}  {:>7} {:>4} {:>6} {:>6}  File",
+        "BPM", "Key", "Downbeat", "En", "LUFS", "rb BPM", "rb", "Grid", "rb AG"
     );
     for track in &analysed {
         let reading = rekordbox
@@ -195,6 +197,7 @@ fn rekordbox_reading(library: &Library, track: &Track) -> RekordboxReading {
         bpm: track.bpm.map(|bpm| bpm as f32),
         key: track.key.as_deref().and_then(Key::parse_file_key),
         first_downbeat_ms,
+        auto_gain_db: track.auto_gain_db,
     }
 }
 
@@ -212,8 +215,8 @@ fn print_track(track: &Analysed, reading: Option<&RekordboxReading>) {
         Ok(analysis) => analysis,
         Err(error) => {
             println!(
-                "{:>7} {:>4} {:>8} {:>3}  {:>32}  {name}: {error}",
-                "", "", "", "", "failed"
+                "{:>7} {:>4} {:>8} {:>3} {:>6}  {:>33}  {name}: {error}",
+                "", "", "", "", "", "failed"
             );
             return;
         }
@@ -232,7 +235,11 @@ fn print_track(track: &Analysed, reading: Option<&RekordboxReading>) {
         .as_ref()
         .map(|energy| energy.rating.to_string())
         .unwrap_or_default();
-    let (rekordbox_bpm, rekordbox_key, grid) = match reading {
+    let loudness = analysis
+        .loudness
+        .map(|loudness| format!("{:.1}", loudness.0))
+        .unwrap_or_default();
+    let (rekordbox_bpm, rekordbox_key, grid, auto_gain) = match reading {
         Some(reading) => (
             reading
                 .bpm
@@ -242,12 +249,16 @@ fn print_track(track: &Analysed, reading: Option<&RekordboxReading>) {
             grid_agreement(analysis, reading)
                 .map(|agreement| agreement.describe())
                 .unwrap_or_default(),
+            reading
+                .auto_gain_db
+                .map(|gain| format!("{gain:+.1}"))
+                .unwrap_or_default(),
         ),
         None => Default::default(),
     };
     println!(
-        "{bpm:>7} {key:>4} {downbeat:>8} {energy:>3}  {rekordbox_bpm:>7} {rekordbox_key:>4} \
-         {grid:>6}  {name}"
+        "{bpm:>7} {key:>4} {downbeat:>8} {energy:>3} {loudness:>6}  {rekordbox_bpm:>7} \
+         {rekordbox_key:>4} {grid:>6} {auto_gain:>6}  {name}"
     );
 }
 
@@ -319,6 +330,7 @@ struct Comparison {
     grid_on_the_off_beat: usize,
     grid_same_bars: usize,
     grid_offsets_ms: Vec<f64>,
+    auto_gain_levels: Vec<f32>,
 }
 
 impl Comparison {
@@ -351,6 +363,9 @@ impl Comparison {
             self.grid_on_the_beat += usize::from(agreement.on_the_beat());
             self.grid_on_the_off_beat += usize::from(agreement.on_the_off_beat());
             self.grid_same_bars += usize::from(agreement.same_bars());
+        }
+        if let (Some(loudness), Some(gain)) = (analysis.loudness, reading.auto_gain_db) {
+            self.auto_gain_levels.push(loudness.0 + gain);
         }
     }
 
@@ -399,6 +414,20 @@ impl Comparison {
             "  Same downbeat as rekordbox: {}",
             share(self.grid_same_bars, self.grid_compared)
         );
+        self.auto_gain_levels.sort_by(f32::total_cmp);
+        let percentile = |fraction: f32| {
+            let last = self.auto_gain_levels.len().checked_sub(1)?;
+            let index = (last as f32 * fraction).round() as usize;
+            self.auto_gain_levels.get(index).copied()
+        };
+        match (percentile(0.1), percentile(0.5), percentile(0.9)) {
+            (Some(low), Some(median), Some(high)) => println!(
+                "  rekordbox's Auto Gain levels {} tracks to {median:.1} LUFS as Dubplate \
+                 measures it (80% between {low:.1} and {high:.1})",
+                self.auto_gain_levels.len()
+            ),
+            _ => println!("  rekordbox's Auto Gain: none to compare"),
+        }
     }
 }
 
@@ -524,11 +553,13 @@ mod tests {
             }),
             key: None,
             energy: None,
+            loudness: None,
         };
         let reading = |first_downbeat_ms| RekordboxReading {
             bpm: Some(120.0),
             key: None,
             first_downbeat_ms: Some(first_downbeat_ms),
+            auto_gain_db: None,
         };
         let same = grid_agreement(&analysis, &reading(2_510)).unwrap();
         assert!((same.offset_ms - 10.0).abs() < 1e-6);
