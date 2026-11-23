@@ -200,7 +200,7 @@ impl TrackTags {
 
 /// The height a menu may reach in `window`: all it needs up to a limit, and never more than
 /// the window leaves room for.
-fn menu_height(window: &Window) -> Pixels {
+pub fn menu_height(window: &Window) -> Pixels {
     (window.viewport_size().height - MENU_WINDOW_MARGIN)
         .max(px(160.0))
         .min(MENU_MAX_HEIGHT)

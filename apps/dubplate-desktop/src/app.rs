@@ -83,6 +83,7 @@ use crate::browser::{Browser, BrowserEvent, LibraryStatus};
 use crate::collection::{Collection, CollectionTrack, TrackIndex};
 use crate::commands::{
     AutoCueChoice, CfxScope, Command, Direction, EffectEdit, JogMotion, Mode, PadPress, Press,
+    SetEdit,
 };
 use crate::controls::{
     CROSSFADER_STEP, Control, MixerPositions, Orientation, Slider, fraction_at, master_gain_at,
@@ -364,6 +365,21 @@ impl DubplateApp {
                 }
                 BrowserEvent::ImportRekordbox => this.set_rekordbox_import(true, cx),
                 BrowserEvent::RelinkAll => this.start_relink(None, cx),
+                BrowserEvent::EditPlaylist(ref edit) => {
+                    let edit = edit.clone();
+                    this.queue_set_edit(
+                        move |editor| editor.edit_playlists(edit),
+                        |this, (_, tree), cx| {
+                            this.browser
+                                .update(cx, |browser, cx| browser.set_playlists(tree, cx));
+                        },
+                        cx,
+                    );
+                }
+                BrowserEvent::ExportPlaylist(id, usb) => this.export_playlist(id, usb, cx),
+                BrowserEvent::PlaylistNotice(message) => {
+                    this.show_notice(NoticePlace::Window, message, cx)
+                }
                 BrowserEvent::ExportCrateToUsb(crate_index) => {
                     this.export_crate_to_usb(crate_index, cx);
                 }
@@ -840,17 +856,19 @@ impl DubplateApp {
                     let editor = SetEditor::open(&path).map_err(|error| error.to_string())?;
                     let grids = editor.track_grids().map_err(|error| error.to_string())?;
                     let track_cues = editor.track_cues().map_err(|error| error.to_string())?;
+                    let playlists = editor.playlists();
                     let session = dubplate_prep::SetSession::new(editor)
                         .map_err(|error| error.to_string())?;
-                    Ok::<_, String>((session, grids, track_cues))
+                    Ok::<_, String>((session, grids, track_cues, playlists))
                 })
                 .await;
             this.update(cx, |this, cx| match opened {
-                Ok((session, grids, track_cues)) => {
+                Ok((session, grids, track_cues, playlists)) => {
                     this.set_editor = Some(session);
                     this.take_track_grids(grids, cx);
                     this.restore_play_history(cx);
                     this.restore_track_cues(track_cues);
+                    this.apply_playlists(playlists, cx);
                     this.set_changed(cx);
                     // The first library build may have completed before set storage opened.
                     this.rebuild_collection(cx);
@@ -1105,6 +1123,16 @@ impl DubplateApp {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        if matches!(
+            command,
+            Command::MoveSelection(_) | Command::EditSet(SetEdit::Add)
+        ) && (self.mode != Mode::Prepare || self.prepare_focus == PrepareFocus::Library)
+            && self.browser.update(cx, |browser, cx| {
+                browser.playlist_picker_command(command, cx)
+            })
+        {
+            return;
+        }
         match command {
             Command::TogglePlay(deck) => {
                 if std::mem::take(&mut self.decks[deck.index()].cue_preview) {
@@ -1321,6 +1349,21 @@ impl DubplateApp {
                 self.browser
                     .update(cx, |browser, cx| browser.show_screen(mode, cx));
             }
+            Command::EditSet(SetEdit::Remove) => {
+                let removed = !self.keys_on_set(cx)
+                    && self
+                        .browser
+                        .update(cx, |browser, cx| browser.remove_playlist_selection(cx));
+                if !removed {
+                    self.edit_set(SetEdit::Remove, cx);
+                }
+            }
+            Command::RemovePlaylistTracks => {
+                if !self.keys_on_set(cx) {
+                    self.browser
+                        .update(cx, |browser, cx| browser.remove_playlist_selection(cx));
+                }
+            }
             Command::EditSet(edit) => self.edit_set(edit, cx),
             Command::SwitchPrepareFocus(direction) => {
                 if self.mode == Mode::Prepare {
@@ -1392,6 +1435,18 @@ impl DubplateApp {
                 self.help_open = false;
             }
             Command::AddMusicFolders => self.add_music_folders(cx),
+            Command::PickPlaylist => {
+                if self.mode != Mode::Prepare || self.prepare_focus == PrepareFocus::Library {
+                    self.browser
+                        .update(cx, |browser, cx| browser.pick_playlist(cx));
+                }
+            }
+            Command::AddToPlaylist(id) => self
+                .browser
+                .update(cx, |browser, cx| browser.add_selection_to_playlist(id, cx)),
+            Command::CopyPlaylist(index) => self
+                .browser
+                .update(cx, |browser, cx| browser.copy_playlist(index, cx)),
             Command::OpenTagManager => self.open_tag_manager(cx),
             Command::ShiftHeld(deck, held) => self.shift_held[deck.index()] = held,
             Command::TogglePadLayer(deck) => {
@@ -1413,6 +1468,10 @@ impl DubplateApp {
                 } else if self.help_open || self.library_open {
                     self.help_open = false;
                     self.library_open = false;
+                } else if self.browser.update(cx, |browser, cx| {
+                    browser.playlist_picker_command(command, cx)
+                }) {
+                    return;
                 } else if self.notices.is_showing() {
                     self.notices.dismiss();
                 } else if self.browser.read(cx).search_has_focus(window, cx) {

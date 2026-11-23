@@ -436,6 +436,14 @@ pub enum Command {
     RelinkMissingFiles,
     /// Open the My Tag manager, to make, rename, reorder and delete categories and tags.
     OpenTagManager,
+    /// Copy a rekordbox playlist into Dubplate.
+    CopyPlaylist(crate::collection::CrateIndex),
+    /// Append selected library rows to a playlist.
+    AddToPlaylist(dubplate_prep::PlaylistId),
+    /// Pick a playlist for the selection.
+    PickPlaylist,
+    /// Remove the selected rows from the current playlist.
+    RemovePlaylistTracks,
     /// Open the folder picker to add music folders to the library.
     AddMusicFolders,
     /// Close the help or leave the search field.

@@ -6,8 +6,9 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+mod playlists;
 use dubplate_engine::DeckId;
-use dubplate_prep::{AudioAnalysis, Key};
+use dubplate_prep::{AudioAnalysis, Key, PlaylistEdit, PlaylistId};
 use dubplate_stems::StemsStatus;
 use gpui::component::input::{Input, InputEvent, InputState};
 use gpui::component::menu::ContextMenuExt;
@@ -17,6 +18,7 @@ use gpui::{
     MouseDownEvent, Pixels, ScrollStrategy, SharedString, Subscription, UniformListScrollHandle,
     Window, div, px, svg, uniform_list,
 };
+use playlists::PlaylistPanel;
 
 use crate::analysis::{AnalysisAnswer, AnalysisState, bpm_cell, energy_cell, key_cell};
 use crate::app::NARROW_WINDOW_WIDTH;
@@ -92,7 +94,7 @@ pub enum LibraryStatus {
 }
 
 /// What the browser asks the window to do.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BrowserEvent {
     /// Load a track on a deck.
     Load {
@@ -115,6 +117,12 @@ pub enum BrowserEvent {
     Relink(TrackIndex),
     /// Export a playlist or music folder to a USB stick for CDJs.
     ExportCrateToUsb(CrateIndex),
+    /// Store a playlist edit.
+    EditPlaylist(PlaylistEdit),
+    /// Export a stored playlist.
+    ExportPlaylist(PlaylistId, bool),
+    /// Describe why a playlist action is unavailable.
+    PlaylistNotice(&'static str),
     /// Save a page of the history as a tracklist.
     ExportHistory {
         /// The page.
@@ -175,6 +183,7 @@ impl Render for DraggedTrack {
 /// The crates and the track table.
 pub struct Browser {
     library: LibraryStatus,
+    playlists: PlaylistPanel,
     crate_index: CrateIndex,
     expanded_folders: HashSet<PathBuf>,
     chosen_folder: Option<PathBuf>,
@@ -226,7 +235,18 @@ impl Browser {
                 InputEvent::Focus | InputEvent::Blur => cx.notify(),
             },
         );
+        let playlists = PlaylistPanel::new(window, cx);
+        let name_subscription = cx.subscribe_in(
+            &playlists.input,
+            window,
+            |this: &mut Self, _, event: &InputEvent, window, cx| {
+                if matches!(event, InputEvent::PressEnter { .. }) {
+                    this.save_playlist_name(window, cx);
+                }
+            },
+        );
         Self {
+            playlists,
             library: LibraryStatus::Reading,
             crate_index: CrateIndex::COLLECTION,
             expanded_folders: HashSet::new(),
@@ -255,7 +275,7 @@ impl Browser {
             detail_scroll: gpui::ScrollHandle::new(),
             narrow: false,
             track_metadata: Arc::default(),
-            _subscriptions: vec![subscription],
+            _subscriptions: vec![subscription, name_subscription],
         }
     }
 
@@ -368,6 +388,25 @@ impl Browser {
             return TreeKey::resolve(self.pane == BrowserPane::Crates, None, direction).is_some();
         };
         let entry = collection.crate_at(self.crate_index);
+        if self.pane == BrowserPane::Crates
+            && let Some(id) = self.playlists.selected
+        {
+            if let Some(entry) = self.playlists.tree.get(id) {
+                let next = match direction {
+                    Direction::Up => self
+                        .playlists
+                        .tree
+                        .descendants(id)
+                        .first()
+                        .map(|child| child.id),
+                    Direction::Down => entry.parent,
+                };
+                if let Some(id) = next {
+                    self.choose_playlist(id, cx);
+                }
+            }
+            return true;
+        }
         let state =
             (self.history_page.is_none() && entry.kind == CrateKind::MusicFolder).then(|| {
                 TreeNode {
@@ -440,6 +479,7 @@ impl Browser {
 
     /// Shows a page of the history in place of the tracks.
     fn open_history(&mut self, page: HistoryPage, cx: &mut Context<'_, Self>) {
+        self.clear_playlist();
         self.history_page = Some(page);
         cx.notify();
     }
@@ -711,6 +751,7 @@ impl Browser {
         if self.focused().is_none() {
             self.select(self.rows.first().copied(), cx);
         }
+        self.pane = BrowserPane::Tracks;
         window.focus(&self.table_focus, cx);
     }
 
@@ -793,39 +834,43 @@ impl Browser {
         }
     }
 
-    /// Moves through the sidebar: the crates shown, then the pages of the history.
+    /// Moves through the playlists, library sources and history pages in sidebar order.
     fn move_crate_cursor(&mut self, steps: i32, cx: &mut Context<'_, Self>) {
-        let crate_count = self.visible_crates.len();
-        let current = match self.history_page {
-            Some(page) => {
-                crate_count
-                    + self
-                        .history
-                        .pages
-                        .iter()
-                        .position(|view| view.page == page)
-                        .unwrap_or(0)
-            }
-            None => self
-                .visible_crates
+        let playlists = self.playlists.tree.entries();
+        let playlist_count = playlists.len();
+        let library_end = playlist_count + self.visible_crates.len();
+        let current = if let Some(page) = self.history_page {
+            library_end
+                + self
+                    .history
+                    .pages
+                    .iter()
+                    .position(|view| view.page == page)
+                    .unwrap_or(0)
+        } else if let Some(id) = self.playlists.selected {
+            playlists
                 .iter()
-                .position(|index| *index == self.crate_index)
-                .unwrap_or(0),
+                .position(|entry| entry.id == id)
+                .unwrap_or(0)
+        } else {
+            playlist_count
+                + self
+                    .visible_crates
+                    .iter()
+                    .position(|index| *index == self.crate_index)
+                    .unwrap_or(0)
         };
-        let Some(next) = offset(current, steps, crate_count + self.history.pages.len()) else {
+        let Some(next) = offset(current, steps, library_end + self.history.pages.len()) else {
             return;
         };
-        match next.checked_sub(crate_count) {
-            Some(page_position) => {
-                if let Some(view) = self.history.pages.get(page_position) {
-                    self.open_history(view.page, cx);
-                }
+        if let Some(entry) = playlists.get(next) {
+            self.choose_playlist(entry.id, cx);
+        } else if let Some(page) = next.checked_sub(library_end) {
+            if let Some(view) = self.history.pages.get(page) {
+                self.open_history(view.page, cx);
             }
-            None => {
-                if let Some(crate_index) = self.visible_crates.get(next).copied() {
-                    self.choose_crate(crate_index, cx);
-                }
-            }
+        } else if let Some(&crate_index) = self.visible_crates.get(next - playlist_count) {
+            self.choose_crate(crate_index, cx);
         }
     }
 
@@ -929,6 +974,7 @@ impl Browser {
     }
 
     fn choose_crate(&mut self, crate_index: CrateIndex, cx: &mut Context<'_, Self>) {
+        self.clear_playlist();
         self.crate_index = crate_index;
         self.history_page = None;
         if let LibraryStatus::Ready(collection) = &self.library {
@@ -946,7 +992,11 @@ impl Browser {
             cx.notify();
             return;
         };
-        let mut rows = filter_tracks(&collection, self.crate_index, &self.query);
+        let mut rows = if let Some(id) = self.playlists.selected {
+            self.playlist_rows(id, &collection)
+        } else {
+            filter_tracks(&collection, self.crate_index, &self.query)
+        };
         if self.query.has_filters() {
             let fits = self.view.reference().and_then(|reference| reference.key);
             rows.retain(|track| {
@@ -982,9 +1032,12 @@ impl Browser {
             .border_color(theme::active().line)
             .bg(theme::active().background)
             .overflow_y_scroll()
+            .child(self.playlist_sidebar(cx))
             .children(self.visible_crates.iter().map(|&crate_index| {
                 let entry = collection.crate_at(crate_index);
-                let chosen = self.history_page.is_none() && crate_index == self.crate_index;
+                let chosen = self.playlists.selected.is_none()
+                    && self.history_page.is_none()
+                    && crate_index == self.crate_index;
                 let count: SharedString = match entry.kind {
                     CrateKind::Folder => "".into(),
                     CrateKind::Smart => "smart".into(),
@@ -992,6 +1045,7 @@ impl Browser {
                         entry.tracks.len().to_string().into()
                     }
                 };
+                let entry_kind = entry.kind;
                 let is_folder = entry.kind == CrateKind::MusicFolder;
                 let expanded = entry
                     .path
@@ -1025,6 +1079,21 @@ impl Browser {
                     this.pane = BrowserPane::Crates;
                     this.choose_crate(crate_index, cx);
                 }))
+                .map(|row| {
+                    if entry_kind == CrateKind::Playlist {
+                        row.context_menu(move |menu, _, _| {
+                            menu.menu(
+                                "Copy to Dubplate playlist",
+                                Box::new(crate::shortcuts::Perform(
+                                    crate::commands::Command::CopyPlaylist(crate_index),
+                                )),
+                            )
+                        })
+                        .into_any_element()
+                    } else {
+                        row.into_any_element()
+                    }
+                })
             }))
             .children(
                 self.history
@@ -1253,6 +1322,7 @@ impl Browser {
                 }),
             )
             .child(self.render_filters(cx))
+            .children(self.playlist_picker(cx))
             .when(searching, |table| table.children(self.render_suggestions(cx)))
             .when(!self.missing.is_empty(), |table| {
                 table.child(missing_bar(self.missing.len(), self.relinking, cx))
@@ -1652,6 +1722,7 @@ impl Browser {
             ),
         };
         let keys = self.table_focus.clone();
+        let playlist_tree = Arc::clone(&self.playlists.tree);
         let menu_tags = TrackTags::new(
             self.track_metadata.for_track(&entry.identity()),
             Arc::clone(&self.track_metadata),
@@ -1694,6 +1765,15 @@ impl Browser {
                     }
                     cx.stop_propagation();
                 }),
+            )
+            .when_some(
+                self.writable_playlist().filter(|_| self.sort().is_none()),
+                |row, id| {
+                    row.drag_over::<DraggedTrack>(|style, _, _, _| style.bg(theme::active().raised))
+                        .on_drop(cx.listener(move |this, dragged: &DraggedTrack, _, cx| {
+                            this.reorder_playlist(id, dragged.track, track, cx)
+                        }))
+                },
             )
             .on_drag(dragged, |dragged, _, _, cx| cx.new(|_| dragged.clone()))
             .when(played, |row| row.opacity(PLAYED_ROW_OPACITY))
@@ -1875,7 +1955,29 @@ impl Browser {
                 }),
             )
             .context_menu(move |menu, window, cx| {
-                track_menu::build(menu, menu_facts, Some(&menu_tags), keys.clone(), window, cx)
+                let menu =
+                    track_menu::build(menu, menu_facts, Some(&menu_tags), keys.clone(), window, cx);
+                if playlist_tree.playlists().next().is_none() {
+                    return menu;
+                }
+                let tree = Arc::clone(&playlist_tree);
+                let height = track_menu::menu_height(window);
+                let keys = keys.clone();
+                menu.submenu("Add to playlist", window, cx, move |submenu, _, _| {
+                    let mut submenu = submenu
+                        .action_context(keys.clone())
+                        .max_h(height)
+                        .scrollable(true);
+                    for list in tree.playlists() {
+                        submenu = submenu.menu(
+                            playlists::playlist_label(&tree, list),
+                            Box::new(crate::shortcuts::Perform(
+                                crate::commands::Command::AddToPlaylist(list.id),
+                            )),
+                        );
+                    }
+                    submenu
+                })
             })
     }
 
@@ -2448,7 +2550,20 @@ impl Render for Browser {
             LibraryStatus::Reading => {
                 body.child(message_panel("Opening your library\u{2026}".into(), None))
             }
-            LibraryStatus::Unchosen => body.child(empty_library(cx)),
+            LibraryStatus::Unchosen => body
+                .when(!self.playlists.tree.is_empty(), |body| {
+                    body.child(
+                        div()
+                            .id("saved-playlist-sidebar")
+                            .flex_none()
+                            .w(SIDEBAR_WIDTH)
+                            .h_full()
+                            .p(px(8.0))
+                            .overflow_y_scroll()
+                            .child(self.playlist_sidebar(cx)),
+                    )
+                })
+                .child(empty_library(cx)),
         }
     }
 }
