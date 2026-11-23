@@ -722,7 +722,9 @@ impl Voicing for Outgoing {
     }
 
     fn set_loop_samples(&mut self, samples: f32) {
-        self.window = samples;
+        if self.taken == 0.0 {
+            self.window = samples;
+        }
     }
 
     fn switched_on(&mut self) {
@@ -730,12 +732,20 @@ impl Voicing for Outgoing {
     }
 
     #[inline]
+    fn dry_passthrough(&self) -> f32 {
+        // Keep the live music audible until the first repeat begins to fade in.
+        let past_capture = (self.taken - self.window).max(0.0);
+        (1.0 - past_capture / self.edge_samples.max(1.0)).max(0.0)
+    }
+
+    #[inline]
     fn send(&mut self, input: Frame) -> Frame {
-        if self.taken >= self.window {
+        let captured = self.taken;
+        self.taken = (captured + 1.0).min(self.window + self.edge_samples);
+        if captured >= self.window {
             return [0.0; 2];
         }
-        let edge = (self.taken.min(self.window - self.taken) / self.edge_samples.max(1.0)).min(1.0);
-        self.taken += 1.0;
+        let edge = (captured.min(self.window - captured) / self.edge_samples.max(1.0)).min(1.0);
         input.map(|sample| sample * edge)
     }
 
