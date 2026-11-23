@@ -7,7 +7,8 @@ use super::database::{DatabaseFile, EncodedRow, TableRows, align4, write_databas
 use super::error::DeviceLibraryError;
 use super::fixed;
 use super::ids::{
-    AlbumId, ArtistId, ArtworkId, GenreId, KeyId, LabelId, LibraryId, PlaylistId, TrackId,
+    AlbumId, ArtistId, ArtworkId, GenreId, HistoryId, KeyId, LabelId, LibraryId, PlaylistId,
+    TrackId,
 };
 use super::rows;
 
@@ -64,6 +65,30 @@ pub struct PlaylistEntry {
     pub track: TrackId,
     /// The playlist.
     pub playlist: PlaylistId,
+}
+
+/// A track's place in a history players recorded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct HistoryEntry {
+    /// The track played.
+    pub track: TrackId,
+    /// The history.
+    pub history: HistoryId,
+    /// The position in the history, from 1 for the first track played.
+    pub entry_index: u32,
+}
+
+/// A history players recorded on the stick: the tracks played while it was in a player, in the
+/// order they played. The format keeps no time or date for it, only its name.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DeviceHistory {
+    /// The history's id.
+    pub id: HistoryId,
+    /// The name players gave it, such as `HISTORY 001`.
+    pub name: String,
+    /// The tracks in the order they played. A track the library does not hold is kept, so the
+    /// reader can say what is missing.
+    pub tracks: Vec<TrackId>,
 }
 
 /// The colour a DJ gives a track, from rekordbox's eight.
@@ -312,6 +337,10 @@ impl PreservedRows {
             self.rows.insert(table.type_number(), rows);
         }
     }
+
+    fn push(&mut self, table: TableKind, row: Vec<u8>) {
+        self.rows.entry(table.type_number()).or_default().push(row);
+    }
 }
 
 /// A Device Library: what `export.pdb` holds.
@@ -361,6 +390,69 @@ impl DeviceLibrary {
             playlist_entries: Vec::new(),
             preserved: PreservedRows::default(),
         }
+    }
+
+    /// The histories players recorded, oldest first by id, each with its tracks in the order
+    /// they played.
+    ///
+    /// Fails when a history row or entry does not match the layout players write.
+    pub fn histories(&self) -> Result<Vec<DeviceHistory>, DeviceLibraryError> {
+        let mut histories = BTreeMap::new();
+        for row in self.preserved.rows(TableKind::HistoryPlaylists) {
+            let (id, name) = rows::decode_history_playlist(row)?;
+            histories.insert(id, (name, Vec::new()));
+        }
+        for row in self.preserved.rows(TableKind::HistoryEntries) {
+            let entry = rows::decode_history_entry(row)?;
+            let Some((_, entries)) = histories.get_mut(&entry.history) else {
+                return Err(DeviceLibraryError::DanglingReference(format!(
+                    "a history entry belongs to history {}, which the library does not hold",
+                    entry.history
+                )));
+            };
+            entries.push((entry.entry_index, entry.track));
+        }
+        Ok(histories
+            .into_iter()
+            .map(|(id, (name, mut entries))| {
+                entries.sort_by_key(|(entry_index, _)| *entry_index);
+                DeviceHistory {
+                    id,
+                    name,
+                    tracks: entries.into_iter().map(|(_, track)| track).collect(),
+                }
+            })
+            .collect())
+    }
+
+    /// Records a history named `name` with `tracks` in playing order, as a player does, and
+    /// returns its id. Dubplate never records histories on a DJ's stick; this builds sticks
+    /// that look played on, for tests and demonstrations.
+    pub fn record_history(
+        &mut self,
+        name: &str,
+        tracks: &[TrackId],
+    ) -> Result<HistoryId, DeviceLibraryError> {
+        let taken = self.preserved.rows(TableKind::HistoryPlaylists).len();
+        let next = taken.saturating_add(1);
+        let id = u32::try_from(next)
+            .ok()
+            .and_then(HistoryId::new)
+            .ok_or(DeviceLibraryError::ExhaustedIds(taken))?;
+        let row = rows::encode_history_playlist(id, name)?;
+        self.preserved.push(TableKind::HistoryPlaylists, row.bytes);
+        for (entry_index, track) in (1..).zip(tracks) {
+            let entry = HistoryEntry {
+                track: *track,
+                history: id,
+                entry_index,
+            };
+            self.preserved.push(
+                TableKind::HistoryEntries,
+                rows::encode_history_entry(&entry).bytes,
+            );
+        }
+        Ok(id)
     }
 
     /// The library as the bytes of `export.pdb`.

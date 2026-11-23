@@ -94,6 +94,10 @@ row_id!(
     /// A folder's or playlist's row in the playlist tree.
     PlaylistId
 );
+row_id!(
+    /// A history's row in the history playlists table, which players add to as they play.
+    HistoryId
+);
 
 /// The number rekordbox stamps into every track row of one library and, plus one, into the
 /// settings row of its `exportExt.pdb`. It differs between libraries and stays the same across
