@@ -1,6 +1,8 @@
 //! The header: the mark, the modes, the search field, and the state of the library and the
 //! audio output.
 
+use std::time::Duration;
+
 use gpui::component::InteractiveElementExt;
 use gpui::prelude::*;
 use gpui::{
@@ -12,6 +14,7 @@ use crate::assets::LOGO_PATH;
 use crate::browser::{LibraryStatus, search_field};
 use crate::commands::{Command, Mode};
 use crate::fonts::MONO_FAMILY;
+use crate::recording::file_size_label;
 use crate::set::running_time;
 use crate::theme;
 use crate::widgets::{InteractiveControl, tooltip};
@@ -125,6 +128,17 @@ fn mode(
 }
 
 fn status(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoElement {
+    let narrow = app.narrow_window();
+    let awaited = app.analysis_awaited();
+    // A narrow window keeps the count of tracks to analyse for the chip's tooltip rather than
+    // cutting it to a fragment.
+    let library_tooltip = match &app.library {
+        LibraryStatus::Ready(collection) if narrow && awaited > 0 => Some(format!(
+            "{} tracks \u{b7} {awaited} to analyse",
+            collection.track_count()
+        )),
+        _ => None,
+    };
     let (library_colour, library_text): (Rgba, SharedString) =
         match (app.sources.files_seen(), &app.library) {
             (Some(files), _) => (
@@ -136,8 +150,9 @@ fn status(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoElem
             }
             (None, LibraryStatus::Ready(collection)) => (
                 theme::active().ok,
-                match app.analysis_awaited() {
+                match awaited {
                     0 => format!("{} tracks", collection.track_count()),
+                    _ if narrow => format!("{} tracks", collection.track_count()),
                     waiting => format!(
                         "{} tracks \u{b7} {waiting} to analyse",
                         collection.track_count()
@@ -197,11 +212,11 @@ fn status(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoElem
                 .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
                     this.perform(Command::ToggleLibrary, window, cx);
                 }))
+                .when_some(library_tooltip, |chip, text| chip.tooltip(tooltip(text)))
                 .child(dot(library_colour))
                 .child(div().truncate().child(library_text)),
         )
         .child({
-            let narrow = app.narrow_window();
             div()
                 .id("controller-status")
                 .flex()
@@ -288,7 +303,12 @@ fn record_button(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl I
         ),
         Some(status) => (
             theme::active().alert,
-            format!("REC {}", running_time(status.elapsed)).into(),
+            format!(
+                "REC {} \u{b7} {}",
+                running_time(status.elapsed),
+                file_size_label(status.size_bytes)
+            )
+            .into(),
         ),
         None => (theme::active().muted, "Rec".into()),
     };
@@ -319,8 +339,17 @@ fn record_button(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl I
         .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
             this.perform(Command::ToggleRecording, window, cx);
         }))
-        .child(dot(colour))
+        .child(dot(colour).when_some(status.as_ref(), |rec_dot, status| {
+            rec_dot.opacity(rec_dot_opacity(status.elapsed))
+        }))
         .child(label)
+}
+
+/// How lit the REC dot is `elapsed` into a recording: fully at each whole second, as the time
+/// ticks, fading to a third of the way between, so a running recording looks alive.
+fn rec_dot_opacity(elapsed: Duration) -> f32 {
+    let phase = elapsed.as_secs_f32().fract() * std::f32::consts::TAU;
+    0.35 + 0.65 * (0.5 + 0.5 * phase.cos())
 }
 
 /// The track playing in the headphones from the library, with a click to stop it.
@@ -395,6 +424,18 @@ fn header_switch(
         .child(name)
 }
 
-fn dot(colour: Rgba) -> impl IntoElement {
+fn dot(colour: Rgba) -> gpui::Div {
     div().size(px(6.0)).rounded_full().bg(colour)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_rec_dot_is_lit_on_each_second_and_dims_between() {
+        assert!((rec_dot_opacity(Duration::from_secs(12)) - 1.0).abs() < 1e-6);
+        assert!((rec_dot_opacity(Duration::from_millis(12_500)) - 0.35).abs() < 1e-6);
+        assert!(rec_dot_opacity(Duration::from_millis(12_250)) < 1.0);
+    }
 }

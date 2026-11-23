@@ -1,4 +1,5 @@
 pub(crate) mod allpass;
+pub(crate) mod coefficients;
 pub(crate) mod crush;
 pub(crate) mod delay_line;
 pub(crate) mod delay_time;

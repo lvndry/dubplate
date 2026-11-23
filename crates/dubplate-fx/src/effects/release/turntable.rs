@@ -1,5 +1,5 @@
 use crate::config::EffectConfig;
-use crate::dsp::delay_line::{DelayLine, MIN_DELAY_SAMPLES};
+use crate::dsp::delay_line::{DelayLine, INTERPOLATION_MARGIN, MIN_DELAY_SAMPLES};
 use crate::unit::Frame;
 
 /// A record of the last few seconds of music and a stylus that can play it at any speed.
@@ -22,7 +22,7 @@ impl Turntable {
 
     /// The most samples the stylus can fall behind.
     pub(crate) fn capacity(&self) -> f64 {
-        f64::from(self.lines[0].max_delay()) - 4.0
+        self.lines[0].max_delay() as f64 - INTERPOLATION_MARGIN as f64
     }
 
     pub(crate) fn drop_stylus(&mut self) {

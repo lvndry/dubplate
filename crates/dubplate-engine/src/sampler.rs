@@ -1,14 +1,28 @@
 use std::sync::Arc;
 
 use crate::curves::{Ramp, channel_fader_gain};
+use crate::looping::{BoundFrame, LoopRegion, advance_and_bound};
 use crate::mixer::RetireQueue;
 use crate::processor::StereoBlock;
 use crate::sync::{MasterBeat, sync_multiple};
 use crate::track::TrackBuffer;
 use crate::voice::Voice;
 
-/// Number of sampler slots: the DDJ-FLX4's left pads play slots 1 to 8, its right pads 9 to 16.
-pub const SAMPLER_SLOTS: usize = 16;
+/// Number of sampler banks, as rekordbox's sampler deck has.
+pub const SAMPLER_BANKS: usize = 4;
+
+/// Number of slots in a bank: the DDJ-FLX4's left pads play a bank's slots 1 to 8, its right
+/// pads 9 to 16.
+pub const BANK_SLOTS: usize = 16;
+
+/// Number of sampler slots in every bank together. Slot `bank * BANK_SLOTS + n` is slot `n + 1`
+/// of bank `bank + 1`; a slot keeps playing while another bank is shown.
+pub const SAMPLER_SLOTS: usize = SAMPLER_BANKS * BANK_SLOTS;
+
+const _: () = assert!(
+    SAMPLER_SLOTS <= u64::BITS as usize,
+    "one bit per slot in the published masks"
+);
 
 /// The sampler volume knob's position when the engine starts.
 pub(crate) const DEFAULT_SAMPLER_VOLUME: f32 = 0.8;
@@ -85,6 +99,9 @@ pub(crate) struct Sampler {
     volume: Ramp,
     cue: bool,
     output_rate: f64,
+    /// How many frames the channel EQ delays the decks by. The sampler skips the EQ, so a
+    /// synced loop starts at the master's beat as it is heard, not as the deck reads it.
+    deck_latency_frames: usize,
     pub(crate) block: StereoBlock,
 }
 
@@ -99,8 +116,13 @@ impl Sampler {
             volume: Ramp::new(channel_fader_gain(DEFAULT_SAMPLER_VOLUME), declick_frames),
             cue: false,
             output_rate: f64::from(output_rate.max(1)),
+            deck_latency_frames: 0,
             block: StereoBlock::with_capacity(max_block_frames),
         }
+    }
+
+    pub(crate) fn set_deck_latency_frames(&mut self, frames: usize) {
+        self.deck_latency_frames = frames;
     }
 
     /// Puts a sample in a slot, or empties it, stopping what it played.
@@ -138,6 +160,7 @@ impl Sampler {
         retire: &mut RetireQueue,
     ) {
         let output_rate = self.output_rate;
+        let latency_seconds = self.deck_latency_frames as f64 / output_rate;
         let Some(slot) = self.slots.get_mut(index) else {
             return;
         };
@@ -157,7 +180,12 @@ impl Sampler {
                     .total_frames()
                     .map_or(0.0, |frames| frames as f64 / source_rate * bpm / 60.0);
                 if length_beats > 0.0 {
-                    let beat = (master.beat * multiple).rem_euclid(length_beats);
+                    let heard_beat = if master.running {
+                        master.beat - latency_seconds * master.bpm / 60.0
+                    } else {
+                        master.beat
+                    };
+                    let beat = (heard_beat * multiple).rem_euclid(length_beats);
                     beat * 60.0 / bpm * source_rate
                 } else {
                     0.0
@@ -208,14 +236,14 @@ impl Sampler {
     }
 
     /// Which slots play, one bit per slot, and which hold a sample.
-    pub(crate) fn playing_and_loaded(&self) -> (u32, u32) {
+    pub(crate) fn playing_and_loaded(&self) -> (u64, u64) {
         self.slots
             .iter()
             .enumerate()
             .fold((0, 0), |(playing, loaded), (index, slot)| {
                 (
-                    playing | u32::from(slot.playing) << index,
-                    loaded | u32::from(slot.voice.track.is_some()) << index,
+                    playing | u64::from(slot.playing) << index,
+                    loaded | u64::from(slot.voice.track.is_some()) << index,
                 )
             })
     }
@@ -241,7 +269,9 @@ impl Sampler {
                 continue;
             }
             let source_rate = f64::from(track.sample_rate());
-            let end = track.total_frames().map(|frames| frames as f64);
+            let Some(end) = track.total_frames().map(|frames| frames as f64) else {
+                continue;
+            };
             let tempo = match (slot.settings.sync, slot.settings.bpm, master_bpm) {
                 (true, Some(bpm), Some(master)) => master * sync_multiple(master, bpm, true) / bpm,
                 _ => 1.0,
@@ -262,17 +292,31 @@ impl Sampler {
                 if !slot.playing {
                     continue;
                 }
-                slot.voice.position += step;
-                if let Some(end) = end
-                    && slot.voice.position >= end
-                {
-                    match slot.settings.mode {
-                        SampleMode::Loop => slot.voice.position -= end,
-                        SampleMode::OneShot => {
-                            slot.playing = false;
-                            slot.voice.transport.jump_to(0.0);
-                        }
+                let previous = slot.voice.position;
+                // A looping slot plays its sample as a whole-sample loop from its start.
+                let loop_region = (slot.settings.mode == SampleMode::Loop).then_some(LoopRegion {
+                    start: 0.0,
+                    end,
+                    active: true,
+                    length: None,
+                });
+                match advance_and_bound(
+                    &mut slot.voice,
+                    previous,
+                    step,
+                    loop_region.as_ref(),
+                    Some(end),
+                    slot.playing,
+                    retire,
+                ) {
+                    BoundFrame::Wrapped => {
+                        // One frame may run past more than one copy of the loop, at a high
+                        // source to output ratio like 384k down to 48k, so the wrap keeps
+                        // its distance into the loop.
+                        slot.voice.position = (slot.voice.position - end).rem_euclid(end);
                     }
+                    BoundFrame::ReachedEnd => slot.playing = false,
+                    BoundFrame::Within => {}
                 }
             }
         }

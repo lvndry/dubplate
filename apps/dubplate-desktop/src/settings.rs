@@ -54,6 +54,9 @@ pub enum SettingsError {
 pub struct Settings {
     /// Whether a playing deck refuses a new track.
     pub lock_playing_deck: bool,
+    /// Whether each track loads with the gain that brings it to a common loudness, as
+    /// rekordbox's Auto Gain, on by default as there.
+    pub auto_gain: bool,
     /// Whether cues, loops and jumps land on the beat grid.
     pub quantize: bool,
     /// Whether each deck's jog top holds the record, deck A first.
@@ -297,7 +300,7 @@ impl LibrarySortSetting {
 
 /// The sampler as the DJ left it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 pub struct SamplerSetting {
     /// The sampler's volume, from 0.0 to 1.0.
     pub volume: f32,
@@ -316,7 +319,6 @@ impl Default for SamplerSetting {
 
 /// One sampler slot as the DJ left it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct SampleSlotSetting {
     /// The slot, 0 for slot 1.
     pub slot: usize,
@@ -340,6 +342,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             lock_playing_deck: true,
+            auto_gain: true,
             quantize: true,
             vinyl_mode: [true; DECK_COUNT],
             audio_device: None,
@@ -462,6 +465,7 @@ mod tests {
         let path = directory.path().join("nested").join(FILE_NAME);
         let settings = Settings {
             lock_playing_deck: false,
+            auto_gain: false,
             quantize: false,
             vinyl_mode: [true, false],
             audio_device: Some("Studio Speakers".to_owned()),
@@ -622,6 +626,10 @@ mod tests {
         let settings = Settings::load(&path).unwrap();
         assert!(settings.lock_playing_deck);
         assert!(
+            settings.auto_gain,
+            "Auto Gain is on until the DJ turns it off, as in rekordbox"
+        );
+        assert!(
             settings.key_lock_on_new_tracks,
             "key lock is on for new tracks unless the DJ turned it off"
         );
@@ -678,7 +686,10 @@ mod tests {
         std::fs::write(
             &path,
             "audio_device = \"DDJ-FLX4\"\nmusic_folders = [\"/Music/Amapiano\"]\n\
-             a_setting_from_the_future = true\n\n[another_future_table]\nlevel = 3\n",
+             a_setting_from_the_future = true\n\n[another_future_table]\nlevel = 3\n\n[sampler]\n\
+             volume = 0.8\na_samplere_feature_from_the_future = true\n\
+             [[sampler.slots]]\nslot = 0\npath = \"/Samples/Bass drop.wav\"\n\
+             played_from_a_newer_build = true\n",
         )
         .unwrap();
         let settings = Settings::load(&path).unwrap();
@@ -686,6 +697,12 @@ mod tests {
         assert_eq!(
             settings.library.music_folders,
             vec![PathBuf::from("/Music/Amapiano")]
+        );
+        assert!((settings.sampler.volume - 0.8).abs() < 1e-6);
+        assert_eq!(settings.sampler.slots.len(), 1);
+        assert_eq!(
+            settings.sampler.slots[0].path,
+            PathBuf::from("/Samples/Bass drop.wav")
         );
     }
 }

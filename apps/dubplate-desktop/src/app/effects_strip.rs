@@ -26,7 +26,8 @@ use crate::widgets::{InteractiveControl, adjusted_value};
 const UNIT_HEIGHT: Pixels = px(32.0);
 /// The space above and below a row of units: a one-row strip is 46 px tall.
 const STRIP_PADDING: Pixels = px(7.0);
-const LEVEL_WIDTH: Pixels = px(52.0);
+/// Below this window width the units go [`Fit::Compact`]: a full unit needs about 480 px.
+const FULL_STRIP_WINDOW_WIDTH: Pixels = px(1500.0);
 const MENU_WIDTH: Pixels = px(372.0);
 /// The tallest the picker grows, enough for every effect at once on a large window.
 const MENU_HEIGHT: Pixels = px(560.0);
@@ -40,10 +41,41 @@ const GROUP_WIDTH: Pixels = px(58.0);
 const PICK_WIDTH: Pixels = px(96.0);
 const PICK_HEIGHT: Pixels = px(24.0);
 
+/// How much room each unit takes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Fit {
+    /// Every target its own button and every name in full.
+    Full,
+    /// For a narrow window: one target button that steps through the targets, a shorter
+    /// level bar and short Release FX names, so the three units keep to one row down to the
+    /// smallest window.
+    Compact,
+}
+
+impl Fit {
+    fn gap(self) -> Pixels {
+        match self {
+            Fit::Full => px(6.0),
+            Fit::Compact => px(4.0),
+        }
+    }
+
+    fn level_width(self) -> Pixels {
+        match self {
+            Fit::Full => px(52.0),
+            Fit::Compact => px(34.0),
+        }
+    }
+}
+
 pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> impl IntoElement {
     let show_focus = app.hardware_connected();
-    // A window too narrow for the three units side by side puts the last on a second row
-    // rather than cutting it off: every unit stays whole and in reach.
+    let fit = if app.window_size.width < FULL_STRIP_WINDOW_WIDTH {
+        Fit::Compact
+    } else {
+        Fit::Full
+    };
+    // Should a unit still not fit, it goes to a second row rather than being cut off.
     let mut strip = div()
         .flex()
         .flex_wrap()
@@ -60,7 +92,7 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
         if let Some(state) = app.effect_unit(unit) {
             let lever = app.beat_fx_lever().filter(|_| app.effect_focus == unit);
             let focused = show_focus && app.effect_focus == unit;
-            strip = strip.child(unit_row(app, unit, state, focused, lever, cx));
+            strip = strip.child(unit_row(app, unit, state, focused, lever, fit, cx));
         }
     }
     let hit_areas = Rc::clone(&app.hit_areas);
@@ -80,9 +112,14 @@ fn unit_row(
     state: EffectUnitState,
     focused: bool,
     lever: Option<Lever>,
+    fit: Fit,
     cx: &mut Context<'_, DubplateApp>,
 ) -> impl IntoElement + use<> {
     let menu = app.effect_menu.filter(|menu| menu.unit == unit);
+    let lever = match lever {
+        Some(Lever::At(target)) => Some(target),
+        Some(Lever::Unreported) | None => None,
+    };
     let menu_open = menu.is_some();
     let accent = match state.target {
         EffectTarget::Deck(deck) => theme::deck_colour(deck),
@@ -93,20 +130,22 @@ fn unit_row(
         .flex()
         .flex_none()
         .items_center()
-        .gap(px(6.0))
+        .gap(fit.gap())
         .h(UNIT_HEIGHT)
-        .pl(px(10.0))
+        .pl(fit.gap() + px(4.0))
         .pr(px(4.0))
         .rounded(px(8.0))
         .border_1()
         .border_color(theme::active().line)
         .bg(theme::active().panel)
         .child(unit_label(unit, focused))
-        .child(effect_button(unit, &state, menu_open, cx))
-        .child(parameter_stepper(unit, &state, cx))
-        .child(targets(unit, &state, cx))
-        .when_some(lever, |row, lever| row.child(lever_reading(lever)))
-        .child(level_bar(app, unit, state.depth, cx))
+        .child(effect_button(unit, &state, menu_open, fit, cx))
+        .child(parameter_stepper(unit, &state, fit, cx))
+        .map(|row| match fit {
+            Fit::Full => row.child(targets(unit, &state, lever, cx)),
+            Fit::Compact => row.child(target_stepper(unit, &state, lever, cx)),
+        })
+        .child(level_bar(app, unit, state.depth, fit.level_width(), cx))
         .child(on_button(
             unit,
             state.enabled,
@@ -114,7 +153,7 @@ fn unit_row(
             focused && app.shows_pressed(HeldControl::BeatFxOn),
             cx,
         ))
-        .child(release_button(unit, &state, cx))
+        .child(release_button(unit, &state, fit, cx))
         .when_some(menu, |row, menu| {
             row.child(picker(app, unit, &state, menu.opening, cx))
         })
@@ -142,6 +181,7 @@ fn effect_button(
     unit: EffectUnitId,
     state: &EffectUnitState,
     menu_open: bool,
+    fit: Fit,
     cx: &mut Context<'_, DubplateApp>,
 ) -> impl IntoElement + use<> {
     div()
@@ -157,7 +197,10 @@ fn effect_button(
         .justify_between()
         .gap(px(6.0))
         .h(px(26.0))
-        .min_w(px(86.0))
+        .map(|button| match fit {
+            Fit::Full => button.min_w(px(86.0)),
+            Fit::Compact => button.min_w(px(64.0)).max_w(px(84.0)),
+        })
         .px(px(8.0))
         .rounded(px(5.0))
         .font_weight(FontWeight::MEDIUM)
@@ -168,9 +211,10 @@ fn effect_button(
         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
             this.toggle_effect_menu(unit, window, cx);
         }))
-        .child(effect_label(state.kind))
+        .child(div().min_w_0().truncate().child(effect_label(state.kind)))
         .child(
             svg()
+                .flex_none()
                 .path(CHEVRON_DOWN_PATH)
                 .size(px(10.0))
                 .text_color(theme::active().muted),
@@ -180,8 +224,13 @@ fn effect_button(
 fn parameter_stepper(
     unit: EffectUnitId,
     state: &EffectUnitState,
+    fit: Fit,
     cx: &mut Context<'_, DubplateApp>,
 ) -> impl IntoElement + use<> {
+    let arrow_width = match fit {
+        Fit::Full => px(22.0),
+        Fit::Compact => px(16.0),
+    };
     let name = state
         .kind
         .parameter()
@@ -198,7 +247,7 @@ fn parameter_stepper(
             .flex()
             .items_center()
             .justify_center()
-            .w(px(22.0))
+            .w(arrow_width)
             .h(px(26.0))
             .rounded(px(5.0))
             .text_color(theme::active().muted)
@@ -224,7 +273,10 @@ fn parameter_stepper(
         .child(arrow("beat-shorter", "\u{2039}", Direction::Down))
         .child(
             div()
-                .min_w(px(34.0))
+                .min_w(match fit {
+                    Fit::Full => px(34.0),
+                    Fit::Compact => px(30.0),
+                })
                 .flex()
                 .justify_center()
                 .font_family(MONO_FAMILY)
@@ -234,9 +286,37 @@ fn parameter_stepper(
         .child(arrow("beat-longer", "\u{203a}", Direction::Up))
 }
 
+/// The colour under a target's letter: the deck's for a deck, the text's for both or master.
+fn target_underline(target: EffectTarget) -> Rgba {
+    match target {
+        EffectTarget::Deck(deck) => theme::deck_colour(deck),
+        EffectTarget::BothDecks | EffectTarget::Master => theme::active().text,
+    }
+}
+
+/// A dot over a target button where the controller's CH SELECT lever sits: quiet when the lever
+/// agrees with the target, in the attention colour when it does not, so a lever left on the
+/// wrong channel shows at once.
+fn lever_mark(agrees: bool) -> impl IntoElement {
+    div()
+        .absolute()
+        .top(px(-4.0))
+        .left(px(10.0))
+        .size(px(4.0))
+        .rounded_full()
+        .bg(if agrees {
+            theme::active().muted
+        } else {
+            theme::active().attention
+        })
+}
+
+/// One button per target, the chosen one lit and underlined, with the lever's dot over the one
+/// the lever is on.
 fn targets(
     unit: EffectUnitId,
     state: &EffectUnitState,
+    lever: Option<EffectTarget>,
     cx: &mut Context<'_, DubplateApp>,
 ) -> impl IntoElement + use<> {
     let current = state.target;
@@ -245,10 +325,8 @@ fn targets(
         .gap(px(2.0))
         .children(EffectTarget::ALL.map(|target| {
             let checked = target == current;
-            let underline = match target {
-                EffectTarget::Deck(deck) => theme::deck_colour(deck),
-                EffectTarget::BothDecks | EffectTarget::Master => theme::active().text,
-            };
+            let underline = target_underline(target);
+            let lever_here = lever == Some(target);
             div()
                 .id((
                     "effect-target",
@@ -256,12 +334,18 @@ fn targets(
                 ))
                 .accessible_toggle(
                     format!(
-                        "Effect {} target {}",
+                        "Effect {} target {}{}",
                         unit.index() + 1,
-                        target_letter(target)
+                        target_letter(target),
+                        if lever_here {
+                            ", the CH SELECT lever is here"
+                        } else {
+                            ""
+                        }
                     ),
                     checked,
                 )
+                .relative()
                 .flex()
                 .items_center()
                 .justify_center()
@@ -292,8 +376,62 @@ fn targets(
                         cx,
                     );
                 }))
+                .when(lever_here, |button| button.child(lever_mark(checked)))
                 .child(target_letter(target))
         }))
+}
+
+/// The compact target: one button showing the chosen target that steps to the next on a click,
+/// A, B, AB, M, with the lever's dot over it when the lever is elsewhere.
+fn target_stepper(
+    unit: EffectUnitId,
+    state: &EffectUnitState,
+    lever: Option<EffectTarget>,
+    cx: &mut Context<'_, DubplateApp>,
+) -> impl IntoElement + use<> {
+    let current = state.target;
+    let next = next_target(current);
+    let lever_elsewhere = lever.filter(|target| *target != current);
+    div()
+        .id(("effect-target-step", unit.index()))
+        .accessible_button(format!(
+            "Effect {} target {}, click for {}{}",
+            unit.index() + 1,
+            target_letter(current),
+            target_letter(next),
+            lever_elsewhere.map_or_else(String::new, |target| format!(
+                ", the CH SELECT lever is on {}",
+                target_letter(target)
+            ))
+        ))
+        .relative()
+        .flex()
+        .items_center()
+        .justify_center()
+        .h(px(24.0))
+        .min_w(px(26.0))
+        .px(px(4.0))
+        .rounded(px(5.0))
+        .font_family(MONO_FAMILY)
+        .text_size(theme::TINY_TEXT_SIZE)
+        .cursor_pointer()
+        .bg(theme::active().raised)
+        .text_color(theme::active().text)
+        .border_b_2()
+        .border_color(target_underline(current))
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+            this.perform(Command::Effect(unit, EffectEdit::Target(next)), window, cx);
+        }))
+        .when(lever_elsewhere.is_some(), |button| {
+            button.child(lever_mark(false))
+        })
+        .child(target_letter(current))
+}
+
+/// The target after `target` in the strip's order, wrapping from M back to A.
+fn next_target(target: EffectTarget) -> EffectTarget {
+    EffectTarget::ALL[(target.index() + 1) % EffectTarget::ALL.len()]
 }
 
 /// The level bar. The controller's LEVEL/DEPTH knob sets it the moment it reports, so the bar
@@ -302,6 +440,7 @@ fn level_bar(
     app: &DubplateApp,
     unit: EffectUnitId,
     depth: f32,
+    width: Pixels,
     cx: &mut Context<'_, DubplateApp>,
 ) -> impl IntoElement + use<> {
     let hit_areas: Rc<HitAreas> = Rc::clone(&app.hit_areas);
@@ -325,7 +464,7 @@ fn level_bar(
         .relative()
         .flex()
         .items_center()
-        .w(LEVEL_WIDTH)
+        .w(width)
         .h(px(16.0))
         .cursor_ew_resize()
         .on_mouse_down(
@@ -407,9 +546,14 @@ fn on_button(
 fn release_button(
     unit: EffectUnitId,
     state: &EffectUnitState,
+    fit: Fit,
     cx: &mut Context<'_, DubplateApp>,
 ) -> impl IntoElement + use<> {
     let name = release_label(state.release);
+    let shown = match fit {
+        Fit::Full => name,
+        Fit::Compact => short_release_label(state.release),
+    };
     div()
         .id(("effect-release", unit.index()))
         .accessible_button(format!("Effect {} release: {name}", unit.index() + 1))
@@ -437,7 +581,7 @@ fn release_button(
         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
             this.perform(Command::Effect(unit, EffectEdit::NextRelease), window, cx);
         }))
-        .child(name)
+        .child(shown)
 }
 
 /// A Release FX's name on the strip.
@@ -449,31 +593,13 @@ fn release_label(release: ReleaseFx) -> &'static str {
     }
 }
 
-/// Where the controller's CH SELECT lever sits, next to the targets of the unit it drives, so
-/// a target that differs from the lever shows at once.
-fn lever_reading(lever: Lever) -> impl IntoElement {
-    let reading = match lever {
-        Lever::At(target) => target_letter(target),
-        Lever::Unreported => "?",
-    };
-    div()
-        .id("beat-fx-lever")
-        .aria_label(match lever {
-            Lever::At(target) => format!("CH SELECT lever on {}", target_letter(target)),
-            Lever::Unreported => "CH SELECT lever not reported yet".to_owned(),
-        })
-        .flex()
-        .items_center()
-        .gap(px(3.0))
-        .text_size(theme::TINY_TEXT_SIZE)
-        .text_color(theme::active().muted)
-        .child("lever")
-        .child(
-            div()
-                .font_family(MONO_FAMILY)
-                .text_color(theme::active().text)
-                .child(reading),
-        )
+/// A Release FX's name on a compact strip.
+fn short_release_label(release: ReleaseFx) -> &'static str {
+    match release {
+        ReleaseFx::Echo => "Echo",
+        ReleaseFx::BackSpin => "Spin",
+        ReleaseFx::VinylBrake => "Brake",
+    }
 }
 
 /// The effect picker. Opened with the pointer it has a search field and stays open, the arrow
@@ -669,5 +795,23 @@ fn picker_room(app: &DubplateApp) -> PickerRoom {
         PickerRoom::Below(below.min(MENU_HEIGHT).max(MENU_SMALLEST))
     } else {
         PickerRoom::Above(above.min(MENU_HEIGHT).max(MENU_SMALLEST))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_compact_target_steps_through_every_target_and_back() {
+        let mut target = EffectTarget::Deck(DeckId::A);
+        let mut seen = Vec::new();
+        for _ in 0..EffectTarget::ALL.len() {
+            target = next_target(target);
+            seen.push(target);
+        }
+        assert_eq!(seen.last(), Some(&EffectTarget::Deck(DeckId::A)));
+        assert_eq!(seen.len(), EffectTarget::ALL.len());
+        assert!(EffectTarget::ALL.iter().all(|target| seen.contains(target)));
     }
 }

@@ -52,9 +52,12 @@ pub struct RecordingSummary {
 pub struct Recording {
     path: PathBuf,
     started: Instant,
+    bytes_per_second: u64,
     stop: Arc<AtomicBool>,
     dropped_frames: Arc<AtomicU64>,
     writer: Option<JoinHandle<Result<Duration, RecordingError>>>,
+    /// The writer still closing the file after a timed-out `finish_within`.
+    detached: Option<JoinHandle<Result<Duration, RecordingError>>>,
 }
 
 impl Recording {
@@ -71,6 +74,8 @@ impl Recording {
             bits_per_sample: BITS_PER_SAMPLE,
             sample_format: hound::SampleFormat::Int,
         };
+        let bytes_per_second =
+            u64::from(tap.sample_rate()) * u64::from(CHANNELS) * u64::from(BITS_PER_SAMPLE / 8);
         let (path, file) = create_recording_file(directory, &now)?;
         let writer =
             hound::WavWriter::new(std::io::BufWriter::new(file), spec).map_err(|source| {
@@ -96,15 +101,22 @@ impl Recording {
         Ok(Self {
             path,
             started: Instant::now(),
+            bytes_per_second,
             stop,
             dropped_frames,
             writer: Some(handle),
+            detached: None,
         })
     }
 
     /// How long the recording has run.
     pub fn elapsed(&self) -> Duration {
         self.started.elapsed()
+    }
+
+    /// About how big the file has grown: the audio of the time it has run.
+    pub fn size_bytes(&self) -> u64 {
+        (self.elapsed().as_secs_f64() * self.bytes_per_second as f64) as u64
     }
 
     /// Frames lost so far because the writer fell behind.
@@ -132,12 +144,34 @@ impl Recording {
             dropped_frames: self.dropped_frames.load(Ordering::Relaxed),
         })
     }
+
+    /// As `finish`, but for quit: the writer is told to stop, waited on briefly, and when it is
+    /// still closing the file, kept closing it in the background so the app is not held, while
+    /// the file it already wrote is finished as is.
+    pub fn finish_within(mut self, limit: Duration) {
+        self.stop.store(true, Ordering::Release);
+        let Some(writer) = self.writer.take() else {
+            return;
+        };
+        let deadline = Instant::now() + limit;
+        while !writer.is_finished() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        if writer.is_finished() {
+            writer.join().ok();
+        } else {
+            self.detached = Some(writer);
+        }
+    }
 }
 
 impl Drop for Recording {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Release);
         if let Some(writer) = self.writer.take() {
+            writer.join().ok();
+        }
+        if let Some(writer) = self.detached.take() {
             writer.join().ok();
         }
     }
@@ -232,8 +266,24 @@ pub fn recordings_directory() -> Option<PathBuf> {
     Some(dirs::audio_dir()?.join("Dubplate Recordings"))
 }
 
+/// A file size as Finder shows it: `86 MB`, or `1.24 GB` from a thousand megabytes.
+pub fn file_size_label(bytes: u64) -> String {
+    let megabytes = bytes as f64 / 1e6;
+    if megabytes < 1000.0 {
+        format!("{megabytes:.0} MB")
+    } else {
+        format!("{:.2} GB", megabytes / 1000.0)
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_file_size_reads_as_finder_shows_it() {
+        assert_eq!(file_size_label(86_400_000), "86 MB");
+        assert_eq!(file_size_label(400_000), "0 MB");
+        assert_eq!(file_size_label(1_240_000_000), "1.24 GB");
+    }
     use dubplate_engine::{DeckId, Track, offline_engine};
 
     use super::*;

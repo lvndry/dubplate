@@ -4,7 +4,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use dubplate_engine::{BeatLength, DeckId};
 use dubplate_rekordbox::{HotCue, HotCuePad, TrackCues, cue_milliseconds};
@@ -35,6 +35,8 @@ const PHASE_TRACK_WIDTH: f32 = 44.0;
 /// 8 ms at 120 BPM, under what an ear hears as a flam.
 const IN_PHASE_BEATS: f64 = 0.016;
 const PLAYHEAD_WIDTH: Pixels = px(2.0);
+/// How long the centre line brightens when the decks' beats lock: about a beat.
+pub(super) const PHASE_LOCK_GLOW: Duration = Duration::from_millis(470);
 const FLAG_WIDTH: f32 = 14.0;
 /// The quietest band still drawn, in pixels of half height.
 const SHORTEST_HALF_HEIGHT: f32 = 0.5;
@@ -112,16 +114,55 @@ pub(super) fn render(
         .child(lane(app, DeckId::A, &frames[0], readings[0], cx))
         .child(lane(app, DeckId::B, &frames[1], readings[1], cx))
         .child(zoom_label(app.lane_zoom))
-        .child(
-            div()
-                .absolute()
-                .top(px(4.0))
-                .bottom(px(4.0))
-                .left(relative(0.5))
-                .ml(-PLAYHEAD_WIDTH / 2.0)
-                .w(PLAYHEAD_WIDTH)
-                .bg(theme::active().playhead),
+        .child(centre_line(theme::active().playhead))
+        .children(
+            app.phase_lock_at
+                .map(|at| lock_glow(at.elapsed()))
+                .filter(|glow| *glow > 0.0)
+                .map(|glow| centre_line(theme::faded(theme::active().ok, glow))),
         )
+}
+
+fn centre_line(colour: Rgba) -> impl IntoElement {
+    div()
+        .absolute()
+        .top(px(4.0))
+        .bottom(px(4.0))
+        .left(relative(0.5))
+        .ml(-PLAYHEAD_WIDTH / 2.0)
+        .w(PLAYHEAD_WIDTH)
+        .bg(colour)
+}
+
+/// How strongly the centre line shows the lock `since` the beats locked: green at once, fading
+/// back to the playhead's colour over [`PHASE_LOCK_GLOW`].
+fn lock_glow(since: Duration) -> f32 {
+    (1.0 - since.as_secs_f32() / PHASE_LOCK_GLOW.as_secs_f32()).max(0.0)
+}
+
+/// How far the follower's beats are from the master's, in beats, while both decks play: what
+/// the phase meter reads.
+pub(super) fn phase_now(app: &DubplateApp, frames: &[DeckFrame; 2]) -> Option<f64> {
+    if !frames.iter().all(|frame| frame.state.playing) {
+        return None;
+    }
+    beat_readings(app, frames)
+        .into_iter()
+        .flatten()
+        .find_map(|reading| reading.phase)
+        .map(|phase| phase.beats)
+}
+
+/// Whether the decks count as locked after this frame's `phase`, given whether they were: they
+/// lock within [`IN_PHASE_BEATS`] and let go only past twice that, so beats hovering at the
+/// edge do not flash the centre line again and again.
+pub(super) fn phase_locked(was_locked: bool, phase: Option<f64>) -> bool {
+    let limit = if was_locked {
+        2.0 * IN_PHASE_BEATS
+    } else {
+        IN_PHASE_BEATS
+    };
+    phase.is_some_and(|beats| beats.abs() <= limit)
 }
 
 /// The lanes' zoom at their top right, one dot per zoom level, lit up to the current one, so
@@ -840,6 +881,26 @@ mod tests {
     use dubplate_rekordbox::{MemoryCue, MemoryCueColor, PaletteColor};
 
     use super::*;
+
+    #[test]
+    fn the_beats_lock_once_and_let_go_only_well_past_the_edge() {
+        assert!(!phase_locked(false, None));
+        assert!(!phase_locked(false, Some(0.02)));
+        assert!(phase_locked(false, Some(-0.01)));
+        assert!(
+            phase_locked(true, Some(0.02)),
+            "hovering at the edge stays locked"
+        );
+        assert!(!phase_locked(true, Some(0.04)));
+        assert!(!phase_locked(true, None), "a deck stopping lets go");
+    }
+
+    #[test]
+    fn the_lock_glow_fades_over_about_a_beat() {
+        assert_eq!(lock_glow(Duration::ZERO), 1.0);
+        assert!(lock_glow(Duration::from_millis(235)) > 0.49);
+        assert_eq!(lock_glow(PHASE_LOCK_GLOW), 0.0);
+    }
 
     #[test]
     fn only_the_memory_cues_on_screen_are_drawn_where_they_fall() {

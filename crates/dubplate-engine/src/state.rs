@@ -20,8 +20,8 @@ pub(crate) struct SharedState {
     pub(crate) headphone_peak: AtomicU32,
     pub(crate) master_limiting: AtomicU32,
     pub(crate) sampler_peak: AtomicU32,
-    pub(crate) sampler_playing: AtomicU32,
-    pub(crate) sampler_loaded: AtomicU32,
+    pub(crate) sampler_playing: AtomicU64,
+    pub(crate) sampler_loaded: AtomicU64,
     pub(crate) preview_playing: AtomicBool,
     pub(crate) preview_position_seconds: AtomicF64,
     pub(crate) effect_sounding: [AtomicBool; EFFECT_UNIT_COUNT],
@@ -149,8 +149,8 @@ impl SharedState {
             headphone_peak: AtomicU32::new(0),
             master_limiting: AtomicU32::new(0),
             sampler_peak: AtomicU32::new(0),
-            sampler_playing: AtomicU32::new(0),
-            sampler_loaded: AtomicU32::new(0),
+            sampler_playing: AtomicU64::new(0),
+            sampler_loaded: AtomicU64::new(0),
             preview_playing: AtomicBool::new(false),
             preview_position_seconds: AtomicF64::default(),
             effect_sounding: std::array::from_fn(|_| AtomicBool::new(false)),
@@ -435,5 +435,18 @@ mod tests {
         raise_peak(&meter, 0.25);
         assert_eq!(take_peak(&meter), 0.75);
         assert_eq!(take_peak(&meter), 0.0);
+    }
+
+    #[test]
+    fn peak_meter_does_not_read_back_huge_for_a_negative_peak() {
+        // A negative float's bits are a positive u32 near the top of the range, so a meter
+        // that saw a negative value would read back ~3.4e38. The limiting meter clamps its
+        // input at zero before it gets here; this guards the meter itself.
+        let meter = AtomicU32::new(0);
+        raise_peak(&meter, (-1e-9_f32).max(0.0));
+        raise_peak(&meter, 0.25);
+        let peak = take_peak(&meter);
+        assert_eq!(peak, 0.25);
+        assert!(peak < 1.0);
     }
 }

@@ -201,6 +201,9 @@ impl TrackAnalysis {
     }
 }
 
+/// The first section wins. A section that shows in both the .DAT and the .EXT (rekordbox
+/// writes the beat grid and the waveforms in both) is taken from the .DAT, which is the
+/// reader's first file, and the copy in the .EXT is dropped.
 fn fill<Value>(slot: &mut Option<Value>, value: Value) {
     if slot.is_none() {
         *slot = Some(value);

@@ -546,15 +546,26 @@ impl<const TAPS: usize> CoefficientBank<TAPS> {
             return (frame, missing);
         }
         let weights = self.weights(fraction, step);
-        let first_frame = base_index.saturating_add(1 - (TAPS / 2) as i64);
+        let first_frame = base_index + 1 - (TAPS / 2) as i64;
+        // Frames before the start of the track are silence, but their taps still need their
+        // weights when the read begins inside the look-back window, as key lock primes at the
+        // start of a track: shift the weights to where the clamped window starts, and the
+        // window itself keeps the position's true frame.
+        let start = first_frame.max(0);
+        let skip = (start - first_frame) as usize;
         let mut left = 0.0;
         let mut right = 0.0;
-        let missing =
-            track.visit_frames::<TAPS>(first_frame, |index, sample_left, sample_right| {
-                left += sample_left * weights[index];
-                right += sample_right * weights[index];
-            });
-        stems.accumulate(first_frame, &weights, &mut frame[..STEM_CHANNELS]);
+        let missing = track.visit_frames::<TAPS>(start, |index, sample_left, sample_right| {
+            if let Some(weight) = weights.get(index + skip) {
+                left += sample_left * weight;
+                right += sample_right * weight;
+            }
+        });
+        // A prime can begin a whole window before the start, when every tap is silence and
+        // the stems stay silent too; the slice only exists while a tap reaches the track.
+        if skip < TAPS {
+            stems.accumulate(start, &weights[skip..], &mut frame[..STEM_CHANNELS]);
+        }
         frame[STEM_CHANNELS] = left;
         frame[STEM_CHANNELS + 1] = right;
         (frame, missing)
@@ -582,7 +593,7 @@ impl<const TAPS: usize> CoefficientBank<TAPS> {
         let weights = self.weights(fraction, step);
         let mut left = 0.0;
         let mut right = 0.0;
-        let first_frame = base_index.saturating_add(1 - (TAPS / 2) as i64);
+        let first_frame = base_index + 1 - (TAPS / 2) as i64;
         let mut accumulate = |index: usize, sample_left: f32, sample_right: f32| {
             left += sample_left * weights[index];
             right += sample_right * weights[index];
@@ -604,7 +615,17 @@ impl<const TAPS: usize> CoefficientBank<TAPS> {
                 }
                 missing
             }
-            None => track.visit_frames::<TAPS>(first_frame, accumulate),
+            None => {
+                // Frames before the start of the track are silence, as key lock primes at the
+                // start of a track: shift the weights to where the clamped window starts.
+                let start = first_frame.max(0);
+                let skip = (start - first_frame) as usize;
+                track.visit_frames::<TAPS>(start, |index, sample_left, sample_right| {
+                    if weights.get(index + skip).is_some() {
+                        accumulate(index + skip, sample_left, sample_right)
+                    }
+                })
+            }
         };
         (left, right, missing)
     }
@@ -744,6 +765,39 @@ mod tests {
                 elapsed.as_secs_f64() * 1e9 / 480_000.0,
                 elapsed.as_secs_f64() * 10.0
             );
+        }
+    }
+
+    #[test]
+    fn a_prime_before_the_start_reads_the_aligned_window() {
+        // Key lock primes the feeder just before the start of the track. A read whose window
+        // begins in silence must be identical to the same window over a track padded with
+        // that silence: the negative frames read as silence, and the taps that reach the
+        // track keep their true weights. This rules out a ghost of the track's opening.
+        let kernel = ResamplingKernel::shared();
+        let pad = 2_048_i64;
+        let samples: Vec<_> = (0..48_000)
+            .flat_map(|frame| {
+                let value =
+                    (std::f64::consts::TAU * 1_000.0 * frame as f64 / 48_000.0).sin() as f32;
+                [value, value]
+            })
+            .collect();
+        let track = Track::from_interleaved_stereo(&samples, 48_000).unwrap();
+        let mut padded = vec![0.0_f32; (pad * 2) as usize];
+        padded.extend_from_slice(&samples);
+        let padded_track = Track::from_interleaved_stereo(&padded, 48_000).unwrap();
+        for step in [0.5, 1.0, 1.5, 2.5, 4.0, 8.0] {
+            for position in (0..128usize).step_by(7).map(|i| -(i as f64)) {
+                let (left, right, _) = kernel.read(track.buffer(), position, step);
+                let (pad_left, pad_right, _) =
+                    kernel.read(padded_track.buffer(), position + pad as f64, step);
+                assert_eq!(
+                    (left, right),
+                    (pad_left, pad_right),
+                    "step {step} position {position}"
+                );
+            }
         }
     }
 

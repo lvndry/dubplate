@@ -12,9 +12,9 @@ use dubplate_prep::{
     ExportLibrary, REKORDBOX_IMPORT_STEPS, RekordboxCollection, Set, SetStore, TrackIdentity,
     default_export_folder, export_file_name,
 };
-use dubplate_rekordbox::{Cue, DatabaseKey, Library, Track, TrackCues};
+use dubplate_rekordbox::{Cue, Library, Track, TrackCues};
 
-use crate::master_db_or_default;
+use crate::{master_db_or_default, open_library};
 
 #[derive(Subcommand)]
 pub(crate) enum SetCommand {
@@ -104,9 +104,7 @@ struct RekordboxData {
 
 impl RekordboxData {
     fn read(master_db: &Path) -> Result<Self> {
-        let key = DatabaseKey::from_user_configuration()?;
-        let library = Library::open_copy(master_db, &key)
-            .with_context(|| format!("reading {}", master_db.display()))?;
+        let library = open_library(master_db)?;
         Ok(Self {
             tracks: library.tracks()?,
             cues: library.cues()?,

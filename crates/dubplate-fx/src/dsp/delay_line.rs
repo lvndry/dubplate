@@ -1,4 +1,5 @@
-const INTERPOLATION_MARGIN: usize = 4;
+/// How many samples past the longest delay a cubic read still reaches for its taps.
+pub(crate) const INTERPOLATION_MARGIN: usize = 4;
 
 /// The shortest delay a cubic read can serve: it needs one sample newer than the read point.
 pub(crate) const MIN_DELAY_SAMPLES: f32 = 2.0;

@@ -5,6 +5,7 @@
 mod analysis;
 mod audio;
 mod audition;
+mod auto_gain;
 mod cueing;
 mod cues;
 mod deck_grid;
@@ -73,6 +74,7 @@ use gpui::{
 };
 
 use crate::analysis::{AnalysisPriority, TrackAnalyser, TrackAnalyses};
+use crate::auto_gain::AutoGain;
 use crate::browser::{Browser, BrowserEvent, LibraryStatus};
 use crate::collection::{Collection, CollectionTrack, TrackIndex};
 use crate::commands::{
@@ -80,7 +82,7 @@ use crate::commands::{
 };
 use crate::controls::{
     CROSSFADER_STEP, Control, MixerPositions, Orientation, Slider, fraction_at, master_gain_at,
-    nudged_tempo_slider, tempo_fader, trim_gain_at,
+    nudged_tempo_slider, tempo_fader,
 };
 use crate::cue_marks::{MarkerPulse, SeenMarks};
 use crate::deck::{
@@ -133,7 +135,7 @@ const PINCH_STEP: f32 = 0.25;
 /// What the window says when the audio drops out often.
 const GLITCH_NOTICE: &str = "Audio is glitching. A larger buffer in Settings > Audio can help.";
 /// Below this width the header shows the controller and the sound card as dots.
-const NARROW_WINDOW_WIDTH: Pixels = px(1320.0);
+pub(crate) const NARROW_WINDOW_WIDTH: Pixels = px(1320.0);
 /// Below this height the lanes are lower.
 const SHORT_WINDOW_HEIGHT: Pixels = px(820.0);
 /// How often the controller lights follow the decks while nothing else updates them, for the
@@ -249,6 +251,8 @@ pub struct DubplateApp {
     set_scroll: ScrollHandle,
     prepare_view: Arc<prepare::PrepareViewModel>,
     prepare_generation: u64,
+    /// When the set's last track became ready, so its energy curve draws in once.
+    set_ready_at: Option<Instant>,
     track_checks: HashMap<PathBuf, TrackCheck>,
     checks_pending: HashSet<PathBuf>,
     check_generation: u64,
@@ -273,6 +277,7 @@ pub struct DubplateApp {
     stems_changed: bool,
     recording: Option<Recording>,
     recording_skip_reported: bool,
+    auto_gains: [Option<AutoGain>; DECK_COUNT],
     play_history: PlayHistory,
     play_watches: [PlayWatch<SessionRecord>; DECK_COUNT],
     time_zone: jiff::tz::TimeZone,
@@ -302,6 +307,10 @@ pub struct DubplateApp {
     lane_zoom: Zoom,
     /// How far a pinch on the lanes has gone since it last changed the zoom.
     pinch: f32,
+    /// Whether the two playing decks' beats are locked together, as the phase meter reads.
+    phase_locked: bool,
+    /// When they last locked, so the lanes' centre line brightens once.
+    phase_lock_at: Option<Instant>,
     /// What the menu bar was last built for.
     menu_state: Option<MenuState>,
     /// The window's size at the last frame, for the layout of small windows.
@@ -365,6 +374,9 @@ impl DubplateApp {
         let effect_search = cx.new(|cx| InputState::new(window, cx).placeholder("Find an effect"));
         let quit_subscription = cx.on_app_quit(|this: &mut Self, cx| {
             this.finish_recording_on_quit();
+            // A debounced settings write may still be running; without waiting, a quit inside
+            // that window drops the last changes.
+            let saving = this.settings_saving.take();
             this.finish_plays(cx);
             let barrier = this
                 .set_editor
@@ -376,6 +388,9 @@ impl DubplateApp {
                 }
             });
             async move {
+                if let Some(saving) = saving {
+                    saving.await;
+                }
                 task.await;
             }
         });
@@ -526,6 +541,7 @@ impl DubplateApp {
             set_scroll: ScrollHandle::new(),
             prepare_view: Arc::default(),
             prepare_generation: 0,
+            set_ready_at: None,
             track_checks: HashMap::new(),
             checks_pending: HashSet::new(),
             check_generation: 0,
@@ -550,6 +566,7 @@ impl DubplateApp {
             stems_changed: true,
             recording: None,
             recording_skip_reported: false,
+            auto_gains: [None; DECK_COUNT],
             play_history: PlayHistory::new(SystemTime::now()),
             play_watches: Default::default(),
             time_zone: jiff::tz::TimeZone::system(),
@@ -576,6 +593,8 @@ impl DubplateApp {
             frame_stats: FrameStats::from_environment().map(|stats| Rc::new(RefCell::new(stats))),
             pad_notes: Default::default(),
             lane_zoom,
+            phase_locked: false,
+            phase_lock_at: None,
             pinch: 0.0,
             menu_state: None,
             window_size: window.viewport_size(),
@@ -596,7 +615,7 @@ impl DubplateApp {
         app.start_library(cx);
         app.start_set_session(cx);
         Self::keep_collecting_stems(cx);
-        if let Some(problem) = problems.into_iter().next() {
+        for problem in problems {
             app.show_notice(NoticePlace::Window, problem, cx);
         }
         app
@@ -986,6 +1005,7 @@ impl DubplateApp {
                 self.reset_deck_stems(deck, cx);
                 self.signal_controllers(Feedback::TrackLoaded(controller_deck(deck)));
                 self.give_deck_analysed_grid(deck, cx);
+                self.level_deck(deck, cx);
                 self.refresh_filter_reference(cx);
                 if needs_waveform {
                     self.draw_waveform_from_audio(deck, generation, cx);
@@ -1159,6 +1179,7 @@ impl DubplateApp {
                 self.save_settings(cx);
                 self.engine_command(cx, |controller| controller.set_fader_echo(on));
             }
+            Command::SetAutoGain(on) => self.set_auto_gain(on, cx),
             Command::Stems(deck, action) => self.apply_stem_action(deck, action, cx),
             Command::ToggleKeyLock(deck) => {
                 let locked = self.key_lock(deck);
@@ -1222,6 +1243,9 @@ impl DubplateApp {
                 .update(cx, |browser, cx| browser.switch_pane(cx)),
             Command::Jog(deck, motion, ticks) => {
                 if self.deck(deck).visuals().is_some() {
+                    if motion == JogMotion::Nudge {
+                        self.decks[deck.index()].nudged_at = Some(Instant::now());
+                    }
                     self.engine_command(cx, |controller| match motion {
                         JogMotion::Scratch => controller.jog_scratch(deck, ticks),
                         JogMotion::Nudge => controller.jog_nudge(deck, ticks),
@@ -1435,6 +1459,7 @@ impl DubplateApp {
         if needs_waveform {
             self.draw_waveform_from_audio(deck, generation, cx);
         }
+        self.level_deck(deck, cx);
         self.mixer.tempo_sliders[deck.index()] = self.mixer.tempo_sliders[source.index()];
         self.signal_controllers(Feedback::TrackLoaded(controller_deck(deck)));
     }
@@ -1494,9 +1519,7 @@ impl DubplateApp {
             }
             Control::Trim(deck) => {
                 self.mixer.trims[deck.index()] = fraction;
-                self.engine_command(cx, |controller| {
-                    controller.set_gain(deck, trim_gain_at(fraction))
-                });
+                self.apply_trim(deck, cx);
             }
             Control::Eq(deck, band) => {
                 self.mixer.eqs[deck.index()][band.index()] = fraction;
@@ -2143,12 +2166,24 @@ impl DubplateApp {
         for (side, frame) in self.decks.iter_mut().zip(&frames) {
             notice_new_cue(side, frame.state.cue_point_seconds, now);
         }
+        let locked = lanes::phase_locked(self.phase_locked, lanes::phase_now(self, &frames));
+        if locked && !self.phase_locked {
+            self.phase_lock_at = Some(now);
+        }
+        self.phase_locked = locked;
         let pulsing = self.decks.iter().any(|side| side.marker_pulse.is_some())
             || self
                 .hardware
                 .as_ref()
                 .is_some_and(|hardware| hardware.dispatcher.held.any_shown(now))
-            || self.pad_notes.iter().flatten().any(|note| note.shows(now));
+            || self.pad_notes.iter().flatten().any(|note| note.shows(now))
+            || self.recording.is_some()
+            || self
+                .set_ready_at
+                .is_some_and(|at| now.duration_since(at) < set_panel::SET_READY_DRAW)
+            || self
+                .phase_lock_at
+                .is_some_and(|at| now.duration_since(at) < lanes::PHASE_LOCK_GLOW);
         let moving = pulsing
             || frames.iter().any(|frame| frame.state.playing)
             || self.master_meter.is_moving()

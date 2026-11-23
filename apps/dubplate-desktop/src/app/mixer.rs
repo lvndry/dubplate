@@ -578,12 +578,16 @@ enum MeterDirection {
 
 fn meter(meter: &PeakMeter, direction: MeterDirection) -> impl IntoElement {
     let lit = meter.lit_segments();
+    let held = meter.held_segment();
+    let clipping = meter.clipping();
     let (size, gap) = match direction {
         MeterDirection::Up => (SEGMENT_SIZE, SEGMENT_GAP),
         MeterDirection::Across => (HEADER_SEGMENT_SIZE, HEADER_SEGMENT_GAP),
     };
     let segments = (0..SEGMENTS).map(move |segment| {
-        let colour = if segment >= lit {
+        let colour = if clipping && segment == SEGMENTS - 1 {
+            theme::active().alert
+        } else if segment >= lit && Some(segment) != held {
             theme::active().meter_off
         } else if segment >= HOT_FROM {
             theme::active().meter_hot

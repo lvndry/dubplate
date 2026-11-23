@@ -11,6 +11,7 @@ use super::ids::{
     TrackId,
 };
 use super::rows;
+use super::string::read_string;
 
 /// A row of an id and a name: an artist, a genre, a label or a musical key.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -589,16 +590,27 @@ impl DeviceLibrary {
         let mut tracks = Vec::new();
         for row in rows_of(TableKind::Tracks) {
             let (track, id) = rows::decode_track(row)?;
-            library_id = id;
+            if tracks.is_empty() {
+                library_id = id;
+            } else if id != library_id {
+                return Err(DeviceLibraryError::DanglingReference(format!(
+                    "the track rows carry two library ids, {library_id:?} and {id:?}"
+                )));
+            }
             tracks.push(track);
         }
         let mut preserved = PreservedRows::default();
         for kind in PreservedRows::TABLES {
             preserved.insert(kind, rows_of(kind).to_vec());
         }
+        let created = rows_of(TableKind::HistorySync)
+            .first()
+            .map(|row| read_string(row, fixed::HISTORY_SYNC_DATE_POSITION))
+            .transpose()?
+            .unwrap_or_default();
         Ok(Self {
             library_id,
-            created: String::new(),
+            created,
             tracks,
             artists: decode_all(rows_of(TableKind::Artists), rows::decode_artist)?,
             albums: decode_all(rows_of(TableKind::Albums), rows::decode_album)?,

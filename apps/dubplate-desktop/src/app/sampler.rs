@@ -277,7 +277,7 @@ mod tests {
         assert_eq!(sampler_slot(DeckId::A, 7), 7);
         assert_eq!(sampler_slot(DeckId::B, 0), 8);
         assert_eq!(sampler_slot(DeckId::B, 7), 15);
-        assert_eq!(SAMPLER_SLOTS, 16);
+        assert_eq!(dubplate_engine::BANK_SLOTS, 16);
     }
 
     #[test]

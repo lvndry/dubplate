@@ -139,7 +139,12 @@ impl Library {
             "SELECT content.ID, content.Title, artist.Name, album.Name, genre.Name, label.Name,
                     musical_key.ScaleName, content.BPM, content.Length, content.FolderPath,
                     content.FileSize, content.Rating, content.Commnt, content.AnalysisDataPath,
-                    content.StockDate
+                    content.StockDate,
+                    (SELECT (mixer.GainHigh & 65535) << 16 | (mixer.GainLow & 65535)
+                     FROM djmdMixerParam AS mixer
+                     WHERE mixer.ContentID = content.ID AND mixer.rb_local_deleted = 0
+                     ORDER BY mixer.updated_at DESC
+                     LIMIT 1)
              FROM djmdContent AS content
              LEFT JOIN djmdArtist AS artist ON artist.ID = content.ArtistID
              LEFT JOIN djmdAlbum AS album ON album.ID = content.AlbumID
@@ -177,38 +182,51 @@ impl Library {
              WHERE rb_local_deleted = 0
              ORDER BY ParentID, Seq, ID",
         )?;
+        let mut shells = Vec::new();
+        for shell in playlist_statement.query_map([], |row| {
+            let parent_id: Option<String> = row.get(1)?;
+            Ok(Playlist {
+                id: row.get(0)?,
+                parent_id: parent_id.filter(|parent| parent != "root"),
+                name: row.get::<_, Option<String>>(2)?.unwrap_or_default(),
+                kind: PlaylistKind::from_attribute(row.get::<_, Option<i64>>(3)?.unwrap_or(0)),
+                position: row.get::<_, Option<i64>>(4)?.unwrap_or(0),
+                track_ids: Vec::new(),
+            })
+        })? {
+            shells.push(shell?);
+        }
+        // The entries of every live playlist in one query, instead of one per playlist on
+        // every library read.
         let mut entry_statement = self.connection.prepare(
-            "SELECT entry.ContentID
-             FROM djmdSongPlaylist AS entry
+            "SELECT entry.ContentID, playlist.ID
+             FROM djmdPlaylist AS playlist
+             JOIN djmdSongPlaylist AS entry ON entry.PlaylistID = playlist.ID
              JOIN djmdContent AS content ON content.ID = entry.ContentID
-             WHERE entry.PlaylistID = ?1
+             WHERE playlist.rb_local_deleted = 0
                AND entry.rb_local_deleted = 0
                AND content.rb_local_deleted = 0
-             ORDER BY entry.TrackNo, entry.ID",
+             ORDER BY playlist.ID, entry.TrackNo, entry.ID",
         )?;
-        let shells = playlist_statement
+        let entries: Vec<(String, String)> = entry_statement
             .query_map([], |row| {
-                let parent_id: Option<String> = row.get(1)?;
-                Ok(Playlist {
-                    id: row.get(0)?,
-                    parent_id: parent_id.filter(|parent| parent != "root"),
-                    name: row.get::<_, Option<String>>(2)?.unwrap_or_default(),
-                    kind: PlaylistKind::from_attribute(row.get::<_, Option<i64>>(3)?.unwrap_or(0)),
-                    position: row.get::<_, Option<i64>>(4)?.unwrap_or(0),
-                    track_ids: Vec::new(),
-                })
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
             })?
-            .collect::<Result<Vec<_>, _>>()?;
-        let mut playlists = Vec::with_capacity(shells.len());
-        for mut playlist in shells {
-            if playlist.kind == PlaylistKind::Playlist {
-                playlist.track_ids = entry_statement
-                    .query_map([&playlist.id], |row| row.get(0))?
-                    .collect::<Result<Vec<String>, _>>()?;
-            }
-            playlists.push(playlist);
+            .collect::<Result<_, _>>()?;
+        let mut tracks_by_playlist: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
+        for (content_id, playlist_id) in entries {
+            tracks_by_playlist
+                .entry(playlist_id)
+                .or_default()
+                .push(content_id);
         }
-        Ok(playlists)
+        for playlist in &mut shells {
+            if playlist.kind == PlaylistKind::Playlist {
+                playlist.track_ids = tracks_by_playlist.remove(&playlist.id).unwrap_or_default();
+            }
+        }
+        Ok(shells)
     }
 
     fn count_live(&self, table: &str) -> Result<u64, Error> {
@@ -244,7 +262,19 @@ fn track_from_row(row: &Row<'_>) -> rusqlite::Result<Track> {
         comment: row.get(12)?,
         analysis_path: row.get(13)?,
         date_added: row.get(14)?,
+        auto_gain_db: row
+            .get::<_, Option<i64>>(15)?
+            .and_then(|bits| u32::try_from(bits).ok())
+            .and_then(mixer_gain_db),
     })
+}
+
+/// A `djmdMixerParam` gain in decibels. rekordbox keeps the linear gain factor as the bits of
+/// an IEEE 754 single, its upper 16 bits in `GainHigh` and its lower 16 in `GainLow`.
+/// A factor that is not a positive number gives none.
+pub(crate) fn mixer_gain_db(bits: u32) -> Option<f32> {
+    let factor = f32::from_bits(bits);
+    (factor.is_finite() && factor > 0.0).then(|| 20.0 * factor.log10())
 }
 
 fn cue_from_row(row: &Row<'_>) -> rusqlite::Result<Cue> {
@@ -291,4 +321,20 @@ fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
     let mut name = path.as_os_str().to_owned();
     name.push(suffix);
     PathBuf::from(name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_mixer_gain_is_the_decibels_of_its_single() {
+        let decibels = |factor: f32| mixer_gain_db(factor.to_bits());
+        assert_eq!(decibels(1.0), Some(0.0));
+        assert!((decibels(0.5).unwrap() + 6.020_6).abs() < 1e-3);
+        assert!((decibels(2.0).unwrap() - 6.020_6).abs() < 1e-3);
+        assert_eq!(decibels(0.0), None);
+        assert_eq!(decibels(-1.0), None);
+        assert_eq!(mixer_gain_db(f32::NAN.to_bits()), None);
+    }
 }

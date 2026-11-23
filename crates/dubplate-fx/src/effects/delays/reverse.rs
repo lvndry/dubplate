@@ -106,9 +106,38 @@ impl Kernel for ReverseKernel {
 
     fn reset(&mut self) {
         self.heads.clear();
+        self.dip = 1.0;
+        if self.window_samples != self.wanted_window_samples {
+            self.window_samples = self.wanted_window_samples;
+            self.heads.set_window_samples(self.window_samples);
+        }
     }
 
     fn tail_seconds(&self) -> f32 {
         self.wanted_window_samples / self.sample_rate + TRAIL_MARGIN_SECONDS
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ReverseKernel;
+    use crate::config::EffectConfig;
+    use crate::context::BlockTiming;
+    use crate::unit::Kernel;
+
+    #[test]
+    fn reset_restores_the_dip_after_a_poisoned_reset() {
+        let mut kernel = ReverseKernel::new(&EffectConfig::default());
+        let timing = BlockTiming {
+            sample_rate: 48_000.0,
+            beat_position: 0.0,
+            beats_per_sample: 120.0 / 60.0 / 48_000.0,
+        };
+        kernel.begin_block(&timing);
+        kernel.dip = 0.0;
+        kernel.window_samples = 1.0;
+        kernel.reset();
+        assert_eq!(kernel.dip, 1.0);
+        assert_eq!(kernel.window_samples, kernel.wanted_window_samples);
     }
 }
