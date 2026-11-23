@@ -15,8 +15,8 @@ use gpui::component::menu::{ContextMenuExt, PopupMenuItem};
 use gpui::prelude::*;
 use gpui::{
     App, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable, MouseButton,
-    MouseDownEvent, Pixels, ScrollStrategy, SharedString, Subscription, UniformListScrollHandle,
-    Window, div, px, svg, uniform_list,
+    MouseDownEvent, Pixels, ScrollHandle, ScrollStrategy, SharedString, Subscription,
+    UniformListScrollHandle, Window, div, px, svg, uniform_list,
 };
 use playlists::PlaylistPanel;
 
@@ -209,8 +209,10 @@ pub struct Browser {
     stems: StemStatuses,
     search_input: Entity<InputState>,
     table_focus: FocusHandle,
+    sidebar_scroll: ScrollHandle,
+    reveal_sidebar_selection: bool,
     scroll: UniformListScrollHandle,
-    detail_scroll: gpui::ScrollHandle,
+    detail_scroll: ScrollHandle,
     /// Whether the window is narrow, so the table shows [`Column::NARROW`].
     narrow: bool,
     /// What Dubplate has stored for the library's tracks, for the search filters.
@@ -273,8 +275,10 @@ impl Browser {
             stems: StemStatuses::default(),
             search_input,
             table_focus: cx.focus_handle(),
+            sidebar_scroll: ScrollHandle::new(),
+            reveal_sidebar_selection: false,
             scroll: UniformListScrollHandle::new(),
-            detail_scroll: gpui::ScrollHandle::new(),
+            detail_scroll: ScrollHandle::new(),
             narrow: false,
             track_metadata: Arc::default(),
             _subscriptions: vec![subscription, name_subscription],
@@ -405,6 +409,7 @@ impl Browser {
                 };
                 if let Some(id) = next {
                     self.choose_playlist(id, cx);
+                    self.reveal_sidebar_selection = true;
                 }
             }
             return true;
@@ -425,8 +430,10 @@ impl Browser {
             return false;
         };
         match action {
-            TreeKey::Expand => self.toggle_folder(self.crate_index, true, cx),
-            TreeKey::Collapse => self.toggle_folder(self.crate_index, false, cx),
+            TreeKey::Expand | TreeKey::Collapse => {
+                self.toggle_folder(self.crate_index, matches!(action, TreeKey::Expand), cx);
+                self.reveal_sidebar_selection = true;
+            }
             TreeKey::FirstChild => self.move_crate_cursor(1, cx),
             TreeKey::Parent => {
                 let parent = collection
@@ -439,6 +446,7 @@ impl Browser {
                     .map(|(index, _)| index);
                 if let Some(parent) = parent {
                     self.choose_crate(parent, cx);
+                    self.reveal_sidebar_selection = true;
                 }
             }
             TreeKey::Nothing => {}
@@ -809,7 +817,10 @@ impl Browser {
     pub fn switch_pane(&mut self, cx: &mut Context<'_, Self>) {
         self.pane = match self.pane {
             BrowserPane::Crates => BrowserPane::Tracks,
-            BrowserPane::Tracks => BrowserPane::Crates,
+            BrowserPane::Tracks => {
+                self.reveal_sidebar_selection = true;
+                BrowserPane::Crates
+            }
         };
         cx.notify();
     }
@@ -836,35 +847,43 @@ impl Browser {
         }
     }
 
+    fn sidebar_selection_position(&self) -> Option<usize> {
+        let playlists = self.playlists.tree.entries();
+        let playlist_count = playlists.len();
+        if let Some(page) = self.history_page {
+            self.history
+                .pages
+                .iter()
+                .position(|view| view.page == page)
+                .map(|position| playlist_count + self.visible_crates.len() + position)
+        } else if let Some(id) = self.playlists.selected {
+            playlists.iter().position(|entry| entry.id == id)
+        } else {
+            self.visible_crates
+                .iter()
+                .position(|index| *index == self.crate_index)
+                .map(|position| playlist_count + position)
+        }
+    }
+
     /// Moves through the playlists, library sources and history pages in sidebar order.
     fn move_crate_cursor(&mut self, steps: i32, cx: &mut Context<'_, Self>) {
+        if steps == 0 {
+            return;
+        }
         let playlists = self.playlists.tree.entries();
         let playlist_count = playlists.len();
         let library_end = playlist_count + self.visible_crates.len();
-        let current = if let Some(page) = self.history_page {
-            library_end
-                + self
-                    .history
-                    .pages
-                    .iter()
-                    .position(|view| view.page == page)
-                    .unwrap_or(0)
-        } else if let Some(id) = self.playlists.selected {
-            playlists
-                .iter()
-                .position(|entry| entry.id == id)
-                .unwrap_or(0)
-        } else {
-            playlist_count
-                + self
-                    .visible_crates
-                    .iter()
-                    .position(|index| *index == self.crate_index)
-                    .unwrap_or(0)
-        };
-        let Some(next) = offset(current, steps, library_end + self.history.pages.len()) else {
+        let current = self.sidebar_selection_position();
+        let start = current.unwrap_or(playlist_count);
+        let Some(next) = offset(start, steps, library_end + self.history.pages.len()) else {
             return;
         };
+        if current == Some(next) {
+            self.reveal_sidebar_selection = true;
+            cx.notify();
+            return;
+        }
         if let Some(entry) = playlists.get(next) {
             self.choose_playlist(entry.id, cx);
         } else if let Some(page) = next.checked_sub(library_end) {
@@ -874,6 +893,7 @@ impl Browser {
         } else if let Some(&crate_index) = self.visible_crates.get(next - playlist_count) {
             self.choose_crate(crate_index, cx);
         }
+        self.reveal_sidebar_selection = true;
     }
 
     fn select(&mut self, track: Option<TrackIndex>, cx: &mut Context<'_, Self>) {
@@ -1015,12 +1035,7 @@ impl Browser {
         cx.notify();
     }
 
-    fn render_sidebar(
-        &self,
-        collection: &Collection,
-        cx: &mut Context<'_, Self>,
-    ) -> impl IntoElement {
-        let crates_have_cursor = self.pane == BrowserPane::Crates;
+    fn sidebar(&self, cx: &mut Context<'_, Self>) -> gpui::Stateful<gpui::Div> {
         div()
             .id("crates")
             .flex()
@@ -1034,7 +1049,18 @@ impl Browser {
             .border_color(theme::active().line)
             .bg(theme::active().background)
             .overflow_y_scroll()
-            .child(self.playlist_sidebar(cx))
+            .track_scroll(&self.sidebar_scroll)
+            .child(self.playlist_sidebar_controls(cx))
+            .children(self.playlist_sidebar_rows(cx))
+    }
+
+    fn render_sidebar(
+        &self,
+        collection: &Collection,
+        cx: &mut Context<'_, Self>,
+    ) -> impl IntoElement {
+        let crates_have_cursor = self.pane == BrowserPane::Crates;
+        self.sidebar(cx)
             .children(self.visible_crates.iter().map(|&crate_index| {
                 let entry = collection.crate_at(crate_index);
                 let chosen = self.playlists.selected.is_none()
@@ -2548,6 +2574,14 @@ pub fn search_field(browser: &Browser) -> impl IntoElement + use<> {
 
 impl Render for Browser {
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+        if std::mem::take(&mut self.reveal_sidebar_selection)
+            && (matches!(self.library, LibraryStatus::Ready(_))
+                || self.playlists.selected.is_some())
+            && let Some(position) = self.sidebar_selection_position()
+        {
+            // The heading and its controls are one child before the browsable rows.
+            self.sidebar_scroll.scroll_to_item(position + 1);
+        }
         self.narrow = window.viewport_size().width < NARROW_WINDOW_WIDTH;
         let body = div()
             .flex()
@@ -2568,16 +2602,7 @@ impl Render for Browser {
             }
             LibraryStatus::Unchosen => body
                 .when(!self.playlists.tree.is_empty(), |body| {
-                    body.child(
-                        div()
-                            .id("saved-playlist-sidebar")
-                            .flex_none()
-                            .w(SIDEBAR_WIDTH)
-                            .h_full()
-                            .p(px(8.0))
-                            .overflow_y_scroll()
-                            .child(self.playlist_sidebar(cx)),
-                    )
+                    body.child(self.sidebar(cx))
                 })
                 .child(empty_library(cx)),
         }
