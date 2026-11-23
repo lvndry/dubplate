@@ -27,10 +27,10 @@ use crate::state::NO_SLICE;
 use crate::state::{GapDetector, SharedState, encode_loop_length, raise_peak};
 use crate::stems::StemSettings;
 use crate::sync::SyncMode;
-use crate::tempo::{DeckLevel, MasterTempo, TempoMaster, TempoRange};
+use crate::tempo::{BeatClock, DeckLevel, MasterTempo, TempoMaster, TempoRange};
 use crate::track::TrackBuffer;
 use crate::{DECK_COUNT, INSERT_SLOTS, MAX_BLOCK_FRAMES};
-use dubplate_fx::{BeatLength, EqBand, Limiter};
+use dubplate_fx::{BeatLength, EqBand, FALLBACK_TEMPO_BPM, Limiter};
 
 const DECLICK_SECONDS: f64 = 0.005;
 const MAX_COMMANDS_PER_CALLBACK: usize = 256;
@@ -320,6 +320,7 @@ pub struct Renderer {
     retire: RetireQueue,
     shared: Arc<SharedState>,
     sample_rate: u32,
+    rendered_frames: u64,
     gap_detector: GapDetector,
 }
 
@@ -360,6 +361,7 @@ impl Renderer {
             retire,
             shared,
             sample_rate,
+            rendered_frames: 0,
             gap_detector: GapDetector::default(),
         };
         renderer.update_channel_gains();
@@ -464,12 +466,21 @@ impl Renderer {
             tempo: deck.tempo(),
             beat_clock: deck.beat_clock(),
         });
+        let fallback = BeatClock {
+            bpm: FALLBACK_TEMPO_BPM,
+            beat_position: self.rendered_frames as f64 * FALLBACK_TEMPO_BPM
+                / (60.0 * f64::from(self.sample_rate)),
+        };
+        self.rendered_frames += frame_count as u64;
         let mut starved = false;
         for (deck_id, (deck, context)) in DeckId::ALL
             .into_iter()
             .zip(self.decks.iter_mut().zip(&deck_contexts))
         {
-            starved |= deck.render(frame_count, context, &mut self.retire).starved;
+            let fx_context = context.for_effects(fallback);
+            starved |= deck
+                .render(frame_count, context, &fx_context, &mut self.retire)
+                .starved;
             let shared = &self.shared.decks[deck_id.index()];
             raise_peak(&shared.pre_fader_peak, deck.block.peak());
             self.headphones.listen(deck_id, &deck.block);
@@ -478,10 +489,10 @@ impl Renderer {
                 self.fader_echo,
                 deck.channel_gain(),
                 &mut deck.block,
-                context,
+                &fx_context,
             );
             self.effects
-                .process(Bus::Deck(deck_id), &mut deck.block, context);
+                .process(Bus::Deck(deck_id), &mut deck.block, &fx_context);
             let peak = deck.mix_into(&mut self.master_block);
             raise_peak(&self.shared.decks[deck_id.index()].peak, peak);
         }
@@ -501,8 +512,11 @@ impl Renderer {
         for processor in self.master_inserts.iter_mut().flatten() {
             processor.process(&mut self.master_block, &master_context);
         }
-        self.effects
-            .process(Bus::Master, &mut self.master_block, &master_context);
+        self.effects.process(
+            Bus::Master,
+            &mut self.master_block,
+            &master_context.for_effects(fallback),
+        );
         starved |= self.render_preview(frame_count);
         self.headphones
             .finish(&self.master_block, &self.preview.block);

@@ -1,7 +1,8 @@
 const FALLBACK_SAMPLE_RATE: f32 = 48_000.0;
 const MIN_SAMPLE_RATE: f32 = 8_000.0;
 const MAX_SAMPLE_RATE: f32 = 768_000.0;
-const FALLBACK_TEMPO_BPM: f64 = 120.0;
+/// Tempo used by beat effects when no track grid is available.
+pub const FALLBACK_TEMPO_BPM: f64 = 120.0;
 /// The slowest tempo effects follow, in beats per minute. A slower tempo is clamped to it.
 pub const MIN_TEMPO_BPM: f64 = 20.0;
 /// The fastest tempo effects follow, in beats per minute. A faster tempo is clamped to it.

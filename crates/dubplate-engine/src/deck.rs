@@ -1148,6 +1148,7 @@ impl Deck {
         &mut self,
         frame_count: usize,
         context: &ProcessContext,
+        fx_context: &ProcessContext,
         retire: &mut RetireQueue,
     ) -> DeckRender {
         let mut result = DeckRender::default();
@@ -1284,8 +1285,8 @@ impl Deck {
             *left = (playhead_left * gain + tail_left) * trim;
             *right = (playhead_right * gain + tail_right) * trim;
         }
-        self.strip.process(&mut self.block, context);
-        self.pad_effects.process(&mut self.block, context);
+        self.strip.process(&mut self.block, fx_context);
+        self.pad_effects.process(&mut self.block, fx_context);
         for processor in self.inserts.iter_mut().flatten() {
             processor.process(&mut self.block, context);
         }

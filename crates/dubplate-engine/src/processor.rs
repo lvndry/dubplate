@@ -111,6 +111,16 @@ pub struct ProcessContext {
     pub beat_clock: Option<BeatClock>,
 }
 
+impl ProcessContext {
+    /// Built-in effects free-run without a grid. Custom inserts still see the original clock.
+    pub(crate) fn for_effects(self, fallback: BeatClock) -> Self {
+        Self {
+            beat_clock: Some(self.beat_clock.unwrap_or(fallback)),
+            ..self
+        }
+    }
+}
+
 /// An effect or other processing stage that sits in a deck's or the master's insert slot.
 ///
 /// `process` runs on the audio thread. It must not allocate, lock, block, or do I/O, and it must
