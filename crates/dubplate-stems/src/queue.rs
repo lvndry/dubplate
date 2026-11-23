@@ -1,8 +1,10 @@
 //! The queue of tracks to separate, run by one thread that starts one worker process at a time.
 
 use std::io::{BufRead, BufReader};
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdout, ExitStatus, Stdio};
+use std::process::{Child, ChildStdout, Command, ExitStatus, Stdio};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -368,13 +370,9 @@ impl Scheduler {
     fn spawn(&mut self, track: &Path) -> std::io::Result<Running> {
         let job = self.next_job;
         self.next_job += 1;
-        let mut child = self
-            .launcher
-            .command(track)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .spawn()?;
+        let command = self.launcher.command(track);
+        let mut command = prepare_worker_command(command);
+        let mut child = command.spawn()?;
         let Some(stdout) = child.stdout.take() else {
             stop_child(&mut child);
             return Err(std::io::Error::other("the worker has no output to read"));
@@ -489,12 +487,48 @@ impl Scheduler {
     }
 }
 
-/// Kills a worker and waits for it, so it leaves no zombie behind.
+/// Kills a worker and the whole tree it started, and waits for it, so it
+/// leaves no zombie or grandchild holding its output pipe open.
 fn stop_child(child: &mut Child) {
+    #[cfg(unix)]
+    {
+        // The worker's app forks its own processes that outlive the direct
+        // child; killing only the child would leave the pipe held open and
+        // the reader would never see the end of the stream.
+        //
+        // SAFETY: the worker was placed in its own process group on spawn;
+        // a failure here just falls through to the plain kill below.
+        let _ = unsafe { libc::killpg(child.id() as libc::pid_t, libc::SIGKILL) };
+    }
     let _ = child.kill();
     let _ = child.wait();
 }
 
+/// Builds a worker command: stdin and stdout piped, stderr inherited, and on
+/// unix the worker runs in its own process group, so stopping it also reaches
+/// the app and the processes the app forks — any of them can hold the output
+/// pipe open after the direct child is gone.
+fn prepare_worker_command(mut command: Command) -> Command {
+    command.stdin(Stdio::piped());
+    command.stdout(Stdio::piped());
+    command.stderr(Stdio::inherit());
+    #[cfg(unix)]
+    {
+        // SAFETY: the closure runs in the forked child before `exec`; a
+        // failed `setpgid` aborts the child with an `io::Error` instead of
+        // running the worker in an unknown process group.
+        unsafe {
+            command.pre_exec(|| {
+                if libc::setpgid(0, 0) == 0 {
+                    Ok(())
+                } else {
+                    Err(std::io::Error::last_os_error())
+                }
+            });
+        }
+    }
+    command
+}
 fn join_reader(running: &mut Running) {
     if let Some(reader) = running.reader.take() {
         let _ = reader.join();
