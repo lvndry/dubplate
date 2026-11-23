@@ -20,7 +20,7 @@ impl DubplateApp {
     pub(super) fn refresh_metadata(
         &mut self,
         collection: Arc<Collection>,
-        cx: &mut gpui::Context<'_, Self>,
+        cx: &mut Context<'_, Self>,
     ) {
         self.track_metadata_generation += 1;
         let generation = self.track_metadata_generation;
@@ -109,11 +109,7 @@ impl DubplateApp {
     }
 
     /// Gives the metadata read from the set store to the browser's filters.
-    fn apply_track_metadata(
-        &mut self,
-        cache: TrackMetadataCache,
-        cx: &mut gpui::Context<'_, Self>,
-    ) {
+    fn apply_track_metadata(&mut self, cache: TrackMetadataCache, cx: &mut Context<'_, Self>) {
         self.track_metadata = Arc::new(cache);
         self.browser.update(cx, |browser, cx| {
             browser.set_track_metadata(Arc::clone(&self.track_metadata), cx)

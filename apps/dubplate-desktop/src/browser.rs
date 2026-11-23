@@ -1079,15 +1079,20 @@ impl Browser {
                     this.pane = BrowserPane::Crates;
                     this.choose_crate(crate_index, cx);
                 }))
-                .when(entry_kind == CrateKind::Playlist, |row| {
-                    row.context_menu(move |menu, _, _| {
-                        menu.menu(
-                            "Copy to Dubplate playlist",
-                            Box::new(crate::shortcuts::Perform(
-                                crate::commands::Command::CopyPlaylist(crate_index),
-                            )),
-                        )
-                    })
+                .map(|row| {
+                    if entry_kind == CrateKind::Playlist {
+                        row.context_menu(move |menu, _, _| {
+                            menu.menu(
+                                "Copy to Dubplate playlist",
+                                Box::new(crate::shortcuts::Perform(
+                                    crate::commands::Command::CopyPlaylist(crate_index),
+                                )),
+                            )
+                        })
+                        .into_any_element()
+                    } else {
+                        row.into_any_element()
+                    }
                 })
             }))
             .children(
