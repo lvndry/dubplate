@@ -15,10 +15,11 @@ use thiserror::Error;
 use crate::downbeat::settle_grid;
 use crate::energy::{TrackEnergy, rate_track_energy};
 use crate::grid::BEATS_PER_BAR;
+use crate::loudness::{Lufs, integrated_loudness};
 
 /// Raised whenever a change to how Dubplate puts Euphoria's detectors together can change what
 /// an analysis reports, so analyses cached before it are made again.
-const PIPELINE_VERSION: u32 = 2;
+const PIPELINE_VERSION: u32 = 3;
 
 /// The version of everything that decides an analysis: Euphoria's detectors, its energy model
 /// and the way Dubplate combines them. A cached analysis made under another version is stale.
@@ -103,6 +104,9 @@ pub struct AudioAnalysis {
     pub key: Option<Key>,
     /// The energy, or None when there is nothing to rate, such as silence.
     pub energy: Option<TrackEnergy>,
+    /// How loud the track sounds over its length, or None for silence. Auto Gain levels the
+    /// track from it.
+    pub loudness: Option<Lufs>,
 }
 
 impl AudioAnalysis {
@@ -180,6 +184,7 @@ pub fn analyse_audio(audio: &AudioBuffer) -> Result<AudioAnalysis, EuphoriaError
         beat_grid,
         key,
         energy,
+        loudness: integrated_loudness(audio),
     })
 }
 

@@ -159,9 +159,7 @@ impl SetStore {
 
 /// `time` as Unix milliseconds, 0 before 1970.
 fn unix_millis(time: SystemTime) -> i64 {
-    time.duration_since(UNIX_EPOCH)
-        .map(|since| i64::try_from(since.as_millis()).unwrap_or(i64::MAX))
-        .unwrap_or(0)
+    i64::try_from(dubplate_library::unix_millis(time)).unwrap_or(i64::MAX)
 }
 
 /// Unix milliseconds as a time, 1970 for a negative count.

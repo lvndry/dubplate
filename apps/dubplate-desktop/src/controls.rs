@@ -1,6 +1,6 @@
 //! The mixer and tempo sliders: their positions, and how a pointer on a slider becomes a value.
 
-use dubplate_engine::{DeckId, EqBand, Stem, TempoRange, decibels_to_gain};
+use dubplate_engine::{DeckId, EqBand, Stem, TempoRange, decibels_to_gain, gain_to_decibels};
 use gpui::{Bounds, Pixels, Point};
 
 /// How far one crossfader key press moves the crossfader.
@@ -194,6 +194,20 @@ pub fn trim_gain_at(fraction: f32) -> f32 {
     decibels_to_gain(decibels)
 }
 
+/// Where the trim knob sits for `gain`, the inverse of [`trim_gain_at`], kept between its ends.
+pub fn trim_fraction_for_gain(gain: f32) -> f32 {
+    if gain <= 0.0 {
+        return 0.0;
+    }
+    let decibels = gain_to_decibels(gain);
+    let fraction = if decibels >= 0.0 {
+        0.5 + decibels / TRIM_BOOST_DB / 2.0
+    } else {
+        0.5 + decibels / TRIM_CUT_DB / 2.0
+    };
+    fraction.clamp(0.0, 1.0)
+}
+
 /// Where the sampler's volume starts, a little under its loudest so a sample sits in the mix.
 pub const DEFAULT_SAMPLER_VOLUME: f32 = 0.8;
 /// The master level the first time Dubplate opens, 10 dB under full, before the DJ or the
@@ -333,6 +347,15 @@ mod tests {
         assert_eq!(trim_gain_at(0.0), 0.0);
         assert!((trim_gain_at(1.0) - decibels_to_gain(9.0)).abs() < 1e-5);
         assert!(trim_gain_at(0.25) < 1.0);
+        for fraction in [0.05, 0.25, 0.5, 0.6, 0.9, 1.0] {
+            let back = trim_fraction_for_gain(trim_gain_at(fraction));
+            assert!(
+                (back - fraction).abs() < 1e-4,
+                "{fraction} came back as {back}"
+            );
+        }
+        assert_eq!(trim_fraction_for_gain(0.0), 0.0);
+        assert_eq!(trim_fraction_for_gain(100.0), 1.0);
     }
 
     #[test]

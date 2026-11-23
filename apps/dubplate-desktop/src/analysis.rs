@@ -337,6 +337,7 @@ mod tests {
                 score: 0.5,
                 curve: Vec::new(),
             }),
+            loudness: None,
         }
     }
 
