@@ -12,7 +12,7 @@ use dubplate_engine::{
 const BLOCK: usize = 256;
 const TRACK_SECONDS: f64 = 60.0;
 
-fn deck_with_grid(grid: BeatGrid) -> (Controller, Renderer) {
+fn loaded_deck() -> (Controller, Renderer) {
     let (mut controller, renderer) = offline_engine(SAMPLE_RATE);
     controller
         .load_track(
@@ -20,10 +20,15 @@ fn deck_with_grid(grid: BeatGrid) -> (Controller, Renderer) {
             sine_track(440.0, 0.5, 0.5, TRACK_SECONDS, SAMPLE_RATE),
         )
         .expect("load the test track");
+    controller.set_crossfader(0.0).expect("set the crossfader");
+    (controller, renderer)
+}
+
+fn deck_with_grid(grid: BeatGrid) -> (Controller, Renderer) {
+    let (mut controller, renderer) = loaded_deck();
     controller
         .set_beat_grid(DeckId::A, Some(grid))
         .expect("set the grid");
-    controller.set_crossfader(0.0).expect("set the crossfader");
     (controller, renderer)
 }
 
@@ -118,6 +123,114 @@ fn without_quantize_the_loop_starts_exactly_at_the_press() {
         assert_close(press.start, press.position, 1e-9);
         assert_close(press.end, press.position + 2.0, 1e-9);
     }
+}
+
+#[test]
+fn a_late_grid_retimes_a_fallback_loop_and_keeps_it_going() {
+    let (mut controller, mut renderer) = loaded_deck();
+    let press = press_beat_loop(&mut controller, &mut renderer, 10.0, BeatLength::FOUR);
+    assert_close(press.end - press.start, 2.0, 1e-9);
+    let expected_duration = 4.0 * 60.0 / 127.0;
+    let tempo = 118.0 / 127.0;
+    controller.set_tempo(DeckId::A, tempo).unwrap();
+    render(
+        &mut renderer,
+        (1.95 * f64::from(SAMPLE_RATE) / tempo) as usize,
+    );
+    let before_grid = position(&controller);
+    assert!((press.start + expected_duration..press.end).contains(&before_grid));
+
+    controller
+        .set_beat_grid(DeckId::A, Some(BeatGrid::new(127.0, 0.1).unwrap()))
+        .unwrap();
+    render(&mut renderer, 1);
+    let wrapped = before_grid - expected_duration + tempo / f64::from(SAMPLE_RATE);
+    assert_close(position(&controller), wrapped, 1e-9);
+    for _ in 0..4 {
+        render(&mut renderer, SAMPLE_RATE as usize);
+        let state = controller.loop_state(DeckId::A);
+        let start = state.start_seconds.unwrap();
+        let end = state.end_seconds.unwrap();
+        assert!(state.active);
+        assert_eq!(state.length, Some(BeatLength::FOUR));
+        assert_close(start, press.start, 1e-9);
+        assert_close(end - start, expected_duration, 1e-9);
+        assert!((start..end).contains(&position(&controller)));
+    }
+}
+
+#[test]
+fn a_late_grid_retimes_an_exited_beat_loop() {
+    let (mut controller, mut renderer) = loaded_deck();
+    let press = press_beat_loop(&mut controller, &mut renderer, 10.0, BeatLength::FOUR);
+    controller.reloop_or_exit(DeckId::A).unwrap();
+    controller
+        .set_beat_grid(DeckId::A, Some(BeatGrid::new(127.0, 0.1).unwrap()))
+        .unwrap();
+    render(&mut renderer, BLOCK);
+    let state = controller.loop_state(DeckId::A);
+    assert!(!state.active);
+    assert_close(state.start_seconds.unwrap(), press.start, 1e-9);
+    assert_close(
+        state.end_seconds.unwrap(),
+        press.start + 240.0 / 127.0,
+        1e-9,
+    );
+}
+
+#[test]
+fn a_late_grid_retimes_a_roll_and_the_beat_loop_it_releases_to() {
+    let (mut controller, mut renderer) = loaded_deck();
+    let press = press_beat_loop(&mut controller, &mut renderer, 10.0, BeatLength::FOUR);
+    controller.beat_roll(DeckId::A, BeatLength::ONE).unwrap();
+    render(&mut renderer, BLOCK);
+    let roll = controller.loop_state(DeckId::A);
+    let start = roll.start_seconds.unwrap();
+    assert_close(roll.end_seconds.unwrap() - start, 0.5, 1e-9);
+
+    controller
+        .set_beat_grid(DeckId::A, Some(BeatGrid::new(127.0, 0.1).unwrap()))
+        .unwrap();
+    render(&mut renderer, BLOCK);
+    let roll = controller.loop_state(DeckId::A);
+    assert!(roll.active);
+    assert_eq!(roll.length, Some(BeatLength::ONE));
+    assert_close(roll.start_seconds.unwrap(), start, 1e-9);
+    assert_close(roll.end_seconds.unwrap(), start + 60.0 / 127.0, 1e-9);
+
+    controller.release_roll(DeckId::A).unwrap();
+    render(&mut renderer, BLOCK);
+    let original = controller.loop_state(DeckId::A);
+    assert!(original.active);
+    assert_eq!(original.length, Some(BeatLength::FOUR));
+    assert_close(original.start_seconds.unwrap(), press.start, 1e-9);
+    assert_close(
+        original.end_seconds.unwrap(),
+        press.start + 240.0 / 127.0,
+        1e-9,
+    );
+}
+
+#[test]
+fn a_late_grid_preserves_manual_loop_markers() {
+    let (mut controller, mut renderer) = loaded_deck();
+    controller.seek(DeckId::A, 10.0).unwrap();
+    controller.loop_in(DeckId::A).unwrap();
+    controller.seek(DeckId::A, 12.0).unwrap();
+    controller.loop_out(DeckId::A).unwrap();
+    render(&mut renderer, BLOCK);
+    let before = controller.loop_state(DeckId::A);
+    assert!(before.active);
+    assert_eq!(before.length, None);
+
+    controller
+        .set_beat_grid(DeckId::A, Some(BeatGrid::new(127.0, 0.1).unwrap()))
+        .unwrap();
+    render(&mut renderer, BLOCK);
+    let after = controller.loop_state(DeckId::A);
+    assert!(after.active);
+    assert_eq!(after.start_seconds, before.start_seconds);
+    assert_eq!(after.end_seconds, before.end_seconds);
 }
 
 #[test]

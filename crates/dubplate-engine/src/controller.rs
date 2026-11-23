@@ -1144,6 +1144,8 @@ impl Controller {
     }
 
     /// Sets the beat grid of the track on a deck, so effects on it follow its tempo and beats.
+    /// When a grid becomes available, existing beat loops keep their start and count their
+    /// length on the new grid.
     /// Loading a track clears the grid: set it after [`Controller::load_track`]. Commands
     /// sent one after the other take effect in the same callback, so no audio plays in between.
     pub fn set_beat_grid(

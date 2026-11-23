@@ -187,11 +187,14 @@ impl Deck {
     }
 
     pub(crate) fn set_beat_grid(&mut self, beat_grid: Option<BeatGrid>, retire: &mut RetireQueue) {
+        let grid_arrived = self.beat_grid.is_none() && beat_grid.is_some();
         if let Some(previous) = std::mem::replace(&mut self.beat_grid, beat_grid) {
             retire.beat_grid(previous);
         }
         self.sync.multiple = None;
-        if self.beat_grid.is_none() {
+        if grid_arrived {
+            self.retime_fallback_loops(retire);
+        } else if self.beat_grid.is_none() {
             self.slicer_off(retire);
         }
     }
@@ -571,6 +574,24 @@ impl Deck {
             },
             retire,
         );
+    }
+
+    /// Loops made before the grid arrived used 120 BPM. Keep their in points and use the new
+    /// grid to count their beats, including the loop that will return after a roll.
+    fn retime_fallback_loops(&mut self, retire: &mut RetireQueue) {
+        let retime = |mut region: LoopRegion| {
+            if let Some(length) = region.length {
+                region.end = self.frame_at_beat(self.beat_at_frame(region.start) + length.beats());
+            }
+            region
+        };
+        let previous = self.looping.region;
+        let updated = previous.map(retime);
+        self.roll = self.roll.map(|saved| saved.map(retime));
+        self.looping.region = updated;
+        if previous.is_some_and(|region| region.active && region.contains(self.voice.position)) {
+            self.fold_past_loop_end(retire);
+        }
     }
 
     /// Halves the loop from its start, down to a thirty-second of a beat.
