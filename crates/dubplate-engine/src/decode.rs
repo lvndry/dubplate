@@ -1,11 +1,12 @@
 use std::fs::File;
+use std::io::Cursor;
 use std::path::Path;
 
 use symphonia::core::codecs::audio::{AudioDecoder, AudioDecoderOptions};
 use symphonia::core::errors::Error as SymphoniaError;
 use symphonia::core::formats::probe::Hint;
 use symphonia::core::formats::{FormatOptions, FormatReader, TrackType};
-use symphonia::core::io::MediaSourceStream;
+use symphonia::core::io::{MediaSource, MediaSourceStream};
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::packet::Packet;
 use symphonia::core::units::TimeBase;
@@ -40,16 +41,14 @@ pub fn decode_file(path: impl AsRef<Path>) -> Result<Track, EngineError> {
 /// be opened or decoding stops with an error.
 pub fn decode_file_to_end(path: impl AsRef<Path>) -> Result<Track, EngineError> {
     let path = path.as_ref();
-    let session = DecodeSession::open(path)?;
-    let track = session.writer.track();
-    session.run();
-    match track.status() {
-        DecodeStatus::Failed(message) => Err(EngineError::Decode {
-            path: path.to_path_buf(),
-            message,
-        }),
-        DecodeStatus::Complete | DecodeStatus::Decoding => Ok(track),
-    }
+    DecodeSession::open(path)?.finish(path)
+}
+
+/// Decodes embedded audio to its end on the calling thread without accessing the filesystem.
+/// The name identifies the audio in errors and its extension gives the decoder a format hint.
+pub fn decode_bytes_to_end(bytes: &'static [u8], name: &str) -> Result<Track, EngineError> {
+    let path = Path::new(name);
+    DecodeSession::from_source(Box::new(Cursor::new(bytes)), path)?.finish(path)
 }
 
 /// What an audio file says about its audio, read from its header without decoding it.
@@ -86,6 +85,10 @@ impl DecodeSession {
             path: path.to_path_buf(),
             source,
         })?;
+        Self::from_source(Box::new(file), path)
+    }
+
+    fn from_source(source: Box<dyn MediaSource>, path: &Path) -> Result<Self, EngineError> {
         let decode_error = |message: String| EngineError::Decode {
             path: path.to_path_buf(),
             message,
@@ -94,7 +97,7 @@ impl DecodeSession {
         if let Some(extension) = path.extension().and_then(|extension| extension.to_str()) {
             hint.with_extension(extension);
         }
-        let stream = MediaSourceStream::new(Box::new(file), Default::default());
+        let stream = MediaSourceStream::new(source, Default::default());
         let format = symphonia::default::get_probe()
             .probe(
                 &hint,
@@ -150,6 +153,18 @@ impl DecodeSession {
             writer: TrackWriter::new(sample_rate, source_channels),
             interleaved: Vec::new(),
         })
+    }
+
+    fn finish(self, path: &Path) -> Result<Track, EngineError> {
+        let track = self.writer.track();
+        self.run();
+        match track.status() {
+            DecodeStatus::Failed(message) => Err(EngineError::Decode {
+                path: path.to_path_buf(),
+                message,
+            }),
+            DecodeStatus::Complete | DecodeStatus::Decoding => Ok(track),
+        }
     }
 
     fn run(mut self) {

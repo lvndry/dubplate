@@ -10,10 +10,11 @@ use gpui::{Context, SharedString};
 
 use super::DubplateApp;
 use super::notice::NoticePlace;
+use crate::built_in_samples::BuiltInSample;
 use crate::commands::{Command, PadPress, Press};
 use crate::pads::PAD_COUNT;
 use crate::settings::{SampleSlotSetting, SampleSource};
-use dubplate_engine::{BANK_SLOTS, SAMPLER_BANKS, SynthSound};
+use dubplate_engine::{BANK_SLOTS, SAMPLER_BANKS};
 
 /// A slot setting the sampler controls switch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,11 +32,27 @@ pub(super) fn sampler_slot(bank: usize, deck: DeckId, pad: usize) -> usize {
     bank.min(SAMPLER_BANKS - 1) * BANK_SLOTS + deck.index() * PAD_COUNT + pad
 }
 
-/// The sounds offered by a slot's context menu.
-pub(super) fn built_in_sample_choices(
+/// Binds a group of built-in menu entries to the pad that opened the menu.
+pub(super) fn built_in_sample_choices<const N: usize>(
     slot: usize,
-) -> [(&'static str, Command); SynthSound::ALL.len()] {
-    SynthSound::ALL.map(|sound| (sound.name(), Command::LoadBuiltInSample(slot, sound)))
+    sounds: [BuiltInSample; N],
+) -> [(&'static str, Command); N] {
+    sounds.map(|sound| (sound.name(), Command::LoadBuiltInSample(slot, sound)))
+}
+
+/// The settings applied when a built-in sound is newly loaded.
+fn built_in_slot_setting(slot: usize, sound: BuiltInSample) -> SampleSlotSetting {
+    let defaults = sound.settings();
+    SampleSlotSetting {
+        slot,
+        source: SampleSource::BuiltIn {
+            sound: sound.key().to_owned(),
+        },
+        bpm: defaults.bpm,
+        gate: defaults.gate,
+        sync: defaults.sync,
+        looped: defaults.mode == SampleMode::Loop,
+    }
 }
 
 /// A saved slot's settings as the engine takes them.
@@ -129,7 +146,7 @@ impl DubplateApp {
             .find(|setting| setting.slot == slot)?;
         Some(match &setting.source {
             SampleSource::File { path } => self.title_of(path).into(),
-            SampleSource::BuiltIn { sound } => SynthSound::from_key(sound)?.name().into(),
+            SampleSource::BuiltIn { sound } => BuiltInSample::from_key(sound)?.name().into(),
         })
     }
 
@@ -230,26 +247,13 @@ impl DubplateApp {
     }
 
     /// Loads a built-in sound into the slot whose menu was opened.
-    pub(super) fn load_synth_sound(
+    pub(super) fn load_built_in_sample(
         &mut self,
         slot: usize,
-        sound: SynthSound,
+        sound: BuiltInSample,
         cx: &mut Context<'_, Self>,
     ) {
-        let defaults = sound.settings();
-        self.load_into_slot(
-            SampleSlotSetting {
-                slot,
-                source: SampleSource::BuiltIn {
-                    sound: sound.key().to_owned(),
-                },
-                bpm: defaults.bpm,
-                gate: defaults.gate,
-                sync: defaults.sync,
-                looped: defaults.mode == SampleMode::Loop,
-            },
-            cx,
-        );
+        self.load_into_slot(built_in_slot_setting(slot, sound), cx);
     }
 
     /// Prepares the sample off the interface thread and puts it in its slot.
@@ -267,9 +271,9 @@ impl DubplateApp {
                     match source {
                         SampleSource::File { path } => dubplate_engine::decode_file(&path)
                             .map_err(|e| format!("{}: {e}", file_title(&path))),
-                        SampleSource::BuiltIn { sound } => SynthSound::from_key(&sound)
+                        SampleSource::BuiltIn { sound } => BuiltInSample::from_key(&sound)
                             .ok_or_else(|| format!("Unknown sampler sound {sound}"))
-                            .and_then(|s| s.track(48_000).map_err(|e| e.to_string())),
+                            .and_then(|sample| sample.track().map_err(|e| e.to_string())),
                     }
                 })
                 .await;
@@ -340,6 +344,8 @@ fn file_title(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::built_in_samples::RecordedSample;
+    use dubplate_engine::SynthSound;
 
     #[test]
     fn the_left_deck_plays_slots_1_to_8_and_the_right_9_to_16() {
@@ -357,20 +363,84 @@ mod tests {
     fn a_slot_menu_targets_the_selected_bank_and_pad_for_every_sound() {
         let slot = sampler_slot(2, DeckId::B, 5);
         assert_eq!(
-            built_in_sample_choices(slot),
+            built_in_sample_choices(slot, BuiltInSample::HOUSE_SOUNDS),
             [
-                (
-                    "Air horn",
-                    Command::LoadBuiltInSample(45, SynthSound::AirHorn)
-                ),
-                ("Siren", Command::LoadBuiltInSample(45, SynthSound::Siren)),
-                ("Riser", Command::LoadBuiltInSample(45, SynthSound::Riser)),
-                (
-                    "Log drum",
-                    Command::LoadBuiltInSample(45, SynthSound::LogDrum)
-                ),
-            ],
+                ("Low tumba", RecordedSample::TumbaLow),
+                ("Muted bongo", RecordedSample::BongoMuted),
+                ("Low agogo", RecordedSample::AgogoLow),
+                ("Room clap", RecordedSample::RoomClap),
+                ("Shaker groove", RecordedSample::ShakerGroove),
+                ("Cm7 chord stab", RecordedSample::ChordCm7),
+            ]
+            .map(|(name, sound)| (
+                name,
+                Command::LoadBuiltInSample(45, BuiltInSample::Recorded(sound))
+            ))
         );
+        assert_eq!(
+            built_in_sample_choices(slot, BuiltInSample::dj_effects()),
+            [
+                ("Air horn", SynthSound::AirHorn),
+                ("Siren", SynthSound::Siren),
+                ("Riser", SynthSound::Riser),
+                ("Log drum", SynthSound::LogDrum),
+            ]
+            .map(|(name, sound)| (
+                name,
+                Command::LoadBuiltInSample(45, BuiltInSample::Synth(sound))
+            ))
+        );
+    }
+
+    #[test]
+    fn saved_sound_keys_restore_without_resetting_slot_options() {
+        for (key, sample) in [
+            (
+                "tumba-low",
+                BuiltInSample::Recorded(RecordedSample::TumbaLow),
+            ),
+            (
+                "bongo-muted",
+                BuiltInSample::Recorded(RecordedSample::BongoMuted),
+            ),
+            (
+                "agogo-low",
+                BuiltInSample::Recorded(RecordedSample::AgogoLow),
+            ),
+            (
+                "room-clap",
+                BuiltInSample::Recorded(RecordedSample::RoomClap),
+            ),
+            (
+                "shaker-groove",
+                BuiltInSample::Recorded(RecordedSample::ShakerGroove),
+            ),
+            (
+                "chord-cm7",
+                BuiltInSample::Recorded(RecordedSample::ChordCm7),
+            ),
+            ("air-horn", BuiltInSample::Synth(SynthSound::AirHorn)),
+            ("siren", BuiltInSample::Synth(SynthSound::Siren)),
+            ("riser", BuiltInSample::Synth(SynthSound::Riser)),
+            ("log-drum", BuiltInSample::Synth(SynthSound::LogDrum)),
+        ] {
+            let new_setting = built_in_slot_setting(45, sample);
+            let saved = toml::to_string(&new_setting).unwrap();
+            assert!(saved.contains(&format!("sound = \"{key}\"")));
+
+            // A user can override the defaults before saving.
+            let updated: SampleSlotSetting =
+                toml::from_str(&format!("slot = 45\nsound = \"{key}\"\ngate = true")).unwrap();
+            let SampleSource::BuiltIn { sound } = &updated.source else {
+                panic!("expected a built-in sound");
+            };
+            assert_eq!(BuiltInSample::from_key(sound), Some(sample));
+            assert!(engine_settings(&updated).gate);
+            assert_eq!(engine_settings(&updated).mode, SampleMode::OneShot);
+            assert!(!engine_settings(&updated).sync);
+            assert_eq!(engine_settings(&new_setting), sample.settings());
+        }
+        assert_eq!(BuiltInSample::from_key("unrecognized"), None);
     }
 
     #[test]

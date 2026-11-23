@@ -7,6 +7,7 @@ mod audition;
 mod auto_cue;
 mod auto_gain;
 mod browser;
+mod built_in_samples;
 mod collection;
 mod commands;
 mod controls;

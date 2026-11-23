@@ -4,11 +4,12 @@
 
 use dubplate_engine::{
     ChannelFaderCurve, CrossfaderAssign, CrossfaderCurve, DeckId, EffectKind, EffectTarget,
-    EffectUnitId, SmartCfx, SmartFaderSource, Stem, StemSettings, SynthSound,
+    EffectUnitId, SmartCfx, SmartFaderSource, Stem, StemSettings,
 };
 use dubplate_midi::{FaderStart, PadMode};
 use dubplate_prep::{GridEdit, TagId, TrackColour};
 
+use crate::built_in_samples::BuiltInSample;
 use crate::controls::Control;
 use crate::pad_fx::{PadFxLayer, PadFxPreset};
 use crate::theme::ThemeId;
@@ -260,7 +261,7 @@ pub enum Command {
     /// A performance pad, doing what its pad mode says.
     Pad(PadPress),
     /// Load a built-in sound into an absolute sampler slot.
-    LoadBuiltInSample(usize, SynthSound),
+    LoadBuiltInSample(usize, BuiltInSample),
     /// Put a deck's pads in a pad mode.
     SetPadMode(DeckId, PadMode),
     ControllerPadMode(DeckId, PadMode),

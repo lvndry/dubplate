@@ -65,7 +65,7 @@ pub use curves::{
     channel_fader_gain, crossfader_gains, decibels_to_gain, eq_gain, gain_to_decibels,
 };
 pub use deck::DeckId;
-pub use decode::{AudioFileInfo, decode_file, decode_file_to_end, probe_file};
+pub use decode::{AudioFileInfo, decode_bytes_to_end, decode_file, decode_file_to_end, probe_file};
 pub use dubplate_fx::{
     BeatLength, EffectKind, EqBand, HIGH_CROSSOVER_HZ, LIMITER_CEILING, LOW_CROSSOVER_HZ,
     ParameterSpec, ParameterValue, SignedBeats,

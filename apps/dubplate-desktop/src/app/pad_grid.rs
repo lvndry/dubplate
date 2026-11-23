@@ -11,6 +11,7 @@ use gpui::{ClickEvent, Context, FontWeight, MouseButton, Pixels, Rgba, SharedStr
 use super::sampler::{SampleOption, built_in_sample_choices, sampler_slot};
 use super::stems::stem_pad_action;
 use super::{DubplateApp, knob};
+use crate::built_in_samples::BuiltInSample;
 use crate::collection::clock;
 use crate::commands::PadFxEdit;
 use crate::commands::{Command, LoopAction, PadPress, Press, StemAction};
@@ -582,11 +583,15 @@ fn pads(
                 let slot = sampler_slot(bank, deck, pad);
                 let keys = app.focus_handle.clone();
                 button.context_menu(move |menu, _, _| {
-                    built_in_sample_choices(slot)
-                        .into_iter()
-                        .fold(menu.action_context(keys.clone()).label("Load built-in sound"), |menu, (name, command)| {
-                            menu.menu(name, Box::new(Perform(command)))
-                        })
+                    let mut menu = menu.action_context(keys.clone()).label("House percussion & chords");
+                    for (name, command) in built_in_sample_choices(slot, BuiltInSample::HOUSE_SOUNDS) {
+                        menu = menu.menu(name, Box::new(Perform(command)));
+                    }
+                    menu = menu.separator().label("DJ effects");
+                    for (name, command) in built_in_sample_choices(slot, BuiltInSample::dj_effects()) {
+                        menu = menu.menu(name, Box::new(Perform(command)));
+                    }
+                    menu
                 }).into_any_element()
             } else {
                 button.into_any_element()
