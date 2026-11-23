@@ -146,9 +146,9 @@ impl SetStore {
     }
 
     /// Points what is kept for files that moved at their new places, each keyed by its old
-    /// place: the cues of a file rekordbox does not hold move with it, and every track's last
-    /// known file follows.
-    pub fn follow_cue_files(
+    /// place: the cues and playlist places of a file rekordbox does not hold move with it, and
+    /// every track's last known file follows.
+    pub fn follow_moved_files(
         &mut self,
         moves: &HashMap<PathBuf, PathBuf>,
     ) -> Result<(), StoreError> {
@@ -158,6 +158,7 @@ impl SetStore {
         let transaction = self.transaction()?;
         for (from, to) in moves {
             move_file_cues(&transaction, from, to)?;
+            super::playlists::move_file_tracks(&transaction, from, to)?;
         }
         transaction.commit()?;
         Ok(())

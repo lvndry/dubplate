@@ -1,5 +1,5 @@
 //! Dubplate's own database: sets, their ordered entries, seam plans, snapshots,
-//! play history, and the cues the DJ made for each track.
+//! play history, the cues the DJ made for each track, and the DJ's playlists.
 //!
 //! The file lives where Dubplate owns it, never inside rekordbox's folders, so
 //! every write Dubplate makes stays out of rekordbox's files. A guard refuses
@@ -17,13 +17,17 @@ use crate::grid::{GridCorrection, TrackGrid};
 
 mod cues;
 mod history;
+mod playlists;
 mod types;
 
 pub use history::{Play, PlayDeck, PlayId, RecordedPlay};
+pub use playlists::{
+    Playlist, PlaylistEdit, PlaylistEdited, PlaylistId, PlaylistKind, PlaylistTrack, PlaylistTree,
+};
 pub use types::{CueSource, EqIntent, Seam, SeamStatus, Set, SetEntry, SetId, SetList};
 
 /// The highest schema version `MIGRATIONS` can bring a database to.
-const SCHEMA_VERSION: u32 = 5;
+const SCHEMA_VERSION: u32 = 6;
 
 /// One migration per schema version, index = target version - 1.
 const MIGRATIONS: &[&str] = &[
@@ -162,6 +166,30 @@ CREATE INDEX play_history_started_at ON play_history (started_at);
 
 PRAGMA user_version = 5;
 "#,
+    r#"
+CREATE TABLE playlist (
+    id INTEGER PRIMARY KEY,
+    parent_id INTEGER REFERENCES playlist(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('playlist', 'folder')),
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+CREATE INDEX playlist_parent ON playlist (parent_id, position);
+
+CREATE TABLE playlist_track (
+    playlist_id INTEGER NOT NULL REFERENCES playlist(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL,
+    identity_kind TEXT NOT NULL,
+    identity TEXT NOT NULL,
+    track_path TEXT,
+    PRIMARY KEY (playlist_id, position)
+);
+CREATE INDEX playlist_track_identity ON playlist_track (identity_kind, identity);
+
+PRAGMA user_version = 6;
+"#,
 ];
 
 /// A position no real entry can hold while one is in the middle of moving.
@@ -212,6 +240,20 @@ pub enum StoreError {
     /// A play the operation referred to is not in the history.
     #[error("play {0} is not in the history")]
     PlayNotFound(PlayId),
+    /// A playlist or folder the operation referred to is not in the database.
+    #[error("playlist {0} does not exist")]
+    PlaylistNotFound(PlaylistId),
+    /// The operation needs a playlist where it was given a folder, or the other way round.
+    #[error("{playlist} is not a {kind:?}")]
+    WrongPlaylistKind {
+        /// The entry it was given.
+        playlist: PlaylistId,
+        /// What the operation needs.
+        kind: PlaylistKind,
+    },
+    /// A folder cannot go inside itself or a folder it holds.
+    #[error("folder {0} cannot go inside itself")]
+    PlaylistInsideItself(PlaylistId),
     /// A SQLite operation failed.
     #[error("set store error: {0}")]
     Database(#[from] rusqlite::Error),
@@ -236,6 +278,9 @@ pub struct SetStore {
 const BACKUPS_FOLDER_NAME: &str = "backups";
 
 impl SetStore {
+    /// The schema version this build writes: a database with a newer one is refused.
+    pub const SCHEMA_VERSION: u32 = SCHEMA_VERSION;
+
     /// Opens the database at `path`, creating parent folders and the file if
     /// needed, and migrating it to the latest known schema.
     ///
@@ -254,6 +299,7 @@ impl SetStore {
         let existing = path.exists();
         let mut connection = Connection::open(path)?;
         connection.pragma_update(None, "journal_mode", "wal")?;
+        connection.pragma_update(None, "foreign_keys", true)?;
 
         let user_version: i64 =
             connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
