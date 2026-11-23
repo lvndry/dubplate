@@ -48,6 +48,7 @@ mod shortcuts;
 mod single_instance;
 mod space;
 mod stems;
+mod tag_editing;
 mod tap_tempo;
 mod theme;
 mod track_edits;
