@@ -183,11 +183,44 @@ fn sampler_slots_and_settings_are_checked() {
         ..SampleSettings::default()
     };
     assert!(controller.load_sample(0, one_shot(), fast).is_err());
-    controller
-        .load_sample(1, one_shot(), SampleSettings::default())
-        .unwrap();
-    controller.eject_sample(1).unwrap();
-    assert!(controller.sampler_state().slots[1].is_none());
+    assert!(controller.eject_sample(SAMPLER_SLOTS).is_err());
+}
+
+#[test]
+fn ejecting_a_playing_slot_clears_only_that_slot_and_stops_its_audio() {
+    let (mut controller, mut renderer) = engine();
+    let remaining_slot = 2;
+    let ejected_slot = BANK_SLOTS + remaining_slot;
+    let settings = SampleSettings {
+        mode: SampleMode::Loop,
+        ..SampleSettings::default()
+    };
+    for (slot, left, right) in [(ejected_slot, 0.25, 0.0), (remaining_slot, 0.0, 0.125)] {
+        controller
+            .load_sample(
+                slot,
+                constant_track(left, right, 0.5, SAMPLE_RATE),
+                settings,
+            )
+            .unwrap();
+        controller.trigger_sample(slot).unwrap();
+    }
+    let before = render(&mut renderer, 0.1);
+    let frame = before.last().unwrap();
+    assert_eq!([frame[0], frame[1]], [0.25, 0.125]);
+    assert!(
+        controller.sampler_state().slots[ejected_slot]
+            .unwrap()
+            .playing
+    );
+
+    controller.eject_sample(ejected_slot).unwrap();
+    let after = render(&mut renderer, 0.1);
+    let frame = after.last().unwrap();
+    assert_eq!([frame[0], frame[1]], [0.0, 0.125]);
+    let state = controller.sampler_state();
+    assert!(state.slots[ejected_slot].is_none());
+    assert!(state.slots[remaining_slot].unwrap().playing);
 }
 
 #[test]

@@ -583,7 +583,10 @@ fn pads(
                 let slot = sampler_slot(bank, deck, pad);
                 let keys = app.focus_handle.clone();
                 button.context_menu(move |menu, _, _| {
-                    let mut menu = menu.action_context(keys.clone()).label("House percussion & chords");
+                    let mut menu = menu.action_context(keys.clone())
+                        .menu("Empty slot", Box::new(Perform(Command::EmptySamplerSlot(slot))))
+                        .separator()
+                        .label("House percussion & chords");
                     for (name, command) in built_in_sample_choices(slot, BuiltInSample::HOUSE_SOUNDS) {
                         menu = menu.menu(name, Box::new(Perform(command)));
                     }

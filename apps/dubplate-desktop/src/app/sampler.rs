@@ -246,6 +246,31 @@ impl DubplateApp {
         );
     }
 
+    pub(super) fn empty_sampler_slot(&mut self, slot: usize, cx: &mut Context<'_, Self>) {
+        let Some(version) = self.sample_load_versions.get_mut(slot) else {
+            return;
+        };
+        if let Ok(engine) = &mut self.engine
+            && let Err(error) = engine.controller.eject_sample(slot)
+        {
+            self.show_notice(NoticePlace::Window, error.to_string(), cx);
+            return;
+        }
+        // Ignore any decode started before the pad was emptied.
+        *version += 1;
+        for held in self.held_sample_slots.iter_mut().flatten() {
+            if *held == Some(slot) {
+                *held = None;
+            }
+        }
+        self.settings
+            .sampler
+            .slots
+            .retain(|sample| sample.slot != slot);
+        self.save_settings(cx);
+        cx.notify();
+    }
+
     /// Loads a built-in sound into the slot whose menu was opened.
     pub(super) fn load_built_in_sample(
         &mut self,
