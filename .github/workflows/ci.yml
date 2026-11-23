@@ -58,7 +58,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+      # The key does not cover the workspace-root Cargo.toml, so the test
+      # profile's opt-level lives here: a different profile means a different
+      # cache, and a full-match restore would otherwise skip the save.
       - uses: Swatinem/rust-cache@v2
+        with:
+          key: test-opt-2
       - name: Clippy
         run: cargo clippy --workspace --all-targets --locked -- --deny warnings
       - name: Install cargo-nextest
