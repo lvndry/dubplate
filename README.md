@@ -25,6 +25,8 @@ The first build takes a few minutes; after a change, a few seconds. Then follow 
 
 ## Learn more
 
+Open `website/index.html` in a browser to explore the interactive example set and see how transition rehearsal and set checks work.
+
 - [Prepare a set and mix it](docs/guide.md): the DJ's walkthrough.
 - [How the engine works](docs/engine.md): every feature of the audio engine, with the measurements behind each choice.
 - [Command line](docs/cli.md): inspect a rekordbox library, analyse folders, export sets, watch your controller's MIDI.
