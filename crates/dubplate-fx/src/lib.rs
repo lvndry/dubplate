@@ -47,7 +47,7 @@ mod unit;
 
 pub use beat::{BeatLength, ParseBeatLengthError};
 pub use config::EffectConfig;
-pub use context::{MAX_TEMPO_BPM, MIN_TEMPO_BPM, ProcessContext};
+pub use context::{FALLBACK_TEMPO_BPM, MAX_TEMPO_BPM, MIN_TEMPO_BPM, ProcessContext};
 pub use effect::{Effect, EffectKind, ParseEffectKindError, create};
 pub use effects::delays::echo::Echo;
 pub use effects::delays::ping_pong::PingPong;

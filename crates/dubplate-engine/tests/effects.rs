@@ -461,3 +461,52 @@ fn rms(samples: &[f32]) -> f32 {
         .sum();
     (energy / samples.len().max(1) as f64).sqrt() as f32
 }
+
+#[test]
+fn ungridded_gate_keeps_time_across_audio_blocks() -> Result<(), EngineError> {
+    use dubplate_engine::{PadEffect, PadRelease};
+
+    for target in [
+        None,
+        Some(EffectTarget::Deck(DeckId::A)),
+        Some(EffectTarget::Master),
+    ] {
+        for block in [64, 509] {
+            let (mut controller, mut renderer) = offline_engine(SAMPLE_RATE);
+            controller.load_track(DeckId::A, constant_track(0.25, 0.25, 1.0, SAMPLE_RATE))?;
+            controller.set_crossfader(0.0)?;
+            let beat = ParameterValue::Beats(BeatLength::ONE);
+            if let Some(target) = target {
+                controller.set_effect_kind(FIRST_UNIT, EffectKind::Trans)?;
+                controller.set_effect_target(FIRST_UNIT, target)?;
+                controller.set_effect_parameter(FIRST_UNIT, beat)?;
+                controller.set_effect_depth(FIRST_UNIT, 1.0)?;
+                controller.set_effect_enabled(FIRST_UNIT, true)?;
+            } else {
+                controller.hold_pad_effect(
+                    DeckId::A,
+                    PadEffect {
+                        kind: EffectKind::Trans,
+                        parameter: Some(beat),
+                        depth: 1.0,
+                        release: PadRelease::Dry,
+                    },
+                )?;
+            }
+            controller.play(DeckId::A)?;
+            let rendered = left_channel(&render_frames(&mut renderer, SAMPLE_RATE as usize, block));
+            let window = |time: f64| {
+                let start = seconds_to_frames(time);
+                rms(&rendered[start..start + 480])
+            };
+            assert!(window(0.12) > 0.1);
+            assert!(
+                window(0.40) < 0.005,
+                "{target:?}, block {block}, closed gate RMS {}",
+                window(0.40)
+            );
+            assert!(window(0.62) > 0.1);
+        }
+    }
+    Ok(())
+}
