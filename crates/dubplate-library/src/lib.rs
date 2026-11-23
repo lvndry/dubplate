@@ -13,12 +13,15 @@
 //!   gather the candidates from a folder the DJ points at.
 //! - [`DataFolder`] says where Dubplate keeps its own files, and [`LibrarySettings`] reads what
 //!   the library is made of from the settings, relinks included.
+//! - [`read_traktor_collection`] reads a collection file written by Traktor Pro 3 and 4, in
+//!   the NML format, with its tracks, grids, cues and playlists, read-only.
 
 mod cache;
 mod own_files;
 mod relocate;
 mod scan;
 mod settings;
+mod traktor;
 
 pub use cache::{CacheError, LibraryCache};
 pub use own_files::{is_inside_rekordbox, unix_millis};
@@ -30,3 +33,7 @@ pub use scan::{
     AUDIO_EXTENSIONS, FolderScan, LibraryTrack, ScanError, ScanProblem, is_audio_file, scan_folder,
 };
 pub use settings::{DataFolder, LibrarySettings, LibrarySettingsError, Relink};
+pub use traktor::{
+    TraktorCollection, TraktorCue, TraktorError, TraktorPlaylistNode, TraktorTrack,
+    read_traktor_collection,
+};
