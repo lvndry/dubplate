@@ -361,6 +361,9 @@ impl DubplateApp {
                     None => this.show_notice(NoticePlace::Window, "Both decks are playing.", cx),
                 },
                 BrowserEvent::AddMusicFolders => this.add_music_folders(cx),
+                BrowserEvent::RescanMusicFolder(ref folder) => {
+                    this.rescan_music_folder(folder.clone(), cx)
+                }
                 BrowserEvent::TookKeys => {
                     this.prepare_focus = PrepareFocus::Library;
                     cx.notify();

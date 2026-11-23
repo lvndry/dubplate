@@ -3,9 +3,10 @@
 //! until the DJ chooses.
 
 use std::collections::{HashMap, VecDeque};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use dubplate_library::FolderScan;
 
@@ -27,10 +28,16 @@ pub enum RekordboxSource {
 /// A scan running in the background.
 #[derive(Debug)]
 pub struct ScanJob {
-    /// The folders it scans.
-    pub folders: Vec<PathBuf>,
+    targets: Vec<ScanTarget>,
     /// The audio files it has looked at so far.
     pub files_seen: Arc<AtomicUsize>,
+}
+
+/// A directory to read and the chosen roots whose caches it refreshes.
+#[derive(Debug, Clone)]
+struct ScanTarget {
+    folder: PathBuf,
+    roots: Vec<PathBuf>,
 }
 
 /// The music folders, their last scans and rekordbox, and the scans waiting to run.
@@ -42,7 +49,7 @@ pub struct LibrarySources {
     /// rekordbox's collection.
     pub rekordbox: RekordboxSource,
     scanning: Option<ScanJob>,
-    queued: VecDeque<PathBuf>,
+    queued: VecDeque<ScanTarget>,
 }
 
 impl LibrarySources {
@@ -118,18 +125,64 @@ impl LibrarySources {
         self.folders.retain(|chosen| chosen != folder);
         self.scans.remove(folder);
         self.failures.remove(folder);
-        self.queued.retain(|queued| queued != folder);
+        self.queued.retain_mut(|target| {
+            target.roots.retain(|root| root != folder);
+            !target.roots.is_empty()
+        });
+        if let Some(job) = &mut self.scanning {
+            for target in &mut job.targets {
+                target.roots.retain(|root| root != folder);
+            }
+        }
     }
 
     /// Asks for `folders` to be scanned: at once when no scan runs, else after it. Returns the
     /// scan to start, if one should start now.
     pub fn request_scan(&mut self, folders: Vec<PathBuf>) -> Option<ScanRequest> {
         for folder in folders {
-            if !self.queued.contains(&folder) {
-                self.queued.push_back(folder);
+            if self.folders.contains(&folder) {
+                self.queue_scan(folder.clone(), vec![folder]);
             }
         }
         self.next_scan()
+    }
+
+    /// Rescans one sidebar folder, updating its subtree in each covering root. Chosen roots
+    /// inside the subtree receive their own full scan, just as they do on startup.
+    pub fn request_subfolder_scan(&mut self, folder: PathBuf) -> Option<ScanRequest> {
+        let roots: Vec<_> = self
+            .folders
+            .iter()
+            .filter(|root| is_within(&folder, root))
+            .cloned()
+            .collect();
+        if !roots.is_empty() {
+            let descendants: Vec<_> = self
+                .folders
+                .iter()
+                .filter(|root| **root != folder && is_within(root, &folder))
+                .cloned()
+                .collect();
+            self.queue_scan(folder, roots);
+            return self.request_scan(descendants);
+        }
+        self.next_scan()
+    }
+
+    fn queue_scan(&mut self, folder: PathBuf, roots: Vec<PathBuf>) {
+        if let Some(target) = self
+            .queued
+            .iter_mut()
+            .find(|target| target.folder == folder)
+        {
+            for root in roots {
+                if !target.roots.contains(&root) {
+                    target.roots.push(root);
+                }
+            }
+        } else {
+            self.queued.push_back(ScanTarget { folder, roots });
+        }
     }
 
     /// The scan to start now, if none runs and some folders wait.
@@ -137,18 +190,20 @@ impl LibrarySources {
         if self.scanning.is_some() || self.queued.is_empty() {
             return None;
         }
-        let folders: Vec<PathBuf> = self.queued.drain(..).collect();
-        let previous = folders
+        let targets: Vec<_> = self.queued.drain(..).collect();
+        let previous = self
+            .scans
             .iter()
-            .filter_map(|folder| self.scans.get(folder).cloned())
+            .filter(|(root, _)| targets.iter().any(|target| target.roots.contains(root)))
+            .map(|(_, scan)| scan.clone())
             .collect();
         let files_seen = Arc::new(AtomicUsize::new(0));
         self.scanning = Some(ScanJob {
-            folders: folders.clone(),
+            targets: targets.clone(),
             files_seen: Arc::clone(&files_seen),
         });
         Some(ScanRequest {
-            folders,
+            targets,
             previous,
             files_seen,
         })
@@ -156,26 +211,46 @@ impl LibrarySources {
 
     /// Takes what a scan found, keeping only the folders still chosen, and returns the next
     /// scan to start, if folders were asked for meanwhile.
-    pub fn finish_scan(
-        &mut self,
-        results: Vec<(PathBuf, Result<FolderScan, String>)>,
-    ) -> Option<ScanRequest> {
-        self.scanning = None;
-        for (folder, result) in results {
-            if !self.folders.contains(&folder) {
-                continue;
-            }
-            match result {
-                Ok(scan) => {
-                    self.failures.remove(&folder);
-                    self.scans.insert(folder, scan);
-                }
-                Err(reason) => {
-                    self.failures.insert(folder, reason);
+    pub fn finish_scan(&mut self, results: Vec<ScanResult>) -> Option<ScanRequest> {
+        if let Some(job) = self.scanning.take() {
+            for ScanResult {
+                folder,
+                result,
+                scope,
+            } in results
+            {
+                let Some(target) = job.targets.iter().find(|target| target.folder == folder) else {
+                    continue;
+                };
+                match result {
+                    Ok(scan) => {
+                        for root in target.roots.iter().filter(|root| **root != folder) {
+                            if let Some(previous) = self.scans.get_mut(root) {
+                                replace_subtree(previous, &scan, &scope);
+                            }
+                        }
+                        if target.roots.contains(&folder) {
+                            self.failures.remove(&folder);
+                            self.scans.insert(folder, scan);
+                        }
+                    }
+                    Err(reason) if target.roots.contains(&folder) => {
+                        self.failures.insert(folder, reason);
+                    }
+                    Err(_) => {}
                 }
             }
         }
         self.next_scan()
+    }
+
+    /// Whether the result still belongs to a root that has stayed chosen during the scan.
+    pub fn is_current_scan_result(&self, folder: &Path) -> bool {
+        self.scanning.as_ref().is_some_and(|job| {
+            job.targets
+                .iter()
+                .any(|target| target.folder == folder && !target.roots.is_empty())
+        })
     }
 
     /// The scan running now, if any.
@@ -185,11 +260,14 @@ impl LibrarySources {
 
     /// Whether `folder` is being scanned or waits to be.
     pub fn is_scanning(&self, folder: &Path) -> bool {
-        self.queued.iter().any(|queued| queued == folder)
-            || self
-                .scanning
-                .as_ref()
-                .is_some_and(|job| job.folders.iter().any(|scanned| scanned == folder))
+        self.queued
+            .iter()
+            .chain(self.scanning.iter().flat_map(|job| &job.targets))
+            .any(|target| {
+                !target.roots.is_empty()
+                    && (is_within(folder, &target.folder)
+                        || target.roots.iter().any(|root| root == folder))
+            })
     }
 
     /// The audio files the running scan has looked at.
@@ -204,39 +282,162 @@ impl LibrarySources {
 /// it raises as it goes.
 #[derive(Debug)]
 pub struct ScanRequest {
-    /// The folders to scan.
-    pub folders: Vec<PathBuf>,
+    targets: Vec<ScanTarget>,
     /// Their previous scans, so files that did not change are not read again.
-    pub previous: Vec<FolderScan>,
+    previous: Vec<FolderScan>,
     /// The files looked at so far.
-    pub files_seen: Arc<AtomicUsize>,
+    files_seen: Arc<AtomicUsize>,
+}
+
+/// What one requested scan found, including the resolved path used for cached tracks.
+#[derive(Debug)]
+pub struct ScanResult {
+    /// The requested path, as shown in the sidebar.
+    pub folder: PathBuf,
+    /// The scan, or the reason the folder could not be read.
+    pub result: Result<FolderScan, String>,
+    scope: PathBuf,
 }
 
 impl ScanRequest {
     /// Scans every folder. Disk work: run it off the interface and audio threads.
-    pub fn run(self) -> Vec<(PathBuf, Result<FolderScan, String>)> {
-        self.folders
+    pub fn run(self) -> Vec<ScanResult> {
+        self.targets
             .into_iter()
-            .map(|folder| {
-                let previous = self.previous.iter().find(|scan| scan.folder == folder);
+            .map(|ScanTarget { folder, roots }| {
+                let previous = self
+                    .previous
+                    .iter()
+                    .filter(|scan| roots.contains(&scan.folder))
+                    .max_by_key(|scan| scan.folder.components().count());
+                let scope = resolved_path(&folder);
                 let result = dubplate_library::scan_folder(&folder, previous, &self.files_seen)
+                    .or_else(|error| {
+                        if matches!(error, dubplate_library::ScanError::NotAFolder(_))
+                            && deleted_subfolder(&folder, &roots)
+                        {
+                            Ok(FolderScan {
+                                folder: folder.clone(),
+                                tracks: Vec::new(),
+                                problems: Vec::new(),
+                                scanned_at_ms: SystemTime::now()
+                                    .duration_since(UNIX_EPOCH)
+                                    .unwrap_or_default()
+                                    .as_millis()
+                                    as u64,
+                            })
+                        } else {
+                            Err(error)
+                        }
+                    })
                     .map_err(|error| error.to_string());
-                (folder, result)
+                ScanResult {
+                    folder,
+                    result,
+                    scope,
+                }
             })
             .collect()
     }
+}
+
+fn is_within(path: &Path, root: &Path) -> bool {
+    path.strip_prefix(root).is_ok_and(|relative| {
+        relative
+            .components()
+            .all(|component| matches!(component, Component::Normal(_)))
+    })
+}
+
+/// Scanned tracks use canonical paths. A removed directory still needs a canonical prefix
+/// when, for example, the configured root was chosen through a symbolic link.
+fn resolved_path(path: &Path) -> PathBuf {
+    path.ancestors()
+        .find_map(|ancestor| {
+            let canonical = ancestor.canonicalize().ok()?;
+            Some(canonical.join(path.strip_prefix(ancestor).ok()?))
+        })
+        .unwrap_or_else(|| path.to_path_buf())
+}
+
+fn deleted_subfolder(folder: &Path, roots: &[PathBuf]) -> bool {
+    !roots.iter().any(|root| root == folder)
+        && std::fs::symlink_metadata(folder)
+            .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+        && roots.iter().any(|root| std::fs::read_dir(root).is_ok())
+}
+
+fn replace_subtree(previous: &mut FolderScan, scan: &FolderScan, scope: &Path) {
+    previous
+        .tracks
+        .retain(|track| !track.path.starts_with(scope));
+    previous.tracks.extend(
+        scan.tracks
+            .iter()
+            .filter(|track| track.path.starts_with(scope))
+            .cloned(),
+    );
+    previous
+        .tracks
+        .sort_by(|first, second| first.path.cmp(&second.path));
+    previous
+        .problems
+        .retain(|problem| !problem.path.starts_with(&scan.folder));
+    previous.problems.extend(scan.problems.iter().cloned());
+    previous
+        .problems
+        .sort_by(|first, second| first.path.cmp(&second.path));
+    previous.scanned_at_ms = scan.scanned_at_ms;
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn scan(folder: &str) -> FolderScan {
-        FolderScan {
+    fn write_track(path: &Path) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let mut wave = hound::WavWriter::create(
+            path,
+            hound::WavSpec {
+                channels: 1,
+                sample_rate: 44_100,
+                bits_per_sample: 16,
+                sample_format: hound::SampleFormat::Int,
+            },
+        )
+        .unwrap();
+        wave.write_sample(0_i16).unwrap();
+        wave.finalize().unwrap();
+    }
+
+    fn track_names(scan: &FolderScan) -> Vec<&str> {
+        scan.tracks
+            .iter()
+            .map(|track| track.path.file_name().unwrap().to_str().unwrap())
+            .collect()
+    }
+
+    fn finish(sources: &mut LibrarySources, request: ScanRequest) {
+        let results = request.run();
+        assert!(
+            results.iter().all(|result| result.result.is_ok()),
+            "{results:?}"
+        );
+        assert!(sources.finish_scan(results).is_none());
+    }
+
+    fn scan_with_result(folder: &str, result: Result<(), &str>) -> ScanResult {
+        ScanResult {
             folder: PathBuf::from(folder),
-            tracks: Vec::new(),
-            problems: Vec::new(),
-            scanned_at_ms: 1,
+            result: result
+                .map(|()| FolderScan {
+                    folder: PathBuf::from(folder),
+                    tracks: Vec::new(),
+                    problems: Vec::new(),
+                    scanned_at_ms: 1,
+                })
+                .map_err(str::to_owned),
+            scope: PathBuf::from(folder),
         }
     }
 
@@ -258,16 +459,17 @@ mod tests {
         ]);
         assert_eq!(added, [PathBuf::from("/A"), PathBuf::from("/B")]);
         let first = sources.request_scan(added).unwrap();
-        assert_eq!(first.folders.len(), 2);
+        assert_eq!(first.targets.len(), 2);
         assert!(sources.is_scanning(Path::new("/A")));
         assert!(sources.request_scan(vec![PathBuf::from("/A")]).is_none());
         let next = sources
             .finish_scan(vec![
-                (PathBuf::from("/A"), Ok(scan("/A"))),
-                (PathBuf::from("/B"), Err("unplugged".to_owned())),
+                scan_with_result("/A", Ok(())),
+                scan_with_result("/B", Err("unplugged")),
             ])
             .unwrap();
-        assert_eq!(next.folders, [PathBuf::from("/A")]);
+        assert_eq!(next.targets.len(), 1);
+        assert_eq!(next.targets[0].folder, Path::new("/A"));
         assert_eq!(next.previous.len(), 1, "a rescan starts from the last scan");
         assert_eq!(sources.failure(Path::new("/B")), Some("unplugged"));
         assert_eq!(sources.chosen_scans().len(), 1);
@@ -276,16 +478,138 @@ mod tests {
     #[test]
     fn a_removed_folder_drops_its_tracks_even_when_its_scan_comes_back_later() {
         let mut sources = LibrarySources::new(vec![PathBuf::from("/A")], false);
-        sources.restore(vec![scan("/A"), scan("/Forgotten")]);
+        sources.restore(vec![
+            scan_with_result("/A", Ok(())).result.unwrap(),
+            scan_with_result("/Forgotten", Ok(())).result.unwrap(),
+        ]);
         assert_eq!(sources.chosen_scans().len(), 1);
-        let request = sources.request_scan(vec![PathBuf::from("/A")]).unwrap();
+        sources.request_scan(vec![PathBuf::from("/A")]).unwrap();
         sources.remove(Path::new("/A"));
         assert!(
             sources
-                .finish_scan(vec![(request.folders[0].clone(), Ok(scan("/A")))])
+                .finish_scan(vec![scan_with_result("/A", Ok(()))])
                 .is_none()
         );
         assert!(sources.chosen_scans().is_empty());
         assert!(sources.is_unchosen());
+    }
+
+    #[test]
+    fn subfolder_scan_replaces_only_its_tracks_and_problems_in_every_covering_root() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().to_path_buf();
+        let parent = root.join("Parent");
+        let target = parent.join("Deep");
+        let sibling = parent.join("Deeper");
+        for track in [target.join("Old.wav"), sibling.join("Sibling.wav")] {
+            write_track(&track);
+        }
+        for problem in [target.join("Old.mp3"), sibling.join("Sibling.mp3")] {
+            std::fs::write(problem, b"not audio").unwrap();
+        }
+        let roots = vec![root.clone(), parent.clone()];
+        let mut sources = LibrarySources::new(roots.clone(), false);
+        let initial = sources.request_scan(roots.clone()).unwrap();
+        finish(&mut sources, initial);
+        std::fs::remove_file(target.join("Old.wav")).unwrap();
+        std::fs::remove_file(target.join("Old.mp3")).unwrap();
+        std::fs::remove_file(sibling.join("Sibling.wav")).unwrap();
+        std::fs::remove_file(sibling.join("Sibling.mp3")).unwrap();
+        write_track(&target.join("New.wav"));
+        std::fs::write(target.join("Broken.mp3"), b"still not audio").unwrap();
+
+        let request = sources.request_subfolder_scan(target.clone()).unwrap();
+        assert!(sources.is_scanning(&target));
+        assert!(!sources.is_scanning(&sibling));
+        assert_eq!(request.targets.len(), 1);
+        finish(&mut sources, request);
+
+        assert_eq!(sources.folders(), roots);
+        assert!(sources.scan(&target).is_none());
+        for root in roots {
+            let scan = sources.scan(&root).unwrap();
+            assert_eq!(track_names(scan), ["New.wav", "Sibling.wav"]);
+            let problems: Vec<_> = scan.problems.iter().map(|problem| &problem.path).collect();
+            assert_eq!(
+                problems,
+                [&target.join("Broken.mp3"), &sibling.join("Sibling.mp3")]
+            );
+        }
+    }
+
+    #[test]
+    fn a_deleted_subfolder_is_pruned_but_a_missing_root_keeps_its_cache() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("Library");
+        let target = root.join("Deleted");
+        write_track(&target.join("Old.wav"));
+        write_track(&root.join("Kept.wav"));
+        let mut sources = LibrarySources::new(vec![root.clone()], false);
+        let initial = sources.request_scan(vec![root.clone()]).unwrap();
+        finish(&mut sources, initial);
+        std::fs::remove_dir_all(&target).unwrap();
+
+        let request = sources.request_subfolder_scan(target.clone()).unwrap();
+        finish(&mut sources, request);
+        assert_eq!(track_names(sources.scan(&root).unwrap()), ["Kept.wav"]);
+
+        std::fs::remove_dir_all(&root).unwrap();
+        let results = sources.request_subfolder_scan(target).unwrap().run();
+        assert!(results[0].result.is_err());
+        assert!(sources.finish_scan(results).is_none());
+        assert_eq!(track_names(sources.scan(&root).unwrap()), ["Kept.wav"]);
+
+        let results = sources.request_subfolder_scan(root.clone()).unwrap().run();
+        assert!(results[0].result.is_err());
+        assert!(sources.finish_scan(results).is_none());
+        assert!(sources.failure(&root).is_some());
+    }
+
+    #[test]
+    fn a_subtree_rescan_also_refreshes_a_separately_chosen_root_within_it() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().to_path_buf();
+        let target = root.join("Selected");
+        let chosen = target.join("Other Root");
+        write_track(&chosen.join("Old.wav"));
+        write_track(&root.join("Sibling.wav"));
+        let roots = vec![root.clone(), chosen.clone()];
+        let mut sources = LibrarySources::new(roots.clone(), false);
+        let initial = sources.request_scan(roots).unwrap();
+        finish(&mut sources, initial);
+        std::fs::remove_file(chosen.join("Old.wav")).unwrap();
+        std::fs::remove_file(root.join("Sibling.wav")).unwrap();
+        write_track(&chosen.join("New.wav"));
+
+        let request = sources.request_subfolder_scan(target).unwrap();
+        finish(&mut sources, request);
+
+        assert_eq!(
+            track_names(sources.scan(&root).unwrap()),
+            ["New.wav", "Sibling.wav"]
+        );
+        assert_eq!(track_names(sources.scan(&chosen).unwrap()), ["New.wav"]);
+    }
+
+    #[test]
+    fn queued_subfolder_scan_uses_the_latest_cache_and_removed_targets_are_discarded() {
+        let root = PathBuf::from("/A");
+        let target = root.join("Nested");
+        let mut sources = LibrarySources::new(vec![root.clone()], false);
+        sources.request_scan(vec![root.clone()]).unwrap();
+        assert!(sources.request_subfolder_scan(target.clone()).is_none());
+        assert!(sources.request_subfolder_scan(target.clone()).is_none());
+        let request = sources
+            .finish_scan(vec![scan_with_result("/A", Ok(()))])
+            .unwrap();
+        assert_eq!(request.targets.len(), 1);
+        assert_eq!(request.previous.len(), 1);
+        assert!(sources.is_current_scan_result(&target));
+        sources.remove(&root);
+        sources.add([root.clone()]);
+        assert!(!sources.is_current_scan_result(&target));
+        assert!(!sources.is_scanning(&target));
+        assert!(sources.finish_scan(request.run()).is_none());
+        assert!(sources.chosen_scans().is_empty());
     }
 }
