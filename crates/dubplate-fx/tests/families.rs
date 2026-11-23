@@ -208,6 +208,38 @@ fn rev_delay_plays_each_beat_length_backwards() {
 }
 
 #[test]
+fn reverse_delay_replays_each_captured_note_once_in_the_next_slice() {
+    let mut delay = effect(EffectKind::RevDelay, 1.0);
+    let frames = BEAT_FRAMES * 3;
+    let mut audio = burst(400.0, frames, 4_800, 960);
+    let second_note = burst(800.0, frames, 14_400, 960);
+    for (channel, other) in [
+        (&mut audio.left, second_note.left),
+        (&mut audio.right, second_note.right),
+    ] {
+        for (original, note) in channel.iter_mut().zip(other) {
+            *original += note;
+        }
+    }
+    play(delay.as_mut(), &mut audio);
+
+    assert!(
+        peak(&audio.left[..BEAT_FRAMES]) < 0.001,
+        "a reversed note leaked into its capture slice"
+    );
+    for (start, hz) in [(14_400, 800.0), (4_800, 400.0)] {
+        let reversed = 2 * BEAT_FRAMES - start - 960;
+        let window = &audio.left[reversed..reversed + 960];
+        assert!(rms(window) > 0.1, "missing reversed {hz} Hz note");
+        assert_eq!(strongest(window, &[400.0, 800.0]), hz);
+    }
+    assert!(
+        peak(&audio.left[2 * BEAT_FRAMES..]) < 0.001,
+        "the delay replayed a note twice"
+    );
+}
+
+#[test]
 fn low_cut_echo_takes_the_lows_out_of_its_repeats() {
     let mut echo = effect(EffectKind::LowCutEcho, 0.5);
     echo.set_mix(1.0);

@@ -1,18 +1,17 @@
 use crate::beat::BeatLength;
 use crate::config::EffectConfig;
 use crate::context::BlockTiming;
-use crate::dsp::pitch_shift::PitchShifter;
+use crate::dsp::delay_line::DelayLine;
 use crate::effect::EffectKind;
 use crate::unit::{Controls, Frame, Kernel, MixLaw, Unit, implement_effect};
 
-const BACKWARDS: f32 = -1.0;
 const DIP_SECONDS: f32 = 0.003;
 const TRAIL_MARGIN_SECONDS: f32 = 0.05;
 const DEFAULT_DEPTH: f32 = 0.5;
 
 /// A reverse delay: every beat length of music comes back played backwards, one beat length
 /// later, each reversed slice faded in and out so the seams never click. A new beat length
-/// comes in behind a dip of a few milliseconds, as jumping the heads would click.
+/// comes in behind a dip of a few milliseconds, while tempo changes take effect at a seam.
 ///
 /// The depth knob balances the music and the reversed sound, as on a DJ mixer.
 pub(crate) struct ReverseDelay {
@@ -39,7 +38,11 @@ impl Controls for ReverseDelay {
     }
 
     fn apply_beat(&mut self, beat: BeatLength) {
-        self.unit.kernel.beat = beat;
+        let kernel = &mut self.unit.kernel;
+        if kernel.beat != beat {
+            kernel.beat = beat;
+            kernel.switching_beat = true;
+        }
     }
 
     fn current_beat(&self) -> Option<BeatLength> {
@@ -47,13 +50,14 @@ impl Controls for ReverseDelay {
     }
 }
 
-/// Plays the music backwards through rotating heads: run at -1 times normal speed, the pitch
-/// shifter's heads each read one window's worth of music in reverse.
+/// Records consecutive slices and reads the preceding slice from end to start.
 pub(crate) struct ReverseKernel {
-    heads: PitchShifter,
+    lines: [DelayLine; 2],
     beat: BeatLength,
-    window_samples: f32,
-    wanted_window_samples: f32,
+    window_samples: usize,
+    wanted_window_samples: usize,
+    position: usize,
+    switching_beat: bool,
     dip: f32,
     dip_step: f32,
     sample_rate: f32,
@@ -62,14 +66,22 @@ pub(crate) struct ReverseKernel {
 impl ReverseKernel {
     fn new(config: &EffectConfig) -> Self {
         Self {
-            heads: PitchShifter::new(config.max_delay_samples()),
+            lines: std::array::from_fn(|_| DelayLine::new(config.max_delay_samples().max(2))),
             beat: BeatLength::ONE,
-            window_samples: 0.0,
-            wanted_window_samples: 0.0,
+            window_samples: 0,
+            wanted_window_samples: 0,
+            position: 0,
+            switching_beat: false,
             dip: 1.0,
             dip_step: 1.0,
             sample_rate: 48_000.0,
         }
+    }
+
+    fn change_window(&mut self) {
+        self.window_samples = self.wanted_window_samples;
+        self.position = 0;
+        self.switching_beat = false;
     }
 }
 
@@ -80,41 +92,54 @@ impl Kernel for ReverseKernel {
     fn begin_block(&mut self, timing: &BlockTiming) {
         self.sample_rate = timing.sample_rate;
         self.dip_step = 1.0 / (DIP_SECONDS * timing.sample_rate);
-        self.wanted_window_samples = 2.0 * timing.beats_to_samples(self.beat.beats()) as f32;
-        if self.window_samples == 0.0 {
-            self.window_samples = self.wanted_window_samples;
-            self.heads.set_window_samples(self.window_samples);
+        let longest = (self.lines[0].max_delay() as usize).div_ceil(2);
+        let samples = timing.beats_to_samples(self.beat.beats()).round() as usize;
+        self.wanted_window_samples = samples.clamp(1, longest);
+        if self.window_samples == 0 {
+            self.change_window();
         }
     }
 
     #[inline]
     fn tick(&mut self, input: Frame, _beat_position: f64) -> Frame {
-        if self.window_samples == self.wanted_window_samples {
-            self.dip = (self.dip + self.dip_step).min(1.0);
-        } else {
+        if self.switching_beat && self.window_samples != self.wanted_window_samples {
             self.dip -= self.dip_step;
             if self.dip <= 0.0 {
                 self.dip = 0.0;
-                self.window_samples = self.wanted_window_samples;
-                self.heads.set_window_samples(self.window_samples);
+                self.change_window();
             }
+        } else {
+            if self.position == 0 {
+                self.change_window();
+            }
+            self.dip = (self.dip + self.dip_step).min(1.0);
         }
-        self.heads
-            .tick(input, BACKWARDS)
-            .map(|sample| sample * self.dip)
+        // The write head advances by one sample while the read head walks back by one.
+        let delay = (2 * self.position + 1) as f32;
+        let edge = self.position.min(self.window_samples - 1 - self.position);
+        let gain = (edge as f32 * self.dip_step).min(1.0) * self.dip;
+        self.position = (self.position + 1) % self.window_samples;
+        let [left, right] = &mut self.lines;
+        let output = [
+            left.read_linear(delay) * gain,
+            right.read_linear(delay) * gain,
+        ];
+        left.write(input[0]);
+        right.write(input[1]);
+        output
     }
 
     fn reset(&mut self) {
-        self.heads.clear();
-        self.dip = 1.0;
-        if self.window_samples != self.wanted_window_samples {
-            self.window_samples = self.wanted_window_samples;
-            self.heads.set_window_samples(self.window_samples);
+        for line in &mut self.lines {
+            line.clear();
         }
+        self.dip = 1.0;
+        self.change_window();
     }
 
     fn tail_seconds(&self) -> f32 {
-        self.wanted_window_samples / self.sample_rate + TRAIL_MARGIN_SECONDS
+        2.0 * self.window_samples.max(self.wanted_window_samples) as f32 / self.sample_rate
+            + TRAIL_MARGIN_SECONDS
     }
 }
 
@@ -135,7 +160,7 @@ mod tests {
         };
         kernel.begin_block(&timing);
         kernel.dip = 0.0;
-        kernel.window_samples = 1.0;
+        kernel.window_samples = 1;
         kernel.reset();
         assert_eq!(kernel.dip, 1.0);
         assert_eq!(kernel.window_samples, kernel.wanted_window_samples);
