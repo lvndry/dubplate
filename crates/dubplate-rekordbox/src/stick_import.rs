@@ -46,6 +46,7 @@ pub struct StickTrackCues {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct StickTrackCuesMap {
     cues: HashMap<TrackId, StickTrackCues>,
+    unreadable: Vec<UnreadableTrack>,
 }
 
 impl StickTrackCuesMap {
@@ -53,7 +54,16 @@ impl StickTrackCuesMap {
     pub fn get(&self, id: TrackId) -> Option<&StickTrackCues> {
         self.cues.get(&id)
     }
+
+    /// The tracks whose analysis files are on the stick but could not be read, with why. They
+    /// have no entry in the map, so their cues are unknown, not empty.
+    pub fn unreadable(&self) -> &[UnreadableTrack] {
+        &self.unreadable
+    }
 }
+
+/// A track on the stick whose analysis files could not be read, so its cues are unknown.
+pub type UnreadableTrack = (TrackId, String);
 
 /// What players changed on the stick since Dubplate exported it: the changes to each track's
 /// cues, keyed by the stick's track id. A track of Dubplate's that the stick does not hold has
@@ -61,6 +71,7 @@ impl StickTrackCuesMap {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct StickCueChanges {
     changes: HashMap<TrackId, Vec<CueChange>>,
+    unreadable: Vec<UnreadableTrack>,
 }
 
 impl StickCueChanges {
@@ -76,6 +87,13 @@ impl StickCueChanges {
             .iter()
             .filter(|(_, changes)| !changes.is_empty())
             .map(|(id, changes)| (*id, changes.as_slice()))
+    }
+
+    /// The tracks whose analysis files are on the stick but could not be read, with why.
+    /// Nothing is reported for them: players may have changed their cues, and Dubplate cannot
+    /// tell.
+    pub fn unreadable(&self) -> &[UnreadableTrack] {
+        &self.unreadable
     }
 }
 
@@ -216,15 +234,20 @@ pub fn stick_histories(root: &Path) -> Result<Vec<History>, StickImportError> {
 }
 
 /// Reads every track's hot cues, memory cues and saved loops as the stick's analysis files
-/// hold them. A track whose analysis files are missing is kept with empty cues and a flag;
-/// a track whose analysis files are there but unreadable is an error.
+/// hold them. A track whose analysis files are missing is kept with empty cues and a flag.
+/// A track whose analysis files are there but unreadable is left out of the map and listed in
+/// `unreadable()` with the reason, and the other tracks still read.
 pub fn stick_track_cues(root: &Path) -> Result<StickTrackCuesMap, StickImportError> {
     let stick = MountedStick::open(root)?;
     let library = stick_library(&stick.root)?;
     let mut cues = StickTrackCuesMap::default();
     for track in &library.library.tracks {
-        let track_cues = read_stick_track_cues(&stick, track)?;
-        cues.cues.insert(track.id, track_cues);
+        match read_stick_track_cues(&stick, track) {
+            Ok(track_cues) => {
+                cues.cues.insert(track.id, track_cues);
+            }
+            Err(error) => cues.unreadable.push((track.id, error.to_string())),
+        }
     }
     Ok(cues)
 }
@@ -285,8 +308,9 @@ fn read_analysis(
 /// What players changed on the stick at `root` against the cues Dubplate exported with it,
 /// `dubplate` keyed by the stick's track id, in any order.
 ///
-/// A cue within 1 ms of where Dubplate put it is the same cue. Fails when `root` holds no
-/// rekordbox export. The stick is only read, never changed.
+/// A cue within 1 ms of where Dubplate put it is the same cue. A track whose analysis files
+/// cannot be read is listed in `unreadable()` and the other tracks still compare. Fails when
+/// `root` holds no rekordbox export. The stick is only read, never changed.
 pub fn stick_cue_changes(
     root: &Path,
     dubplate: impl IntoIterator<Item = (TrackId, TrackCues)>,
@@ -298,7 +322,13 @@ pub fn stick_cue_changes(
         let Some(track) = library.track(id) else {
             continue;
         };
-        let stick_cues = read_stick_track_cues(&stick, track)?;
+        let stick_cues = match read_stick_track_cues(&stick, track) {
+            Ok(stick_cues) => stick_cues,
+            Err(error) => {
+                changes.unreadable.push((id, error.to_string()));
+                continue;
+            }
+        };
         let track_changes = stick_cues.cues.changes_from(&cues);
         if !track_changes.is_empty() {
             changes.changes.insert(id, track_changes);
