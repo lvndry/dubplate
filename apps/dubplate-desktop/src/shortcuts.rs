@@ -127,6 +127,9 @@ pub const SHORTCUTS: &[Shortcut] = &[
     outside_text("shift-right", Command::LoadSelected(DeckId::B)),
     outside_text("up", Command::MoveSelection(Direction::Up)),
     outside_text("down", Command::MoveSelection(Direction::Down)),
+    outside_text("shift-up", Command::ExtendSelection(Direction::Up)),
+    outside_text("shift-down", Command::ExtendSelection(Direction::Down)),
+    outside_text("cmd-a", Command::SelectAllTracks),
     outside_text("/", Command::FocusSearch),
     anywhere("cmd-f", Command::FocusSearch),
     anywhere("ctrl-f", Command::FocusSearch),
@@ -455,6 +458,11 @@ pub fn help_sections() -> Vec<HelpSection> {
             title: "Library",
             lines: vec![
                 line(&["up", "down"], "Select the previous / next track"),
+                line(
+                    &["shift-up", "shift-down"],
+                    "Add the previous / next track to the selection",
+                ),
+                line(&["cmd-a"], "Select every track shown"),
                 line(
                     &["/", "cmd-f"],
                     "Search titles, artists, genres, folders and comments",

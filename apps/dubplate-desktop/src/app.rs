@@ -1240,6 +1240,18 @@ impl DubplateApp {
                     .browser
                     .update(cx, |browser, cx| browser.move_selection(direction, cx)),
             },
+            Command::ExtendSelection(direction) => {
+                if !self.keys_on_set(cx) {
+                    self.browser
+                        .update(cx, |browser, cx| browser.extend_selection(direction, cx));
+                }
+            }
+            Command::SelectAllTracks => {
+                if !self.keys_on_set(cx) {
+                    self.browser
+                        .update(cx, |browser, cx| browser.select_all(cx));
+                }
+            }
             Command::SwitchMode(mode) => {
                 self.mode = mode;
                 self.settings.set_screen(mode);

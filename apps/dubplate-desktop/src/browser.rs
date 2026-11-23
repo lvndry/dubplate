@@ -37,6 +37,7 @@ use crate::search::{SearchQuery, filter_tracks};
 use crate::search_filter::{
     SuggestionContext, TrackFacts, complete, suggestions, toggle_hide_played,
 };
+use crate::selection::Selection;
 use crate::stems::{StemStatuses, stems_cell};
 use crate::theme;
 use crate::track_menu::{self, RowFacts, RowPlace, TrackTags};
@@ -177,7 +178,7 @@ pub struct Browser {
     played: Arc<HashSet<PathBuf>>,
     rows: Vec<TrackIndex>,
     searched_count: usize,
-    selected: Option<TrackIndex>,
+    selection: Selection<TrackIndex>,
     pane: BrowserPane,
     in_set: Arc<HashSet<TrackIndex>>,
     screen: Mode,
@@ -227,7 +228,7 @@ impl Browser {
             played: Arc::default(),
             rows: Vec::new(),
             searched_count: 0,
-            selected: None,
+            selection: Selection::default(),
             pane: BrowserPane::default(),
             in_set: Arc::default(),
             screen: Mode::Perform,
@@ -252,14 +253,15 @@ impl Browser {
     /// Shows the library as it now stands.
     /// The selected track stays selected when it is still in the library.
     pub fn set_library(&mut self, library: LibraryStatus, cx: &mut Context<'_, Self>) {
-        let selected_identity = match (&self.library, self.selected) {
+        let selected_identity = match (&self.library, self.focused()) {
             (LibraryStatus::Ready(collection), Some(track)) => {
                 Some(collection.track(track).identity())
             }
             _ => None,
         };
         if let LibraryStatus::Ready(collection) = &library {
-            self.selected = selected_identity.and_then(|identity| collection.find(&identity));
+            self.selection
+                .select_only(selected_identity.and_then(|identity| collection.find(&identity)));
             if collection
                 .indexed_crates()
                 .nth(self.crate_index.position())
@@ -467,7 +469,7 @@ impl Browser {
         let LibraryStatus::Ready(collection) = &self.library else {
             return None;
         };
-        let track = self.selected?;
+        let track = self.focused()?;
         BpmRange::tempo_of(&self.cell_text(collection.track(track), track, Column::Bpm))
     }
 
@@ -530,7 +532,7 @@ impl Browser {
     /// Scrolls the selected track into the middle of the table.
     fn reveal_selection(&self) {
         if let Some(position) = self
-            .selected
+            .focused()
             .and_then(|track| self.rows.iter().position(|row| *row == track))
         {
             self.scroll.scroll_to_item(position, ScrollStrategy::Center);
@@ -551,7 +553,20 @@ impl Browser {
 
     /// The selected track, while the tracks are shown.
     pub fn selected(&self) -> Option<TrackIndex> {
-        self.selected.filter(|_| self.history_page.is_none())
+        self.focused().filter(|_| self.history_page.is_none())
+    }
+
+    /// The selected tracks in the order of the table's rows, the focused one among them; none
+    /// while a history page shows.
+    pub fn selected_tracks(&self) -> Vec<TrackIndex> {
+        if self.history_page.is_some() {
+            return Vec::new();
+        }
+        self.selection.in_order(&self.rows)
+    }
+
+    fn focused(&self) -> Option<TrackIndex> {
+        self.selection.focused()
     }
 
     /// Puts the cursor in the search field.
@@ -562,7 +577,7 @@ impl Browser {
 
     /// Moves the keyboard to the track table, leaving the search field.
     pub fn focus_table(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        if self.selected.is_none() {
+        if self.focused().is_none() {
             self.select(self.rows.first().copied(), cx);
         }
         window.focus(&self.table_focus, cx);
@@ -583,7 +598,28 @@ impl Browser {
             Direction::Up => -1,
             Direction::Down => 1,
         };
-        self.move_track_cursor(steps, cx);
+        self.move_track_cursor(steps, false, cx);
+    }
+
+    /// Shift plus an arrow: moves the focus one row up or down and selects from where the
+    /// selection started to it.
+    pub fn extend_selection(&mut self, direction: Direction, cx: &mut Context<'_, Self>) {
+        self.pane = BrowserPane::Tracks;
+        let steps = match direction {
+            Direction::Up => -1,
+            Direction::Down => 1,
+        };
+        self.move_track_cursor(steps, true, cx);
+    }
+
+    /// Command+A: selects every track the table shows.
+    pub fn select_all(&mut self, cx: &mut Context<'_, Self>) {
+        if self.history_page.is_some() {
+            return;
+        }
+        self.pane = BrowserPane::Tracks;
+        self.selection.select_all(&self.rows);
+        cx.notify();
     }
 
     /// Moves the cursor `steps` rows down, or up when negative, in the pane that has it: the
@@ -591,7 +627,7 @@ impl Browser {
     pub fn browse(&mut self, steps: i32, cx: &mut Context<'_, Self>) {
         match self.pane {
             BrowserPane::Crates => self.move_crate_cursor(steps, cx),
-            BrowserPane::Tracks => self.move_track_cursor(steps, cx),
+            BrowserPane::Tracks => self.move_track_cursor(steps, false, cx),
         }
     }
 
@@ -604,19 +640,24 @@ impl Browser {
         cx.notify();
     }
 
-    fn move_track_cursor(&mut self, steps: i32, cx: &mut Context<'_, Self>) {
+    fn move_track_cursor(&mut self, steps: i32, extend: bool, cx: &mut Context<'_, Self>) {
         if self.history_page.is_some() {
             return;
         }
         let current = self
-            .selected
+            .focused()
             .and_then(|track| self.rows.iter().position(|row| *row == track));
         let next = match current {
             None => Some(0),
             Some(position) => offset(position, steps, self.rows.len()),
         };
         if let Some((next, track)) = next.and_then(|next| Some((next, *self.rows.get(next)?))) {
-            self.select(Some(track), cx);
+            if extend {
+                self.selection.extend_to(track, &self.rows);
+                cx.notify();
+            } else {
+                self.select(Some(track), cx);
+            }
             self.scroll.scroll_to_item(next, ScrollStrategy::Nearest);
         }
     }
@@ -661,7 +702,7 @@ impl Browser {
     }
 
     fn select(&mut self, track: Option<TrackIndex>, cx: &mut Context<'_, Self>) {
-        self.selected = track;
+        self.selection.select_only(track);
         self.detail_scroll.set_offset(gpui::point(px(0.0), px(0.0)));
         cx.notify();
     }
@@ -738,7 +779,7 @@ impl Browser {
     /// The filters to offer for what is being typed, from the reference and selected tracks.
     fn search_suggestions(&self) -> Vec<String> {
         let reference = self.view.reference();
-        let genre = match (&self.library, self.selected) {
+        let genre = match (&self.library, self.focused()) {
             (LibraryStatus::Ready(collection), Some(track)) => collection
                 .track(track)
                 .row
@@ -786,12 +827,7 @@ impl Browser {
             self.cell_text(collection.track(track), track, column)
         });
         self.rows = rows;
-        if self
-            .selected
-            .is_none_or(|selected| !self.rows.contains(&selected))
-        {
-            self.selected = self.rows.first().copied();
-        }
+        self.selection.retain(&self.rows);
         cx.notify();
     }
 
@@ -1092,7 +1128,7 @@ impl Browser {
                     .track_scroll(&self.scroll),
                 ),
             })
-            .when_some(self.selected, |table, selected| {
+            .when_some(self.focused(), |table, selected| {
                 let entry = collection.track(selected);
                 table.child(
                     div().id("selected-track-details")
@@ -1437,7 +1473,7 @@ impl Browser {
     ) -> impl IntoElement + use<> {
         let entry = collection.track(track);
         let actions = self.actions();
-        let selected = self.selected == Some(track);
+        let selected = self.selection.contains(track);
         let missing = self.missing.contains(&track);
         let in_set = self.in_set.contains(&track);
         let played = self.was_played(entry);
@@ -1479,8 +1515,11 @@ impl Browser {
             .aria_position_in_set(position + 1)
             .aria_size_of_set(self.rows.len())
             .when(selected, |row| row.aria_active_descendant())
-            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                this.select(Some(track), cx);
+            .on_click(cx.listener(move |this, event: &ClickEvent, _, cx| {
+                let modifiers = event.modifiers();
+                if !modifiers.platform && !modifiers.shift {
+                    this.select(Some(track), cx);
+                }
             }))
             .group(ROW_GROUP)
             .flex()
@@ -1494,7 +1533,7 @@ impl Browser {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, event: &MouseDownEvent, window, cx| {
-                    this.take_row(track, window, cx);
+                    this.press_row(track, event.modifiers, window, cx);
                     if event.click_count == 2 {
                         cx.emit(BrowserEvent::LoadOnFreeDeck(track));
                     }
@@ -1677,7 +1716,7 @@ impl Browser {
             .on_mouse_down(
                 MouseButton::Right,
                 cx.listener(move |this, _: &MouseDownEvent, window, cx| {
-                    this.take_row(track, window, cx);
+                    this.take_row_for_menu(track, window, cx);
                 }),
             )
             .context_menu(move |menu, window, cx| {
@@ -1685,12 +1724,49 @@ impl Browser {
             })
     }
 
-    /// Selects `track` and gives the table the keys, as pressing its row does, before a click
-    /// or a context menu acts on it.
-    fn take_row(&mut self, track: TrackIndex, window: &mut Window, cx: &mut Context<'_, Self>) {
+    /// Pressing a row: Command adds it to the selection or takes it out, Shift selects from
+    /// where the selection started, and a plain press selects it alone, unless it is part of
+    /// the selection already, which a click on it then narrows to it.
+    fn press_row(
+        &mut self,
+        track: TrackIndex,
+        modifiers: gpui::Modifiers,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
         window.focus(&self.table_focus, cx);
         self.pane = BrowserPane::Tracks;
-        self.select(Some(track), cx);
+        if modifiers.platform {
+            self.selection.toggle(track, &self.rows);
+            cx.notify();
+        } else if modifiers.shift {
+            self.selection.select_range(track, &self.rows);
+            cx.notify();
+        } else if !self.selection.contains(track) {
+            self.select(Some(track), cx);
+        } else {
+            self.selection.focus(track);
+            cx.notify();
+        }
+        cx.emit(BrowserEvent::TookKeys);
+    }
+
+    /// A right-click: the menu acts on the selection when the row is in it, else on the row
+    /// alone.
+    fn take_row_for_menu(
+        &mut self,
+        track: TrackIndex,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        window.focus(&self.table_focus, cx);
+        self.pane = BrowserPane::Tracks;
+        if self.selection.contains(track) {
+            self.selection.focus(track);
+            cx.notify();
+        } else {
+            self.select(Some(track), cx);
+        }
         cx.emit(BrowserEvent::TookKeys);
     }
 }
