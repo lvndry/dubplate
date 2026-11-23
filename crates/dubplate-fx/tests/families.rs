@@ -183,6 +183,26 @@ fn multi_tap_delay_repeats_every_eighth_of_a_beat_up_to_the_beat_length() {
 }
 
 #[test]
+fn multi_tap_delay_respects_the_sixteenth_beat_setting() {
+    let mut delay = effect(EffectKind::MtDelay, 1.0);
+    delay.set_beat(BeatLength::SIXTEENTH);
+    let pulse = 4_800;
+    let mut audio = Stereo::silence(BEAT_FRAMES);
+    audio.left[pulse] = 0.5;
+    play(delay.as_mut(), &mut audio);
+
+    let sixteenth = pulse + BEAT_FRAMES / 16;
+    assert!(
+        audio.left[sixteenth] > 0.45,
+        "the selected tap arrived late"
+    );
+    assert!(
+        peak(&audio.left[sixteenth + 1..]) < 0.001,
+        "an extra tap escaped the selected beat length"
+    );
+}
+
+#[test]
 fn rev_delay_plays_each_beat_length_backwards() {
     let mut delay = effect(EffectKind::RevDelay, 1.0);
     delay.set_beat(BeatLength::HALF);
