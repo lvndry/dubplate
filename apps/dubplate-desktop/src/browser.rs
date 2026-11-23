@@ -19,6 +19,7 @@ use gpui::{
 };
 
 use crate::analysis::{AnalysisAnswer, AnalysisState, bpm_cell, energy_cell, key_cell};
+use crate::app::NARROW_WINDOW_WIDTH;
 use crate::assets::{
     ARROW_DOWN_PATH, ARROW_UP_PATH, CLOSE_ICON_PATH, PLAYED_ICON_PATH, SEARCH_ICON_PATH,
 };
@@ -185,6 +186,8 @@ pub struct Browser {
     table_focus: FocusHandle,
     scroll: UniformListScrollHandle,
     detail_scroll: gpui::ScrollHandle,
+    /// Whether the window is narrow, so the table shows [`Column::NARROW`].
+    narrow: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -231,6 +234,7 @@ impl Browser {
             table_focus: cx.focus_handle(),
             scroll: UniformListScrollHandle::new(),
             detail_scroll: gpui::ScrollHandle::new(),
+            narrow: false,
             _subscriptions: vec![subscription],
         }
     }
@@ -978,6 +982,15 @@ impl Browser {
             .child(body)
     }
 
+    /// The table's columns: all of them, or the ones a narrow window keeps.
+    fn columns(&self) -> &'static [Column] {
+        if self.narrow {
+            &Column::NARROW
+        } else {
+            &Column::ALL
+        }
+    }
+
     fn render_table(
         &self,
         collection: Arc<Collection>,
@@ -998,7 +1011,7 @@ impl Browser {
             .id("track-table")
             .role(gpui::Role::Grid)
             .aria_row_count(self.rows.len() + 1)
-            .aria_column_count(Column::ALL.len() + usize::from(self.actions() != Actions::None))
+            .aria_column_count(self.columns().len() + usize::from(self.actions() != Actions::None))
             .aria_label("Library tracks")
             .aria_description("Use Up and Down to select a track. Full title and artist appear below the list. Shift Left or Shift Right loads a deck.")
             .tab_index(0)
@@ -1307,64 +1320,69 @@ impl Browser {
             .text_size(theme::SMALL_TEXT_SIZE)
             .text_color(theme::active().muted)
             .font_weight(gpui::FontWeight::MEDIUM)
-            .children(Column::ALL.map(|column| {
-                let direction = sort
-                    .filter(|sort| sort.column == column)
-                    .map(|sort| sort.direction);
-                let arrow = direction.map(|direction| {
-                    svg()
-                        .path(match direction {
-                            SortDirection::Ascending => ARROW_UP_PATH,
-                            SortDirection::Descending => ARROW_DOWN_PATH,
-                        })
-                        .size(px(11.0))
-                        .flex_none()
-                        .text_color(theme::active().text)
-                });
-                let heading: SharedString = match (column, self.matches.heading()) {
-                    (Column::Match, Some(heading)) => heading.to_owned().into(),
-                    _ => column.label().into(),
-                };
-                let label = div().truncate().child(heading.clone());
-                column_box(column)
-                    .id(("sort", column as usize))
-                    .accessible_button(match direction {
-                        Some(SortDirection::Ascending) => {
-                            format!("Sort by {heading}, ascending")
-                        }
-                        Some(SortDirection::Descending) => {
-                            format!("Sort by {heading}, descending")
-                        }
-                        None => format!("Sort by {heading}"),
-                    })
-                    .role(gpui::Role::ColumnHeader)
-                    .aria_column_index(column as usize + 1)
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .h_full()
-                    .gap(px(4.0))
-                    .when(column == Column::Title, |header| header.pl(px(22.0)))
-                    .cursor_pointer()
-                    .hover(|header| header.text_color(theme::active().text))
-                    .when(direction.is_some(), |header| {
-                        header.text_color(theme::active().text)
-                    })
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.click_header(column, cx);
-                    }))
-                    .map(|header| {
-                        if column.is_numeric() {
-                            header.children(arrow).child(label)
-                        } else {
-                            header.child(label).children(arrow)
-                        }
-                    })
-            }))
+            .children(
+                self.columns()
+                    .iter()
+                    .enumerate()
+                    .map(|(position, &column)| {
+                        let direction = sort
+                            .filter(|sort| sort.column == column)
+                            .map(|sort| sort.direction);
+                        let arrow = direction.map(|direction| {
+                            svg()
+                                .path(match direction {
+                                    SortDirection::Ascending => ARROW_UP_PATH,
+                                    SortDirection::Descending => ARROW_DOWN_PATH,
+                                })
+                                .size(px(11.0))
+                                .flex_none()
+                                .text_color(theme::active().text)
+                        });
+                        let heading: SharedString = match (column, self.matches.heading()) {
+                            (Column::Match, Some(heading)) => heading.to_owned().into(),
+                            _ => column.label().into(),
+                        };
+                        let label = div().truncate().child(heading.clone());
+                        column_box(column)
+                            .id(("sort", column as usize))
+                            .accessible_button(match direction {
+                                Some(SortDirection::Ascending) => {
+                                    format!("Sort by {heading}, ascending")
+                                }
+                                Some(SortDirection::Descending) => {
+                                    format!("Sort by {heading}, descending")
+                                }
+                                None => format!("Sort by {heading}"),
+                            })
+                            .role(gpui::Role::ColumnHeader)
+                            .aria_column_index(position + 1)
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                            .h_full()
+                            .gap(px(4.0))
+                            .when(column == Column::Title, |header| header.pl(px(22.0)))
+                            .cursor_pointer()
+                            .hover(|header| header.text_color(theme::active().text))
+                            .when(direction.is_some(), |header| {
+                                header.text_color(theme::active().text)
+                            })
+                            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                this.click_header(column, cx);
+                            }))
+                            .map(|header| {
+                                if column.is_numeric() {
+                                    header.children(arrow).child(label)
+                                } else {
+                                    header.child(label).children(arrow)
+                                }
+                            })
+                    }),
+            )
             .when(actions != Actions::None, |row| {
                 row.child(
                     div()
                         .id("action-column-header")
                         .role(gpui::Role::ColumnHeader)
-                        .aria_column_index(Column::ALL.len() + 1)
+                        .aria_column_index(self.columns().len() + 1)
                         .aria_label("Track actions")
                         .flex()
                         .items_center()
@@ -1449,118 +1467,133 @@ impl Browser {
             )
             .on_drag(dragged, |dragged, _, _, cx| cx.new(|_| dragged.clone()))
             .when(played, |row| row.opacity(PLAYED_ROW_OPACITY))
-            .children(Column::ALL.map(|column| {
-                let text = self.cell_text(entry, track, column);
-                let cell = column_box(column)
-                    .id(("track-cell", column as usize))
-                    .role(gpui::Role::Cell)
-                    .aria_column_index(column as usize + 1)
-                    .aria_label(match (column, match_cell) {
-                        (Column::Match, Some(found)) => found.description(played).into(),
-                        _ => text.clone(),
-                    });
-                match column {
-                    Column::Title => cell
-                        .gap(px(8.0))
-                        .pl(px(8.0))
-                        .child(
-                            div()
-                                .size(px(6.0))
-                                .flex_none()
-                                .rounded_full()
-                                .when(in_set, |dot| dot.bg(theme::active().ok)),
-                        )
-                        .child(
-                            div()
-                                .truncate()
-                                .min_w_0()
-                                .font_weight(gpui::FontWeight::MEDIUM)
-                                .when(played, |title| {
-                                    title.text_color(theme::active().played_title)
-                                })
-                                .when(missing, |title| title.text_color(theme::active().muted))
-                                .child(text),
-                        )
-                        .when(played, |cell| {
-                            cell.child(
-                                svg()
-                                    .path(PLAYED_ICON_PATH)
-                                    .size(px(12.0))
-                                    .flex_none()
-                                    .text_color(theme::active().muted),
-                            )
-                        }),
-                    Column::Artist => cell
-                        .text_color(theme::active().muted)
-                        .child(div().truncate().min_w_0().child(text)),
-                    Column::Genre => cell
-                        .text_size(theme::SMALL_TEXT_SIZE)
-                        .text_color(theme::active().muted)
-                        .child(div().truncate().min_w_0().child(text)),
-                    Column::Bpm | Column::Key | Column::Energy => cell
-                        .font_family(MONO_FAMILY)
-                        .text_size(theme::SMALL_TEXT_SIZE)
-                        .child(text),
-                    Column::Match => cell.children(match_cell.map(MatchCell::render)),
-                    Column::Stems => {
-                        let status = self.stems_status(entry);
-                        let separable =
-                            matches!(status, StemsStatus::None | StemsStatus::Failed(_))
-                                && entry.track.file_path.is_some()
-                                && !missing;
-                        let pending = status.is_pending();
-                        cell.font_family(MONO_FAMILY)
-                            .text_size(theme::SMALL_TEXT_SIZE)
-                            .text_color(theme::active().muted)
-                            .when(separable, |cell| {
-                                cell.cursor_pointer()
-                                    .child(
-                                        div()
-                                            .opacity(0.0)
-                                            .group_hover(ROW_GROUP, |label| label.opacity(1.0))
-                                            .hover(|label| label.text_color(theme::active().text))
-                                            .child(SEPARATE_LABEL),
+            .children(
+                self.columns()
+                    .iter()
+                    .enumerate()
+                    .map(|(position, &column)| {
+                        let text = self.cell_text(entry, track, column);
+                        let cell = column_box(column)
+                            .id(("track-cell", column as usize))
+                            .role(gpui::Role::Cell)
+                            .aria_column_index(position + 1)
+                            .aria_label(match (column, match_cell) {
+                                (Column::Match, Some(found)) => found.description(played).into(),
+                                _ => text.clone(),
+                            });
+                        match column {
+                            Column::Title => cell
+                                .gap(px(8.0))
+                                .pl(px(8.0))
+                                .child(
+                                    div()
+                                        .size(px(6.0))
+                                        .flex_none()
+                                        .rounded_full()
+                                        .when(in_set, |dot| dot.bg(theme::active().ok)),
+                                )
+                                .child(
+                                    div()
+                                        .truncate()
+                                        .min_w_0()
+                                        .font_weight(gpui::FontWeight::MEDIUM)
+                                        .when(played, |title| {
+                                            title.text_color(theme::active().played_title)
+                                        })
+                                        .when(missing, |title| {
+                                            title.text_color(theme::active().muted)
+                                        })
+                                        .child(text),
+                                )
+                                .when(played, |cell| {
+                                    cell.child(
+                                        svg()
+                                            .path(PLAYED_ICON_PATH)
+                                            .size(px(12.0))
+                                            .flex_none()
+                                            .text_color(theme::active().muted),
                                     )
-                                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
-                                        cx.stop_propagation()
+                                }),
+                            Column::Artist => cell
+                                .text_color(theme::active().muted)
+                                .child(div().truncate().min_w_0().child(text)),
+                            Column::Genre => cell
+                                .text_size(theme::SMALL_TEXT_SIZE)
+                                .text_color(theme::active().muted)
+                                .child(div().truncate().min_w_0().child(text)),
+                            Column::Bpm | Column::Key | Column::Energy => cell
+                                .font_family(MONO_FAMILY)
+                                .text_size(theme::SMALL_TEXT_SIZE)
+                                .child(text),
+                            Column::Match => cell.children(match_cell.map(MatchCell::render)),
+                            Column::Stems => {
+                                let status = self.stems_status(entry);
+                                let separable =
+                                    matches!(status, StemsStatus::None | StemsStatus::Failed(_))
+                                        && entry.track.file_path.is_some()
+                                        && !missing;
+                                let pending = status.is_pending();
+                                cell.font_family(MONO_FAMILY)
+                                    .text_size(theme::SMALL_TEXT_SIZE)
+                                    .text_color(theme::active().muted)
+                                    .when(separable, |cell| {
+                                        cell.cursor_pointer()
+                                            .child(
+                                                div()
+                                                    .opacity(0.0)
+                                                    .group_hover(ROW_GROUP, |label| {
+                                                        label.opacity(1.0)
+                                                    })
+                                                    .hover(|label| {
+                                                        label.text_color(theme::active().text)
+                                                    })
+                                                    .child(SEPARATE_LABEL),
+                                            )
+                                            .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                                cx.stop_propagation()
+                                            })
+                                            .on_click(cx.listener(
+                                                move |_, _: &ClickEvent, _, cx| {
+                                                    cx.emit(BrowserEvent::SeparateStems(track));
+                                                },
+                                            ))
                                     })
-                                    .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {
-                                        cx.emit(BrowserEvent::SeparateStems(track));
-                                    }))
-                            })
-                            .when(pending, |cell| {
-                                cell.cursor_pointer()
-                                    .hover(|cell| cell.text_color(theme::active().text))
-                                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
-                                        cx.stop_propagation()
+                                    .when(pending, |cell| {
+                                        cell.cursor_pointer()
+                                            .hover(|cell| cell.text_color(theme::active().text))
+                                            .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                                cx.stop_propagation()
+                                            })
+                                            .on_click(cx.listener(
+                                                move |_, _: &ClickEvent, _, cx| {
+                                                    cx.emit(BrowserEvent::CancelStems(track));
+                                                },
+                                            ))
                                     })
-                                    .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {
-                                        cx.emit(BrowserEvent::CancelStems(track));
-                                    }))
-                            })
-                            .when(!separable, |cell| cell.child(text))
-                    }
-                    Column::Time => cell
-                        .font_family(MONO_FAMILY)
-                        .text_size(theme::SMALL_TEXT_SIZE)
-                        .text_color(theme::active().muted)
-                        .child(text),
-                    Column::Source => cell
-                        .text_size(theme::SMALL_TEXT_SIZE)
-                        .text_color(if missing {
-                            theme::active().attention
-                        } else {
-                            theme::active().muted
-                        })
-                        .child(div().truncate().min_w_0().child(text)),
-                }
-            }))
+                                    .when(!separable, |cell| cell.child(text))
+                            }
+                            Column::Time => cell
+                                .font_family(MONO_FAMILY)
+                                .text_size(theme::SMALL_TEXT_SIZE)
+                                .text_color(theme::active().muted)
+                                .child(text),
+                            Column::Source => cell
+                                .text_size(theme::SMALL_TEXT_SIZE)
+                                .text_color(if missing {
+                                    theme::active().attention
+                                } else {
+                                    theme::active().muted
+                                })
+                                .child(div().truncate().min_w_0().child(text)),
+                        }
+                    }),
+            )
             .when(actions != Actions::None, |row| {
                 row.child(
                     div()
                         .id("actions-cell")
                         .role(gpui::Role::Cell)
-                        .aria_column_index(Column::ALL.len() + 1)
+                        .aria_column_index(self.columns().len() + 1)
                         .aria_label("Track actions")
                         .flex()
                         .flex_none()
@@ -1997,6 +2030,7 @@ pub fn search_field(browser: &Browser) -> impl IntoElement + use<> {
 
 impl Render for Browser {
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+        self.narrow = window.viewport_size().width < NARROW_WINDOW_WIDTH;
         let body = div()
             .flex()
             .size_full()

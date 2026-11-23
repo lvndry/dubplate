@@ -51,6 +51,19 @@ impl Column {
         Self::Source,
     ];
 
+    /// The columns a narrow window keeps, what a DJ reads while mixing: without the genre, the
+    /// stems and the source, so the title and artist keep room to read and every header stays
+    /// a whole word.
+    pub const NARROW: [Self; 7] = [
+        Self::Title,
+        Self::Artist,
+        Self::Bpm,
+        Self::Key,
+        Self::Energy,
+        Self::Match,
+        Self::Time,
+    ];
+
     /// The column's header.
     pub fn label(self) -> &'static str {
         match self {
