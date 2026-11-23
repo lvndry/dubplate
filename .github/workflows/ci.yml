@@ -61,5 +61,24 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Clippy
         run: cargo clippy --workspace --all-targets --locked -- --deny warnings
+      - name: Install cargo-nextest
+        env:
+          NEXTEST_VERSION: 0.9.152
+        run: |
+          case "${{ runner.os }}-${{ runner.arch }}" in
+            Linux-X64) asset=x86_64-unknown-linux-gnu ;;
+            Linux-ARM64) asset=aarch64-unknown-linux-gnu ;;
+            macOS-*) asset=universal-apple-darwin ;;
+            *) echo "unsupported runner ${{ runner.os }}-${{ runner.arch }}"; exit 1 ;;
+          esac
+          curl -fsSL --retry 3 \
+            "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-${NEXTEST_VERSION}/cargo-nextest-${NEXTEST_VERSION}-${asset}.tar.gz" \
+            | tar xz
+          sudo install cargo-nextest /usr/local/bin/cargo-nextest
+      # Tests run in parallel across every test binary, so a workspace run
+      # takes a fraction of the sequential cargo test.
       - name: Tests
-        run: cargo test --workspace --locked
+        run: cargo nextest run --workspace --locked
+      # nextest does not run doctests, so keep them covered.
+      - name: Doc tests
+        run: cargo test --workspace --locked --doc
