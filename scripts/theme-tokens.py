@@ -5,7 +5,7 @@ Run it on apps/dubplate-desktop/src after merging code written against the old c
 
     python3 scripts/theme-tokens.py apps/dubplate-desktop/src
 
-Sizes, radii and the played opacity stay constants and are left as they are.
+Sizes and radii stay constants and are left as they are.
 """
 
 import pathlib
@@ -13,7 +13,6 @@ import re
 import sys
 
 KEPT_CONSTANTS = {
-    "PLAYED_OPACITY",
     "TEXT_SIZE",
     "SMALL_TEXT_SIZE",
     "TINY_TEXT_SIZE",

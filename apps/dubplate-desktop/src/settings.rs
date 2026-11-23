@@ -607,6 +607,17 @@ mod tests {
     }
 
     #[test]
+    fn set_atlas_is_restored_from_settings() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join(FILE_NAME);
+        let mut settings = Settings::default();
+        assert_eq!(settings.theme(), ThemeId::Graphite);
+        settings.set_theme(ThemeId::SetAtlas);
+        settings.save(&path).unwrap();
+        assert_eq!(Settings::load(&path).unwrap().theme(), ThemeId::SetAtlas);
+    }
+
+    #[test]
     fn a_file_with_every_setting_at_the_top_keeps_the_library() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join(FILE_NAME);
