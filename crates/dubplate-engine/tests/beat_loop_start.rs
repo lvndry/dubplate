@@ -419,14 +419,20 @@ fn the_loop_leaves_the_music_unbroken_when_it_starts_ahead_of_the_playhead() {
 }
 
 #[test]
-fn a_loop_roll_still_repeats_the_beat_just_passed() {
-    let (mut controller, mut renderer) = deck_with_grid(steady_grid());
-    controller.seek(DeckId::A, pressed_before(10.4)).unwrap();
+fn a_loop_roll_repeats_the_beat_completed_at_the_speakers_and_preserves_phase() {
+    let (mut controller, renderer) = deck_with_grid(steady_grid());
+    let mut device = Device::new(renderer, 100_000_000);
+    controller.seek(DeckId::A, pressed_before(10.55)).unwrap();
     controller.play(DeckId::A).unwrap();
-    render(&mut renderer, BLOCK * 4);
+    device.run(4);
     controller.beat_roll(DeckId::A, BeatLength::ONE).unwrap();
-    render(&mut renderer, BLOCK);
+    device.run(1);
     let state = controller.loop_state(DeckId::A);
-    assert_close(state.start_seconds.unwrap(), 10.0, 1e-9);
-    assert_close(state.end_seconds.unwrap(), 10.5, 1e-9);
+    assert_close(state.start_seconds.unwrap(), 9.5, 1e-9);
+    assert_close(state.end_seconds.unwrap(), 10.0, 1e-9);
+    assert_close(
+        position(&controller),
+        9.55 + BLOCK as f64 / f64::from(SAMPLE_RATE),
+        1e-9,
+    );
 }

@@ -62,7 +62,7 @@ fn a_roll_repeats_the_beat_and_lands_where_the_track_would_have_been() {
     controller.beat_roll(DeckId::A, BeatLength::HALF).unwrap();
     seconds(&mut renderer, 1.5);
     let rolling = position(&controller);
-    assert!((10.25..10.5).contains(&rolling), "rolling at {rolling}");
+    assert!((10.0..10.25).contains(&rolling), "rolling at {rolling}");
     let shadow = controller.slip_state(DeckId::A).shadow_seconds.unwrap();
     assert_close(shadow, start + 1.5, 0.01);
     controller.release_roll(DeckId::A).unwrap();
@@ -70,6 +70,58 @@ fn a_roll_repeats_the_beat_and_lands_where_the_track_would_have_been() {
     assert_close(position(&controller), start + 2.0, 0.01);
     assert_eq!(controller.slip_state(DeckId::A).shadow_seconds, None);
     assert!(!controller.loop_state(DeckId::A).active);
+}
+
+#[test]
+fn a_short_roll_tap_changes_the_audio_before_the_first_wrap() {
+    let audition = |quantize, has_grid: bool, roll| {
+        let (mut controller, mut renderer) = deck_on_grid(443.0);
+        if !has_grid {
+            controller.set_beat_grid(DeckId::A, None).unwrap();
+        }
+        controller.set_quantize(quantize).unwrap();
+        controller.seek(DeckId::A, 10.0).unwrap();
+        controller.play(DeckId::A).unwrap();
+        seconds(&mut renderer, 0.03);
+        if let Some(length) = roll {
+            controller.beat_roll(DeckId::A, length).unwrap();
+        }
+        let tapped = seconds(&mut renderer, 0.025);
+        if roll.is_some() {
+            controller.release_roll(DeckId::A).unwrap();
+        }
+        let released = seconds(&mut renderer, 0.025);
+        assert_close(position(&controller), 10.08, 0.0001);
+        (tapped, released)
+    };
+    let (dry_tap, dry_release) = audition(true, true, None);
+    let settled = SAMPLE_RATE as usize / 100;
+    let difference = |signal: &[f32], dry: &[f32]| {
+        let differences: Vec<f32> = signal[settled..]
+            .iter()
+            .zip(&dry[settled..])
+            .map(|(wet, dry)| wet - dry)
+            .collect();
+        rms(&differences)
+    };
+    for (quantize, has_grid, length) in [
+        (true, true, BeatLength::HALF),
+        (true, true, BeatLength::QUARTER),
+        (true, true, BeatLength::EIGHTH),
+        (true, true, BeatLength::ONE),
+        (false, true, BeatLength::QUARTER),
+        (true, false, BeatLength::QUARTER),
+    ] {
+        let (tapped, released) = audition(quantize, has_grid, Some(length));
+        assert!(
+            difference(&tapped, &dry_tap) > 0.2,
+            "pressing a {length}-beat roll should repeat earlier audio with quantize={quantize}, grid={has_grid}"
+        );
+        assert!(
+            difference(&released, &dry_release) < 0.001,
+            "releasing a {length}-beat roll should restore live audio with quantize={quantize}, grid={has_grid}"
+        );
+    }
 }
 
 #[test]

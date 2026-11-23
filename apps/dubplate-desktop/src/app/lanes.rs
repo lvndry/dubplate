@@ -356,7 +356,7 @@ fn lane(
         lane_loop: app
             .loop_state(deck)
             .and_then(|state| LaneLoop::of(&state, playhead_seconds)),
-        slip_shadow: app.slip_shadow(deck),
+        slip_shadow: frame.slip_shadow,
         colour: theme::deck_colour(deck),
         cue_point: app
             .deck(deck)
