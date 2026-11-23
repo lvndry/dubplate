@@ -35,13 +35,15 @@ todo = "warn"
 undocumented_unsafe_blocks = "warn"
 unwrap_used = "warn"
 
-
 # The engine and prep tests render real audio offline; at the default
 # optimisation a workspace run takes minutes for the math alone, so the test
 # profile optimises the code it checks. `dev` stays unoptimised for fast
-# local builds.
+# local builds. Debug info is line tables only: the fully-optimised test
+# artifacts triple in size with it, and the CI cache round-trip has to carry
+# them on every run.
 [profile.test]
 opt-level = 2
+debug = 1
 [profile.release]
 codegen-units = 1
 lto = true
