@@ -76,6 +76,35 @@ cargo test --release -p dubplate-engine --locked --test callback_budget -- --ign
 
 Tab and Shift-Tab move through controls; Enter and Space activate buttons. Arrow keys adjust a focused knob or slider, Shift gives finer steps, Home/End reach its bounds and Backspace resets it. Ctrl-Tab switches the Prepare pane. Dialogs trap focus and restore it when closed. Selecting a library track reveals its full title, artist and any analysis failure.
 
+## Releases
+
+The **Release** workflow runs on `main` after CI passes. Before running it for a new version, update both app manifests and `Cargo.lock` in a pull request. The workflow reads the version from the desktop manifest and publishes it under `v<version>`. Published releases keep their original assets.
+
+The release contains `Dubplate-<version>.dmg`, a copy named `Dubplate.dmg` for the latest-download link, `dubplate-<version>-aarch64-apple-darwin.tar.gz` with `bin/dubplate`, `install.sh`, and `SHA256SUMS`. The packager checks the app and CLI signatures, mounts the disk image to verify the embedded app, and runs the archived command line tool. The app bundle records the minimum macOS version from the executable.
+
+The workflow signs and notarizes releases by default. Configure these Actions secrets for the repository:
+
+| Secret | Value |
+| --- | --- |
+| `APPLE_DEVELOPER_ID_P12_BASE64` | Base64-encoded Developer ID Application certificate and private key export |
+| `APPLE_DEVELOPER_ID_P12_PASSWORD` | Password for the certificate export |
+| `APPLE_TEAM_ID` | Apple Developer team ID |
+| `APPLE_NOTARY_KEY_P8_BASE64` | Base64-encoded App Store Connect API key |
+| `APPLE_NOTARY_KEY_ID` | App Store Connect API key ID |
+| `APPLE_NOTARY_ISSUER_ID` | App Store Connect team key issuer ID |
+
+For a local build on Apple Silicon, use a Developer ID Application identity available in Keychain and a profile previously configured with `xcrun notarytool store-credentials`.
+
+```sh
+DUBPLATE_SIGN_IDENTITY="Your Developer ID Application identity" \
+DUBPLATE_NOTARY_PROFILE="Your notarytool profile" \
+./scripts/release/package-macos.sh dist
+```
+
+You can also supply `DUBPLATE_NOTARY_KEY_PATH`, `DUBPLATE_NOTARY_KEY_ID`, and `DUBPLATE_NOTARY_ISSUER_ID` to use an App Store Connect team key directly. Pass `--binaries PATH` to package existing release binaries from that directory.
+
+For a local build without notarization, pass `--sign-only` to keep the Developer ID signatures or `--adhoc` to use ad hoc signatures. The Release workflow's `adhoc` input explicitly selects ad hoc signing for a new GitHub release. Note the lack of notarization in the release notes for any such build.
+
 ## Layout
 
 - `crates/dubplate-rekordbox`: reads the rekordbox library and, in `src/analysis`, the per-track analysis files. `schema/rekordbox-7.2.19.sql` holds the tables of rekordbox 7.2.19, with no data, and the tests build an encrypted library from it.

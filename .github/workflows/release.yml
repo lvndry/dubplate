@@ -1,0 +1,160 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      adhoc:
+        description: Explicitly publish this new version with ad hoc signatures and without notarization
+        type: boolean
+        default: false
+
+permissions: {}
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Package Apple Silicon release
+    if: github.ref == 'refs/heads/main' && github.actor == github.repository_owner && github.triggering_actor == github.repository_owner
+    runs-on: macos-15
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      tag: ${{ steps.prepare.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check the version and CI status
+        id: prepare
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' apps/dubplate-desktop/Cargo.toml)
+          if ! printf '%s\n' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::The desktop manifest needs a three-number version."
+            exit 1
+          fi
+          if gh release view "v$version" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "::error::A release for v$version already exists. This workflow only publishes new versions."
+            exit 1
+          fi
+          passed=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&event=push&status=success" --jq '.total_count')
+          if [ "$passed" -eq 0 ]; then
+            echo "::error::CI has not passed for $GITHUB_SHA."
+            exit 1
+          fi
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+      - name: Import the Developer ID identity and notary key
+        if: ${{ !inputs.adhoc }}
+        env:
+          APPLE_DEVELOPER_ID_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
+          APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_NOTARY_KEY_P8_BASE64: ${{ secrets.APPLE_NOTARY_KEY_P8_BASE64 }}
+          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+        run: |
+          for name in APPLE_DEVELOPER_ID_P12_BASE64 APPLE_DEVELOPER_ID_P12_PASSWORD APPLE_TEAM_ID \
+            APPLE_NOTARY_KEY_P8_BASE64 APPLE_NOTARY_KEY_ID APPLE_NOTARY_ISSUER_ID; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Set the $name secret to publish a notarized build."
+              exit 1
+            fi
+          done
+
+          umask 077
+          keychain="$RUNNER_TEMP/dubplate-signing.keychain-db"
+          password=$(openssl rand -base64 32)
+          echo "::add-mask::$password"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 7200 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          printf '%s' "$APPLE_DEVELOPER_ID_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/dubplate-certificate.p12"
+          security import "$RUNNER_TEMP/dubplate-certificate.p12" -k "$keychain" \
+            -P "$APPLE_DEVELOPER_ID_P12_PASSWORD" -T /usr/bin/codesign
+          rm -f "$RUNNER_TEMP/dubplate-certificate.p12"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain" > /dev/null
+          security list-keychains -d user -s "$keychain" login.keychain-db
+
+          identities=$(security find-identity -v -p codesigning "$keychain")
+          identity=$(printf '%s\n' "$identities" | awk -v team="($APPLE_TEAM_ID)" '
+            /Developer ID Application:/ && index($0, team) { print $2; count++ }
+            END { if (count != 1) exit 1 }
+          ') || { echo "::error::The certificate must contain one Developer ID Application identity for APPLE_TEAM_ID."; exit 1; }
+          printf '%s' "$APPLE_NOTARY_KEY_P8_BASE64" | base64 --decode > "$RUNNER_TEMP/dubplate-notary.p8"
+          {
+            printf 'DUBPLATE_SIGN_IDENTITY=%s\n' "$identity"
+            printf 'DUBPLATE_NOTARY_KEY_PATH=%s\n' "$RUNNER_TEMP/dubplate-notary.p8"
+          } >> "$GITHUB_ENV"
+      - name: Build and verify release files
+        env:
+          ADHOC: ${{ inputs.adhoc }}
+          DUBPLATE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          DUBPLATE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+        run: |
+          if [ "$ADHOC" = true ]; then
+            ./scripts/release/package-macos.sh --adhoc dist
+          else
+            ./scripts/release/package-macos.sh dist
+          fi
+      - name: Delete the keychain and keys
+        if: ${{ always() && !inputs.adhoc }}
+        run: |
+          if [ -f "$RUNNER_TEMP/dubplate-signing.keychain-db" ]; then
+            security delete-keychain "$RUNNER_TEMP/dubplate-signing.keychain-db"
+          fi
+          rm -f "$RUNNER_TEMP/dubplate-certificate.p12" "$RUNNER_TEMP/dubplate-notary.p8"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-macos
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish the GitHub release
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-macos
+          path: dist
+      - name: Publish verified files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.build.outputs.tag }}
+          ADHOC: ${{ inputs.adhoc }}
+        run: |
+          cd dist
+          sha256sum -c SHA256SUMS
+          version=${TAG#v}
+          reference=$(gh api "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/$TAG" \
+            --jq ".[] | select(.ref == \"refs/tags/$TAG\") | .object.sha")
+          if [ -n "$reference" ] && [ "$reference" != "$GITHUB_SHA" ]; then
+            echo "::error::$TAG already points to a different object."
+            exit 1
+          fi
+          notes="Dubplate $version for Mac with Apple Silicon. Download Dubplate.dmg and drag Dubplate.app into Applications. The CLI is available as a separate archive."
+          if [ "$ADHOC" = true ]; then
+            notes="$notes This build is ad hoc signed. macOS may require you to allow the app in System Settings under Privacy & Security before opening it."
+          else
+            notes="$notes The desktop app and the command line tool are signed with Developer ID and notarized by Apple."
+          fi
+          # Supplying files makes gh stage the release as a draft until the uploads succeed.
+          gh release create "$TAG" "Dubplate-$version.dmg" Dubplate.dmg \
+            "dubplate-$version-aarch64-apple-darwin.tar.gz" SHA256SUMS install.sh \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Dubplate $version" \
+            --notes "$notes" --generate-notes --latest
