@@ -6,7 +6,8 @@
 //!   lets it skip every file that has not changed since.
 //! - [`LibraryCache`] keeps the scans on disk so the library opens at once on the next launch;
 //!   a rescan then picks up the files added or removed meanwhile.
-//! - Nothing here writes to the music folders.
+//! - Nothing here writes to the music folders, and nothing Dubplate writes for itself goes
+//!   inside rekordbox's folders: [`is_inside_rekordbox`] is the one check for both crates.
 //! - [`find_relocations`] finds, for a rekordbox track whose file was moved, the file again by
 //!   its name, confirmed by size or length; [`search_folders_for`] and [`candidates_from_paths`]
 //!   gather the candidates from a folder the DJ points at.
@@ -14,11 +15,13 @@
 //!   the library is made of from the settings, relinks included.
 
 mod cache;
+mod own_files;
 mod relocate;
 mod scan;
 mod settings;
 
 pub use cache::{CacheError, LibraryCache};
+pub use own_files::{is_inside_rekordbox, unix_millis};
 pub use relocate::{
     MissingTrack, Relocation, RelocationConfidence, candidates_from_paths, find_relocations,
     search_folders_for,

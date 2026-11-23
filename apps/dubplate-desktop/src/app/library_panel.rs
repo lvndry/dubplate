@@ -137,6 +137,15 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
                     Command::SetFaderEcho(!app.settings.fader_echo),
                     cx,
                 ))
+                .child(section_title("Mixer"))
+                .child(setting_switch(
+                    "auto-gain",
+                    "Auto Gain",
+                    "Each track loads at a common loudness: rekordbox's Auto Gain for its tracks, Dubplate's loudness measure for the others. TRIM stays where you set it.",
+                    app.settings.auto_gain,
+                    Command::SetAutoGain(!app.settings.auto_gain),
+                    cx,
+                ))
                 .child(section_title("Audio"))
                 .children(output_rows)
                 .child(buffer_row(app, cx))

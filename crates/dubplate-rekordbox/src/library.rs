@@ -139,7 +139,12 @@ impl Library {
             "SELECT content.ID, content.Title, artist.Name, album.Name, genre.Name, label.Name,
                     musical_key.ScaleName, content.BPM, content.Length, content.FolderPath,
                     content.FileSize, content.Rating, content.Commnt, content.AnalysisDataPath,
-                    content.StockDate
+                    content.StockDate,
+                    (SELECT (mixer.GainHigh & 65535) << 16 | (mixer.GainLow & 65535)
+                     FROM djmdMixerParam AS mixer
+                     WHERE mixer.ContentID = content.ID AND mixer.rb_local_deleted = 0
+                     ORDER BY mixer.updated_at DESC
+                     LIMIT 1)
              FROM djmdContent AS content
              LEFT JOIN djmdArtist AS artist ON artist.ID = content.ArtistID
              LEFT JOIN djmdAlbum AS album ON album.ID = content.AlbumID
@@ -244,7 +249,19 @@ fn track_from_row(row: &Row<'_>) -> rusqlite::Result<Track> {
         comment: row.get(12)?,
         analysis_path: row.get(13)?,
         date_added: row.get(14)?,
+        auto_gain_db: row
+            .get::<_, Option<i64>>(15)?
+            .and_then(|bits| u32::try_from(bits).ok())
+            .and_then(mixer_gain_db),
     })
+}
+
+/// A `djmdMixerParam` gain in decibels. rekordbox keeps the linear gain factor as the bits of
+/// an IEEE 754 single, its upper 16 bits in `GainHigh` and its lower 16 in `GainLow`.
+/// A factor that is not a positive number gives none.
+pub(crate) fn mixer_gain_db(bits: u32) -> Option<f32> {
+    let factor = f32::from_bits(bits);
+    (factor.is_finite() && factor > 0.0).then(|| 20.0 * factor.log10())
 }
 
 fn cue_from_row(row: &Row<'_>) -> rusqlite::Result<Cue> {
@@ -291,4 +308,20 @@ fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
     let mut name = path.as_os_str().to_owned();
     name.push(suffix);
     PathBuf::from(name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_mixer_gain_is_the_decibels_of_its_single() {
+        let decibels = |factor: f32| mixer_gain_db(factor.to_bits());
+        assert_eq!(decibels(1.0), Some(0.0));
+        assert!((decibels(0.5).unwrap() + 6.020_6).abs() < 1e-3);
+        assert!((decibels(2.0).unwrap() - 6.020_6).abs() < 1e-3);
+        assert_eq!(decibels(0.0), None);
+        assert_eq!(decibels(-1.0), None);
+        assert_eq!(mixer_gain_db(f32::NAN.to_bits()), None);
+    }
 }
