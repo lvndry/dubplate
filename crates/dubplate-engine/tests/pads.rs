@@ -5,7 +5,7 @@ mod common;
 use common::{SAMPLE_RATE, assert_close, left_channel, render_frames, sine_track};
 use dubplate_engine::{
     BeatGrid, BeatLength, Controller, DeckId, EffectKind, MasterTempo, PadEffect, PadRelease,
-    ParameterValue, Renderer, SyncMode, offline_engine,
+    ParameterValue, Renderer, SyncMode, Track, offline_engine,
 };
 
 const BLOCK: usize = 256;
@@ -190,6 +190,124 @@ fn a_held_echo_rings_out_after_release_and_a_brake_gives_the_live_track_back() {
     let live = seconds(&mut renderer, 1.0);
     assert!(rms(&live[24_000..]) > 0.3, "the live track is back");
     assert_close(position(&controller), started + 2.0, 0.01);
+}
+
+fn audition_echo_out(pad: Option<PadRelease>, hold_seconds: f64) -> Vec<f32> {
+    let (mut controller, mut renderer) = offline_engine(SAMPLE_RATE);
+    let samples: Vec<f32> = (0..2 * SAMPLE_RATE)
+        .flat_map(|frame| {
+            let time = f64::from(frame) / f64::from(SAMPLE_RATE);
+            let hz = if (0.58..0.70).contains(&time) {
+                440.0
+            } else if (0.80..0.95).contains(&time) {
+                660.0
+            } else if (1.20..1.29).contains(&time) {
+                990.0
+            } else {
+                0.0
+            };
+            [0.4 * (std::f64::consts::TAU * time * hz).sin() as f32; 2]
+        })
+        .collect();
+    let track =
+        Track::from_interleaved_stereo(&samples, SAMPLE_RATE).expect("valid stereo test track");
+    controller
+        .load_track(DeckId::A, track)
+        .expect("load test track");
+    controller
+        .set_beat_grid(
+            DeckId::A,
+            Some(BeatGrid::new(120.0, 0.0).expect("valid beat grid")),
+        )
+        .expect("assign beat grid");
+    controller.set_crossfader(0.0).expect("set crossfader");
+    controller.play(DeckId::A).expect("start deck");
+    seconds(&mut renderer, 0.5);
+    if let Some(release) = pad {
+        controller
+            .hold_pad_effect(
+                DeckId::A,
+                PadEffect {
+                    kind: EffectKind::EchoOut,
+                    parameter: Some(ParameterValue::Beats(BeatLength::ONE)),
+                    depth: 0.8,
+                    release,
+                },
+            )
+            .expect("press echo out");
+    }
+    let mut output = seconds(&mut renderer, hold_seconds);
+    if hold_seconds < 1.5 {
+        if pad.is_some() {
+            controller
+                .release_pad_effect(DeckId::A)
+                .expect("release echo out");
+        }
+        output.extend(seconds(&mut renderer, 1.5 - hold_seconds));
+    }
+    output
+}
+
+fn echo_out_window(signal: &[f32], start: f64, end: f64) -> &[f32] {
+    let frame_at = |time: f64| (time * f64::from(SAMPLE_RATE)).round() as usize;
+    &signal[frame_at(start)..frame_at(end)]
+}
+
+fn assert_echo_out_passes_live_note(live: &[f32], dry: &[f32]) {
+    assert!(rms(dry) > 0.1);
+    let difference: Vec<f32> = live.iter().zip(dry).map(|(live, dry)| live - dry).collect();
+    assert!(
+        rms(&difference) < 0.001,
+        "the live note remains audible at its original level"
+    );
+}
+
+#[test]
+fn echo_out_plays_the_captured_beat_before_repeating_it() {
+    let dry = audition_echo_out(None, 1.5);
+    let echo = audition_echo_out(Some(PadRelease::RingOut), 1.5);
+    for (start, end, hz) in [(0.11, 0.18, 440.0), (0.33, 0.42, 660.0)] {
+        let original = echo_out_window(&dry, start, end);
+        assert_echo_out_passes_live_note(echo_out_window(&echo, start, end), original);
+
+        let first = echo_out_window(&echo, start + 0.5, end + 0.5);
+        let second = echo_out_window(&echo, start + 1.0, end + 1.0);
+        let dry_level = rms(original);
+        let first_level = rms(first);
+        let second_level = rms(second);
+        assert!((0.5 * dry_level..dry_level).contains(&first_level));
+        assert!((0.2 * first_level..0.9 * first_level).contains(&second_level));
+        assert_close(frequency(first), hz, 2.0);
+        assert_close(frequency(second), hz, 2.0);
+    }
+    assert!(rms(echo_out_window(&dry, 0.73, 0.78)) > 0.1);
+    assert!(
+        rms(echo_out_window(&echo, 0.73, 0.78)) < 0.005,
+        "the new live note stays out of the repeated beat"
+    );
+}
+
+#[test]
+fn a_quick_echo_out_tap_leaves_the_live_music_audible_and_honors_release() {
+    let dry = audition_echo_out(None, 0.1);
+    let ring = audition_echo_out(Some(PadRelease::RingOut), 0.1);
+    let cut = audition_echo_out(Some(PadRelease::Dry), 0.1);
+
+    for (start, end) in [(0.09, 0.10), (0.115, 0.17), (0.33, 0.42), (0.73, 0.78)] {
+        let original = echo_out_window(&dry, start, end);
+        assert_echo_out_passes_live_note(echo_out_window(&ring, start, end), original);
+        assert_echo_out_passes_live_note(echo_out_window(&cut, start, end), original);
+    }
+    let first = echo_out_window(&ring, 0.59, 0.605);
+    assert!(
+        rms(first) > 0.06,
+        "the captured note still echoes after release"
+    );
+    assert_close(frequency(first), 440.0, 2.0);
+    assert!(
+        rms(echo_out_window(&cut, 0.59, 0.605)) < 0.005,
+        "a dry release cuts the delayed note"
+    );
 }
 
 #[test]

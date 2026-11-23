@@ -53,6 +53,12 @@ pub(crate) trait Kernel: Send {
 
     fn begin_block(&mut self, timing: &BlockTiming);
 
+    /// The fraction of the dry signal this kernel keeps audible independently of the mix.
+    #[inline]
+    fn dry_passthrough(&self) -> f32 {
+        0.0
+    }
+
     /// Processes one frame and returns the effect's output, before mixing.
     fn tick(&mut self, input: Frame, beat_position: f64) -> Frame;
 
@@ -195,6 +201,7 @@ impl<K: Kernel> Unit<K> {
             let dry = [sanitize_input(*left_sample), sanitize_input(*right_sample)];
             let presence = self.presence.next();
             let (dry_mix, wet_mix) = K::MIX_LAW.gains(self.mix.next());
+            let dry_mix = dry_mix + (1.0 - dry_mix) * self.kernel.dry_passthrough();
             let dry_gain = presence * dry_mix + (1.0 - presence);
             let (send_gain, wet_gain, heard_gain) = if K::TRAILS && self.trail_cut {
                 (presence, wet_mix, presence * wet_mix)

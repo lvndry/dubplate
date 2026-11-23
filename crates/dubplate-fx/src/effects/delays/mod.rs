@@ -54,6 +54,12 @@ pub(crate) trait Voicing: Send + 'static {
     /// Follows the depth knob, for voicings it moves.
     fn set_depth(&mut self, _depth: f32) {}
 
+    /// How much of the dry music stays audible as the loop starts.
+    #[inline]
+    fn dry_passthrough(&self) -> f32 {
+        0.0
+    }
+
     /// Shapes the music on its way into the loop.
     #[inline]
     fn send(&mut self, input: Frame) -> Frame {
@@ -63,7 +69,7 @@ pub(crate) trait Voicing: Send + 'static {
     /// Shapes a repeat on its way back round the loop.
     fn shape(&mut self, repeat: Frame) -> Frame;
 
-    /// Learns how long the loop is, in samples, at the start of each block.
+    /// Learns the configured loop length, in samples, at the start of each block.
     fn set_loop_samples(&mut self, _samples: f32) {}
 
     /// Called each time the effect is switched on.
@@ -124,14 +130,16 @@ impl<V: Voicing> Kernel for EchoLoop<V> {
             self.trail_level.prepare(timing.sample_rate);
             self.voicing.prepare(timing.sample_rate);
         }
-        let samples = timing.beats_to_samples(self.beat.beats()) as f32;
-        let longest = self.lines[0].max_delay();
-        self.time.set_target(
-            samples.clamp(MIN_DELAY_SAMPLES, longest),
-            timing.sample_rate,
-        );
+        let samples = (timing.beats_to_samples(self.beat.beats()) as f32)
+            .clamp(MIN_DELAY_SAMPLES, self.lines[0].max_delay());
+        self.time.set_target(samples, timing.sample_rate);
         self.trail_level.set_loop_samples(self.time.longest());
-        self.voicing.set_loop_samples(self.time.longest());
+        self.voicing.set_loop_samples(samples);
+    }
+
+    #[inline]
+    fn dry_passthrough(&self) -> f32 {
+        self.voicing.dry_passthrough()
     }
 
     #[inline]
