@@ -10,6 +10,10 @@
 //! [`device_library`] writes and reads the Device Library a rekordbox USB export carries for
 //! CDJs: `export.pdb` and `exportExt.pdb`.
 //!
+//! [`stick_import`] reads what players wrote back to an exported stick: the histories players
+//! recorded and the cues players added or moved on the CDJ. The stick is only read, never
+//! changed.
+//!
 //! [`xml`] writes a library in rekordbox's XML format, the way to hand rekordbox tracks,
 //! grids, cues and playlists without touching its own files.
 
@@ -20,6 +24,7 @@ mod error;
 mod library;
 mod location;
 mod model;
+pub mod stick_import;
 mod track_cues;
 pub mod xml;
 
@@ -29,4 +34,4 @@ pub use error::Error;
 pub use library::{DatabaseKey, Library, LibrarySummary};
 pub use location::{KEY_ENVIRONMENT_VARIABLE, default_master_db, key_file};
 pub use model::{Cue, CueKind, HotCuePad, Playlist, PlaylistKind, Track};
-pub use track_cues::{HotCue, MEMORY_CUE_LIMIT, MemoryCue, TrackCues, cue_milliseconds};
+pub use track_cues::{CueChange, HotCue, MEMORY_CUE_LIMIT, MemoryCue, TrackCues, cue_milliseconds};

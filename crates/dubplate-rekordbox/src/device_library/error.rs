@@ -20,6 +20,9 @@ pub enum DeviceLibraryError {
     /// A table's rows refer to an id the library does not hold.
     #[error("{0}")]
     DanglingReference(String),
+    /// The tables hold more rows than the format's 32-bit ids can number.
+    #[error("{0} rows is more than the format's ids can number")]
+    ExhaustedIds(usize),
     /// The bytes are not a DeviceSQL database.
     #[error("not a DeviceSQL database: {0}")]
     NotADatabase(String),

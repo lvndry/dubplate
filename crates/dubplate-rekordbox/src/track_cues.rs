@@ -2,13 +2,18 @@
 //! memory cues in time order. Any cue can be a saved loop, and each keeps rekordbox's colour
 //! and the DJ's name for it.
 
+use std::fmt;
+
 use serde::Serialize;
 
+use crate::analysis::AnalysisCue;
 use crate::cue_colors::{MemoryCueColor, PaletteColor};
 use crate::model::{Cue, CueKind, HotCuePad};
 
 /// How many memory cues a CDJ shows and calls for a track.
 pub const MEMORY_CUE_LIMIT: usize = 10;
+/// How far a cue may sit from where it was and still be the same one.
+const SAME_CUE_TOLERANCE_MS: u32 = 1;
 
 /// A hot cue, or a hot loop when it has an end.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -131,6 +136,112 @@ impl TrackCues {
         Self::new(hot, memory)
     }
 
+    /// The cues of one track as its analysis files hold them, on a stick or in rekordbox's
+    /// `share` folder: hot cues numbered from 1 for pad A, memory cues with their row in the
+    /// colour table. A second cue on a pad, a hot cue number past H and a loop end not after its
+    /// start are left out, as [`Self::from_rekordbox`] does.
+    pub fn from_analysis<'a>(cues: impl IntoIterator<Item = &'a AnalysisCue>) -> Self {
+        let mut hot: [Option<HotCue>; HotCuePad::ALL.len()] = Default::default();
+        let mut memory = Vec::new();
+        for cue in cues {
+            let loop_end_ms = cue.loop_end_ms.filter(|end| *end > cue.time_ms);
+            let name = cue.name.clone().unwrap_or_default();
+            match cue.hot_cue {
+                Some(number) => {
+                    let pad = usize::try_from(number)
+                        .ok()
+                        .and_then(|number| number.checked_sub(1))
+                        .and_then(|index| HotCuePad::ALL.get(index).copied());
+                    if let Some(pad) = pad
+                        && hot[pad.index()].is_none()
+                    {
+                        hot[pad.index()] = Some(HotCue {
+                            start_ms: cue.time_ms,
+                            loop_end_ms,
+                            color: cue
+                                .hot_cue_color
+                                .and_then(|color| PaletteColor::from_index(i64::from(color.code))),
+                            name,
+                        });
+                    }
+                }
+                None => memory.push(MemoryCue {
+                    start_ms: cue.time_ms,
+                    loop_end_ms,
+                    color: cue
+                        .memory_color
+                        .and_then(|row| row.checked_sub(1))
+                        .and_then(|value| MemoryCueColor::from_rekordbox(i64::from(value))),
+                    name,
+                }),
+            }
+        }
+        Self::new(hot, memory)
+    }
+
+    /// What it takes to go from `before` to these cues, pad by pad, then memory cue by memory
+    /// cue in time order. A hot cue on its pad and a memory cue at where it was, within 1 ms,
+    /// are the same one; an equal list has no change. A memory cue at a new position reads
+    /// back as a deletion where it was and a new cue where it is, since the format keeps no
+    /// name to follow a memory cue by.
+    pub fn changes_from(&self, before: &Self) -> Vec<CueChange> {
+        let mut changes = Vec::new();
+        for pad in HotCuePad::ALL {
+            match (before.hot_cue(pad), self.hot_cue(pad)) {
+                (None, Some(cue)) => changes.push(CueChange::HotCueSet {
+                    pad,
+                    cue: cue.clone(),
+                }),
+                (Some(cue), None) => changes.push(CueChange::HotCueCleared {
+                    pad,
+                    cue: cue.clone(),
+                }),
+                (Some(old), Some(new)) => {
+                    let same_cue = old.start_ms.abs_diff(new.start_ms) <= SAME_CUE_TOLERANCE_MS
+                        && old.loop_end_ms == new.loop_end_ms
+                        && old.color == new.color
+                        && old.name == new.name;
+                    if !same_cue {
+                        changes.push(CueChange::HotCueChanged {
+                            pad,
+                            before: old.clone(),
+                            after: new.clone(),
+                        });
+                    }
+                }
+                (None, None) => {}
+            }
+        }
+        let mut memory_changes = Vec::new();
+        let mut remaining: Vec<&MemoryCue> = before.memory.iter().collect();
+        for cue in &self.memory {
+            let place = remaining.iter().position(|old| *old == cue).or_else(|| {
+                remaining
+                    .iter()
+                    .position(|old| old.start_ms.abs_diff(cue.start_ms) <= SAME_CUE_TOLERANCE_MS)
+            });
+            if let Some(place) = place {
+                let old = remaining.remove(place);
+                if !same_memory_cue(old, cue) {
+                    memory_changes.push(CueChange::MemoryCueChanged {
+                        before: old.clone(),
+                        after: cue.clone(),
+                    });
+                }
+            } else {
+                memory_changes.push(CueChange::MemoryCueAdded(cue.clone()));
+            }
+        }
+        memory_changes.extend(
+            remaining
+                .into_iter()
+                .map(|cue| CueChange::MemoryCueRemoved(cue.clone())),
+        );
+        memory_changes.sort_by_key(CueChange::start_ms);
+        changes.extend(memory_changes);
+        changes
+    }
+
     /// Whether the track has no cue at all.
     pub fn is_empty(&self) -> bool {
         self.memory.is_empty() && self.hot.iter().all(Option::is_none)
@@ -196,6 +307,166 @@ impl TrackCues {
             .flatten()
             .filter_map(|cue| Some((cue.start_ms, cue.loop_end_ms?)));
         memory.chain(hot)
+    }
+}
+
+/// The same memory cue: where it was, within the tolerance, and loop, colour and name the
+/// same.
+fn same_memory_cue(before: &MemoryCue, after: &MemoryCue) -> bool {
+    before.start_ms.abs_diff(after.start_ms) <= SAME_CUE_TOLERANCE_MS
+        && before.loop_end_ms == after.loop_end_ms
+        && before.color == after.color
+        && before.name == after.name
+}
+
+/// One difference between two cue lists of a track, as [`TrackCues::changes_from`] finds it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub enum CueChange {
+    /// A hot cue on a pad that had none.
+    HotCueSet {
+        /// The pad.
+        pad: HotCuePad,
+        /// The new hot cue.
+        cue: HotCue,
+    },
+    /// A pad's hot cue moved, or changed loop, colour or name.
+    HotCueChanged {
+        /// The pad.
+        pad: HotCuePad,
+        /// The hot cue before.
+        before: HotCue,
+        /// The hot cue after.
+        after: HotCue,
+    },
+    /// A pad's hot cue is gone.
+    HotCueCleared {
+        /// The pad.
+        pad: HotCuePad,
+        /// The hot cue that was there.
+        cue: HotCue,
+    },
+    /// A memory cue or saved loop that was not there.
+    MemoryCueAdded(MemoryCue),
+    /// A memory cue where it was changed loop, colour or name.
+    MemoryCueChanged {
+        /// The memory cue before.
+        before: MemoryCue,
+        /// The memory cue after.
+        after: MemoryCue,
+    },
+    /// A memory cue or saved loop that is gone.
+    MemoryCueRemoved(MemoryCue),
+}
+
+impl CueChange {
+    /// Where the cue the change is about sits, in milliseconds: after the change when there
+    /// is an after.
+    pub fn start_ms(&self) -> u32 {
+        match self {
+            Self::HotCueSet { cue, .. } | Self::HotCueCleared { cue, .. } => cue.start_ms,
+            Self::HotCueChanged { after, .. } => after.start_ms,
+            Self::MemoryCueAdded(cue) | Self::MemoryCueRemoved(cue) => cue.start_ms,
+            Self::MemoryCueChanged { after, .. } => after.start_ms,
+        }
+    }
+}
+
+impl fmt::Display for CueChange {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let kind = |loop_end_ms: Option<u32>, hot: bool| match (loop_end_ms.is_some(), hot) {
+            (true, true) => "hot loop",
+            (false, true) => "hot cue",
+            (true, false) => "memory loop",
+            (false, false) => "memory cue",
+        };
+        let named = |name: &str| {
+            if name.is_empty() {
+                String::new()
+            } else {
+                format!(" \u{201c}{name}\u{201d}")
+            }
+        };
+        match self {
+            Self::HotCueSet { pad, cue } => write!(
+                formatter,
+                "New {} {} at {}{}",
+                kind(cue.loop_end_ms, true),
+                pad.letter(),
+                CueTime(cue.start_ms),
+                named(&cue.name)
+            ),
+            Self::HotCueChanged { pad, before, after } if before.start_ms != after.start_ms => {
+                write!(
+                    formatter,
+                    "{} {} moved from {} to {}{}",
+                    capitalized(kind(after.loop_end_ms, true)),
+                    pad.letter(),
+                    CueTime(before.start_ms),
+                    CueTime(after.start_ms),
+                    named(&after.name)
+                )
+            }
+            Self::HotCueChanged { pad, after, .. } => write!(
+                formatter,
+                "{} {} at {} changed{}",
+                capitalized(kind(after.loop_end_ms, true)),
+                pad.letter(),
+                CueTime(after.start_ms),
+                named(&after.name)
+            ),
+            Self::HotCueCleared { pad, cue } => write!(
+                formatter,
+                "{} {} at {} deleted{}",
+                capitalized(kind(cue.loop_end_ms, true)),
+                pad.letter(),
+                CueTime(cue.start_ms),
+                named(&cue.name)
+            ),
+            Self::MemoryCueAdded(cue) => write!(
+                formatter,
+                "New {} at {}{}",
+                kind(cue.loop_end_ms, false),
+                CueTime(cue.start_ms),
+                named(&cue.name)
+            ),
+            Self::MemoryCueChanged { after, .. } => write!(
+                formatter,
+                "{} at {} changed{}",
+                capitalized(kind(after.loop_end_ms, false)),
+                CueTime(after.start_ms),
+                named(&after.name)
+            ),
+            Self::MemoryCueRemoved(cue) => write!(
+                formatter,
+                "{} at {} deleted{}",
+                capitalized(kind(cue.loop_end_ms, false)),
+                CueTime(cue.start_ms),
+                named(&cue.name)
+            ),
+        }
+    }
+}
+
+fn capitalized(text: &str) -> String {
+    let mut characters = text.chars();
+    characters.next().map_or_else(String::new, |first| {
+        first.to_uppercase().chain(characters).collect()
+    })
+}
+
+/// A place in a track as DJs read it on a player: minutes, seconds and tenths, `1:02.3`.
+struct CueTime(u32);
+
+impl fmt::Display for CueTime {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let tenths = self.0.saturating_add(50) / 100;
+        write!(
+            formatter,
+            "{}:{:02}.{}",
+            tenths / 600,
+            tenths / 10 % 60,
+            tenths % 10
+        )
     }
 }
 
@@ -320,6 +591,98 @@ mod tests {
             ..HotCue::at(0)
         };
         assert_eq!(own.display_color(HotCuePad::B).index(), 5);
+    }
+
+    #[test]
+    fn analysis_cues_come_back_as_the_cues_they_were_written_from() {
+        use crate::analysis::HotCueColor;
+        let hot = AnalysisCue {
+            hot_cue: Some(3),
+            pad: Some('C'),
+            time_ms: 4_000,
+            loop_end_ms: Some(6_000),
+            loop_length: None,
+            name: Some("Drop".to_owned()),
+            memory_color: None,
+            hot_cue_color: Some(HotCueColor {
+                code: 42,
+                display: None,
+                led: None,
+            }),
+        };
+        let memory = AnalysisCue {
+            hot_cue: None,
+            pad: None,
+            time_ms: 9_000,
+            loop_end_ms: None,
+            loop_length: None,
+            name: None,
+            memory_color: Some(MemoryCueColor::Blue.rekordbox_value() + 1),
+            hot_cue_color: None,
+        };
+        let past_h = AnalysisCue {
+            hot_cue: Some(9),
+            ..hot.clone()
+        };
+        let second_on_c = AnalysisCue {
+            time_ms: 1,
+            ..hot.clone()
+        };
+        let cues = TrackCues::from_analysis(&[hot, memory, past_h, second_on_c]);
+        let drop = cues.hot_cue(HotCuePad::C).unwrap();
+        assert_eq!(
+            (drop.start_ms, drop.loop_end_ms, drop.name.as_str()),
+            (4_000, Some(6_000), "Drop")
+        );
+        assert_eq!(drop.color.map(PaletteColor::index), Some(42));
+        assert_eq!(cues.hot_cues().count(), 1);
+        assert_eq!(cues.memory_cues()[0].color, Some(MemoryCueColor::Blue));
+    }
+
+    #[test]
+    fn changes_say_what_moved_what_is_new_and_what_is_gone() {
+        let mut before = TrackCues::default();
+        before.set_hot_cue(HotCuePad::A, HotCue::at(1_000));
+        before.set_hot_cue(HotCuePad::B, HotCue::at(2_000));
+        before.set_hot_cue(HotCuePad::C, HotCue::at(3_000));
+        before.insert_memory_cue(MemoryCue::at(10_000));
+        before.insert_memory_cue(MemoryCue::at(20_000));
+        let mut after = before.clone();
+        assert!(after.changes_from(&before).is_empty());
+
+        after.set_hot_cue(HotCuePad::B, HotCue::at(62_340));
+        after.delete_hot_cue(HotCuePad::C);
+        after.set_hot_cue(
+            HotCuePad::H,
+            HotCue {
+                loop_end_ms: Some(5_000),
+                name: "Vox".to_owned(),
+                ..HotCue::at(4_000)
+            },
+        );
+        after.remove_memory_cues(|cue| cue.start_ms == 20_000);
+        after.remove_memory_cues(|cue| cue.start_ms == 10_000);
+        after.insert_memory_cue(MemoryCue {
+            color: Some(MemoryCueColor::Red),
+            ..MemoryCue::at(10_000)
+        });
+        after.insert_memory_cue(MemoryCue::at(30_000));
+        let lines: Vec<String> = after
+            .changes_from(&before)
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        assert_eq!(
+            lines,
+            [
+                "Hot cue B moved from 0:02.0 to 1:02.3",
+                "Hot cue C at 0:03.0 deleted",
+                "New hot loop H at 0:04.0 \u{201c}Vox\u{201d}",
+                "Memory cue at 0:10.0 changed",
+                "Memory cue at 0:20.0 deleted",
+                "New memory cue at 0:30.0",
+            ]
+        );
     }
 
     #[test]

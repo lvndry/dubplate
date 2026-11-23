@@ -5,11 +5,12 @@ use super::TableKind;
 use super::database::{EncodedRow, align4, get_u16, get_u32};
 use super::error::DeviceLibraryError;
 use super::ids::{
-    AlbumId, ArtistId, ArtworkId, GenreId, KeyId, LabelId, LibraryId, PlaylistId, TrackId,
-    number_or_zero,
+    AlbumId, ArtistId, ArtworkId, GenreId, HistoryId, KeyId, LabelId, LibraryId, PlaylistId,
+    TrackId, number_or_zero,
 };
 use super::library::{
-    Album, Artwork, DeviceColor, DeviceTrack, FileType, Named, PlaylistEntry, PlaylistNode,
+    Album, Artwork, DeviceColor, DeviceTrack, FileType, HistoryEntry, Named, PlaylistEntry,
+    PlaylistNode,
 };
 use super::string::{DeviceString, read_string};
 
@@ -321,6 +322,43 @@ pub(crate) fn decode_artwork(row: &[u8]) -> Result<Artwork, DeviceLibraryError> 
         id: ArtworkId::new(id)
             .ok_or_else(|| FieldReader::new(row, TableKind::Artwork).malformed("its id is 0"))?,
         path,
+    })
+}
+
+pub(crate) fn encode_history_playlist(
+    id: HistoryId,
+    name: &str,
+) -> Result<EncodedRow, DeviceLibraryError> {
+    encode_id_and_text(id.get(), name)
+}
+
+pub(crate) fn decode_history_playlist(
+    row: &[u8],
+) -> Result<(HistoryId, String), DeviceLibraryError> {
+    let (id, name) = decode_id_and_text(row, TableKind::HistoryPlaylists)?;
+    let id = HistoryId::new(id).ok_or_else(|| {
+        FieldReader::new(row, TableKind::HistoryPlaylists).malformed("its id is 0")
+    })?;
+    Ok((id, name))
+}
+
+/// A history entry: the track, its history, then its place, unlike a playlist entry, which
+/// starts with its place.
+pub(crate) fn encode_history_entry(entry: &HistoryEntry) -> EncodedRow {
+    let bytes = [entry.track.get(), entry.history.get(), entry.entry_index]
+        .into_iter()
+        .flat_map(u32::to_le_bytes)
+        .collect();
+    EncodedRow::new(bytes, 12)
+}
+
+pub(crate) fn decode_history_entry(row: &[u8]) -> Result<HistoryEntry, DeviceLibraryError> {
+    let fields = FieldReader::new(row, TableKind::HistoryEntries);
+    Ok(HistoryEntry {
+        track: TrackId::new(fields.u32(0)?).ok_or_else(|| fields.malformed("its track is 0"))?,
+        history: HistoryId::new(fields.u32(4)?)
+            .ok_or_else(|| fields.malformed("its history is 0"))?,
+        entry_index: fields.u32(8)?,
     })
 }
 
