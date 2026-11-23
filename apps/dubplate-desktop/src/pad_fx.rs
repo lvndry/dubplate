@@ -1,6 +1,6 @@
 //! The 32 Pad FX of the FLX4's PAD FX1 and PAD FX2 modes, eight pads each with and without
 //! SHIFT, as the DJ sets them in the Pad FX editor: what each pad plays, its beat or parameter,
-//! its depth, whether it is held or latched and what letting go does to its trail. Three
+//! its depth, how it is triggered and what letting go does to its trail. Three
 //! starting sets are built in, and the DJ's own set is remembered.
 
 use std::fmt;
@@ -206,6 +206,8 @@ pub enum PadTrigger {
     Hold,
     /// A press switches it on and the next press switches it off.
     Latch,
+    /// A press feeds the echo for the selected beat length, then it rings out.
+    Tap,
 }
 
 /// One Pad FX pad as the DJ set it.
@@ -217,7 +219,7 @@ pub struct PadFxSlot {
     pub parameter: Option<ParameterValue>,
     /// The effect's depth, from 0 to 1. A loop roll ignores it.
     pub depth: f32,
-    /// Held or latched.
+    /// How the pad is triggered.
     pub trigger: PadTrigger,
     /// What letting go does to the effect's trail.
     pub release: PadRelease,
@@ -288,27 +290,70 @@ impl PadFxSlot {
         }
     }
 
+    /// The echo and its capture length if this is a Tap pad.
+    pub fn tap_echo(self) -> Option<(PadEffect, BeatLength)> {
+        if self.trigger != PadTrigger::Tap {
+            return None;
+        }
+        let (kind, length) = self.tap_echo_settings()?;
+        Some((
+            PadEffect {
+                kind,
+                parameter: self.parameter,
+                depth: self.depth,
+                release: PadRelease::RingOut,
+            },
+            length,
+        ))
+    }
+
+    fn tap_echo_settings(self) -> Option<(EffectKind, BeatLength)> {
+        let (PadSound::Effect(kind), Some(ParameterValue::Beats(length))) =
+            (self.sound, self.parameter)
+        else {
+            return None;
+        };
+        matches!(
+            kind,
+            EffectKind::Echo
+                | EffectKind::UpEcho
+                | EffectKind::DownEcho
+                | EffectKind::LowCutEcho
+                | EffectKind::PingPong
+                | EffectKind::BpfEcho
+                | EffectKind::HpfEcho
+                | EffectKind::LpfEcho
+                | EffectKind::CrushEcho
+                | EffectKind::EchoOut
+        )
+        .then_some((kind, length))
+    }
+
     /// Its name and parameter, as its pad shows them.
     pub fn label(self) -> (&'static str, String) {
-        (
-            self.sound.pad_label(),
-            self.parameter
-                .map_or_else(String::new, |value| value.to_string()),
-        )
+        let parameter = self
+            .parameter
+            .map_or_else(String::new, |value| value.to_string());
+        match (self.trigger, self.sound) {
+            (PadTrigger::Tap, PadSound::Effect(EffectKind::Echo)) => ("Tap Echo", parameter),
+            (PadTrigger::Tap, sound) => (sound.pad_label(), format!("{parameter} tap")),
+            (_, sound) => (sound.pad_label(), parameter),
+        }
     }
 
     /// The same pad playing the sound `steps` places on, with that sound's default parameter
-    /// and depth and the trigger kept.
+    /// and depth and the trigger kept if the new sound supports it.
     pub fn step_sound(self, steps: i32) -> Self {
         let sound = self.sound.step(steps);
         let fresh = match sound {
             PadSound::LoopRoll => Self::roll(BeatLength::QUARTER),
             PadSound::Effect(kind) => Self::effect(kind, kind.parameter().map(|spec| spec.default)),
         };
-        Self {
-            trigger: self.trigger,
-            ..fresh
-        }
+        let trigger = match self.trigger {
+            PadTrigger::Tap if fresh.tap_echo_settings().is_none() => PadTrigger::Hold,
+            trigger => trigger,
+        };
+        Self { trigger, ..fresh }
     }
 
     /// The same pad with its parameter `steps` places on, stopping at either end.
@@ -332,12 +377,13 @@ impl PadFxSlot {
         }
     }
 
-    /// The same pad held or latched the other way.
+    /// The same pad with the next trigger it supports.
     pub fn toggle_trigger(self) -> Self {
         Self {
             trigger: match self.trigger {
                 PadTrigger::Hold => PadTrigger::Latch,
-                PadTrigger::Latch => PadTrigger::Hold,
+                PadTrigger::Latch if self.tap_echo_settings().is_some() => PadTrigger::Tap,
+                PadTrigger::Latch | PadTrigger::Tap => PadTrigger::Hold,
             },
             ..self
         }
@@ -345,6 +391,9 @@ impl PadFxSlot {
 
     /// The same pad with its trail released the other way.
     pub fn toggle_release(self) -> Self {
+        if self.trigger == PadTrigger::Tap {
+            return self;
+        }
         Self {
             release: match self.release {
                 PadRelease::RingOut => PadRelease::Dry,
@@ -407,6 +456,10 @@ impl PadFxPreset {
         let beats = PadFxSlot::beats;
         let percent = PadFxSlot::percent;
         let effect = PadFxSlot::effect;
+        let tap_echo = |length| PadFxSlot {
+            trigger: PadTrigger::Tap,
+            ..beats(Kind::Echo, length)
+        };
         // Noise is generated into a delay. A short tap needs both a short first tap time
         // and a ringing release to let the generated burst reach the output.
         let noise = beats(Kind::Noise, Beat::EIGHTH).at_depth(FULL_DEPTH);
@@ -416,7 +469,7 @@ impl PadFxPreset {
                 roll(Beat::EIGHTH),
                 roll(Beat::SIXTEENTH),
                 roll(Beat::THIRTY_SECOND),
-                beats(Kind::Echo, Beat::HALF),
+                tap_echo(Beat::HALF),
                 beats(Kind::Echo, Beat::THREE_QUARTERS),
                 beats(Kind::Spiral, Beat::HALF),
                 percent(Kind::Reverb, 50),
@@ -450,7 +503,7 @@ impl PadFxPreset {
                 roll(Beat::QUARTER),
                 roll(Beat::EIGHTH),
                 roll(Beat::ONE),
-                beats(Kind::Echo, Beat::THREE_QUARTERS),
+                tap_echo(Beat::THREE_QUARTERS),
                 beats(Kind::Echo, Beat::HALF),
                 beats(Kind::Delay, Beat::THREE_QUARTERS),
                 beats(Kind::EchoOut, Beat::ONE).at_depth(0.8),
@@ -484,7 +537,7 @@ impl PadFxPreset {
                 roll(Beat::QUARTER),
                 roll(Beat::EIGHTH),
                 roll(Beat::SIXTEENTH),
-                beats(Kind::Echo, Beat::HALF),
+                tap_echo(Beat::HALF),
                 beats(Kind::Delay, Beat::ONE),
                 percent(Kind::Reverb, 80),
                 beats(Kind::VinylBrake, Beat::TWO).at_depth(1.0),
@@ -648,6 +701,9 @@ pub struct PadFxSlotSetting {
     /// Whether a press latches it on instead of playing it while held.
     #[serde(default)]
     pub latch: bool,
+    /// Whether a press feeds the echo for the selected beat length.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub tap: bool,
     /// `dry` to take its trail out on release, else it rings out.
     #[serde(default)]
     pub release: String,
@@ -665,6 +721,7 @@ impl PadFxSlotSetting {
                 .map_or_else(String::new, |value| value.to_string()),
             depth: slot.depth,
             latch: slot.trigger == PadTrigger::Latch,
+            tap: slot.trigger == PadTrigger::Tap,
             release: match slot.release {
                 PadRelease::Dry => DRY_RELEASE,
                 PadRelease::RingOut => RING_OUT_RELEASE,
@@ -682,7 +739,7 @@ impl PadFxSlotSetting {
                 .filter(|value| spec.accepts(*value))
                 .unwrap_or(spec.default)
         });
-        Some(PadFxSlot {
+        let mut slot = PadFxSlot {
             sound,
             parameter,
             depth: if self.depth.is_finite() {
@@ -700,7 +757,11 @@ impl PadFxSlotSetting {
             } else {
                 PadRelease::RingOut
             },
-        })
+        };
+        if self.tap && slot.tap_echo_settings().is_some() {
+            slot.trigger = PadTrigger::Tap;
+        }
+        Some(slot)
     }
 }
 
@@ -790,18 +851,79 @@ mod tests {
     }
 
     #[test]
+    fn each_factory_bank_has_tap_echo_on_fx1_pad_five() {
+        for (preset, beat) in [
+            (PadFxPreset::Classic, BeatLength::HALF),
+            (PadFxPreset::AfroHouse, BeatLength::THREE_QUARTERS),
+            (PadFxPreset::Amapiano, BeatLength::HALF),
+        ] {
+            let banks = PadFxBanks::from_preset(preset);
+            let slot = banks.pad(PadMode::PadFx1, 4, false).unwrap();
+            let (effect, capture) = slot.tap_echo().unwrap();
+            assert_eq!(effect.kind, EffectKind::Echo, "{preset:?}");
+            assert_eq!(effect.parameter, Some(ParameterValue::Beats(beat)));
+            assert_eq!(effect.release, PadRelease::RingOut);
+            assert_eq!(capture, beat);
+            assert_eq!(slot.label(), ("Tap Echo", beat.to_string()));
+            assert_eq!(
+                preset
+                    .slots()
+                    .iter()
+                    .filter(|slot| slot.trigger == PadTrigger::Tap)
+                    .count(),
+                1
+            );
+        }
+    }
+
+    #[test]
+    fn tap_echo_rings_out_and_keeps_the_hold_release_setting() {
+        for kind in [EffectKind::Echo, EffectKind::PingPong, EffectKind::EchoOut] {
+            let held = PadFxSlot::beats(kind, BeatLength::HALF)
+                .at_depth(0.6)
+                .toggle_release();
+            let latched = held.toggle_trigger();
+            assert_eq!(latched.trigger, PadTrigger::Latch);
+            assert!(latched.tap_echo().is_none());
+
+            let tap = latched.toggle_trigger();
+            assert_eq!(tap.trigger, PadTrigger::Tap);
+            let (effect, capture) = tap.tap_echo().unwrap();
+            assert_eq!(effect.kind, kind);
+            assert_eq!(effect.depth, held.depth);
+            assert_eq!(effect.release, PadRelease::RingOut);
+            assert_eq!(capture, BeatLength::HALF);
+            assert_eq!(tap.toggle_release(), tap);
+            assert_eq!(tap.toggle_trigger(), held);
+        }
+
+        for held in [
+            PadFxSlot::roll(BeatLength::QUARTER),
+            PadFxSlot::percent(EffectKind::Reverb, 50),
+        ] {
+            assert_eq!(held.toggle_trigger().trigger, PadTrigger::Latch);
+            assert_eq!(held.toggle_trigger().toggle_trigger(), held);
+        }
+
+        let tap = PadFxPreset::Classic.slots()[4];
+        let roll = tap.step_sound(-2);
+        assert_eq!(roll.sound, PadSound::LoopRoll);
+        assert_eq!(roll.trigger, PadTrigger::Hold);
+    }
+
+    #[test]
     fn editing_a_pad_steps_its_sound_parameter_depth_trigger_and_release() {
         let mut banks = PadFxBanks::default();
         let layer = PadFxLayer::Fx1;
-        banks.edit(layer, 4, |slot| slot.step_parameter(1));
+        banks.edit(layer, 5, |slot| slot.step_parameter(-1));
         assert_eq!(
-            banks.slot(layer, 4).unwrap().label(),
-            ("Echo", "3/4".to_owned())
+            banks.slot(layer, 5).unwrap().label(),
+            ("Echo", "1/2".to_owned())
         );
-        banks.edit(layer, 4, |slot| slot.step_depth(-20));
-        assert_eq!(banks.slot(layer, 4).unwrap().depth, 0.05);
-        banks.edit(layer, 4, |slot| slot.toggle_trigger().toggle_release());
-        let edited = banks.slot(layer, 4).unwrap();
+        banks.edit(layer, 5, |slot| slot.step_depth(-20));
+        assert_eq!(banks.slot(layer, 5).unwrap().depth, 0.05);
+        banks.edit(layer, 5, |slot| slot.toggle_trigger().toggle_release());
+        let edited = banks.slot(layer, 5).unwrap();
         assert_eq!(edited.trigger, PadTrigger::Latch);
         assert_eq!(edited.release, PadRelease::Dry);
         assert!(banks.edited());
@@ -822,7 +944,7 @@ mod tests {
             EffectKind::EchoOut.parameter().map(|spec| spec.steps[0])
         );
 
-        banks.reset_pad(layer, 4);
+        banks.reset_pad(layer, 5);
         banks.reset_pad(layer, 0);
         assert!(!banks.edited());
     }
@@ -830,6 +952,9 @@ mod tests {
     #[test]
     fn the_pads_survive_a_round_trip_through_settings_and_a_bad_pad_keeps_the_preset() {
         let mut banks = PadFxBanks::from_preset(PadFxPreset::AfroHouse);
+        banks.edit(PadFxLayer::Fx1, 5, |slot| {
+            slot.toggle_release().toggle_trigger().toggle_trigger()
+        });
         banks.edit(PadFxLayer::Fx2Shift, 3, |slot| {
             slot.step_sound(5).toggle_trigger().step_depth(2)
         });
@@ -855,6 +980,23 @@ mod tests {
             PadFxBanks::from_setting(&PadFxSetting::default()),
             PadFxBanks::default()
         );
+    }
+
+    #[test]
+    fn legacy_settings_keep_the_stored_hold_and_latch_triggers() {
+        for (latch, expected) in [(false, PadTrigger::Hold), (true, PadTrigger::Latch)] {
+            let mut setting = PadFxBanks::default().setting();
+            setting.pads[4] = toml::from_str(&format!(
+                "sound = \"echo\"\nparameter = \"1/2\"\ndepth = 0.35\nlatch = {latch}\nrelease = \"dry\""
+            ))
+            .unwrap();
+            let banks = PadFxBanks::from_setting(&setting);
+            let slot = banks.slot(PadFxLayer::Fx1, 4).unwrap();
+            assert_eq!(slot.trigger, expected);
+            assert_eq!(slot.depth, 0.35);
+            assert_eq!(slot.release, PadRelease::Dry);
+            assert_eq!(slot.label(), ("Echo", "1/2".to_owned()));
+        }
     }
 
     #[test]

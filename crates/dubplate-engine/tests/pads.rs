@@ -2,7 +2,10 @@
 
 mod common;
 
-use common::{SAMPLE_RATE, assert_close, left_channel, render_frames, sine_track};
+use common::{
+    SAMPLE_RATE, assert_close, constant_track, largest_step, left_channel, mixer_latency_frames,
+    render_frames, sine_track,
+};
 use dubplate_engine::{
     BeatGrid, BeatLength, Controller, DeckId, EffectKind, MasterTempo, PadEffect, PadRelease,
     ParameterValue, Renderer, SyncMode, Track, offline_engine,
@@ -307,6 +310,191 @@ fn a_quick_echo_out_tap_leaves_the_live_music_audible_and_honors_release() {
     assert!(
         rms(echo_out_window(&cut, 0.59, 0.605)) < 0.005,
         "a dry release cuts the delayed note"
+    );
+}
+
+fn pulse_track(pulses: &[(usize, f32)], frames: usize) -> Track {
+    let mut samples = vec![0.0; 2 * frames];
+    for &(frame, amplitude) in pulses {
+        samples[2 * frame..2 * frame + 2].fill(amplitude);
+    }
+    Track::from_interleaved_stereo(&samples, SAMPLE_RATE).expect("valid stereo pulse track")
+}
+
+fn tap_pad(kind: EffectKind, delay: BeatLength) -> PadEffect {
+    PadEffect {
+        kind,
+        parameter: Some(ParameterValue::Beats(delay)),
+        depth: 0.8,
+        release: PadRelease::Dry,
+    }
+}
+
+fn start_pulse_deck(pulses: &[(usize, f32)], bpm: Option<f64>) -> (Controller, Renderer, usize) {
+    let (mut controller, mut renderer) = offline_engine(SAMPLE_RATE);
+    let warmup = 4_096;
+    // Align the pulses with the pad input, which lies between the EQ and master limiter.
+    let output_latency = dubplate_fx::Limiter::new(SAMPLE_RATE as f32).latency_frames();
+    let input_latency = mixer_latency_frames(&controller) - output_latency;
+    let pulses: Vec<_> = pulses
+        .iter()
+        .map(|&(frame, level)| (frame + warmup - input_latency, level))
+        .collect();
+    controller
+        .load_track(DeckId::A, pulse_track(&pulses, 2 * SAMPLE_RATE as usize))
+        .expect("load pulse track");
+    controller
+        .set_beat_grid(
+            DeckId::A,
+            bpm.map(|bpm| BeatGrid::new(bpm, 0.3).expect("valid pulse track grid")),
+        )
+        .expect("assign pulse track grid");
+    controller.set_quantize(true).expect("enable quantize");
+    controller.set_crossfader(0.0).expect("select deck A");
+    controller.play(DeckId::A).expect("play pulse track");
+    render_frames(&mut renderer, warmup, BLOCK);
+    (controller, renderer, output_latency)
+}
+
+#[test]
+fn a_tapped_echo_captures_the_late_hit_up_to_the_sample_boundary() {
+    for (bpm, beat_frames) in [(None, 24_000), (Some(150.0), 19_200)] {
+        let delay_frames = beat_frames * 3 / 4;
+        for kind in [EffectKind::Echo, EffectKind::EchoOut] {
+            for block in [73, 4_097] {
+                let (mut controller, mut renderer, latency) = start_pulse_deck(
+                    &[
+                        (0, 0.15),
+                        (beat_frames - 128, 0.2),
+                        (beat_frames - 1, 0.2),
+                        (beat_frames, 0.3),
+                    ],
+                    bpm,
+                );
+                controller
+                    .tap_pad_effect(
+                        DeckId::A,
+                        tap_pad(kind, BeatLength::THREE_QUARTERS),
+                        BeatLength::ONE,
+                    )
+                    .unwrap();
+                let signal = left_channel(&render_frames(
+                    &mut renderer,
+                    2 * beat_frames + 1_024,
+                    block,
+                ));
+                assert_eq!(controller.pad_effect(DeckId::A), None);
+                assert_close(f64::from(signal[beat_frames + latency]), 0.3, 0.001);
+                assert!(
+                    signal[delay_frames + latency] > 0.002,
+                    "{kind:?} captures from the first sample"
+                );
+                let repeat_end = beat_frames + delay_frames + latency;
+                assert!(
+                    signal[repeat_end - 128] > 0.15,
+                    "{kind:?} repeats the hit just before the capture ends"
+                );
+                assert!(
+                    signal[repeat_end - 1] > 0.002,
+                    "{kind:?} captures the last sample"
+                );
+                assert!(
+                    signal[repeat_end].abs() < 0.001,
+                    "{kind:?} leaves the next beat out at {bpm:?} BPM in {block}-frame blocks"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_tapped_echo_fades_the_edges_of_a_sustained_signal() {
+    for kind in [EffectKind::Echo, EffectKind::EchoOut] {
+        let (mut controller, mut renderer) = offline_engine(SAMPLE_RATE);
+        controller
+            .load_track(DeckId::A, constant_track(0.2, 0.2, 2.0, SAMPLE_RATE))
+            .unwrap();
+        controller.set_crossfader(0.0).unwrap();
+        controller.play(DeckId::A).unwrap();
+        render_frames(&mut renderer, 4_096, BLOCK);
+        controller
+            .tap_pad_effect(DeckId::A, tap_pad(kind, BeatLength::ONE), BeatLength::HALF)
+            .unwrap();
+        let signal = left_channel(&render_frames(&mut renderer, 40_000, 367));
+        let latency = dubplate_fx::Limiter::new(SAMPLE_RATE as f32).latency_frames();
+        assert_close(f64::from(signal[23_800 + latency]), 0.2, 0.001);
+        assert!((0.34..0.4).contains(&signal[24_200 + latency]));
+        assert_close(f64::from(signal[36_200 + latency]), 0.2, 0.001);
+        assert!(
+            largest_step(&signal) < 0.006,
+            "{kind:?} capture edges click"
+        );
+    }
+}
+
+#[test]
+fn retriggering_a_tapped_echo_extends_capture_and_keeps_earlier_repeats() {
+    let pulses = [(2_000, 0.2), (28_000, 0.25), (51_000, 0.25)];
+    for kind in [EffectKind::Echo, EffectKind::EchoOut] {
+        for retrigger in [14_000, 24_500] {
+            let (mut controller, mut renderer, latency) = start_pulse_deck(&pulses, None);
+            let pad = tap_pad(kind, BeatLength::ONE);
+            controller
+                .tap_pad_effect(DeckId::A, pad, BeatLength::ONE)
+                .unwrap();
+            let mut signal = render_frames(&mut renderer, retrigger, 391);
+            controller
+                .tap_pad_effect(DeckId::A, pad, BeatLength::ONE)
+                .unwrap();
+            signal.extend(render_frames(&mut renderer, 76_000 - retrigger, 701));
+            let signal = left_channel(&signal);
+            assert!(signal[26_000 + latency] > 0.08, "the first tap rings");
+            assert!(signal[52_000 + latency] > 0.08, "the new hit echoes");
+            assert!(
+                signal[75_000 + latency].abs() < 0.005,
+                "the renewed capture also ends"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_held_pad_supersedes_the_tap_timer_and_loading_a_track_clears_the_pad() {
+    let (mut controller, mut renderer, latency) = start_pulse_deck(&[(28_000, 0.25)], None);
+    let pad = tap_pad(EffectKind::Echo, BeatLength::ONE);
+    controller
+        .tap_pad_effect(DeckId::A, pad, BeatLength::ONE)
+        .unwrap();
+    render_frames(&mut renderer, 4_000, BLOCK);
+    controller.hold_pad_effect(DeckId::A, pad).unwrap();
+    let signal = left_channel(&render_frames(&mut renderer, 50_000, BLOCK));
+    assert!(signal[48_000 + latency] > 0.08, "the held echo stays on");
+    assert_eq!(controller.pad_effect(DeckId::A), Some(pad));
+    controller
+        .load_track(DeckId::A, pulse_track(&[], 1_024))
+        .unwrap();
+    assert_eq!(controller.pad_effect(DeckId::A), None);
+}
+
+#[test]
+fn a_replaced_track_does_not_feed_the_previous_tracks_tap() {
+    let (mut controller, mut renderer, latency) = start_pulse_deck(&[(2_000, 0.2)], None);
+    let pad = tap_pad(EffectKind::Echo, BeatLength::ONE);
+    controller
+        .tap_pad_effect(DeckId::A, pad, BeatLength::ONE)
+        .unwrap();
+    render_frames(&mut renderer, 7_000, BLOCK);
+    controller
+        .load_track(DeckId::A, pulse_track(&[(3_000, 0.25)], 40_000))
+        .unwrap();
+    controller.play(DeckId::A).unwrap();
+    let signal = left_channel(&render_frames(&mut renderer, 31_000, BLOCK));
+    let live_latency = mixer_latency_frames(&controller);
+    assert!(signal[3_000 + live_latency] > 0.2, "the new hit plays live");
+    assert!(signal[19_000 + latency] > 0.08, "the old hit still echoes");
+    assert!(
+        signal[27_000 + live_latency].abs() < 0.005,
+        "the old tap does not echo the new track"
     );
 }
 

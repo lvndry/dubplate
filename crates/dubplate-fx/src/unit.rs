@@ -9,6 +9,7 @@ pub(crate) type Frame = [f32; 2];
 
 const MIX_SMOOTHING_SECONDS: f32 = 0.01;
 const SWITCH_SMOOTHING_SECONDS: f32 = 0.004;
+const CAPTURE_EDGE_SECONDS: f32 = 0.001;
 const QUIET_LEVEL: f32 = 1e-5;
 
 /// How the mix knob balances the untouched signal against the effect.
@@ -82,6 +83,9 @@ pub(crate) trait Kernel: Send {
     /// Called each time the effect is switched off, before any trail fades out.
     fn switched_off(&mut self) {}
 
+    /// Lets the caller control when the effect stops taking new input.
+    fn set_external_capture(&mut self, _capture: bool) {}
+
     /// How long the output must stay silent before a switched-off trail is over.
     fn tail_seconds(&self) -> f32 {
         0.0
@@ -92,6 +96,7 @@ pub(crate) trait Kernel: Send {
 pub(crate) struct Unit<K> {
     pub(crate) kernel: K,
     enabled: bool,
+    capture: Option<CaptureEnvelope>,
     mix: Smoothed,
     presence: Smoothed,
     trail_cut: bool,
@@ -100,11 +105,33 @@ pub(crate) struct Unit<K> {
     sample_rate: f32,
 }
 
+struct CaptureEnvelope {
+    elapsed: usize,
+    remaining: usize,
+    start_gain: f32,
+    gain: f32,
+}
+
+impl CaptureEnvelope {
+    fn next(&mut self, edge_frames: f32) -> f32 {
+        if self.remaining == 0 {
+            return 0.0;
+        }
+        let attack = ((self.elapsed + 1) as f32 / edge_frames).min(1.0);
+        let release = (self.remaining as f32 / edge_frames).min(1.0);
+        self.gain = (self.start_gain + (1.0 - self.start_gain) * attack).min(release);
+        self.elapsed += 1;
+        self.remaining -= 1;
+        self.gain
+    }
+}
+
 impl<K: Kernel> Unit<K> {
     pub(crate) fn new(kernel: K, mix: f32) -> Self {
         Self {
             kernel,
             enabled: false,
+            capture: None,
             mix: Smoothed::new(mix.clamp(0.0, 1.0), MIX_SMOOTHING_SECONDS),
             presence: Smoothed::new(0.0, SWITCH_SMOOTHING_SECONDS),
             trail_cut: false,
@@ -125,12 +152,17 @@ impl<K: Kernel> Unit<K> {
     }
 
     pub(crate) fn set_enabled(&mut self, enabled: bool) {
-        if enabled == self.enabled {
+        let resume_hold = enabled && self.capture.is_some();
+        if enabled == self.enabled && !resume_hold {
             return;
         }
         self.enabled = enabled;
         self.presence.set_target(if enabled { 1.0 } else { 0.0 });
         if enabled {
+            if resume_hold {
+                self.capture = None;
+                self.kernel.set_external_capture(false);
+            }
             self.trail_cut = false;
             if self.idle {
                 self.mix.snap_to_target();
@@ -143,6 +175,24 @@ impl<K: Kernel> Unit<K> {
             self.kernel.switched_on();
         } else {
             self.kernel.switched_off();
+        }
+    }
+
+    pub(crate) fn start_capture(&mut self, frames: usize) {
+        if !self.enabled {
+            self.set_enabled(true);
+        }
+        if K::TRAILS {
+            // When re-tapped within the window, continue the input fade from its current
+            // gain. Feedback is independent of this envelope and keeps ringing.
+            let start_gain = self.capture.as_ref().map_or(0.0, |capture| capture.gain);
+            self.capture = Some(CaptureEnvelope {
+                elapsed: 0,
+                remaining: frames,
+                start_gain,
+                gain: start_gain,
+            });
+            self.kernel.set_external_capture(true);
         }
     }
 
@@ -201,6 +251,7 @@ impl<K: Kernel> Unit<K> {
         }
 
         let tail_samples = (self.kernel.tail_seconds() * timing.sample_rate) as usize;
+        let capture_edge_frames = (CAPTURE_EDGE_SECONDS * timing.sample_rate).max(1.0);
         let mut poisoned = false;
         let mut beat_position = timing.beat_position;
         for (left_sample, right_sample) in left[..frames].iter_mut().zip(&mut right[..frames]) {
@@ -209,13 +260,26 @@ impl<K: Kernel> Unit<K> {
             let (dry_mix, wet_mix) = K::MIX_LAW.gains(self.mix.next());
             let dry_mix = dry_mix + (1.0 - dry_mix) * self.kernel.dry_passthrough();
             let dry_gain = presence * dry_mix + (1.0 - presence);
-            let (send_gain, wet_gain, heard_gain) = if K::TRAILS && self.trail_cut {
-                (presence, wet_mix, presence * wet_mix)
-            } else if K::TRAILS {
-                (presence, wet_mix, wet_mix)
-            } else {
-                (1.0, presence * wet_mix, presence * wet_mix)
-            };
+            let (dry_gain, send_gain, wet_gain, heard_gain) =
+                if let Some(capture) = &mut self.capture {
+                    let send_gain = if self.enabled {
+                        capture.next(capture_edge_frames)
+                    } else {
+                        0.0
+                    };
+                    let heard_gain = if self.trail_cut {
+                        presence * wet_mix
+                    } else {
+                        wet_mix
+                    };
+                    (1.0, send_gain, wet_mix, heard_gain)
+                } else if K::TRAILS && self.trail_cut {
+                    (dry_gain, presence, wet_mix, presence * wet_mix)
+                } else if K::TRAILS {
+                    (dry_gain, presence, wet_mix, wet_mix)
+                } else {
+                    (dry_gain, 1.0, presence * wet_mix, presence * wet_mix)
+                };
 
             let mut wet = self
                 .kernel
@@ -308,6 +372,10 @@ macro_rules! implement_effect {
 
             fn set_enabled(&mut self, enabled: bool) {
                 self.unit.set_enabled(enabled);
+            }
+
+            fn start_capture(&mut self, frames: usize) {
+                self.unit.start_capture(frames);
             }
 
             fn switch_off_dry(&mut self) {

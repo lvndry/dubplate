@@ -54,6 +54,12 @@ pub trait Effect: Send {
     /// on and return to the live music when switched off.
     fn set_enabled(&mut self, enabled: bool);
 
+    /// Starts a timed capture without clearing the trail. Trailing effects pass the dry signal
+    /// through at full level and taper the input inside the given window of `frames`.
+    fn start_capture(&mut self, _frames: usize) {
+        self.set_enabled(true);
+    }
+
     /// Switches the effect off and takes its trail out with the same short fade, so the music
     /// is left dry at once instead of ringing out, as a pad set to go back to dry does.
     fn switch_off_dry(&mut self) {

@@ -215,6 +215,11 @@ pub(crate) enum Command {
         deck: DeckId,
         pad: PadEffect,
     },
+    TapPadEffect {
+        deck: DeckId,
+        pad: PadEffect,
+        capture: BeatLength,
+    },
     ReleasePadEffect(DeckId),
     SetKeyShift {
         deck: DeckId,
@@ -836,6 +841,9 @@ impl Renderer {
                 self.decks[deck.index()].beat_roll(length, &mut self.retire);
             }
             Command::HoldPadEffect { deck, pad } => self.decks[deck.index()].hold_pad_effect(pad),
+            Command::TapPadEffect { deck, pad, capture } => {
+                self.decks[deck.index()].tap_pad_effect(pad, capture);
+            }
             Command::ReleasePadEffect(deck) => self.decks[deck.index()].release_pad_effect(),
             Command::SetKeyShift { deck, semitones } => {
                 self.decks[deck.index()].set_key_shift(semitones);

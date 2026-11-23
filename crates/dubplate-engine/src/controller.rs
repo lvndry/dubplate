@@ -238,7 +238,6 @@ impl Controller {
         self.beat_grids[deck.index()] = grid;
         self.key_locks[deck.index()] = state.key_lock;
         self.key_shifts[deck.index()] = state.key_shift;
-        self.pad_effects[deck.index()] = None;
         Ok(())
     }
 
@@ -258,7 +257,6 @@ impl Controller {
         self.replace_track(deck, Some(track));
         self.beat_grids[deck.index()] = grid;
         self.key_shifts[deck.index()] = 0.0;
-        self.pad_effects[deck.index()] = None;
         Ok(())
     }
 
@@ -907,6 +905,22 @@ impl Controller {
         Ok(())
     }
 
+    /// Plays a pad for `capture` beats starting on the next rendered sample. The duration
+    /// uses the effective tempo at that sample. The effect always uses Ring Out on expiry,
+    /// so echoes and reverb ring over the live track. Tapping again starts a new capture while
+    /// preserving the existing trail.
+    pub fn tap_pad_effect(
+        &mut self,
+        deck: DeckId,
+        pad: PadEffect,
+        capture: BeatLength,
+    ) -> Result<(), EngineError> {
+        check_range("pad effect depth", f64::from(pad.depth), 0.0, 1.0)?;
+        self.send(Command::TapPadEffect { deck, pad, capture })?;
+        self.pad_effects[deck.index()] = None;
+        Ok(())
+    }
+
     /// Lets go of a deck's pad effect.
     pub fn release_pad_effect(&mut self, deck: DeckId) -> Result<(), EngineError> {
         self.send(Command::ReleasePadEffect(deck))?;
@@ -1340,6 +1354,7 @@ impl Controller {
     fn replace_track(&mut self, deck: DeckId, track: Option<Track>) {
         self.tracks[deck.index()] = track;
         self.beat_grids[deck.index()] = None;
+        self.pad_effects[deck.index()] = None;
     }
 }
 

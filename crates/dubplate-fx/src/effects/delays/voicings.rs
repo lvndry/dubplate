@@ -735,6 +735,7 @@ pub(crate) struct Outgoing {
     taken: f32,
     window: f32,
     edge_samples: f32,
+    external_capture: bool,
 }
 
 impl Voicing for Outgoing {
@@ -765,6 +766,10 @@ impl Voicing for Outgoing {
         self.taken = 0.0;
     }
 
+    fn set_external_capture(&mut self, capture: bool) {
+        self.external_capture = capture;
+    }
+
     #[inline]
     fn dry_passthrough(&self) -> f32 {
         // Keep the live music audible until the first repeat begins to fade in.
@@ -774,6 +779,9 @@ impl Voicing for Outgoing {
 
     #[inline]
     fn send(&mut self, input: Frame) -> Frame {
+        if self.external_capture {
+            return input;
+        }
         let captured = self.taken;
         self.taken = (captured + 1.0).min(self.window + self.edge_samples);
         if captured >= self.window {

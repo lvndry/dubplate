@@ -800,6 +800,10 @@ impl Deck {
         self.pad_effects.hold(pad);
     }
 
+    pub(crate) fn tap_pad_effect(&mut self, pad: PadEffect, capture: BeatLength) {
+        self.pad_effects.tap(pad, capture);
+    }
+
     pub(crate) fn release_pad_effect(&mut self) {
         self.pad_effects.release();
     }
