@@ -85,6 +85,40 @@ impl Track {
         Ok(writer.track())
     }
 
+    /// A new track holding this track's frames from `start_seconds` up to `end_seconds`, each
+    /// rounded to the nearest frame: a loop or a bar captured from a deck into the sampler.
+    /// Fails when the span is empty or reaches past the end of the track, or when its frames
+    /// are not decoded yet.
+    pub fn clip(&self, start_seconds: f64, end_seconds: f64) -> Result<Self, EngineError> {
+        let rate = f64::from(self.sample_rate());
+        let frame_at = |seconds: f64| (seconds * rate).round();
+        let first = frame_at(start_seconds);
+        let end = frame_at(end_seconds);
+        let available = self
+            .inner
+            .total_frames()
+            .unwrap_or_else(|| self.decoded_frames()) as f64;
+        if !(first >= 0.0 && end > first && end <= available) {
+            return Err(EngineError::InvalidParameter {
+                name: "clip in seconds",
+                value: if first < 0.0 || end <= first {
+                    start_seconds
+                } else {
+                    end_seconds
+                },
+            });
+        }
+        let first = first as usize;
+        let mut frames = vec![[0.0_f32; 2]; end as usize - first];
+        if self.read_frames(first, &mut frames) < frames.len() {
+            return Err(EngineError::InvalidParameter {
+                name: "clip not yet decoded, ending in seconds",
+                value: end_seconds,
+            });
+        }
+        Self::from_interleaved_stereo(frames.as_flattened(), self.sample_rate())
+    }
+
     pub(crate) fn buffer(&self) -> &Arc<TrackBuffer> {
         &self.inner
     }

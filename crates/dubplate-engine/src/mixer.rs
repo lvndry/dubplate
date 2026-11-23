@@ -352,8 +352,9 @@ impl Renderer {
         for deck in &mut renderer.decks {
             deck.settle_gains();
         }
-        let mixer_latency =
-            renderer.decks[0].mixer_latency_frames() + renderer.master_limiter.latency_frames();
+        let deck_latency = renderer.decks[0].mixer_latency_frames();
+        renderer.sampler.set_deck_latency_frames(deck_latency);
+        let mixer_latency = deck_latency + renderer.master_limiter.latency_frames();
         renderer.shared.stats.mixer_latency_frames.store(
             u32::try_from(mixer_latency).unwrap_or(u32::MAX),
             Ordering::Relaxed,
