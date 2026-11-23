@@ -403,6 +403,15 @@ fn helix_fully_right_holds_its_loop_without_fading() {
         late > early * 0.9,
         "the frozen loop faded from {early} to {late}"
     );
+
+    helix.set_enabled(false);
+    let mut released = Stereo::silence(BEAT_FRAMES * 96);
+    deck.play(helix.as_mut(), &mut released);
+    assert!(
+        rms(&released.left[..BEAT_FRAMES]) > 0.02,
+        "the held sound should ring after release"
+    );
+    assert!(!helix.is_active(), "the frozen loop never ended");
 }
 
 #[test]

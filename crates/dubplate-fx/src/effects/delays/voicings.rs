@@ -634,13 +634,28 @@ const HELIX_FREEZE_SECONDS: f32 = 0.004;
 /// no new music and repeats what it holds for as long as it plays.
 pub(crate) struct Layered {
     frozen: Smoothed,
+    freeze_requested: bool,
+    enabled: bool,
 }
 
 impl Default for Layered {
     fn default() -> Self {
         Self {
             frozen: Smoothed::new(0.0, HELIX_FREEZE_SECONDS),
+            freeze_requested: false,
+            enabled: false,
         }
+    }
+}
+
+impl Layered {
+    fn update_freeze(&mut self) {
+        self.frozen
+            .set_target(if self.enabled && self.freeze_requested {
+                1.0
+            } else {
+                0.0
+            });
     }
 }
 
@@ -660,12 +675,18 @@ impl Voicing for Layered {
     }
 
     fn set_depth(&mut self, depth: f32) {
-        let frozen = if depth >= HELIX_FREEZE_DEPTH {
-            1.0
-        } else {
-            0.0
-        };
-        self.frozen.set_target(frozen);
+        self.freeze_requested = depth >= HELIX_FREEZE_DEPTH;
+        self.update_freeze();
+    }
+
+    fn switched_on(&mut self) {
+        self.enabled = true;
+        self.update_freeze();
+    }
+
+    fn switched_off(&mut self) {
+        self.enabled = false;
+        self.update_freeze();
     }
 
     fn frozen(&self) -> f32 {
