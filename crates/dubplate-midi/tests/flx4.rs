@@ -397,6 +397,41 @@ fn shift_layer_keeps_the_control_and_marks_the_layer() {
 }
 
 #[test]
+fn fader_start_sends_the_play_and_cue_notes_with_shift() {
+    let mut decoder = decoder();
+    let start = |deck: Deck, start: FaderStart| Action::Button {
+        button: Button::FaderStart { deck, start },
+        state: ButtonState::Pressed,
+    };
+    // The channel faders and the crossfader report fader start with the same notes, so
+    // both drive their deck's transport.
+    assert_decodes(
+        &mut decoder,
+        [0x90, 0x66, 0x7F],
+        start(Deck::A, FaderStart::Play),
+        SHIFT,
+    );
+    assert_decodes(
+        &mut decoder,
+        [0x90, 0x52, 0x7F],
+        start(Deck::A, FaderStart::Cue),
+        SHIFT,
+    );
+    assert_decodes(
+        &mut decoder,
+        [0x91, 0x66, 0x7F],
+        start(Deck::B, FaderStart::Play),
+        SHIFT,
+    );
+    assert_decodes(
+        &mut decoder,
+        [0x91, 0x52, 0x7F],
+        start(Deck::B, FaderStart::Cue),
+        SHIFT,
+    );
+}
+
+#[test]
 fn switches_read_on_and_off() {
     let mut decoder = decoder();
     for (switch, status, number) in switch_messages() {

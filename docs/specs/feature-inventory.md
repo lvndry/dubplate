@@ -658,7 +658,7 @@ rekordbox does not print its full Beat FX list; these names come from the plan p
 | Internal or external mixer mode | Mix in software, or send each deck to its own output for a hardware mixer. | Preferences > Audio > Mixer Mode | Free | Missing | P2 |
 | Microphone panel | Mic on/off, meter, EQ, mic FX, talkover, feedback reducer. | Microphone panel | Free | Missing (the FLX4 mixes its mic in hardware) | P3 |
 | Talkover | Ducks the music -6, -12, -18 or -24 dB, all bands or mids only. | Preferences > Controller > Mixer | Free | Missing | P3 |
-| Fader start | SHIFT + channel fader or crossfader starts and stops the deck. | FLX4 SHIFT + faders | Free (FLX4) | Missing | P2 |
+| Fader start | SHIFT + channel fader or crossfader starts and stops the deck. | FLX4 SHIFT + faders | Free (FLX4) | Done: a shifted fader left from its closed end plays the deck from its cue; back at the closed end the deck cues and pauses. The same notes come from the channel faders and the crossfader. A Fader start toggle in Settings (on by default) turns it off; empty decks are ignored | P2 |
 | Master isolator and send/return | DJM-V10 master isolator, send effects, external returns. | DJM hardware | n/a | Missing | P3 |
 
 ## 24. Performance: headphones, audio and recording
@@ -787,8 +787,8 @@ Every control in Pioneer's "DDJ-FLX4 Hardware Diagram for rekordbox", with and w
 | EQ HI, MID, LOW | EQ | FLX4 hardware diagram | Free (FLX4) | Done | P0 |
 | CFX | Sound Color FX or Smart CFX | FLX4 hardware diagram | Free (FLX4) | Done: filter, Sound Color FX per channel, or Smart CFX | P1 |
 | HEADPHONE CUE (channel) | Channel cue; with SHIFT: Tap BPM | FLX4 hardware diagram | Free (FLX4) | Done | P0 |
-| Channel fader | Volume or Smart Fader; with SHIFT: Channel fader start | FLX4 hardware diagram | Free (FLX4) | Partial: no fader start | P2 |
-| Crossfader | Crossfader or Smart Fader; with SHIFT: Crossfader start | FLX4 hardware diagram | Free (FLX4) | Partial: no crossfader start | P2 |
+| Channel fader | Volume or Smart Fader; with SHIFT: Channel fader start | FLX4 hardware diagram | Free (FLX4) | Done: fader gain and, with SHIFT held, the fader-start notes play or cue the deck | P2 |
+| Crossfader | Crossfader or Smart Fader; with SHIFT: Crossfader start | FLX4 hardware diagram | Free (FLX4) | Done: A/B mix and, with SHIFT held, the fader-start notes play or cue the deck the fader closes onto | P2 |
 | MIC LEVEL, MIC ATT. | Mic level and attenuator (hardware) | FLX4 hardware diagram | Free (FLX4) | Done in hardware | P3 |
 | SMART CFX | On/off; with SHIFT: Preset selection | FLX4 hardware diagram | Free (FLX4) | Done | P1 |
 | SMART FADER | On/off | FLX4 hardware diagram | Free (FLX4) | Done | P1 |
