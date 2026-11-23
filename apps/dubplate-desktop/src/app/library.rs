@@ -25,6 +25,18 @@ use crate::settings::Settings;
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(200);
 
 impl DubplateApp {
+    /// Opens the folders of the sidebar's tree and chooses the folder as the DJ left them.
+    pub(super) fn restore_folder_tree(&mut self, cx: &mut Context<'_, Self>) {
+        let saved = self.settings.folder_tree.clone();
+        self.browser.update(cx, |browser, cx| {
+            browser.restore_folder_tree(
+                saved.expanded.iter().map(PathBuf::from).collect(),
+                saved.selected.as_ref().map(PathBuf::from),
+                cx,
+            );
+        });
+    }
+
     /// Sorts each screen's tracks as the DJ left them.
     pub(super) fn restore_library_sorts(&mut self, cx: &mut Context<'_, Self>) {
         let saved = self.settings.library_sort.clone();

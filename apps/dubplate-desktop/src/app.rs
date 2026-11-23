@@ -114,7 +114,7 @@ use crate::prep::{Catalogue, TrackCheck, TrackDetail};
 use crate::recording::Recording;
 use crate::relink::Missing;
 use crate::set::SetEditor;
-use crate::settings::{LevelsSetting, Settings};
+use crate::settings::{FolderTreeSetting, LevelsSetting, Settings};
 use crate::shortcuts::{Perform, WINDOW_CONTEXT};
 use crate::space::{DeckOnAir, space_deck};
 use crate::stems::TrackStems;
@@ -369,6 +369,17 @@ impl DubplateApp {
                         this.cancel_stems(path, cx);
                     }
                 }
+                BrowserEvent::FolderTreeChanged => {
+                    let (expanded, selected) = this.browser.read(cx).folder_tree();
+                    this.settings.folder_tree = FolderTreeSetting {
+                        expanded: expanded
+                            .iter()
+                            .map(|path| path.to_string_lossy().into_owned())
+                            .collect(),
+                        selected: selected.map(|path| path.to_string_lossy().into_owned()),
+                    };
+                    this.save_settings(cx);
+                }
                 BrowserEvent::Sorted { screen, sort } => {
                     this.settings
                         .library_sort
@@ -619,6 +630,7 @@ impl DubplateApp {
         app.engine_command(cx, |controller| controller.set_fader_echo(fader_echo));
         app.restore_sampler(cx);
         app.restore_library_sorts(cx);
+        app.restore_folder_tree(cx);
         app.start_library(cx);
         app.start_set_session(cx);
         Self::keep_collecting_stems(cx);
@@ -1215,6 +1227,12 @@ impl DubplateApp {
             }
             Command::SetControl(control, fraction) => self.set_control(control, fraction, cx),
             Command::MoveCrossfader(direction) => {
+                if self
+                    .browser
+                    .update(cx, |browser, cx| browser.tree_key(direction, cx))
+                {
+                    return;
+                }
                 let position = self.mixer.crossfader + CROSSFADER_STEP * direction.sign() as f32;
                 self.set_control(Control::Crossfader, position.clamp(0.0, 1.0), cx);
             }
