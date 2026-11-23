@@ -346,7 +346,7 @@ impl Browser {
         self.scroll.scroll_to_item(0, ScrollStrategy::Top);
     }
 
-    pub(super) fn playlist_sidebar(&self, cx: &mut Context<'_, Self>) -> impl IntoElement {
+    pub(super) fn playlist_sidebar_controls(&self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let selected = self
             .playlists
             .selected
@@ -443,7 +443,14 @@ impl Browser {
                 )),
             );
         }
-        for entry in self.playlists.tree.entries() {
+        panel
+    }
+
+    pub(super) fn playlist_sidebar_rows<'a>(
+        &'a self,
+        cx: &'a mut Context<'_, Self>,
+    ) -> impl Iterator<Item = gpui::Stateful<gpui::Div>> + 'a {
+        self.playlists.tree.entries().iter().map(move |entry| {
             let id = entry.id;
             let is_list = entry.kind == PlaylistKind::Playlist;
             let chosen = self.playlists.selected == Some(id);
@@ -452,37 +459,35 @@ impl Browser {
             } else {
                 "Folder".into()
             };
-            panel = panel.child(
-                sidebar_row(
-                    SharedString::from(format!("dubplate-list-{id}")),
-                    entry.name.clone().into(),
-                    label.into(),
-                    entry.depth,
-                    chosen,
-                    chosen && self.pane == BrowserPane::Crates,
-                    RowExtras::default(),
-                )
-                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    if this.playlists.destination.is_some() && is_list {
-                        this.add_selection_to_playlist(id, cx)
-                    } else {
-                        this.choose_playlist(id, cx)
-                    }
-                }))
-                .when(is_list, |row| {
-                    row.drag_over::<DraggedTrack>(|style, _, _, _| style.bg(theme::active().raised))
-                        .on_drop(cx.listener(move |this, drag: &DraggedTrack, _, cx| {
-                            let tracks = if this.selection.contains(drag.track) {
-                                this.selected_tracks()
-                            } else {
-                                vec![drag.track]
-                            };
-                            this.add_playlist_tracks(id, &tracks, cx);
-                        }))
-                }),
-            );
-        }
-        panel
+            sidebar_row(
+                SharedString::from(format!("dubplate-list-{id}")),
+                entry.name.clone().into(),
+                label.into(),
+                entry.depth,
+                chosen,
+                chosen && self.pane == BrowserPane::Crates,
+                RowExtras::default(),
+            )
+            .mt(px(1.0))
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                if this.playlists.destination.is_some() && is_list {
+                    this.add_selection_to_playlist(id, cx)
+                } else {
+                    this.choose_playlist(id, cx)
+                }
+            }))
+            .when(is_list, |row| {
+                row.drag_over::<DraggedTrack>(|style, _, _, _| style.bg(theme::active().raised))
+                    .on_drop(cx.listener(move |this, drag: &DraggedTrack, _, cx| {
+                        let tracks = if this.selection.contains(drag.track) {
+                            this.selected_tracks()
+                        } else {
+                            vec![drag.track]
+                        };
+                        this.add_playlist_tracks(id, &tracks, cx);
+                    }))
+            })
+        })
     }
 }
 
