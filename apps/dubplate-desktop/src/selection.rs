@@ -117,6 +117,15 @@ impl<Row: Copy + Eq + Hash> Selection<Row> {
         }
     }
 
+    /// Whether the row's context menu targets any row matching `predicate`.
+    pub fn any_in_context_menu(&self, row: Row, mut predicate: impl FnMut(Row) -> bool) -> bool {
+        if self.contains(row) {
+            self.members.iter().copied().any(predicate)
+        } else {
+            predicate(row)
+        }
+    }
+
     /// The selected rows in the order `rows` lists them.
     pub fn in_order(&self, rows: &[Row]) -> Vec<Row> {
         rows.iter()

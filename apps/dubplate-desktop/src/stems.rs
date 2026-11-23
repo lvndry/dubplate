@@ -141,6 +141,11 @@ impl TrackStems {
     }
 }
 
+/// Whether separation is available for a track with this status.
+pub fn can_separate(status: &StemsStatus) -> bool {
+    matches!(status, StemsStatus::None | StemsStatus::Failed(_))
+}
+
 /// The few characters the library's Stems column and the set rows show for a status, in the
 /// quiet style of the Energy column: blank without stems, the share separated while
 /// separating, and a mark once they are ready.

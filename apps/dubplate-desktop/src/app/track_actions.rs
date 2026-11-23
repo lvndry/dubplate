@@ -5,6 +5,7 @@
 
 use std::path::PathBuf;
 
+use dubplate_stems::SeparationPriority;
 use gpui::{App, ClipboardItem, Context};
 
 use super::DubplateApp;
@@ -12,6 +13,7 @@ use super::notice::NoticePlace;
 use super::prepare::PrepareFocus;
 use crate::collection::TrackIndex;
 use crate::commands::Mode;
+use crate::stems::can_separate;
 
 impl DubplateApp {
     /// The track the keys act on: the selected set track while the keys are on the set in
@@ -83,15 +85,20 @@ impl DubplateApp {
         }
     }
 
-    /// Separates the selected track's stems now.
+    /// Separates the stems of the eligible selected tracks now.
     pub(super) fn separate_selected_stems(&mut self, cx: &mut Context<'_, Self>) {
-        let paths: Vec<PathBuf> = self
+        let browser = self.browser.read(cx);
+        let requests: Vec<_> = self
             .selected_tracks(cx)
             .into_iter()
+            .filter(|track| !browser.is_track_missing(*track))
             .filter_map(|track| self.track_file(track))
+            .filter(|path| can_separate(self.stems.status(path)))
+            .map(|path| (path, SeparationPriority::Now))
             .collect();
-        for path in paths {
-            self.separate_stems_now(path, cx);
+        if !requests.is_empty() {
+            self.stems.request(requests);
+            cx.notify();
         }
     }
 
