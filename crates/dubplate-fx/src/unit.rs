@@ -62,6 +62,12 @@ pub(crate) trait Kernel: Send {
     /// Processes one frame and returns the effect's output, before mixing.
     fn tick(&mut self, input: Frame, beat_position: f64) -> Frame;
 
+    /// Hears a frame while idle, without contributing its output to the mix.
+    #[inline]
+    fn listen(&mut self, input: Frame, beat_position: f64) {
+        self.tick(input, beat_position);
+    }
+
     /// Clears every internal state.
     fn reset(&mut self);
 
@@ -245,7 +251,7 @@ impl<K: Kernel> Unit<K> {
             *right_sample = sanitize_input(*right_sample);
             if K::LISTENS_WHEN_OFF {
                 self.kernel
-                    .tick([*left_sample, *right_sample], beat_position);
+                    .listen([*left_sample, *right_sample], beat_position);
                 beat_position += timing.beats_per_sample;
             }
         }

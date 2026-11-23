@@ -1,11 +1,11 @@
 use crate::beat::BeatLength;
 use crate::config::EffectConfig;
-use crate::effect::EffectKind;
+use crate::effect::{Effect, EffectKind};
 use crate::unit::{Controls, Unit, implement_effect, knob};
 
 use super::tape::DEFAULT_DEPTH;
 use super::voicings::Aged;
-use super::{EchoLoop, Voicing};
+use super::{EchoEffect, EchoLoop, Voicing};
 
 /// A tempo-synced stereo echo with feedback.
 ///
@@ -35,6 +35,12 @@ impl Echo {
         echo.apply_depth(DEFAULT_DEPTH);
         echo.unit.settle();
         echo
+    }
+
+    /// Builds a half-beat echo that stores the dry music while switched off. For a fader echo,
+    /// keep processing it while idle so a fast cut can echo audio that already passed the fader.
+    pub fn with_history(config: &EffectConfig) -> impl Effect + use<> {
+        EchoEffect::new(config, Aged::<true>::default(), BeatLength::HALF)
     }
 
     /// Sets how much of each repeat comes back, from 0 (a single repeat) to 1 (repeats that

@@ -196,3 +196,154 @@ fn noise_lays_noise_over_silence_either_way() {
         assert!(level > 0.01, "Noise at {knob} is silent: {level}");
     }
 }
+
+#[test]
+fn plain_cfx_filter_passes_lows_left_highs_right_and_returns_flat() {
+    let track = club_loop_track(124.0, 8.0, SAMPLE_RATE);
+    let (mut controller, mut renderer) = deck(track.clone(), None);
+    let (mut reference_controller, mut reference) = deck(track, None);
+    for position in [0.51, 0.0, 0.5, 1.0, 0.5] {
+        controller.set_filter(DeckId::A, position).unwrap();
+        reference_controller.set_filter(DeckId::A, 0.5).unwrap();
+        let audio = seconds(&mut renderer, 1.25);
+        let dry = seconds(&mut reference, 1.25);
+        let start = SAMPLE_RATE as usize / 4;
+        let difference: Vec<_> = audio[start..]
+            .iter()
+            .zip(&dry[start..])
+            .map(|(actual, dry)| actual - dry)
+            .collect();
+        if position == 0.5 || position == 0.51 {
+            assert!(
+                rms(&difference) < 1e-5,
+                "{position} detent did not restore dry"
+            );
+        } else {
+            assert!(
+                rms(&difference) > rms(&dry[start..]) * 0.20,
+                "{position} did not engage the filter"
+            );
+        }
+    }
+
+    for (knob, pass, cut) in [(0.1, 80.0, 5_000.0), (0.9, 5_000.0, 80.0)] {
+        let level = |frequency| {
+            let track = sine_track(frequency, 0.5, 0.5, 2.0, SAMPLE_RATE);
+            let (mut controller, mut renderer) = deck(track, None);
+            controller.set_filter(DeckId::A, knob).unwrap();
+            let audio = seconds(&mut renderer, 1.0);
+            rms(&audio[SAMPLE_RATE as usize / 2..])
+        };
+        assert!(level(pass) > 0.25, "knob {knob} blocked its passband");
+        assert!(level(cut) < 0.01, "knob {knob} did not reject its stopband");
+    }
+}
+
+#[test]
+fn every_cfx_preset_stays_on_its_assigned_decks_and_returns_dry() {
+    let track = club_loop_track(124.0, 20.0, SAMPLE_RATE);
+    let fixed_position = 0.75;
+    let reference = |deck_id: DeckId| {
+        let (mut controller, renderer) = offline_engine(SAMPLE_RATE);
+        for id in DeckId::ALL {
+            controller.load_track(id, track.clone()).unwrap();
+            controller
+                .set_beat_grid(id, Some(BeatGrid::new(124.0, 0.0).unwrap()))
+                .unwrap();
+            controller.play(id).unwrap();
+        }
+        let crossfader = if deck_id == DeckId::A { 0.0 } else { 1.0 };
+        controller.set_crossfader(crossfader).unwrap();
+        controller.set_filter(deck_id, fixed_position).unwrap();
+        (controller, renderer)
+    };
+    let settled = SAMPLE_RATE as usize / 2;
+
+    for preset in SmartCfx::ALL {
+        for audible in DeckId::ALL {
+            let other = if audible == DeckId::A {
+                DeckId::B
+            } else {
+                DeckId::A
+            };
+            let (mut controller, mut renderer) = reference(audible);
+            let (mut dry_controller, mut dry_renderer) = reference(audible);
+            seconds(&mut renderer, 0.25);
+            seconds(&mut dry_renderer, 0.25);
+
+            // Normal CFX permits one assigned deck. It must not leak into the other deck.
+            controller.set_smart_cfx(other, Some(preset)).unwrap();
+            controller.set_filter(other, 0.25).unwrap();
+            assert!(
+                seconds(&mut renderer, 0.5) == seconds(&mut dry_renderer, 0.5),
+                "{preset} leaked from {other:?} into {audible:?}"
+            );
+
+            // Smart CFX sends the shared colour to both decks, using each deck's CFX knob.
+            controller.set_smart_cfx(audible, Some(preset)).unwrap();
+            let effected = seconds(&mut renderer, 1.5);
+            let dry = seconds(&mut dry_renderer, 1.5);
+            let difference: Vec<_> = effected[settled..]
+                .iter()
+                .zip(&dry[settled..])
+                .map(|(actual, dry)| actual - dry)
+                .collect();
+            assert!(
+                rms(&difference) > 0.001,
+                "{preset} never reached {audible:?}"
+            );
+            assert!(effected.iter().all(|sample| sample.is_finite()));
+
+            controller.set_filter(audible, 0.5).unwrap();
+            dry_controller.set_filter(audible, 0.5).unwrap();
+            // Dub Echo and Space have deliberately long feedback tails. Once they decay,
+            // the exact dry signal should be back, like every non-trailing effect.
+            seconds(&mut renderer, 16.0);
+            seconds(&mut dry_renderer, 16.0);
+            assert!(
+                seconds(&mut renderer, 0.25) == seconds(&mut dry_renderer, 0.25),
+                "{preset} did not return to dry on {audible:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn pitch_bends_the_test_tone_down_left_and_up_right() {
+    let source = 523.25;
+    let track = sine_track(source, 0.3, 0.3, 2.0, SAMPLE_RATE);
+    for (knob, direction) in [(0.3, -1.0), (0.7, 1.0)] {
+        let (mut controller, mut renderer) = deck(track.clone(), Some(SmartCfx::Pitch));
+        controller.set_filter(DeckId::A, knob).unwrap();
+        let output = seconds(&mut renderer, 1.75);
+        let signal = &output[SAMPLE_RATE as usize..];
+        let power_at = |frequency: f64| {
+            let phase_step = std::f64::consts::TAU * frequency / f64::from(SAMPLE_RATE);
+            let (sine, cosine) =
+                signal
+                    .iter()
+                    .enumerate()
+                    .fold((0.0, 0.0), |(sine, cosine), (index, sample)| {
+                        let (sin, cos) = (phase_step * index as f64).sin_cos();
+                        (
+                            sine + f64::from(*sample) * sin,
+                            cosine + f64::from(*sample) * cos,
+                        )
+                    });
+            sine.hypot(cosine)
+        };
+        let offset = ((0.4_f64 - 0.02) / 0.98).powf(0.6);
+        let band_peak = |sign: f64| {
+            let expected = source * (sign * offset).exp2();
+            (-20..=20)
+                .map(|step| power_at(expected + f64::from(step)))
+                .fold(0.0_f64, f64::max)
+        };
+        let right_direction = band_peak(direction);
+        let wrong_direction = band_peak(-direction);
+        assert!(
+            right_direction > 20.0 && right_direction > 5.0 * wrong_direction,
+            "knob {knob}: pitch energy {right_direction} in intended band and {wrong_direction} in opposite band"
+        );
+    }
+}

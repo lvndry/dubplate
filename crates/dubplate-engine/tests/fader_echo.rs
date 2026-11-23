@@ -101,3 +101,46 @@ fn a_fader_left_half_way_stops_echoing_and_plays_the_music_as_it_is() {
         "a fader at rest plays as without the echo: {difference_db:.2} dB"
     );
 }
+
+#[test]
+fn a_hard_throw_echoes_a_hit_that_already_passed_through_the_fader() {
+    let mut tail_levels = Vec::new();
+    for (crossfader, smart_fader) in [(false, false), (true, false), (true, true)] {
+        let (mut controller, mut renderer) = offline_engine(SAMPLE_RATE);
+        let mut samples = vec![0.0; 2 * SAMPLE_RATE as usize * 3];
+        let hit = 19 * SAMPLE_RATE as usize / 20;
+        for index in 0..SAMPLE_RATE as usize / 40 {
+            let phase = 440.0 * std::f32::consts::TAU * index as f32 / SAMPLE_RATE as f32;
+            let note = phase.sin() * 0.5;
+            samples[2 * (hit + index)] = note;
+            samples[2 * (hit + index) + 1] = note;
+        }
+        controller
+            .load_track(
+                DeckId::A,
+                dubplate_engine::Track::from_interleaved_stereo(&samples, SAMPLE_RATE).unwrap(),
+            )
+            .unwrap();
+        controller
+            .set_beat_grid(DeckId::A, Some(BeatGrid::new(120.0, 0.0).unwrap()))
+            .unwrap();
+        controller.set_crossfader(0.0).unwrap();
+        controller.set_fader_echo(true).unwrap();
+        controller.set_smart_fader(smart_fader).unwrap();
+        controller.play(DeckId::A).unwrap();
+        seconds(&mut renderer, 1.0);
+        if crossfader {
+            controller.set_crossfader(1.0).unwrap();
+        } else {
+            controller.set_channel_fader(DeckId::A, 0.0).unwrap();
+        }
+        let tail = seconds(&mut renderer, 0.5);
+        let from = 18 * SAMPLE_RATE as usize / 100;
+        let to = 28 * SAMPLE_RATE as usize / 100;
+        tail_levels.push(rms(&tail[from..to]));
+    }
+    assert!(
+        tail_levels.iter().all(|level| *level > 0.05),
+        "the hit before a hard throw never reached the channel or crossfader echo: {tail_levels:?}"
+    );
+}
