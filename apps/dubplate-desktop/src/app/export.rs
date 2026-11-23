@@ -7,7 +7,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use dubplate_prep::{
-    ExportLibrary, REKORDBOX_IMPORT_STEPS, SetExport, default_export_folder, export_file_name,
+    ExportLibrary, PlaylistId, REKORDBOX_IMPORT_STEPS, Set, SetEntry, SetExport, SetId,
+    TrackIdentity, default_export_folder, export_file_name,
 };
 use gpui::Context;
 
@@ -38,6 +39,76 @@ impl DubplateApp {
             );
             return;
         }
+        self.export_to_xml(set, cx);
+    }
+
+    /// Exports a saved playlist in its stored order, even when the table is sorted or filtered.
+    pub(super) fn export_playlist(
+        &mut self,
+        id: PlaylistId,
+        usb: bool,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let browser = self.browser.read(cx);
+        let Some(playlist) = browser.playlists().get(id) else {
+            return;
+        };
+        let entries = browser
+            .playlists()
+            .tracks(id)
+            .into_iter()
+            .map(|track| {
+                let path = self
+                    .collection()
+                    .and_then(|collection| {
+                        collection
+                            .find(&track.identity)
+                            .map(|index| collection.track(index))
+                    })
+                    .and_then(|entry| entry.track.file_path.clone())
+                    .or_else(|| track.track_path.clone())
+                    .or_else(|| match &track.identity {
+                        TrackIdentity::File(path) => Some(path.clone()),
+                        TrackIdentity::Rekordbox(_) => None,
+                    })
+                    .unwrap_or_default();
+                let mut entry = SetEntry {
+                    rekordbox_id: match &track.identity {
+                        TrackIdentity::Rekordbox(id) => Some(id.clone()),
+                        TrackIdentity::File(_) => None,
+                    },
+                    ..SetEntry::default()
+                };
+                self.track_grid(&path).write_to(&mut entry);
+                entry.track_path = path;
+                entry
+            })
+            .collect::<Vec<_>>();
+        if entries.is_empty() {
+            self.show_notice(
+                NoticePlace::Window,
+                "This playlist has no tracks to export.",
+                cx,
+            );
+            return;
+        }
+        let set = Set {
+            id: SetId(0),
+            name: playlist.name.clone(),
+            target_minutes: 0,
+            created_at: 0,
+            updated_at: 0,
+            entries,
+            seams: Vec::new(),
+        };
+        if usb {
+            self.export_to_usb(set, cx);
+        } else {
+            self.export_to_xml(set, cx);
+        }
+    }
+
+    fn export_to_xml(&mut self, set: Set, cx: &mut Context<'_, Self>) {
         let folder = default_export_folder()
             .filter(|folder| std::fs::create_dir_all(folder).is_ok())
             .or_else(dirs::home_dir)
@@ -75,7 +146,7 @@ impl DubplateApp {
                         None if needs_rekordbox => {
                             let library = RekordboxLibrary::load_default().map_err(|error| {
                                 format!(
-                                    "rekordbox could not be read for the set's grids and cues: {}",
+                                    "rekordbox could not be read for the tracks' grids and cues: {}",
                                     error_chain(&error)
                                 )
                             })?;
@@ -92,7 +163,7 @@ impl DubplateApp {
                     .export(&set);
                     export
                         .write_to(&path)
-                        .map_err(|error| format!("The set could not be exported: {error}"))?;
+                        .map_err(|error| format!("The tracks could not be exported: {error}"))?;
                     Ok::<_, String>((export, path))
                 })
                 .await;

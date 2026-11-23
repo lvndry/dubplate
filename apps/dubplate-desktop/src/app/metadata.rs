@@ -21,32 +21,71 @@ impl DubplateApp {
     ) {
         self.track_metadata_generation += 1;
         let generation = self.track_metadata_generation;
-        self.queue_set_edit(
-            move |editor| {
-                let identities: Vec<TrackIdentity> = collection
-                    .indexed_tracks()
-                    .map(|(_, track)| track.identity())
-                    .collect();
-                let mut seeded: HashMap<TrackIdentity, TrackMetadata> = collection
-                    .indexed_tracks()
-                    .map(|(_, track)| {
-                        (
-                            track.identity(),
-                            TrackMetadata::from_rekordbox(&track.track),
-                        )
-                    })
-                    .collect();
-                seeded.extend(editor.track_metadata_many(&identities)?);
-                let categories = editor.tag_categories()?;
-                Ok(TrackMetadataCache::from_library(seeded, &categories))
-            },
-            move |this, cache, cx| {
-                if this.track_metadata_generation == generation {
-                    this.apply_track_metadata(cache, cx);
+        let Some(session) = self.set_editor.as_ref() else {
+            return;
+        };
+        let job = session.submit(move |editor| {
+            let identities: Vec<TrackIdentity> = collection
+                .indexed_tracks()
+                .map(|(_, track)| track.identity())
+                .collect();
+            let mut seeded: HashMap<TrackIdentity, TrackMetadata> = collection
+                .indexed_tracks()
+                .map(|(_, track)| {
+                    (
+                        track.identity(),
+                        TrackMetadata::from_rekordbox(&track.track),
+                    )
+                })
+                .collect();
+            seeded.extend(editor.track_metadata_many(&identities)?);
+            let categories = editor.tag_categories()?;
+            Ok((
+                TrackMetadataCache::from_library(seeded, &categories),
+                editor.playlists()?,
+            ))
+        });
+        let job = match job {
+            Ok(job) => job,
+            Err(error) => {
+                self.show_notice(
+                    super::notice::NoticePlace::Window,
+                    format!("Could not read library metadata: {error}"),
+                    cx,
+                );
+                return;
+            }
+        };
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    job.wait()
+                        .map_err(|err| err.to_string())?
+                        .outcome
+                        .map_err(|err| err.to_string())
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                if this.track_metadata_generation != generation {
+                    return;
                 }
-            },
-            cx,
-        );
+                match result {
+                    Ok((cache, tree)) => {
+                        this.browser
+                            .update(cx, |browser, cx| browser.set_playlists(tree, cx));
+                        this.apply_track_metadata(cache, cx);
+                    }
+                    Err(error) => this.show_notice(
+                        super::notice::NoticePlace::Window,
+                        format!("Could not read library metadata: {error}"),
+                        cx,
+                    ),
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// Gives the metadata read from the set store to the browser's filters.

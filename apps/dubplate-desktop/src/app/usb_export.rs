@@ -87,7 +87,7 @@ impl DubplateApp {
         self.export_to_usb(set, cx);
     }
 
-    fn export_to_usb(&mut self, set: Set, cx: &mut Context<'_, Self>) {
+    pub(super) fn export_to_usb(&mut self, set: Set, cx: &mut Context<'_, Self>) {
         let chosen = cx.prompt_for_paths(PathPromptOptions {
             files: false,
             directories: true,

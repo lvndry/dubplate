@@ -142,6 +142,8 @@ pub const SHORTCUTS: &[Shortcut] = &[
     outside_text("cmd-enter", Command::EditSet(SetEdit::InsertAfterSelection)),
     outside_text("alt-up", Command::EditSet(SetEdit::Move(Direction::Up))),
     outside_text("alt-down", Command::EditSet(SetEdit::Move(Direction::Down))),
+    outside_text("cmd-shift-p", Command::PickPlaylist),
+    outside_text("delete", Command::RemovePlaylistTracks),
     outside_text("backspace", Command::EditSet(SetEdit::Remove)),
     outside_text("f", Command::EditSet(SetEdit::TogglePlanned)),
     outside_text("y", Command::EditSet(SetEdit::AcceptProposedCues)),
@@ -463,6 +465,11 @@ pub fn help_sections() -> Vec<HelpSection> {
                     "Add the previous / next track to the selection",
                 ),
                 line(&["cmd-a"], "Select every track shown"),
+                line(&["cmd-shift-p"], "Add selected tracks to a playlist"),
+                line(
+                    &["backspace"],
+                    "Remove selected tracks from a Dubplate playlist",
+                ),
                 line(
                     &["/", "cmd-f"],
                     "Search titles, artists, genres, folders and comments",

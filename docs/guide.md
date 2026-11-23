@@ -22,6 +22,12 @@ You can use both. Settings (Cmd+,) lists your folders with Rescan and Remove.
 
 Dubplate analyses every track in the background and keeps what it found for the next launch, set tracks and the tracks you load first. Each track gets its energy (1 to 10), and the tracks rekordbox never analysed, such as the ones only in your music folders, also get a BPM, a beat grid with its downbeats and a key in Camelot. Sync, beat FX, loops, quantize, the beat marks, the track check, the seam warnings and the suggestions then work for them as for rekordbox tracks. rekordbox's own BPM, key and grid stay first for its tracks, and tap tempo or your grid nudges win over Dubplate's grid. A blank BPM, Key or Energy cell means the track is still being analysed; the header counts how many are left.
 
+### Dubplate playlists
+
+Use **+ Playlist** or **+ Folder** in the library sidebar. Select a folder before creating an item to place it inside that folder. Select an item to rename or delete it, and use **XML…** or **USB…** to export its tracks in their saved order.
+
+Drag selected tracks onto a playlist, choose **Add to playlist** from a track’s context menu, or press Cmd+Shift+P and choose a destination with Up, Down and Enter. In a playlist, choose its original order from the sort controls to reorder tracks by dragging. Delete removes the selected tracks from that playlist. To make an editable copy of a rekordbox playlist, right-click it and choose **Copy to Dubplate playlist**.
+
 ## 2. Pick the sound card
 
 In Settings, choose **DDJ-FLX4** as the sound card so the master goes to the FLX4's master output and the headphones to its headphone jack. Turn the master down before the first track, then check the headphones with the channel CUE buttons. Dubplate remembers the master and headphone levels and the screen you were on, and opens no louder than it closed: if the FLX4's MASTER LEVEL knob reports a louder level when it connects, it waits until you turn it down through the level on screen, while turning it down always works at once.
