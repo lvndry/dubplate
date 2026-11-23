@@ -28,6 +28,7 @@ mod library;
 mod library_matches;
 mod library_panel;
 mod memory_cues;
+mod metadata;
 mod mixer;
 mod notice;
 mod overview;
@@ -117,6 +118,7 @@ use crate::shortcuts::{Perform, WINDOW_CONTEXT};
 use crate::space::{DeckOnAir, space_deck};
 use crate::stems::TrackStems;
 use crate::theme;
+use crate::track_metadata::TrackMetadataCache;
 use crate::transport::{self, CueDown, is_at_cue, other_deck};
 use crate::waveform::Zoom;
 use crate::waveform_cache::WaveformCache;
@@ -258,6 +260,8 @@ pub struct DubplateApp {
     check_generation: u64,
     track_detail: Option<(PathBuf, Arc<TrackDetail>)>,
     detail_pending: Option<PathBuf>,
+    track_metadata: Arc<TrackMetadataCache>,
+    track_metadata_generation: u64,
     waveform_cache: WaveformCache,
     check_cursor_seconds: f64,
     catalogue: Arc<Catalogue>,
@@ -545,6 +549,8 @@ impl DubplateApp {
             track_checks: HashMap::new(),
             checks_pending: HashSet::new(),
             check_generation: 0,
+            track_metadata: Arc::default(),
+            track_metadata_generation: 0,
             track_detail: None,
             detail_pending: None,
             waveform_cache: WaveformCache::default(),

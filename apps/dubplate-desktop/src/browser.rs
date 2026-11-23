@@ -40,6 +40,7 @@ use crate::search_filter::{
 use crate::stems::{StemStatuses, stems_cell};
 use crate::theme;
 use crate::track_menu::{self, RowFacts, RowPlace};
+use crate::track_metadata::TrackMetadataCache;
 use crate::tracklist::TracklistFormat;
 use crate::widgets::{Emphasis, InteractiveControl, button, tooltip};
 
@@ -188,6 +189,8 @@ pub struct Browser {
     detail_scroll: gpui::ScrollHandle,
     /// Whether the window is narrow, so the table shows [`Column::NARROW`].
     narrow: bool,
+    /// What Dubplate has stored for the library's tracks, for the search filters.
+    track_metadata: Arc<TrackMetadataCache>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -235,6 +238,7 @@ impl Browser {
             scroll: UniformListScrollHandle::new(),
             detail_scroll: gpui::ScrollHandle::new(),
             narrow: false,
+            track_metadata: Arc::default(),
             _subscriptions: vec![subscription],
         }
     }
@@ -259,6 +263,16 @@ impl Browser {
             }
         }
         self.library = library;
+        self.refilter(cx);
+    }
+
+    /// Gives the filters what Dubplate has stored for the library's tracks.
+    pub fn set_track_metadata(
+        &mut self,
+        metadata: Arc<TrackMetadataCache>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.track_metadata = metadata;
         self.refilter(cx);
     }
 
@@ -700,7 +714,7 @@ impl Browser {
             key: Key::parse_file_key(&self.cell_text(entry, track, Column::Key)),
             energy: energy.trim().parse().ok(),
             played: self.was_played(entry),
-            rating: entry.track.rating,
+            metadata: self.track_metadata.facts_for(&entry.identity()),
         }
     }
 
@@ -723,6 +737,7 @@ impl Browser {
                 .and_then(|reference| reference.key)
                 .map(|fit| fit.reference()),
             genre,
+            tag_names: self.track_metadata.tag_names().to_vec(),
         };
         suggestions(&self.search_text, &context)
     }

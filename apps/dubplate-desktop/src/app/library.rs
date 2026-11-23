@@ -279,7 +279,9 @@ impl DubplateApp {
                     this.catalogue = Arc::new(catalogue);
                     this.analyses.refresh();
                     this.restore_analyses();
-                    this.show_library(LibraryStatus::Ready(Arc::new(collection)), cx);
+                    let collection = Arc::new(collection);
+                    this.show_library(LibraryStatus::Ready(Arc::clone(&collection)), cx);
+                    this.refresh_metadata(collection, cx);
                     this.show_missing(missing, cx);
                     this.forget_track_checks();
                     this.set_changed(cx);
