@@ -271,7 +271,7 @@ impl DubplateApp {
             }
             _ => {}
         }
-        let selected = self.library_selection(cx);
+        let selected = self.library_selections(cx);
         let selection = self.selected_set_path();
         self.set_selection_generation += 1;
         let generation = self.set_selection_generation;
@@ -466,9 +466,14 @@ impl DubplateApp {
         }
     }
 
-    /// The track selected in the library, as a set names it.
-    fn library_selection(&self, cx: &App) -> Option<SetTrackRef> {
-        self.track_ref(self.browser.read(cx).selected()?)
+    /// The tracks selected in the library, in the table's order, as a set names them.
+    fn library_selections(&self, cx: &App) -> Vec<SetTrackRef> {
+        self.browser
+            .read(cx)
+            .selected_tracks()
+            .into_iter()
+            .filter_map(|track| self.track_ref(track))
+            .collect()
     }
 
     /// A library track as a set names it: its file, and its rekordbox id when it has one.
@@ -954,18 +959,18 @@ fn ranked_next(
 fn apply_edit(
     editor: &mut SetEditor,
     edit: SetEdit,
-    selected: Option<SetTrackRef>,
+    selected: Vec<SetTrackRef>,
     selected_path: Option<&Path>,
 ) -> Result<Option<usize>, StoreError> {
     let mut selection = selected_path.and_then(|path| editor.position(path));
     match edit {
         SetEdit::Add => {
-            if let Some(track) = selected {
+            for track in selected {
                 selection = Some(editor.add(track)?);
             }
         }
         SetEdit::InsertAfterSelection => {
-            if let Some(track) = selected {
+            for track in selected {
                 selection = Some(editor.insert_after(selection, track)?);
             }
         }
@@ -991,7 +996,7 @@ fn apply_edit(
             }
         }
         SetEdit::ToggleBackup => {
-            if let Some(track) = selected {
+            for track in selected {
                 editor.toggle_backup(track)?;
             }
         }
@@ -1079,7 +1084,7 @@ mod tests {
             .submit(move |editor| {
                 started.send(()).unwrap();
                 release_rx.recv().unwrap();
-                apply_edit(editor, SetEdit::Remove, None, Some(&track("a").path))
+                apply_edit(editor, SetEdit::Remove, Vec::new(), Some(&track("a").path))
             })
             .unwrap();
         started_rx.recv().unwrap();
@@ -1088,7 +1093,7 @@ mod tests {
                 apply_edit(
                     editor,
                     SetEdit::Move(Direction::Down),
-                    None,
+                    Vec::new(),
                     Some(&track("b").path),
                 )
             })
@@ -1112,16 +1117,51 @@ mod tests {
     }
 
     #[test]
+    fn adding_several_selected_tracks_puts_them_in_the_set_in_order() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut editor = SetEditor::open(&directory.path().join("sets.sqlite")).unwrap();
+        editor.add(track("a")).unwrap();
+        let selection = apply_edit(
+            &mut editor,
+            SetEdit::InsertAfterSelection,
+            vec![track("b"), track("c")],
+            Some(&track("a").path),
+        )
+        .unwrap();
+        let paths: Vec<_> = editor
+            .tracks()
+            .iter()
+            .map(|entry| entry.track_path.clone())
+            .collect();
+        assert_eq!(paths, [track("a").path, track("b").path, track("c").path]);
+        assert_eq!(selection, Some(2));
+        apply_edit(
+            &mut editor,
+            SetEdit::Add,
+            vec![track("d"), track("e")],
+            None,
+        )
+        .unwrap();
+        assert_eq!(editor.tracks().len(), 5);
+    }
+
+    #[test]
     fn a_queued_edit_never_targets_the_neighbor_of_a_removed_selection() {
         let directory = tempfile::tempdir().unwrap();
         let mut editor = SetEditor::open(&directory.path().join("sets.sqlite")).unwrap();
         editor.add(track("a")).unwrap();
         editor.add(track("b")).unwrap();
-        apply_edit(&mut editor, SetEdit::Remove, None, Some(&track("a").path)).unwrap();
+        apply_edit(
+            &mut editor,
+            SetEdit::Remove,
+            Vec::new(),
+            Some(&track("a").path),
+        )
+        .unwrap();
         apply_edit(
             &mut editor,
             SetEdit::Grid(GridEdit::ToggleConfirmed),
-            None,
+            Vec::new(),
             Some(&track("a").path),
         )
         .unwrap();

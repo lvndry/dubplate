@@ -13,13 +13,16 @@ use crate::track_edits::{
 };
 
 impl DubplateApp {
-    /// The tracks a rating, colour or tag applies to: the selected track, the set's when the
-    /// keys are on the set, else the library's.
+    /// The tracks a rating, colour or tag applies to: every selected library track, or the
+    /// selected set track when the keys are on the set.
     fn selected_targets(&self, cx: &gpui::App) -> Vec<TrackTarget> {
-        let (Some(collection), Some(track)) = (self.collection(), self.selected_track(cx)) else {
+        let Some(collection) = self.collection() else {
             return Vec::new();
         };
-        vec![TrackTarget::of(collection.track(track))]
+        self.selected_tracks(cx)
+            .into_iter()
+            .map(|track| TrackTarget::of(collection.track(track)))
+            .collect()
     }
 
     /// Gives the selected track `rating` stars, 0 for unrated.

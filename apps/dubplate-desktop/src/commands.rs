@@ -377,6 +377,11 @@ pub enum Command {
     SetChannelFaderCurve(ChannelFaderCurve),
     /// Select the row above or below in the browser.
     MoveSelection(Direction),
+    /// Select the row above or below as well, from where the selection started: Shift plus an
+    /// arrow in the library.
+    ExtendSelection(Direction),
+    /// Select every track the library shows.
+    SelectAllTracks,
     /// Move the browser's cursor by a number of rows, in the crates or the tracks, whichever
     /// has the cursor. Negative moves up.
     Browse(i32),

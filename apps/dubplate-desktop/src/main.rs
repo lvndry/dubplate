@@ -40,6 +40,7 @@ mod recording;
 mod relink;
 mod search;
 mod search_filter;
+mod selection;
 mod set;
 mod settings;
 mod shortcuts;
