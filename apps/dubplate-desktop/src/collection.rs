@@ -13,11 +13,20 @@ use dubplate_rekordbox::{
 };
 use gpui::SharedString;
 
+use crate::folder_tree::folder_nodes;
 use crate::search::SearchText;
 
 /// The position of a track in the collection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TrackIndex(usize);
+
+impl TrackIndex {
+    /// The track at `position`, for tests.
+    #[cfg(test)]
+    pub fn for_tests(position: usize) -> Self {
+        Self(position)
+    }
+}
 
 /// The position of a crate in the sidebar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -105,6 +114,10 @@ pub struct Crate {
     pub kind: CrateKind,
     /// Its tracks, in order.
     pub tracks: Vec<TrackIndex>,
+    /// The folder on disk, for a music folder and the subfolders shown under it.
+    pub path: Option<PathBuf>,
+    /// Whether subfolders with audio sit under it in the sidebar.
+    pub has_subfolders: bool,
 }
 
 /// rekordbox's library, read from a copy of `master.db`.
@@ -193,6 +206,8 @@ impl Collection {
             depth: 0,
             kind: CrateKind::Collection,
             tracks: Vec::new(),
+            path: None,
+            has_subfolders: false,
         }];
         let mut index_by_path: HashMap<PathBuf, TrackIndex> = HashMap::new();
         let mut playlist_crates = Vec::new();
@@ -244,6 +259,7 @@ impl Collection {
         for scan in folders {
             let name = folder_name(&scan.folder);
             let mut folder_tracks = Vec::with_capacity(scan.tracks.len());
+            let mut folder_files = Vec::with_capacity(scan.tracks.len());
             for found in &scan.tracks {
                 let index = *index_by_path.entry(found.path.clone()).or_insert_with(|| {
                     let index = TrackIndex(tracks.len());
@@ -252,13 +268,25 @@ impl Collection {
                     index
                 });
                 folder_tracks.push(index);
+                folder_files.push((found.path.clone(), index));
             }
+            let subfolders = folder_nodes(&scan.folder, &folder_files);
             crates.push(Crate {
                 name: name.into(),
                 depth: 0,
                 kind: CrateKind::MusicFolder,
                 tracks: folder_tracks,
+                path: Some(scan.folder.clone()),
+                has_subfolders: !subfolders.is_empty(),
             });
+            crates.extend(subfolders.into_iter().map(|node| Crate {
+                name: folder_name(&node.path).into(),
+                depth: node.depth,
+                kind: CrateKind::MusicFolder,
+                tracks: node.tracks,
+                path: Some(node.path),
+                has_subfolders: node.has_children,
+            }));
         }
         crates[0].tracks = (0..tracks.len()).map(TrackIndex).collect();
         crates.extend(playlist_crates);
@@ -445,6 +473,8 @@ fn add_playlist_crates(
                 .iter()
                 .filter_map(|id| index_by_id.get(id.as_str()).copied())
                 .collect(),
+            path: None,
+            has_subfolders: false,
         });
         if kind == CrateKind::Folder {
             add_playlist_crates(
@@ -694,6 +724,7 @@ mod tests {
                 ("Collection", CrateKind::Collection, 2),
                 ("House", CrateKind::MusicFolder, 2),
                 ("Deep", CrateKind::MusicFolder, 1),
+                ("Deep", CrateKind::MusicFolder, 1),
             ]
         );
         let shared = collection.track(TrackIndex(0));
@@ -759,5 +790,62 @@ mod tests {
         assert_eq!(clock(0.0), "0:00");
         assert_eq!(clock(408.9), "6:48");
         assert_eq!(clock(-3.0), "0:00");
+    }
+
+    #[test]
+    fn a_music_folder_lists_its_subfolders_and_each_holds_the_tracks_below_it() {
+        let folders = [folder(
+            "/Music",
+            vec![
+                found("/Music/loose.mp3", None),
+                found("/Music/House/Deep/one.mp3", None),
+                found("/Music/House/Deep/two.mp3", None),
+                found("/Music/House/three.mp3", None),
+            ],
+        )];
+        let collection = Collection::build(None, &folders);
+        let crates: Vec<(String, usize, usize, bool)> = collection
+            .indexed_crates()
+            .map(|(_, entry)| {
+                (
+                    entry.name.to_string(),
+                    entry.depth,
+                    entry.tracks.len(),
+                    entry.has_subfolders,
+                )
+            })
+            .collect();
+        assert_eq!(
+            crates,
+            [
+                ("Collection".to_owned(), 0, 4, false),
+                ("Music".to_owned(), 0, 4, true),
+                ("House".to_owned(), 1, 3, true),
+                ("Deep".to_owned(), 2, 2, false),
+            ]
+        );
+        let deep = collection.crate_at(CrateIndex(3));
+        assert_eq!(deep.path.as_deref(), Some(Path::new("/Music/House/Deep")));
+        let titles: Vec<&str> = deep
+            .tracks
+            .iter()
+            .map(|track| collection.track(*track).row.title.as_ref())
+            .collect();
+        assert_eq!(titles, ["one", "two"]);
+
+        use crate::search::{SearchQuery, filter_tracks};
+        let house = CrateIndex(2);
+        assert_eq!(
+            filter_tracks(&collection, house, &SearchQuery::parse("")).len(),
+            3
+        );
+        let searched = filter_tracks(&collection, house, &SearchQuery::parse("three"));
+        assert_eq!(searched.len(), 1);
+        assert_eq!(
+            collection.track(searched[0]).row.title.as_ref(),
+            "three",
+            "the search runs inside the chosen folder"
+        );
+        assert!(filter_tracks(&collection, house, &SearchQuery::parse("loose")).is_empty());
     }
 }

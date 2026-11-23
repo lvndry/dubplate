@@ -3,7 +3,7 @@
 //! the window to load tracks through [`BrowserEvent`].
 
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use dubplate_engine::DeckId;
@@ -26,6 +26,7 @@ use crate::assets::{
 use crate::collection::{Collection, CollectionTrack, CrateIndex, CrateKind, TrackIndex};
 use crate::commands::{Direction, Mode};
 use crate::deck::deck_letter;
+use crate::folder_tree::visible_crates;
 use crate::fonts::MONO_FAMILY;
 use crate::history::{HistoryPage, HistoryShelf};
 use crate::library_match::{LibraryMatches, TrackMatch};
@@ -125,6 +126,8 @@ pub enum BrowserEvent {
     SeparateStems(TrackIndex),
     /// Stop separating a track, or forget it if it waits.
     CancelStems(TrackIndex),
+    /// The DJ opened or closed a folder of the sidebar's tree, or chose another crate.
+    FolderTreeChanged,
     /// The DJ sorted a screen's tracks by another column, or went back to the crate's order.
     Sorted {
         /// The screen.
@@ -173,6 +176,9 @@ impl Render for DraggedTrack {
 pub struct Browser {
     library: LibraryStatus,
     crate_index: CrateIndex,
+    expanded_folders: HashSet<PathBuf>,
+    chosen_folder: Option<PathBuf>,
+    visible_crates: Vec<CrateIndex>,
     query: SearchQuery,
     search_text: String,
     played: Arc<HashSet<PathBuf>>,
@@ -223,6 +229,9 @@ impl Browser {
         Self {
             library: LibraryStatus::Reading,
             crate_index: CrateIndex::COLLECTION,
+            expanded_folders: HashSet::new(),
+            chosen_folder: None,
+            visible_crates: Vec::new(),
             query: SearchQuery::default(),
             search_text: String::new(),
             played: Arc::default(),
@@ -262,16 +271,138 @@ impl Browser {
         if let LibraryStatus::Ready(collection) = &library {
             self.selection
                 .select_only(selected_identity.and_then(|identity| collection.find(&identity)));
-            if collection
+            let chosen = self.chosen_folder.as_ref().and_then(|folder| {
+                collection
+                    .indexed_crates()
+                    .find(|(_, entry)| entry.path.as_ref() == Some(folder))
+                    .map(|(index, _)| index)
+            });
+            if let Some(chosen) = chosen {
+                self.crate_index = chosen;
+                if let Some(folder) = &self.chosen_folder {
+                    self.expanded_folders
+                        .extend(folder.ancestors().skip(1).map(Path::to_path_buf));
+                }
+            } else if collection
                 .indexed_crates()
                 .nth(self.crate_index.position())
                 .is_none()
             {
                 self.crate_index = CrateIndex::COLLECTION;
             }
+            self.visible_crates = visible_crates(collection, &self.expanded_folders);
+        } else {
+            self.visible_crates.clear();
         }
         self.library = library;
         self.refilter(cx);
+    }
+
+    /// Opens the folders and chooses the folder the DJ left, once the library is there to
+    /// show them.
+    pub fn restore_folder_tree(
+        &mut self,
+        expanded: Vec<PathBuf>,
+        selected: Option<PathBuf>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.expanded_folders = expanded.into_iter().collect();
+        self.chosen_folder = selected;
+        if let LibraryStatus::Ready(_) = &self.library {
+            let library = self.library.clone();
+            self.set_library(library, cx);
+        }
+    }
+
+    /// The folders shown open, and the music folder or subfolder chosen, none when another
+    /// crate is.
+    pub fn folder_tree(&self) -> (Vec<PathBuf>, Option<PathBuf>) {
+        let mut expanded: Vec<PathBuf> = self.expanded_folders.iter().cloned().collect();
+        expanded.sort();
+        (expanded, self.chosen_folder.clone())
+    }
+
+    fn folder_tree_changed(&self, cx: &mut Context<'_, Self>) {
+        cx.emit(BrowserEvent::FolderTreeChanged);
+    }
+
+    fn refresh_visible_crates(&mut self) {
+        if let LibraryStatus::Ready(collection) = &self.library {
+            self.visible_crates = visible_crates(collection, &self.expanded_folders);
+        }
+    }
+
+    /// Opens or closes the folder `crate_index`. Closing a folder that holds the chosen one
+    /// chooses the closed folder, so the tracks shown stay in view.
+    fn toggle_folder(&mut self, crate_index: CrateIndex, expand: bool, cx: &mut Context<'_, Self>) {
+        let LibraryStatus::Ready(collection) = self.library.clone() else {
+            return;
+        };
+        let entry = collection.crate_at(crate_index);
+        let Some(path) = entry.path.clone() else {
+            return;
+        };
+        if !entry.has_subfolders {
+            return;
+        }
+        if expand {
+            self.expanded_folders.insert(path.clone());
+        } else {
+            self.expanded_folders.remove(&path);
+        }
+        self.refresh_visible_crates();
+        if !self.visible_crates.contains(&self.crate_index) {
+            self.choose_crate(crate_index, cx);
+            return;
+        }
+        self.folder_tree_changed(cx);
+        cx.notify();
+    }
+
+    /// Left and Right while the sidebar has the cursor, as in Finder: Right opens a closed
+    /// folder, or steps into an open one; Left closes an open folder, or steps out to the
+    /// folder holding it. The keys never reach the crossfader then, so browsing folders in the
+    /// middle of a set cannot move the mix. Returns whether the key was taken.
+    pub fn tree_key(&mut self, direction: Direction, cx: &mut Context<'_, Self>) -> bool {
+        let LibraryStatus::Ready(collection) = self.library.clone() else {
+            return TreeKey::resolve(self.pane == BrowserPane::Crates, None, direction).is_some();
+        };
+        let entry = collection.crate_at(self.crate_index);
+        let state =
+            (self.history_page.is_none() && entry.kind == CrateKind::MusicFolder).then(|| {
+                TreeNode {
+                    has_subfolders: entry.has_subfolders,
+                    expanded: entry
+                        .path
+                        .as_ref()
+                        .is_some_and(|path| self.expanded_folders.contains(path)),
+                    depth: entry.depth,
+                }
+            });
+        let Some(action) = TreeKey::resolve(self.pane == BrowserPane::Crates, state, direction)
+        else {
+            return false;
+        };
+        match action {
+            TreeKey::Expand => self.toggle_folder(self.crate_index, true, cx),
+            TreeKey::Collapse => self.toggle_folder(self.crate_index, false, cx),
+            TreeKey::FirstChild => self.move_crate_cursor(1, cx),
+            TreeKey::Parent => {
+                let parent = collection
+                    .indexed_crates()
+                    .take(self.crate_index.position())
+                    .filter(|(_, other)| {
+                        other.kind == CrateKind::MusicFolder && other.depth < entry.depth
+                    })
+                    .last()
+                    .map(|(index, _)| index);
+                if let Some(parent) = parent {
+                    self.choose_crate(parent, cx);
+                }
+            }
+            TreeKey::Nothing => {}
+        }
+        true
     }
 
     /// Gives the filters what Dubplate has stored for the library's tracks.
@@ -662,12 +793,9 @@ impl Browser {
         }
     }
 
-    /// Moves through the sidebar: the crates, then the pages of the history.
+    /// Moves through the sidebar: the crates shown, then the pages of the history.
     fn move_crate_cursor(&mut self, steps: i32, cx: &mut Context<'_, Self>) {
-        let LibraryStatus::Ready(collection) = &self.library else {
-            return;
-        };
-        let crate_count = collection.indexed_crates().count();
+        let crate_count = self.visible_crates.len();
         let current = match self.history_page {
             Some(page) => {
                 crate_count
@@ -678,7 +806,11 @@ impl Browser {
                         .position(|view| view.page == page)
                         .unwrap_or(0)
             }
-            None => self.crate_index.position(),
+            None => self
+                .visible_crates
+                .iter()
+                .position(|index| *index == self.crate_index)
+                .unwrap_or(0),
         };
         let Some(next) = offset(current, steps, crate_count + self.history.pages.len()) else {
             return;
@@ -690,11 +822,7 @@ impl Browser {
                 }
             }
             None => {
-                let chosen = collection
-                    .indexed_crates()
-                    .nth(next)
-                    .map(|(crate_index, _)| crate_index);
-                if let Some(crate_index) = chosen {
+                if let Some(crate_index) = self.visible_crates.get(next).copied() {
                     self.choose_crate(crate_index, cx);
                 }
             }
@@ -803,6 +931,10 @@ impl Browser {
     fn choose_crate(&mut self, crate_index: CrateIndex, cx: &mut Context<'_, Self>) {
         self.crate_index = crate_index;
         self.history_page = None;
+        if let LibraryStatus::Ready(collection) = &self.library {
+            self.chosen_folder = collection.crate_at(crate_index).path.clone();
+        }
+        self.folder_tree_changed(cx);
         self.refilter(cx);
         self.scroll.scroll_to_item(0, ScrollStrategy::Top);
     }
@@ -850,7 +982,8 @@ impl Browser {
             .border_color(theme::active().line)
             .bg(theme::active().background)
             .overflow_y_scroll()
-            .children(collection.indexed_crates().map(|(crate_index, entry)| {
+            .children(self.visible_crates.iter().map(|&crate_index| {
+                let entry = collection.crate_at(crate_index);
                 let chosen = self.history_page.is_none() && crate_index == self.crate_index;
                 let count: SharedString = match entry.kind {
                     CrateKind::Folder => "".into(),
@@ -859,6 +992,17 @@ impl Browser {
                         entry.tracks.len().to_string().into()
                     }
                 };
+                let is_folder = entry.kind == CrateKind::MusicFolder;
+                let expanded = entry
+                    .path
+                    .as_ref()
+                    .is_some_and(|path| self.expanded_folders.contains(path));
+                let leading = is_folder
+                    .then(|| folder_disclosure(crate_index, entry.has_subfolders, expanded, cx));
+                let hint = entry
+                    .path
+                    .as_ref()
+                    .map(|path| SharedString::from(path.display().to_string()));
                 sidebar_row(
                     ("crate", crate_index.position()),
                     entry.name.clone(),
@@ -866,9 +1010,17 @@ impl Browser {
                     entry.depth,
                     chosen,
                     chosen && crates_have_cursor,
-                    (chosen && matches!(entry.kind, CrateKind::Playlist | CrateKind::MusicFolder))
+                    RowExtras {
+                        action: (chosen
+                            && matches!(entry.kind, CrateKind::Playlist | CrateKind::MusicFolder))
                         .then(|| export_crate_button(crate_index, cx).into_any_element()),
+                        leading,
+                        hint,
+                    },
                 )
+                .when(is_folder && entry.has_subfolders, |row| {
+                    row.aria_expanded(expanded)
+                })
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     this.pane = BrowserPane::Crates;
                     this.choose_crate(crate_index, cx);
@@ -893,7 +1045,7 @@ impl Browser {
                             depth,
                             chosen,
                             chosen && crates_have_cursor,
-                            None,
+                            RowExtras::default(),
                         )
                         .when(page == HistoryPage::ThisSession, |row| row.mt(px(12.0)))
                         .on_click(cx.listener(
@@ -1835,6 +1987,61 @@ fn history_cell(column: HistoryColumn) -> gpui::Div {
 }
 
 /// An entry of the sidebar: a crate, or a page of the history.
+/// Where the cursor stands in the folder tree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TreeNode {
+    has_subfolders: bool,
+    expanded: bool,
+    depth: usize,
+}
+
+/// What Left or Right does in the sidebar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TreeKey {
+    Expand,
+    Collapse,
+    FirstChild,
+    Parent,
+    Nothing,
+}
+
+impl TreeKey {
+    /// What the key does, or `None` when the sidebar does not have the cursor and the key
+    /// belongs to the crossfader. While it has, the key is always taken, even when it does
+    /// nothing. `Up` stands for Right and `Down` for Left, as the crossfader keys do.
+    fn resolve(
+        sidebar_has_cursor: bool,
+        node: Option<TreeNode>,
+        direction: Direction,
+    ) -> Option<Self> {
+        if !sidebar_has_cursor {
+            return None;
+        }
+        let Some(node) = node else {
+            return Some(Self::Nothing);
+        };
+        Some(match direction {
+            Direction::Up if node.has_subfolders && node.expanded => Self::FirstChild,
+            Direction::Up if node.has_subfolders => Self::Expand,
+            Direction::Up => Self::Nothing,
+            Direction::Down if node.has_subfolders && node.expanded => Self::Collapse,
+            Direction::Down if node.depth > 0 => Self::Parent,
+            Direction::Down => Self::Nothing,
+        })
+    }
+}
+
+/// What a sidebar row can carry besides its name and count.
+#[derive(Default)]
+struct RowExtras {
+    /// A button before the count.
+    action: Option<gpui::AnyElement>,
+    /// What comes before the name, such as a disclosure triangle.
+    leading: Option<gpui::AnyElement>,
+    /// What hovering the name shows, such as the folder's whole path.
+    hint: Option<SharedString>,
+}
+
 fn sidebar_row(
     id: impl Into<gpui::ElementId>,
     name: SharedString,
@@ -1842,8 +2049,13 @@ fn sidebar_row(
     depth: usize,
     chosen: bool,
     has_cursor: bool,
-    action: Option<gpui::AnyElement>,
+    extras: RowExtras,
 ) -> gpui::Stateful<gpui::Div> {
+    let RowExtras {
+        action,
+        leading,
+        hint,
+    } = extras;
     div()
         .id(id)
         .accessible_toggle(name.clone(), chosen)
@@ -1872,7 +2084,16 @@ fn sidebar_row(
         } else {
             theme::faded(theme::active().muted, 0.0)
         })
-        .child(div().flex_1().min_w_0().truncate().child(name))
+        .children(leading)
+        .child(
+            div()
+                .id("crate-name")
+                .flex_1()
+                .min_w_0()
+                .truncate()
+                .child(name)
+                .when_some(hint, |label, hint| label.tooltip(tooltip(hint))),
+        )
         .children(action)
         .child(
             div()
@@ -1881,6 +2102,42 @@ fn sidebar_row(
                 .text_color(theme::active().muted)
                 .child(count),
         )
+}
+
+/// The disclosure triangle of a music folder's row, a blank of the same width when it has no
+/// subfolders so the names line up.
+fn folder_disclosure(
+    crate_index: CrateIndex,
+    has_subfolders: bool,
+    expanded: bool,
+    cx: &mut Context<'_, Browser>,
+) -> gpui::AnyElement {
+    let box_ = div()
+        .flex()
+        .flex_none()
+        .items_center()
+        .justify_center()
+        .size(px(16.0))
+        .mr(px(2.0));
+    if !has_subfolders {
+        return box_.into_any_element();
+    }
+    box_.id(("folder-disclosure", crate_index.position()))
+        .accessible_button(if expanded {
+            "Collapse folder"
+        } else {
+            "Expand folder"
+        })
+        .cursor_pointer()
+        .text_size(theme::TINY_TEXT_SIZE)
+        .text_color(theme::active().muted)
+        .hover(|arrow| arrow.text_color(theme::active().text))
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+            this.toggle_folder(crate_index, !expanded, cx);
+        }))
+        .child(if expanded { "\u{25BE}" } else { "\u{25B8}" })
+        .into_any_element()
 }
 
 /// Exports the chosen playlist or music folder to a USB stick for CDJs.
@@ -2262,7 +2519,52 @@ fn message_panel(title: SharedString, detail: Option<SharedString>) -> impl Into
 
 #[cfg(test)]
 mod tests {
-    use super::offset;
+    use super::*;
+
+    #[test]
+    fn left_and_right_in_the_sidebar_never_fall_through_to_the_crossfader() {
+        for has_subfolders in [false, true] {
+            for expanded in [false, true] {
+                for depth in [0, 1, 3] {
+                    for direction in [Direction::Up, Direction::Down] {
+                        let node = TreeNode {
+                            has_subfolders,
+                            expanded: has_subfolders && expanded,
+                            depth,
+                        };
+                        assert!(
+                            TreeKey::resolve(true, Some(node), direction).is_some(),
+                            "{node:?} {direction:?}"
+                        );
+                    }
+                }
+                for direction in [Direction::Up, Direction::Down] {
+                    assert!(TreeKey::resolve(true, None, direction).is_some());
+                }
+            }
+        }
+        assert_eq!(TreeKey::resolve(false, None, Direction::Up), None);
+    }
+
+    #[test]
+    fn the_tree_keys_follow_finder() {
+        let node = |has_subfolders, expanded, depth| {
+            Some(TreeNode {
+                has_subfolders,
+                expanded,
+                depth,
+            })
+        };
+        let right = |node| TreeKey::resolve(true, node, Direction::Up);
+        let left = |node| TreeKey::resolve(true, node, Direction::Down);
+        assert_eq!(left(node(true, true, 1)), Some(TreeKey::Collapse));
+        assert_eq!(left(node(true, false, 1)), Some(TreeKey::Parent));
+        assert_eq!(left(node(false, false, 2)), Some(TreeKey::Parent));
+        assert_eq!(left(node(false, false, 0)), Some(TreeKey::Nothing));
+        assert_eq!(right(node(true, false, 0)), Some(TreeKey::Expand));
+        assert_eq!(right(node(true, true, 0)), Some(TreeKey::FirstChild));
+        assert_eq!(right(node(false, false, 2)), Some(TreeKey::Nothing));
+    }
 
     #[test]
     fn the_cursor_stops_at_the_first_and_last_rows() {

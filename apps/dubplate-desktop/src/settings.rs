@@ -98,6 +98,8 @@ pub struct Settings {
     pub library_sort: LibrarySortSetting,
     /// The theme Dubplate wears, by name.
     pub theme: Option<String>,
+    /// The folders of the sidebar's tree that are open, and the one chosen.
+    pub folder_tree: FolderTreeSetting,
     /// Whether a track loaded on a deck starts with key lock on, as rekordbox's Master Tempo
     /// default: the deck's Key lock button still changes it for the track on the deck.
     pub key_lock_on_new_tracks: bool,
@@ -302,6 +304,17 @@ impl LibrarySortSetting {
     }
 }
 
+/// The sidebar's folder tree as the DJ left it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FolderTreeSetting {
+    /// The folders shown open, by path.
+    pub expanded: Vec<String>,
+    /// The music folder or subfolder that was chosen, by path; none when a playlist or the
+    /// collection was.
+    pub selected: Option<String>,
+}
+
 /// The sampler as the DJ left it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -366,6 +379,7 @@ impl Default for Settings {
             smart_fader_source: String::new(),
             library_sort: LibrarySortSetting::default(),
             theme: None,
+            folder_tree: FolderTreeSetting::default(),
             key_lock_on_new_tracks: true,
             fader_echo: false,
         }
@@ -542,6 +556,10 @@ mod tests {
                     descending: true,
                 }),
                 perform: None,
+            },
+            folder_tree: FolderTreeSetting {
+                expanded: vec!["/Music".to_owned(), "/Music/House".to_owned()],
+                selected: Some("/Music/House/Deep".to_owned()),
             },
             key_lock_on_new_tracks: false,
             fader_echo: true,

@@ -97,7 +97,7 @@ Ranked by what stops the owner from playing a club night with Dubplate alone, th
 | Drag a track or file onto a deck | Drop a track from the browser, or a file from Finder, onto a deck. | Deck | Free | Done | P1 |
 | Readable formats | MP3, AAC/M4A, ALAC, WAV and AIFF (16/24-bit up to 192 kHz), FLAC up to 192 kHz. | n/a | Free | Done (MP3, M4A AAC/ALAC, FLAC, WAV, AIFF, Ogg) | P0 |
 | Readable tags | ID3 v1 to v2.4, M4A atoms, WAV RIFF INFO, FLAC Vorbis comments. | On import | Free | Partial: title, artist, genre, comment, BPM and key; album, label, year, artwork not shown | P1 |
-| Explorer | Browse disk folders inside the app; tracks already in the collection carry an icon. | Media Browser > Explorer | Free | Partial: music folders appear as crates; no free browsing of the disk | P2 |
+| Explorer | Browse disk folders inside the app; tracks already in the collection carry an icon. | Media Browser > Explorer | Free | Partial: each music folder opens into its subfolders in the sidebar, showing the tracks below each; no free browsing of the rest of the disk | P2 |
 | Sub browser and split screen | A second tree and list side by side for drag and drop between lists. | [View] > Sub Browser / Split Screen | Free | Partial: Prepare shows library and set side by side; no second library list | P2 |
 | Playlist palette | Up to 4 playlists side by side next to the list, plus Tag List and Request Catalog. | Browser palette | Free | Missing | P2 |
 | Shortcuts pane | Up to 8 pinned folders or playlists; drop a track on one to add it. | Top of Media Browser | Free | Missing | P3 |
