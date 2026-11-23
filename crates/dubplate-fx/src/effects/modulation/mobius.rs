@@ -130,9 +130,16 @@ impl Kernel for MobiusKernel {
     #[inline]
     fn tick(&mut self, _input: Frame, _beat_position: f64) -> Frame {
         let direction = if self.cycle.falling { -1.0 } else { 1.0 };
-        self.glide.advance(
-            direction * self.beats_per_sample / self.cycle.length.beats() / SHEPARD_VOICES as f64,
-        );
+        let step = direction * self.beats_per_sample / self.cycle.length.beats();
+        if self.glide.advance(step) {
+            // Keep each sounding oscillator as it moves to the adjacent slot. Only the voice
+            // that has faded to silence restarts at the other end of the frequency range.
+            if self.cycle.falling {
+                self.phases.rotate_left(1);
+            } else {
+                self.phases.rotate_right(1);
+            }
+        }
         let mut tone = 0.0;
         for (voice, phase) in self.glide.voices().into_iter().zip(&mut self.phases) {
             let frequency = LOWEST_HZ * (voice.height * SHEPARD_VOICES as f32).exp2();

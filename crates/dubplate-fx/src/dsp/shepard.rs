@@ -27,10 +27,12 @@ impl EndlessGlide {
         self.position = 0.0;
     }
 
-    /// Moves by `step` voice spacings: positive rises, negative falls.
+    /// Moves by `step` voice spacings and returns whether a voice crossed either end.
     #[inline]
-    pub(crate) fn advance(&mut self, step: f64) {
-        self.position = (self.position + step).rem_euclid(1.0);
+    pub(crate) fn advance(&mut self, step: f64) -> bool {
+        let position = self.position + step;
+        self.position = position.rem_euclid(1.0);
+        !(0.0..1.0).contains(&position)
     }
 
     /// The voices, lowest first.

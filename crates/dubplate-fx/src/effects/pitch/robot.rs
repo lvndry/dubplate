@@ -17,6 +17,7 @@ const RING_SHARE: f32 = 0.5;
 const PITCH_SMOOTHING_SECONDS: f32 = 0.03;
 const FULL_MIX_DEPTH: f32 = 0.5;
 const DEFAULT_TONE_PERCENT: i16 = 0;
+const MAX_TONE_PERCENT: i16 = 100;
 
 /// Turns the music into a robot's voice: a metallic resonance tuned to one pitch, roughened by
 /// ring modulation at the same pitch.
@@ -50,6 +51,7 @@ impl Controls for Robot {
 
     fn apply_parameter(&mut self, value: ParameterValue) {
         if let ParameterValue::Percent(percent) = value {
+            let percent = percent.clamp(-MAX_TONE_PERCENT, MAX_TONE_PERCENT);
             let kernel = &mut self.unit.kernel;
             kernel.tone_percent = percent;
             let octaves = f32::from(percent) / 100.0 * OCTAVES_AT_FULL_TONE;

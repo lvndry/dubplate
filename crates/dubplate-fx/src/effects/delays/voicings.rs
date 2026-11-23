@@ -425,6 +425,14 @@ impl Noise {
             sample_rate: 48_000.0,
         }
     }
+
+    fn update_band_coefficients(&mut self) {
+        self.coefficients = SvfCoefficients::new(
+            self.centre_octaves.current().exp2(),
+            NOISE_QUALITY,
+            self.sample_rate,
+        );
+    }
 }
 
 impl Voicing for Noise {
@@ -443,7 +451,10 @@ impl Voicing for Noise {
     }
 
     fn prepare(&mut self, sample_rate: f32) {
-        self.sample_rate = sample_rate;
+        if self.sample_rate != sample_rate {
+            self.sample_rate = sample_rate;
+            self.update_band_coefficients();
+        }
         self.tape.prepare(sample_rate);
         self.level.prepare(sample_rate);
         self.centre_octaves.prepare(sample_rate);
@@ -475,8 +486,7 @@ impl Voicing for Noise {
         let before = self.centre_octaves.current();
         let octaves = self.centre_octaves.next();
         if octaves != before {
-            self.coefficients =
-                SvfCoefficients::new(octaves.exp2(), NOISE_QUALITY, self.sample_rate);
+            self.update_band_coefficients();
         }
         let level = self.level.next();
         let [left, right] = &mut self.band;
@@ -498,6 +508,7 @@ impl Voicing for Noise {
         self.tape.reset();
         self.level.snap_to_target();
         self.centre_octaves.snap_to_target();
+        self.update_band_coefficients();
     }
 }
 

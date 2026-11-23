@@ -1,6 +1,7 @@
 use crate::config::EffectConfig;
 use crate::context::BlockTiming;
 use crate::dsp::pitch_shift::PitchShifter;
+use crate::dsp::shaping::smoothstep;
 use crate::dsp::smoothing::Smoothed;
 use crate::effect::EffectKind;
 use crate::parameter::ParameterValue;
@@ -11,6 +12,7 @@ const PITCH_SMOOTHING_SECONDS: f32 = 0.05;
 const FULL_MIX_DEPTH: f32 = 0.05;
 const DEFAULT_RANGE_SEMITONES: i8 = 12;
 const MOST_SEMITONES: i8 = 12;
+const NEUTRAL_FADE_SEMITONES: f32 = 0.25;
 
 /// Shifts the music's pitch without changing its tempo, like the Pitch beat effect of a DJ
 /// mixer.
@@ -99,14 +101,15 @@ impl Kernel for PitchKernel {
     /// over the next window.
     #[inline]
     fn tick(&mut self, input: Frame, _beat_position: f64) -> Frame {
-        let ratio = (self.semitones.next() / 12.0).exp2();
+        let semitones = self.semitones.next();
+        let ratio = (semitones / 12.0).exp2();
         let shifted = self.shifter.tick(input, ratio);
-        if self.heard_samples >= 2.0 * self.window_samples {
-            return shifted;
-        }
-        self.heard_samples += 1.0;
-        let shifted_share =
+        self.heard_samples = (self.heard_samples + 1.0).min(2.0 * self.window_samples);
+        let warmup =
             ((self.heard_samples - self.window_samples) / self.window_samples).clamp(0.0, 1.0);
+        // At zero semitones the read heads are still delayed. Fade to the live signal as
+        // the smoothed pitch approaches zero, while keeping the shifter's history warm.
+        let shifted_share = warmup * smoothstep(semitones.abs() / NEUTRAL_FADE_SEMITONES);
         [
             input[0] + (shifted[0] - input[0]) * shifted_share,
             input[1] + (shifted[1] - input[1]) * shifted_share,

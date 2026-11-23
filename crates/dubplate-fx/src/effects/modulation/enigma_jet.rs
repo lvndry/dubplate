@@ -104,7 +104,7 @@ impl Kernel for EnigmaJetKernel {
         let voices_per_beat = 1.0 / self.cycle.length.beats();
         let direction = if self.cycle.falling { -1.0 } else { 1.0 };
         self.glide
-            .advance(direction * voices_per_beat * self.beats_per_sample / SHEPARD_VOICES as f64);
+            .advance(direction * voices_per_beat * self.beats_per_sample);
         let voices = self.glide.voices();
         let feedback = self.feedback.next();
         let normalise = 2.0 / SHEPARD_VOICES as f32;

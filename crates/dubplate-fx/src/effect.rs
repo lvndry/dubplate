@@ -92,9 +92,17 @@ pub trait Effect: Send {
     /// The effect's parameter, or `None` for an effect without one.
     fn parameter(&self) -> Option<ParameterValue>;
 
-    /// Sets the beat length of a beat-synced effect. Effects without one ignore it.
+    /// Sets the beat length of a beat-synced effect, preserving any direction.
+    /// Effects without a beat length ignore it.
     fn set_beat(&mut self, beat: BeatLength) {
-        self.set_parameter(ParameterValue::Beats(beat));
+        let value = match self.parameter() {
+            Some(ParameterValue::SignedBeats(mut cycle)) => {
+                cycle.length = beat;
+                ParameterValue::SignedBeats(cycle)
+            }
+            _ => ParameterValue::Beats(beat),
+        };
+        self.set_parameter(value);
     }
 
     /// The beat length of a beat-synced effect, or `None` for effects without one.
@@ -414,7 +422,41 @@ pub fn create(kind: EffectKind, config: &EffectConfig) -> Box<dyn Effect> {
 
 #[cfg(test)]
 mod tests {
-    use super::EffectKind;
+    use super::{EffectKind, create};
+    use crate::beat::BeatLength;
+    use crate::config::EffectConfig;
+    use crate::parameter::{ParameterValue, SignedBeats};
+
+    #[test]
+    fn setting_a_beat_length_preserves_a_signed_effects_direction() {
+        let config = EffectConfig::default();
+        for kind in [
+            EffectKind::EnigmaJet,
+            EffectKind::MobiusSaw,
+            EffectKind::MobiusTriangle,
+        ] {
+            let mut effect = create(kind, &config);
+            effect.set_beat(BeatLength::HALF);
+            assert_eq!(
+                effect.parameter(),
+                Some(ParameterValue::SignedBeats(SignedBeats::rising(
+                    BeatLength::HALF,
+                ))),
+                "{kind}",
+            );
+            effect.set_parameter(ParameterValue::SignedBeats(SignedBeats::falling(
+                BeatLength::TWO,
+            )));
+            effect.set_beat(BeatLength::QUARTER);
+            assert_eq!(
+                effect.parameter(),
+                Some(ParameterValue::SignedBeats(SignedBeats::falling(
+                    BeatLength::QUARTER,
+                ))),
+                "{kind}",
+            );
+        }
+    }
 
     #[test]
     fn every_name_parses_back_to_its_effect() {
