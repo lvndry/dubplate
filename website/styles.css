@@ -134,10 +134,6 @@ h1 em { color: var(--leaf); }
 .deck-sheet > svg { display: block; width: 100%; height: auto; margin-block: 16px 4px; }
 .deck-legend { display: flex; justify-content: space-between; align-items: center; color: var(--chart-muted); font: 12px var(--mono); }
 .deck-legend button { border: 1px solid #78978b; border-radius: 3px; padding: 8px 12px; background: transparent; color: var(--chart-text); font: inherit; cursor: pointer; }
-.live-tools { display: grid; grid-template-columns: repeat(3,1fr); gap: 5%; margin: 46px 0 70px; }
-.live-tools h2 { font: 400 clamp(30px,3.6vw,55px)/1.05 var(--serif); letter-spacing: -.055em; }
-.live-tools p { margin-top: 14px; max-width: 39ch; }
-@media (max-width: 680px) { .live-tools { grid-template-columns: 1fr; gap: 30px; } }
 @keyframes enter-deck-title { from { transform: translateY(.16em); } to { transform: translateY(0); } }
 @media (prefers-reduced-motion: no-preference) { body:has(.deck-sheet) h1 { animation: enter-deck-title .6s ease-out both; } }
 @media (max-width: 680px) {
@@ -183,3 +179,16 @@ svg.paused .decks-scroll {
 }
 .genre-cycle.paused > span { animation: none; opacity: 0; transform: none; }
 .genre-cycle.paused > span:first-child { opacity: 1; }
+
+.setup-questions { display: grid; grid-template-columns: 1fr 1.18fr; gap: clamp(30px, 8vw, 130px); padding: clamp(48px, 7vw, 100px) 0; }
+.setup-questions h2 { font: 400 clamp(36px, 4.6vw, 72px)/1 var(--serif); letter-spacing: -.055em; }
+.setup-questions details { border-top: 1px solid var(--line); padding: 15px 0; }
+.setup-questions summary { cursor: pointer; font-weight: 650; }
+.setup-questions details p { margin-top: 10px; max-width: 61ch; }
+@media (max-width: 720px) { .setup-questions { grid-template-columns: 1fr; } }
+
+.sample-bank { margin: 20px 0 0; padding: 0; border: 0; }
+.sample-bank legend { font-weight: 650; margin-bottom: 8px; }
+.sample-bank button { font: inherit; background: transparent; color: var(--leaf); border: 1px solid var(--leaf); border-radius: 3px; padding: 8px 12px; margin: 0 4px 6px 0; cursor: pointer; }
+.sample-bank button::before { content: "▸"; margin-right: 6px; }
+.sample-bank button:hover, .sample-bank button.sounding { background: var(--leaf); color: var(--paper); }
