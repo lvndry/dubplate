@@ -117,10 +117,19 @@ pub const SHORTCUTS: &[Shortcut] = &[
     outside_text("p", Command::PreviewSelected),
     outside_text("alt-cmd-r", Command::RevealSelected),
     outside_text("alt-cmd-c", Command::CopySelectedPath),
+    outside_text("ctrl-0", Command::RateSelected(0)),
+    outside_text("ctrl-1", Command::RateSelected(1)),
+    outside_text("ctrl-2", Command::RateSelected(2)),
+    outside_text("ctrl-3", Command::RateSelected(3)),
+    outside_text("ctrl-4", Command::RateSelected(4)),
+    outside_text("ctrl-5", Command::RateSelected(5)),
     outside_text("shift-left", Command::LoadSelected(DeckId::A)),
     outside_text("shift-right", Command::LoadSelected(DeckId::B)),
     outside_text("up", Command::MoveSelection(Direction::Up)),
     outside_text("down", Command::MoveSelection(Direction::Down)),
+    outside_text("shift-up", Command::ExtendSelection(Direction::Up)),
+    outside_text("shift-down", Command::ExtendSelection(Direction::Down)),
+    outside_text("cmd-a", Command::SelectAllTracks),
     outside_text("/", Command::FocusSearch),
     anywhere("cmd-f", Command::FocusSearch),
     anywhere("ctrl-f", Command::FocusSearch),
@@ -450,6 +459,11 @@ pub fn help_sections() -> Vec<HelpSection> {
             lines: vec![
                 line(&["up", "down"], "Select the previous / next track"),
                 line(
+                    &["shift-up", "shift-down"],
+                    "Add the previous / next track to the selection",
+                ),
+                line(&["cmd-a"], "Select every track shown"),
+                line(
                     &["/", "cmd-f"],
                     "Search titles, artists, genres, folders and comments",
                 ),
@@ -464,6 +478,10 @@ pub fn help_sections() -> Vec<HelpSection> {
                 line(
                     &["alt-cmd-r", "alt-cmd-c"],
                     "Show the selected track in Finder / copy its file path",
+                ),
+                line(
+                    &["ctrl-0", "ctrl-1"],
+                    "Rate the selected track: no stars / one star (⌃ 2 to ⌃ 5 for two to five stars)",
                 ),
             ],
         },
@@ -696,7 +714,11 @@ mod tests {
                 .strip_prefix("shift-")
                 .or_else(|| keystroke.strip_prefix("alt-"))
                 .unwrap_or(keystroke);
-            matches!(key, "2" | "3" | "4" | "5" | "6" | "7" | "8") || keystroke == "ctrl-f"
+            matches!(key, "2" | "3" | "4" | "5" | "6" | "7" | "8")
+                || matches!(
+                    keystroke,
+                    "ctrl-2" | "ctrl-3" | "ctrl-4" | "ctrl-5" | "ctrl-f"
+                )
         };
         let shown: HashSet<String> = help_sections()
             .into_iter()
@@ -709,6 +731,24 @@ mod tests {
                 assert!(shown.contains(&printed), "{}", shortcut.keystroke);
             }
         }
+    }
+
+    #[test]
+    fn control_and_a_digit_rate_the_selected_track() {
+        for stars in 0..=5u8 {
+            let keystroke = format!("ctrl-{stars}");
+            let shortcut = SHORTCUTS
+                .iter()
+                .find(|shortcut| shortcut.keystroke == keystroke)
+                .map(|shortcut| shortcut.command);
+            assert_eq!(shortcut, Some(Command::RateSelected(stars)), "{keystroke}");
+        }
+        assert!(help_sections().into_iter().any(|section| {
+            section
+                .lines
+                .iter()
+                .any(|line| line.description.contains("Rate the selected track"))
+        }));
     }
 
     #[test]

@@ -28,6 +28,7 @@ mod library;
 mod library_matches;
 mod library_panel;
 mod memory_cues;
+mod metadata;
 mod mixer;
 mod notice;
 mod overview;
@@ -48,6 +49,7 @@ mod stems_strip;
 mod track_actions;
 mod track_check;
 mod track_preview;
+mod track_tags;
 mod usb_export;
 mod waveforms;
 
@@ -117,6 +119,7 @@ use crate::shortcuts::{Perform, WINDOW_CONTEXT};
 use crate::space::{DeckOnAir, space_deck};
 use crate::stems::TrackStems;
 use crate::theme;
+use crate::track_metadata::TrackMetadataCache;
 use crate::transport::{self, CueDown, is_at_cue, other_deck};
 use crate::waveform::Zoom;
 use crate::waveform_cache::WaveformCache;
@@ -258,6 +261,8 @@ pub struct DubplateApp {
     check_generation: u64,
     track_detail: Option<(PathBuf, Arc<TrackDetail>)>,
     detail_pending: Option<PathBuf>,
+    track_metadata: Arc<TrackMetadataCache>,
+    track_metadata_generation: u64,
     waveform_cache: WaveformCache,
     check_cursor_seconds: f64,
     catalogue: Arc<Catalogue>,
@@ -545,6 +550,8 @@ impl DubplateApp {
             track_checks: HashMap::new(),
             checks_pending: HashSet::new(),
             check_generation: 0,
+            track_metadata: Arc::default(),
+            track_metadata_generation: 0,
             track_detail: None,
             detail_pending: None,
             waveform_cache: WaveformCache::default(),
@@ -1133,6 +1140,9 @@ impl DubplateApp {
             Command::CopySelectedPath => self.copy_selected_path(cx),
             Command::SeparateSelectedStems => self.separate_selected_stems(cx),
             Command::RelinkSelected => self.relink_selected(cx),
+            Command::RateSelected(rating) => self.rate_selected(rating, cx),
+            Command::ColourSelected(colour) => self.colour_selected(colour, cx),
+            Command::ToggleSelectedTag(tag) => self.toggle_selected_tag(tag, cx),
             Command::InstantDouble(deck) => self.instant_double(deck, cx),
             Command::NudgeTempo(deck, direction) => {
                 let slider = nudged_tempo_slider(
@@ -1230,6 +1240,18 @@ impl DubplateApp {
                     .browser
                     .update(cx, |browser, cx| browser.move_selection(direction, cx)),
             },
+            Command::ExtendSelection(direction) => {
+                if !self.keys_on_set(cx) {
+                    self.browser
+                        .update(cx, |browser, cx| browser.extend_selection(direction, cx));
+                }
+            }
+            Command::SelectAllTracks => {
+                if !self.keys_on_set(cx) {
+                    self.browser
+                        .update(cx, |browser, cx| browser.select_all(cx));
+                }
+            }
             Command::SwitchMode(mode) => {
                 self.mode = mode;
                 self.settings.set_screen(mode);

@@ -66,7 +66,7 @@ Ranked by what stops the owner from playing a club night with Dubplate alone, th
 19. **Saved and active loops.** Call and save loops as memory or hot cues; an active loop engages when reached; SHIFT + 4 BEAT/EXIT toggles it.
 20. **Stems on the decks.** Wire the separation queue into the app and add ACTIVE PART mute and solo for vocals, melody, bass and drums per deck, with stem waveforms and FLX4 pads.
 21. **Library columns and metadata.** A column chooser and the album, label, remixer, year, date added, rating, colour, comment, My Tag, bit rate and play count columns, reading rating, colour and My Tag from master.db.
-22. **Track filter by rating, colour and My Tag.** AND/OR across My Tags, next to the BPM and key filters, plus hide played.
+22. **Track filter by rating, colour and My Tag.** `rated:0`/`rated:none` for unrated, `color:`/`colour:`/`color:none`, `tag:` (every one must match) and `comment:`, next to the BPM and key filters, plus hide played.
 23. **Playlists in Dubplate.** Create, rename and delete playlists and folders, add, reorder and remove tracks, export M3U8 or TXT, and include them in the XML and USB exports.
 24. **Key sync and key on the deck.** KEY SYNC, semitone up and down with the key difference, the deck key coloured by its fit to the master, and a Classic or Camelot setting.
 25. **Played tracks (done).** Colour a row once its track has played for 60 seconds, and offer a hide played filter.
@@ -126,8 +126,8 @@ Ranked by what stops the owner from playing a club night with Dubplate alone, th
 | Title, Artist, Genre, BPM, Key, Time columns | The core columns. | Track list | Free | Done | P0 |
 | Album, Album artist, Original artist, Remixer, Composer, Label columns | Release metadata columns. | Track list | Free | Missing | P1 |
 | Comments column | Free text, often holds Mixed In Key or My Tag text. | Track list | Free | Missing as a column (comments are searched) | P1 |
-| Rating column | 0 to 5 stars. | Track list | Free | Missing | P1 |
-| Colour column | One of 8 track colours. | Track list | Free | Missing | P1 |
+| Rating column | 0 to 5 stars. | Track list | Free | Done (stars in a sortable column, best first, dropped in a narrow window) | P1 |
+| Colour column | One of 8 track colours. | Track list | Free | Done (a swatch in a sortable column, in rekordbox's colour order, dropped in a narrow window) | P1 |
 | My Tag column | The track's My Tags. | Track list | Free | Missing | P1 |
 | Date Added column | Import date, the usual "new music" sort. | Track list | Free | Missing | P1 |
 | Release year and date columns | Year and release date. | Track list | Free | Missing | P2 |
@@ -141,6 +141,7 @@ Ranked by what stops the owner from playing a club night with Dubplate alone, th
 | Sort by column | Click to sort, click again to reverse. | Header | Free | Done (third click restores the crate order; remembered per screen) | P0 |
 | Track number order | The playlist's own order, renumber to the current sort. | [Playlist] > Renumber Track Order | Free | Partial: crate order restorable; no renumber | P3 |
 | Search | Incremental search over chosen columns. | Search box | Free | Done (title, artist, genre, comment, folder names) | P0 |
+| Search filtering by rating, colour, My Tag and comment | `rated:4+`, `rated:0`/`rated:none`, `color:red`/`colour:`/`color:none`, `tag:peak`, `comment:word` in the search field, with suggestions from the set store. | Search box | Free | Done | P1 |
 | Search field choice | Pick which columns the search looks in. | Search drop-down | Free | Missing | P3 |
 | Alphabet search | Type letters in the list to jump to titles starting with them. | Track list | Free | Missing | P2 |
 | Collection filter | Tree categories Date Added, Genre, Artist, Album under the collection. | Tree under Collection | Free (registered) | Missing | P2 |
@@ -192,9 +193,9 @@ Ranked by what stops the owner from playing a club night with Dubplate alone, th
 | Reload tags | Re-reads the file's tags. | Context menu | Free | Partial: a folder rescan rereads tags | P3 |
 | Write tags to files | rekordbox writes only the key to ID3 (option); other edits stay in its database. | Preferences > Analysis > Key Analysis | Free | Missing | P3 |
 | Artwork | Shown in the deck, the list and the CDJ jog; add JPEG or PNG by drag. | Info window > Artwork | Free | Missing | P2 |
-| Rating | 0 to 5 stars, editable in the list and on the CDJ-3000X. | Rating column | Free | Missing (read from rekordbox, not shown) | P1 |
-| Track colour | One of 8 colours (Pink, Red, Orange, Yellow, Green, Aqua, Blue, Purple) with a comment per colour shown on CDJs. | Colour column, Preferences > Advanced > Browse > Color | Free | Missing | P1 |
-| My Tag | Categories of user tags (for example Genre, Components, Situation), several tags per track, editable in a window. | My Tag window | Free | Missing (not read from rekordbox) | P1 |
+| Rating | 0 to 5 stars, editable in the list and on the CDJ-3000X. | Rating column | Free | Done (shown in the Rating column; set from the track's menu or with Ctrl+0 to Ctrl+5) | P1 |
+| Track colour | One of 8 colours (Pink, Red, Orange, Yellow, Green, Aqua, Blue, Purple) with a comment per colour shown on CDJs. | Colour column, Preferences > Advanced > Browse > Color | Free | Done for the colour itself, set from the track's menu (the comment per colour is not) | P1 |
+| My Tag | Categories of user tags (for example Genre, Components, Situation), several tags per track, editable in a window. | My Tag window | Free | Partial: tags are put on and taken off a track from its menu, grouped by category, and searched with `tag:`; no window to make or rename categories and tags yet, and none are read from rekordbox | P1 |
 | My Tag into comments | Appends My Tag names to the comment. | Preferences > Advanced > Browse | Free | Missing | P3 |
 | Comments | Free-text comment per track. | Info window | Free | Partial: searched, never shown or edited | P1 |
 | Multi-value genre | Split "Afro House; Amapiano" into separate genres; asked for, not in rekordbox. | Not in rekordbox | n/a | Missing | P3 |
