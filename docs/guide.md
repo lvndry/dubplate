@@ -100,11 +100,13 @@ To bring it in, in rekordbox:
 3. Select all its tracks and choose **Import To Collection**. rekordbox only updates tracks it already has this way; importing just the playlist would keep their old grids and cues.
 4. Right-click the playlist and choose **Import Playlist**.
 
-From then on the set is an ordinary rekordbox playlist, ready to export to a USB stick for CDJs.
+Repeat the import for the backups playlist if you want it too. To send a saved Dubplate playlist instead of a set, select it in the library and choose **XML…**, then follow the same import steps. For a player that uses OneLibrary, [export the imported playlists from rekordbox](#export-a-onelibrary-usb).
 
 ## Play the set on CDJs
 
-**USB…** at the top of the Set panel, or Cmd+Shift+E, exports the set straight to a USB stick for CDJs and XDJs, without rekordbox. Choose the stick (or any folder) in the picker. Dubplate writes what rekordbox's Export mode writes:
+**USB…** at the top of the Set panel, or Cmd+Shift+E, exports the set in the classic Device Library format used by players such as the CDJ-3000, CDJ-2000NXS2 and XDJ-RX3. Choose the stick (or any folder) in the picker. [Check which format your player uses.](https://rekordbox.com/en/support/usb-export/)
+
+Dubplate writes the following files.
 
 - the audio files, under `Contents/<artist>/<album>`; a file already on the stick, byte for byte, is not copied again;
 - for each track, the analysis files players read: the beat grid with your fixes, the hot cues A to H with their colours and names, memory cues, saved loops, and the blue, RGB and 3-band waveforms (rekordbox's own when rekordbox analysed the track, else drawn by Dubplate from the audio) and rekordbox's phrases;
@@ -112,7 +114,17 @@ From then on the set is an ordinary rekordbox playlist, ready to export to a USB
 
 A notice follows the export track by track and says what it did. In the library, a chosen playlist or music folder shows **USB…** beside its name to export it the same way.
 
-A stick Dubplate exported to before is added to, and a playlist of the same name is replaced. A stick that already holds a library rekordbox wrote is refused, so nothing on it changes: use another stick, or a folder. Dubplate never replaces or deletes a file it did not write, and never writes inside rekordbox's folders. The CDJ-2000NXS2, CDJ-3000 and XDJs read this library; the newest players that read only rekordbox 7's OneLibrary (CDJ-3000X, XDJ-AZ, OPUS-QUAD) do not yet.
+Dubplate adds to a classic Device Library it previously exported and replaces a playlist of the same name. Use a separate stick or folder if rekordbox or another app prepared your current stick.
+
+### Export a OneLibrary USB
+
+Use the latest rekordbox 7 to prepare a stick for the CDJ-3000X, CDJ-1500X, XDJ-AZ, XDJ-AN, OPUS-QUAD or OMNIS-DUO. rekordbox exports both OneLibrary and the classic Device Library to the same stick, so it can serve both types of players. [AlphaTheta USB compatibility.](https://rekordbox.com/en/support/usb-export/)
+
+1. [Export and import the set as rekordbox XML](#play-the-set-in-rekordbox). In rekordbox, check the playlist order and load a track to check its cues and grid.
+2. Switch rekordbox to **EXPORT** mode, connect your USB stick and drag the imported playlist from **Playlists** to the stick under **Devices**. Drag the backups playlist too if you want it on the stick.
+3. When the transfer finishes, open **Devices > your stick > OneLibrary > Playlists** and confirm the playlist order and track count. If you need the stick for both types of player, also check **Device Library > Playlists** on the same stick. Eject the stick from rekordbox before unplugging it.
+
+For a stick with an existing classic Device Library, rekordbox also offers **Devices > your stick > OneLibrary > Convert from Device Library** from the OneLibrary context menu. Back up the stick before converting if it already contains OneLibrary. Conversion replaces that library, including playlists and histories saved only there. Dubplate's direct **USB…** export refuses a stick once it contains OneLibrary. Conversion of a Dubplate-written stick has yet to be verified. [rekordbox OneLibrary FAQ.](https://rekordbox.com/en/support/faq/onelibrary-7/#faq-q700038)
 
 ### Import from USB after playing
 
