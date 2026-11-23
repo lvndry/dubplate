@@ -66,7 +66,7 @@ Ranked by what stops the owner from playing a club night with Dubplate alone, th
 19. **Saved and active loops.** Call and save loops as memory or hot cues; an active loop engages when reached; SHIFT + 4 BEAT/EXIT toggles it.
 20. **Stems on the decks.** Wire the separation queue into the app and add ACTIVE PART mute and solo for vocals, melody, bass and drums per deck, with stem waveforms and FLX4 pads.
 21. **Library columns and metadata.** A column chooser and the album, label, remixer, year, date added, rating, colour, comment, My Tag, bit rate and play count columns, reading rating, colour and My Tag from master.db.
-22. **Track filter by rating, colour and My Tag.** AND/OR across My Tags, next to the BPM and key filters, plus hide played.
+22. **Track filter by rating, colour and My Tag.** `rated:0`/`rated:none` for unrated, `color:`/`colour:`/`color:none`, `tag:` (every one must match) and `comment:`, next to the BPM and key filters, plus hide played.
 23. **Playlists in Dubplate.** Create, rename and delete playlists and folders, add, reorder and remove tracks, export M3U8 or TXT, and include them in the XML and USB exports.
 24. **Key sync and key on the deck.** KEY SYNC, semitone up and down with the key difference, the deck key coloured by its fit to the master, and a Classic or Camelot setting.
 25. **Played tracks (done).** Colour a row once its track has played for 60 seconds, and offer a hide played filter.
@@ -141,6 +141,7 @@ Ranked by what stops the owner from playing a club night with Dubplate alone, th
 | Sort by column | Click to sort, click again to reverse. | Header | Free | Done (third click restores the crate order; remembered per screen) | P0 |
 | Track number order | The playlist's own order, renumber to the current sort. | [Playlist] > Renumber Track Order | Free | Partial: crate order restorable; no renumber | P3 |
 | Search | Incremental search over chosen columns. | Search box | Free | Done (title, artist, genre, comment, folder names) | P0 |
+| Search filtering by rating, colour, My Tag and comment | `rated:4+`, `rated:0`/`rated:none`, `color:red`/`colour:`/`color:none`, `tag:peak`, `comment:word` in the search field, with suggestions from the set store. | Search box | Free | Done | P1 |
 | Search field choice | Pick which columns the search looks in. | Search drop-down | Free | Missing | P3 |
 | Alphabet search | Type letters in the list to jump to titles starting with them. | Track list | Free | Missing | P2 |
 | Collection filter | Tree categories Date Added, Genre, Artist, Album under the collection. | Tree under Collection | Free (registered) | Missing | P2 |

@@ -11,8 +11,8 @@ use dubplate_rekordbox::TrackCues;
 
 use crate::{
     CueSource, EqIntent, GridEdit, Play, PlayId, PlaylistEdit, PlaylistEdited, PlaylistTree,
-    RecordedPlay, Seam, SeamStatus, Set, SetEntry, SetId, SetList, SetStore, StoreError, TrackGrid,
-    TrackIdentity,
+    RecordedPlay, Seam, SeamStatus, Set, SetEntry, SetId, SetList, SetStore, StoreError,
+    TagCategory, TrackGrid, TrackIdentity, TrackMetadata,
 };
 
 /// The name of the set made on first launch.
@@ -291,6 +291,20 @@ impl SetEditor {
     /// The cues the DJ made in Dubplate, by track.
     pub fn track_cues(&self) -> Result<HashMap<TrackIdentity, TrackCues>, StoreError> {
         self.store.track_cues()
+    }
+
+    /// What Dubplate has stored for each of the tracks, in one query; a track with nothing
+    /// stored for it is absent.
+    pub fn track_metadata_many(
+        &self,
+        tracks: &[TrackIdentity],
+    ) -> Result<HashMap<TrackIdentity, TrackMetadata>, StoreError> {
+        self.store.track_metadata_many(tracks)
+    }
+
+    /// The DJ's My Tag categories and their tags in the DJ's order.
+    pub fn tag_categories(&self) -> Result<Vec<TagCategory>, StoreError> {
+        self.store.tag_categories()
     }
 
     /// Keeps `cues` as the whole list of the track `identity`, whose file is at `track_path`.

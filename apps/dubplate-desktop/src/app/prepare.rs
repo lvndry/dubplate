@@ -575,6 +575,9 @@ impl DubplateApp {
         self.request_set_analysis(cx);
         self.request_set_stems();
         self.refresh_prepare_view(cx);
+        if let Some(collection) = self.collection().cloned() {
+            self.refresh_metadata(collection, cx);
+        }
         cx.notify();
     }
 

@@ -49,6 +49,7 @@ mod stems;
 mod tap_tempo;
 mod theme;
 mod track_menu;
+mod track_metadata;
 mod tracklist;
 mod transport;
 mod waveform;
