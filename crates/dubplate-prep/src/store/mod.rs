@@ -663,7 +663,6 @@ impl SetStore {
     }
 }
 
-
 /// Keeps only the newest `max_backups` files in the backups folder, deleting
 /// the oldest by modification time.
 fn trim_backups(backups_folder: &Path, max_backups: usize) -> Result<(), StoreError> {

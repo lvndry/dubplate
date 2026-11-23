@@ -16,7 +16,6 @@ use crate::analysis::{AnalysedGrid, AudioAnalysis, analysis_version, millis_i64}
 use crate::energy::TrackEnergy;
 use crate::loudness::Lufs;
 
-
 use crate::sql::{execute_cached, now_unix_millis, query_row_cached};
 use crate::store::is_inside_rekordbox;
 
