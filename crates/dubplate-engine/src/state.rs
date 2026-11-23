@@ -4,6 +4,7 @@ use std::time::Duration;
 use dubplate_fx::BeatLength;
 
 use crate::deck::DeckId;
+use crate::slicer::{SlicerMode, SlicerSlice};
 use crate::sync::SyncMode;
 use crate::tempo::TempoRange;
 use crate::{DECK_COUNT, EFFECT_UNIT_COUNT};
@@ -29,6 +30,8 @@ pub(crate) struct SharedState {
     pub(crate) stats: SharedStats,
 }
 
+pub(crate) const NO_SLICE: u8 = u8::MAX;
+
 #[derive(Default)]
 pub(crate) struct DeckShared {
     pub(crate) publication: AtomicU64,
@@ -51,6 +54,11 @@ pub(crate) struct DeckShared {
     pub(crate) pending_loop_start_seconds: AtomicF64,
     pub(crate) slip_enabled: AtomicBool,
     pub(crate) slip_shadow_seconds: AtomicF64,
+    pub(crate) slicer_enabled: AtomicBool,
+    pub(crate) slicer_mode: AtomicU8,
+    pub(crate) slicer_domain_start_seconds: AtomicF64,
+    pub(crate) slicer_domain_end_seconds: AtomicF64,
+    pub(crate) slicer_slice: AtomicU8,
     pub(crate) touched: AtomicBool,
     pub(crate) vinyl_mode: AtomicBool,
     pub(crate) peak: AtomicU32,
@@ -140,6 +148,8 @@ impl SharedState {
                 deck.loop_end_seconds.store(f64::NAN);
                 deck.pending_loop_start_seconds.store(f64::NAN);
                 deck.slip_shadow_seconds.store(f64::NAN);
+                deck.slicer_domain_start_seconds.store(f64::NAN);
+                deck.slicer_domain_end_seconds.store(f64::NAN);
                 deck.tempo_range
                     .store(TempoRange::default().index(), Ordering::Relaxed);
                 deck.vinyl_mode.store(true, Ordering::Relaxed);
@@ -350,6 +360,22 @@ pub struct LoopState {
     pub length: Option<BeatLength>,
     /// A loop in point waiting for its loop out, in seconds.
     pub pending_start_seconds: Option<f64>,
+}
+
+/// A deck's slicer, as the audio thread last published it: the range a slicer UI draws and
+/// the slice of it the track is in.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SlicerState {
+    /// The SLICER button: the domain around the playhead is on.
+    pub enabled: bool,
+    /// The slicer's mode, while it is on.
+    pub mode: Option<SlicerMode>,
+    /// Where the domain starts, in seconds from the start of the track, while it is on.
+    pub domain_start_seconds: Option<f64>,
+    /// Where the domain ends, in seconds from the start of the track, while it is on.
+    pub domain_end_seconds: Option<f64>,
+    /// The slice the playhead is in, while it is on and the playhead is in the domain.
+    pub slice: Option<SlicerSlice>,
 }
 
 /// A deck's slip mode, as the audio thread last published it.

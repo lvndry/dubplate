@@ -23,11 +23,12 @@ use crate::recording::{RecordingTap, recording_tap};
 use crate::sampler::{
     DEFAULT_SAMPLER_VOLUME, SAMPLER_SLOTS, SampleSettings, SamplerState, SlotState,
 };
+use crate::slicer::{SlicerDomain, SlicerMode, SlicerRoll, SlicerSlice};
 use crate::smart_cfx::SmartCfx;
 use crate::smart_fader::SmartFaderSource;
 use crate::state::{
-    DeckState, EngineStats, LoopState, Meters, PlatterState, SharedState, SlipState, TempoState,
-    decode_loop_length, take_peak,
+    DeckState, EngineStats, LoopState, Meters, PlatterState, SharedState, SlicerState, SlipState,
+    TempoState, decode_loop_length, take_peak,
 };
 use crate::stems::StemSettings;
 use crate::sync::SyncMode;
@@ -833,6 +834,67 @@ impl Controller {
     /// Lets go of a roll: the deck lands in rhythm where the track would have been.
     pub fn release_roll(&mut self, deck: DeckId) -> Result<(), EngineError> {
         self.send(Command::BeatRoll { deck, length: None })
+    }
+
+    /// Turns the slicer on: the `domain`'s beats around the playhead, from their downbeat,
+    /// go on, cut into 8 slices. The track keeps playing underneath, as in slip, and the
+    /// domain moves forward with the music in `SlicerMode::Slicer` or loops in
+    /// `SlicerMode::SlicerLoop`. Refused without a beat grid.
+    pub fn slicer_on(
+        &mut self,
+        deck: DeckId,
+        mode: SlicerMode,
+        domain: SlicerDomain,
+    ) -> Result<(), EngineError> {
+        if self.beat_grids[deck.index()].is_none() {
+            return Err(EngineError::NoBeatGrid {
+                name: "turn the slicer on",
+            });
+        }
+        self.send(Command::SlicerOn { deck, mode, domain })
+    }
+
+    /// Turns the slicer off: playback returns to where the track is now.
+    pub fn slicer_off(&mut self, deck: DeckId) -> Result<(), EngineError> {
+        self.send(Command::SlicerOff(deck))
+    }
+
+    /// A slicer pad: `pressed` plays slice `slice` from its start, quantized to the next
+    /// slice boundary of the underlying playback, and `roll` repeats its first part while it
+    /// is held. Releasing returns playback to where the track is now.
+    pub fn slicer_pad(
+        &mut self,
+        deck: DeckId,
+        slice: SlicerSlice,
+        pressed: bool,
+        roll: Option<SlicerRoll>,
+    ) -> Result<(), EngineError> {
+        self.send(Command::SlicerPad {
+            deck,
+            slice,
+            pressed,
+            roll,
+        })
+    }
+
+    /// A deck's slicer, as the audio thread last published it.
+    pub fn slicer_state(&self, deck: DeckId) -> SlicerState {
+        let shared = &self.shared.decks[deck.index()];
+        let enabled = shared.slicer_enabled.load(Ordering::Relaxed);
+        let mode = match shared.slicer_mode.load(Ordering::Relaxed) {
+            0 => SlicerMode::Slicer,
+            _ => SlicerMode::SlicerLoop,
+        };
+        let start = shared.slicer_domain_start_seconds.load();
+        let end = shared.slicer_domain_end_seconds.load();
+        SlicerState {
+            enabled,
+            mode: enabled.then_some(mode),
+            domain_start_seconds: (enabled && start.is_finite()).then_some(start),
+            domain_end_seconds: (enabled && end.is_finite()).then_some(end),
+            slice: SlicerSlice::from_index(shared.slicer_slice.load(Ordering::Relaxed))
+                .filter(|_| enabled),
+        }
     }
 
     /// Holds a pad effect on a deck, after its EQ and filter, until released. Holding another
