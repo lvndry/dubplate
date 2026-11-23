@@ -49,6 +49,7 @@ mod stems_strip;
 mod track_actions;
 mod track_check;
 mod track_preview;
+mod track_tags;
 mod usb_export;
 mod waveforms;
 
@@ -1139,6 +1140,9 @@ impl DubplateApp {
             Command::CopySelectedPath => self.copy_selected_path(cx),
             Command::SeparateSelectedStems => self.separate_selected_stems(cx),
             Command::RelinkSelected => self.relink_selected(cx),
+            Command::RateSelected(rating) => self.rate_selected(rating, cx),
+            Command::ColourSelected(colour) => self.colour_selected(colour, cx),
+            Command::ToggleSelectedTag(tag) => self.toggle_selected_tag(tag, cx),
             Command::InstantDouble(deck) => self.instant_double(deck, cx),
             Command::NudgeTempo(deck, direction) => {
                 let slider = nudged_tempo_slider(

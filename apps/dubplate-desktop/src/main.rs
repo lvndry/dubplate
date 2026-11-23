@@ -48,6 +48,7 @@ mod space;
 mod stems;
 mod tap_tempo;
 mod theme;
+mod track_edits;
 mod track_menu;
 mod track_metadata;
 mod tracklist;

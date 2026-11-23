@@ -12,7 +12,7 @@ use dubplate_rekordbox::TrackCues;
 use crate::{
     CueSource, EqIntent, GridEdit, Play, PlayId, PlaylistEdit, PlaylistEdited, PlaylistTree,
     RecordedPlay, Seam, SeamStatus, Set, SetEntry, SetId, SetList, SetStore, StoreError,
-    TagCategory, TrackGrid, TrackIdentity, TrackMetadata,
+    TagCategory, TrackGrid, TrackIdentity, TrackMetadata, TrackTagEdit, TrackTagEdited,
 };
 
 /// The name of the set made on first launch.
@@ -305,6 +305,13 @@ impl SetEditor {
     /// The DJ's My Tag categories and their tags in the DJ's order.
     pub fn tag_categories(&self) -> Result<Vec<TagCategory>, StoreError> {
         self.store.tag_categories()
+    }
+
+    /// Carries out a change to a track's rating, colour, comment or tags, or to the My Tag
+    /// system, in one transaction. Like the cues, it is no edit of the set, so there is no step
+    /// to undo.
+    pub fn edit_track_tags(&mut self, edit: TrackTagEdit) -> Result<TrackTagEdited, StoreError> {
+        self.store.edit_track_tags(edit)
     }
 
     /// Keeps `cues` as the whole list of the track `identity`, whose file is at `track_path`.

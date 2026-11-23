@@ -39,8 +39,8 @@ use crate::search_filter::{
 };
 use crate::stems::{StemStatuses, stems_cell};
 use crate::theme;
-use crate::track_menu::{self, RowFacts, RowPlace};
-use crate::track_metadata::TrackMetadataCache;
+use crate::track_menu::{self, RowFacts, RowPlace, TrackTags};
+use crate::track_metadata::{TrackMetadataCache, colour_name, rating_description, rating_stars};
 use crate::tracklist::TracklistFormat;
 use crate::widgets::{Emphasis, InteractiveControl, button, tooltip};
 
@@ -49,6 +49,12 @@ const SIDEBAR_WIDTH: Pixels = px(200.0);
 const BPM_WIDTH: Pixels = px(72.0);
 const KEY_WIDTH: Pixels = px(56.0);
 const ENERGY_WIDTH: Pixels = px(64.0);
+/// Room for five stars at the table's text size, and for the header with its sort arrow.
+const RATING_WIDTH: Pixels = px(88.0);
+/// Room for the Colour header with its sort arrow.
+const COLOUR_WIDTH: Pixels = px(76.0);
+/// The side of the swatch in the Colour column.
+const SWATCH_SIZE: Pixels = px(14.0);
 const STEMS_WIDTH: Pixels = px(72.0);
 /// What a track without stems offers in the Stems column on hover.
 const SEPARATE_LABEL: &str = "Separate";
@@ -493,6 +499,17 @@ impl Browser {
             Column::Bpm => bpm_cell(entry, self.analysis_state(entry)),
             Column::Key => key_cell(entry, self.analysis_state(entry)),
             Column::Energy => energy_cell(self.analysis_state(entry)),
+            Column::Rating => self
+                .track_metadata
+                .for_track(&entry.identity())
+                .map(|stored| rating_stars(stored.rating).into())
+                .unwrap_or_default(),
+            Column::Colour => self
+                .track_metadata
+                .for_track(&entry.identity())
+                .and_then(|stored| stored.colour)
+                .map(|colour| colour_name(colour).into())
+                .unwrap_or_default(),
             Column::Match => self
                 .track_match(entry)
                 .and_then(|found| found.rank)
@@ -1444,6 +1461,10 @@ impl Browser {
             ),
         };
         let keys = self.table_focus.clone();
+        let menu_tags = TrackTags::new(
+            self.track_metadata.for_track(&entry.identity()),
+            Arc::clone(&self.track_metadata),
+        );
         div()
             .id(("track", position))
             .role(gpui::Role::Row)
@@ -1494,6 +1515,11 @@ impl Browser {
                             .aria_column_index(position + 1)
                             .aria_label(match (column, match_cell) {
                                 (Column::Match, Some(found)) => found.description(played).into(),
+                                (Column::Rating, _) => rating_description(
+                                    u8::try_from(text.chars().count()).unwrap_or(0),
+                                )
+                                .into(),
+                                (Column::Colour, _) if text.is_empty() => "No colour".into(),
                                 _ => text.clone(),
                             });
                         match column {
@@ -1540,6 +1566,25 @@ impl Browser {
                                 .font_family(MONO_FAMILY)
                                 .text_size(theme::SMALL_TEXT_SIZE)
                                 .child(text),
+                            Column::Rating => cell
+                                .text_size(theme::SMALL_TEXT_SIZE)
+                                .text_color(theme::active().text)
+                                .when(!text.is_empty(), |cell| {
+                                    cell.child(div().whitespace_nowrap().child(text.clone()))
+                                }),
+                            Column::Colour => {
+                                let swatch = self
+                                    .track_metadata
+                                    .for_track(&entry.identity())
+                                    .and_then(|stored| stored.colour);
+                                cell.children(swatch.map(|colour| {
+                                    div()
+                                        .size(SWATCH_SIZE)
+                                        .flex_none()
+                                        .rounded(px(3.0))
+                                        .bg(theme::active().track_colour(colour))
+                                }))
+                            }
                             Column::Match => cell.children(match_cell.map(MatchCell::render)),
                             Column::Stems => {
                                 let status = self.stems_status(entry);
@@ -1635,7 +1680,9 @@ impl Browser {
                     this.take_row(track, window, cx);
                 }),
             )
-            .context_menu(move |menu, _, _| track_menu::build(menu, menu_facts, keys.clone()))
+            .context_menu(move |menu, window, cx| {
+                track_menu::build(menu, menu_facts, Some(&menu_tags), keys.clone(), window, cx)
+            })
     }
 
     /// Selects `track` and gives the table the keys, as pressing its row does, before a click
@@ -1678,6 +1725,8 @@ fn column_box(column: Column) -> gpui::Div {
         Column::Bpm => fixed(cell, BPM_WIDTH).justify_end(),
         Column::Key => fixed(cell, KEY_WIDTH),
         Column::Energy => fixed(cell, ENERGY_WIDTH).justify_end(),
+        Column::Rating => fixed(cell, RATING_WIDTH),
+        Column::Colour => fixed(cell, COLOUR_WIDTH),
         Column::Match => fixed(cell, MATCH_WIDTH),
         Column::Stems => fixed(cell, STEMS_WIDTH).justify_end(),
         Column::Time => fixed(cell, TIME_WIDTH).justify_end(),

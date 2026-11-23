@@ -7,7 +7,7 @@ use dubplate_engine::{
     EffectUnitId, SmartCfx, SmartFaderSource, Stem, StemSettings,
 };
 use dubplate_midi::{FaderStart, PadMode};
-use dubplate_prep::GridEdit;
+use dubplate_prep::{GridEdit, TagId, TrackColour};
 
 use crate::controls::Control;
 use crate::pad_fx::{PadFxLayer, PadFxPreset};
@@ -324,6 +324,12 @@ pub enum Command {
     SeparateSelectedStems,
     /// Look for the moved file of the selected track.
     RelinkSelected,
+    /// Give the selected track 0 to 5 stars; 0 takes its rating away.
+    RateSelected(u8),
+    /// Give the selected track a colour label, or take its label away with `None`.
+    ColourSelected(Option<TrackColour>),
+    /// Put one of the DJ's My Tags on the selected track, or take it off when it has it.
+    ToggleSelectedTag(TagId),
     /// Load the track playing on the other deck at the same place, as pressing LOAD twice does.
     InstantDouble(DeckId),
     /// Change a deck's tempo by one step.
