@@ -41,7 +41,8 @@ use dubplate_fx::{MAX_TEMPO_BPM, MIN_TEMPO_BPM};
 const COMMAND_CAPACITY: usize = 1024;
 const RETIRE_CAPACITY: usize = COMMAND_CAPACITY * 4;
 const MAX_TEMPO: f64 = 4.0;
-const MAX_GAIN: f32 = 16.0;
+/// The largest gain a channel's trim or the master takes, about +24 dB.
+pub const MAX_GAIN: f32 = 16.0;
 const MAX_JUMP_BEATS: f64 = 1_024.0;
 const MAX_RECORDING_BUFFER_SECONDS: f64 = 600.0;
 
@@ -1050,7 +1051,7 @@ impl Controller {
         self.send(Command::BeatLoop { deck, length })
     }
 
-    /// Halves the loop from its start, down to a sixteenth of a beat. A playhead past the new
+    /// Halves the loop from its start, down to a thirty-second of a beat. A playhead past the new
     /// end goes back inside it in rhythm.
     pub fn halve_loop(&mut self, deck: DeckId) -> Result<(), EngineError> {
         self.send(Command::HalveLoop(deck))

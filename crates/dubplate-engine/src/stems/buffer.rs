@@ -119,17 +119,14 @@ impl AttachedStems {
 
     /// Adds every stem's frames from `first` on, each times its weight in `weights`, into
     /// `into`: one pass over the frames for all four stems, as the resampling kernel needs.
+    /// The weights are the tap weights of the window that `first` opens, so a window that
+    /// began before the start of the track is passed from where the frames start.
     #[inline]
-    pub(crate) fn accumulate<const TAPS: usize>(
-        &self,
-        first: i64,
-        weights: &[f32; TAPS],
-        into: &mut [f32],
-    ) {
+    pub(crate) fn accumulate(&self, first: i64, weights: &[f32], into: &mut [f32]) {
         let frames = &self.stems.buffer.frames;
         let start = first.clamp(0, frames.len() as i64);
         let end = first
-            .saturating_add(TAPS as i64)
+            .saturating_add(weights.len() as i64)
             .clamp(start, frames.len() as i64);
         let mut sums = [0.0_f32; STEM_CHANNELS];
         for index in start..end {

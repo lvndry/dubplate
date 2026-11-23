@@ -297,6 +297,9 @@ pub struct Renderer {
     smart_fader: bool,
     smart_fader_source: SmartFaderSource,
     smart_bpm: Option<f64>,
+    /// The deck the smart fader's glide is heading from; the glide starts from it, so the
+    /// tempo master changing between blocks must restart it.
+    smart_master: Option<DeckId>,
     fader_echo: bool,
     fader_echoes: [FaderEcho; DECK_COUNT],
     commands: Consumer<QueuedCommand>,
@@ -336,6 +339,7 @@ impl Renderer {
             smart_fader: false,
             smart_fader_source: SmartFaderSource::default(),
             smart_bpm: None,
+            smart_master: None,
             fader_echo: false,
             fader_echoes: std::array::from_fn(|_| FaderEcho::new(sample_rate)),
             commands,
@@ -499,10 +503,10 @@ impl Renderer {
             recording.write(&self.master_block);
         }
         raise_peak(&self.shared.master_peak, self.master_block.peak());
-        raise_peak(
-            &self.shared.master_limiting,
-            1.0 - self.master_limiter.take_gain_reduction(),
-        );
+        // The limiter's gain reduction can overshoot 1.0 by a hair, and the limiting meter
+        // keeps the highest value on the bits, where a negative float reads back huge.
+        let limiting = (1.0 - self.master_limiter.take_gain_reduction()).max(0.0);
+        raise_peak(&self.shared.master_limiting, limiting);
         starved
     }
 
@@ -549,6 +553,13 @@ impl Renderer {
             return;
         };
         let target = shared_bpm(position, left_bpm, right_bpm);
+        // The glide runs from the master's own tempo, and when the master changes between
+        // blocks, it runs from the new master's own tempo, not from where the old glide
+        // got to.
+        if self.smart_master != Some(master) {
+            self.smart_master = Some(master);
+            self.smart_bpm = self.decks[master.index()].bpm();
+        }
         let glide = 1.0
             - (-(frame_count as f64) / (TEMPO_GLIDE_SECONDS * f64::from(self.sample_rate))).exp();
         let bpm = match self.smart_bpm {
@@ -579,9 +590,11 @@ impl Renderer {
         }
     }
 
-    /// Gives the decks back their own tempo and LOW knobs.
+    /// Gives the decks back their own tempo and LOW knobs, and the glide its own master, so
+    /// the next glide starts from where the new master's own tempo is, not from the last one.
     fn rest_smart_fader(&mut self) {
         self.smart_bpm = None;
+        self.smart_master = None;
         for deck in &mut self.decks {
             deck.set_automatic_low(None);
             deck.set_smart_bpm(None);

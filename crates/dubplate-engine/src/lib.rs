@@ -57,7 +57,7 @@ mod voice;
 
 pub use band_waveform::{BAND_COLUMNS_PER_SECOND, BandLevels, three_band_levels};
 pub use channel::ChannelSettings;
-pub use controller::{Controller, DeckSnapshot, offline_engine};
+pub use controller::{Controller, DeckSnapshot, MAX_GAIN, offline_engine};
 pub use cpal;
 pub use crossfader::{ChannelFaderCurve, Crossfader, CrossfaderAssign, CrossfaderCurve};
 pub use curves::{

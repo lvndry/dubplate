@@ -96,10 +96,15 @@ pub(crate) fn master_db_or_default(library: Option<PathBuf>) -> Result<PathBuf> 
     }
 }
 
-fn inspect(master_db: &Path, json: bool, limit: usize) -> Result<()> {
+/// A copy of the library at `master_db`, opened with the user's rekordbox key. rekordbox's
+/// own file is never changed.
+pub(crate) fn open_library(master_db: &Path) -> Result<Library> {
     let key = DatabaseKey::from_user_configuration()?;
-    let library = Library::open_copy(master_db, &key)
-        .with_context(|| format!("reading {}", master_db.display()))?;
+    Library::open_copy(master_db, &key).with_context(|| format!("reading {}", master_db.display()))
+}
+
+fn inspect(master_db: &Path, json: bool, limit: usize) -> Result<()> {
+    let library = open_library(master_db)?;
     let summary = library.summary()?;
     let tracks = library.tracks()?;
     let playlists = library.playlists()?;
@@ -144,9 +149,7 @@ fn inspect(master_db: &Path, json: bool, limit: usize) -> Result<()> {
 }
 
 fn analysis(master_db: &Path, track: &str, json: bool) -> Result<()> {
-    let key = DatabaseKey::from_user_configuration()?;
-    let library = Library::open_copy(master_db, &key)
-        .with_context(|| format!("reading {}", master_db.display()))?;
+    let library = open_library(master_db)?;
     analysis::show(&library, track, json)
 }
 

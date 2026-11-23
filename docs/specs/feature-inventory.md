@@ -51,7 +51,7 @@ Ranked by what stops the owner from playing a club night with Dubplate alone, th
 4. **Grid editing on the decks for every track.** Set the downbeat at the playhead, shift 1 ms, type a BPM, x2 and /2, widen and narrow, edit from here, metronome; saved and exported like track check edits.
 5. **Waveform and overview (done).** Cue point mark, loops and the slip shadow on the lanes, a 3-band overview with hot cues, memory cues, mix cues, loops and phrases, and the end-of-track warning.
 6. **FLX4 Beat FX fixes (in progress).** CH SELECT 1&2 puts the effect on both decks, LEVEL/DEPTH follows the knob from its first report, FX SELECT shows its choice.
-7. **Auto Gain.** Read the gain rekordbox stores for its tracks (djmdMixerParam), measure loudness for folder tracks, and set the trim on load, with a switch in Settings.
+7. **Auto Gain (done).** Read the gain rekordbox stores for its tracks (djmdMixerParam), measure loudness for folder tracks, and set the trim on load, with a switch in Settings.
 8. **Auto cue on load.** Every track loads cued at its first beat (or first audio above -36 to -78 dB, or the nearest memory or hot cue), never at 0:00 in silence.
 9. **History and tracklists (in progress).** Record each play of a minute or more with start time, duration and deck in the play history table that already exists, show a history per session, and export it as TXT, CSV or M3U with timestamps, also beside each recording.
 10. **rekordbox's hot cue colours, names and loops (done).** Use the stored colour (16-colour palette) and comment on the pads, lanes and overview, and start the loop when a hot loop is called.
@@ -231,7 +231,7 @@ Ranked by what stops the owner from playing a club night with Dubplate alone, th
 | Write key to the file | Stores the detected key in the ID3 tag. | Preferences > Analysis > Key Analysis | Free | Missing | P3 |
 | Phrase analysis | Intro, Up, Down, Chorus, Bridge, Verse, Outro with Fill-in marks and a High/Mid/Low mood. | Track analysis | Free | Partial: rekordbox's phrases are read and shown; folder tracks get none | P1 |
 | Vocal detection | AI vocal positions drawn on the overview and scrolling waveform. | Track analysis, Preferences > View > Layout > Vocal | Free | Missing | P2 |
-| Auto gain analysis | Loudness per track for Auto Gain. | Track analysis | Free | Missing | P1 |
+| Auto gain analysis | Loudness per track for Auto Gain. | Track analysis | Free | Done (BS.1770 integrated loudness in the folder-track analysis, cached) | P1 |
 | Energy analysis | Not in rekordbox. | Not in rekordbox | n/a | Done | P1 |
 | Analysis lock | Blocks re-analysis and grid edits; lock icon. | Context menu > Analysis Lock | Free | Partial: Dubplate never overwrites rekordbox's analysis; confirmed grids are kept | P3 |
 | Radar analysis | Uploads data for Track Suggestion's radar. | Preferences > Analysis | Free | Missing | P3 |
@@ -634,7 +634,7 @@ rekordbox does not print its full Beat FX list; these names come from the plan p
 | Feature | What it does | Where in rekordbox | Tier | Dubplate | Priority |
 | --- | --- | --- | --- | --- | --- |
 | Trim | Channel gain before the EQ. | Mixer, FLX4 TRIM | Free (FLX4) | Done | P0 |
-| Auto Gain | Levels every loaded track from its analysed loudness; adjustable in the grid panel. | Preferences > Controller > Mixer | Free | Missing | P0 |
+| Auto Gain | Levels every loaded track from its analysed loudness; adjustable in the grid panel. | Preferences > Controller > Mixer | Free | Partial: rekordbox's stored gain or Dubplate's loudness on load, on top of TRIM, with a switch in Settings; not adjustable per track yet | P0 |
 | 3-band EQ | HI, MID, LOW. | Mixer, FLX4 EQ | Free (FLX4) | Done (isolator: centre flat, left kill, right +6 dB; splits at 250 Hz and 2.5 kHz) | P0 |
 | EQ or isolator | The knobs act as EQ (DJM style, -26 dB) or isolator (full kill). | Preferences > Controller > Mixer > EQ | Free | Partial: isolator only | P2 |
 | EQ type | DJM-900NXS or DJM-900NXS2 curve. | Preferences > Controller > Mixer > EQ | Free | Missing | P3 |

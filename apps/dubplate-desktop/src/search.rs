@@ -109,6 +109,7 @@ mod tests {
             comment: None,
             analysis_path: None,
             date_added: None,
+            auto_gain_db: None,
         }
     }
 

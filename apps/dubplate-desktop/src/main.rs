@@ -5,6 +5,7 @@ mod app;
 mod assets;
 mod audition;
 mod auto_cue;
+mod auto_gain;
 mod browser;
 mod collection;
 mod commands;

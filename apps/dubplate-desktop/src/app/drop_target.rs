@@ -28,7 +28,18 @@ pub(super) fn accept_drops(
             this.load(deck, LoadSource::Collection(dragged.track), cx);
         }))
         .on_drop(cx.listener(move |this, paths: &ExternalPaths, _, cx| {
-            if let Some(path) = paths.paths().first() {
+            let paths = paths.paths();
+            if paths.len() > 1 {
+                this.show_notice(
+                    super::notice::NoticePlace::Window,
+                    format!(
+                        "Only the first of the {} dropped files was loaded, the rest were not",
+                        paths.len()
+                    ),
+                    cx,
+                );
+            }
+            if let Some(path) = paths.first() {
                 this.load(deck, LoadSource::File(path.clone()), cx);
             }
         }))

@@ -156,7 +156,7 @@ pub(crate) fn decode_track(row: &[u8]) -> Result<(DeviceTrack, LibraryId), Devic
         sample_rate: fields.u32(0x08)?,
         sample_depth: fields.u16(0x52)?,
         bitrate: fields.u32(0x30)?,
-        file_size: fields.u32(0x10)?,
+        file_size: fields.u32(0x10)?, // rekordbox keeps a 32-bit size; files over 4 GiB read truncated
         file_type: FileType::from_code(fields.u16(0x5a)?),
         track_number: fields.u32(0x34)?,
         disc_number: fields.u16(0x4c)?,

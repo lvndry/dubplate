@@ -1,5 +1,6 @@
-//! `dubplate analyse`: Dubplate's own analysis of audio files (tempo, beat grid, key and
-//! energy), optionally compared with rekordbox's for the tracks it also holds.
+//! `dubplate analyse`: Dubplate's own analysis of audio files (tempo, beat grid, key, energy
+//! and loudness), optionally compared with rekordbox's for the tracks it also holds, including
+//! the loudness rekordbox's Auto Gain levels them to.
 
 use std::collections::{BTreeMap, HashMap};
 use std::num::NonZeroUsize;
@@ -10,7 +11,9 @@ use std::sync::mpsc::channel;
 use anyhow::{Context, Result, bail};
 use dubplate_library::{is_audio_file, scan_folder};
 use dubplate_prep::{AudioAnalysis, Key, analyse_track};
-use dubplate_rekordbox::{DatabaseKey, Library, Track};
+use dubplate_rekordbox::{Library, Track};
+
+use crate::open_library;
 
 /// Two tempos this close, in BPM, agree.
 const SAME_TEMPO_BPM: f32 = 0.5;
@@ -49,6 +52,7 @@ struct RekordboxReading {
     bpm: Option<f32>,
     key: Option<Key>,
     first_downbeat_ms: Option<u32>,
+    auto_gain_db: Option<f32>,
 }
 
 pub(crate) fn run(arguments: AnalyseArgs) -> Result<()> {
@@ -72,8 +76,8 @@ pub(crate) fn run(arguments: AnalyseArgs) -> Result<()> {
 
     let mut comparison = Comparison::default();
     println!(
-        "{:>7} {:>4} {:>8} {:>3}  {:>7} {:>4} {:>6}  File",
-        "BPM", "Key", "Downbeat", "En", "rb BPM", "rb", "Grid"
+        "{:>7} {:>4} {:>8} {:>3} {:>6}  {:>7} {:>4} {:>6} {:>6}  File",
+        "BPM", "Key", "Downbeat", "En", "LUFS", "rb BPM", "rb", "Grid", "rb AG"
     );
     for track in &analysed {
         let reading = rekordbox
@@ -160,9 +164,7 @@ impl RekordboxReadings {
 
 /// Reads a copy of the library at `master_db` and each track's BPM, key and first downbeat.
 fn rekordbox_readings(master_db: PathBuf) -> Result<RekordboxReadings> {
-    let key = DatabaseKey::from_user_configuration()?;
-    let library = Library::open_copy(&master_db, &key)
-        .with_context(|| format!("reading {}", master_db.display()))?;
+    let library = open_library(&master_db)?;
     let mut readings = RekordboxReadings {
         by_path: HashMap::new(),
         by_name: HashMap::new(),
@@ -195,6 +197,7 @@ fn rekordbox_reading(library: &Library, track: &Track) -> RekordboxReading {
         bpm: track.bpm.map(|bpm| bpm as f32),
         key: track.key.as_deref().and_then(Key::parse_file_key),
         first_downbeat_ms,
+        auto_gain_db: track.auto_gain_db,
     }
 }
 
@@ -212,8 +215,8 @@ fn print_track(track: &Analysed, reading: Option<&RekordboxReading>) {
         Ok(analysis) => analysis,
         Err(error) => {
             println!(
-                "{:>7} {:>4} {:>8} {:>3}  {:>32}  {name}: {error}",
-                "", "", "", "", "failed"
+                "{:>7} {:>4} {:>8} {:>3} {:>6}  {:>33}  {name}: {error}",
+                "", "", "", "", "", "failed"
             );
             return;
         }
@@ -232,7 +235,11 @@ fn print_track(track: &Analysed, reading: Option<&RekordboxReading>) {
         .as_ref()
         .map(|energy| energy.rating.to_string())
         .unwrap_or_default();
-    let (rekordbox_bpm, rekordbox_key, grid) = match reading {
+    let loudness = analysis
+        .loudness
+        .map(|loudness| format!("{:.1}", loudness.0))
+        .unwrap_or_default();
+    let (rekordbox_bpm, rekordbox_key, grid, auto_gain) = match reading {
         Some(reading) => (
             reading
                 .bpm
@@ -242,12 +249,16 @@ fn print_track(track: &Analysed, reading: Option<&RekordboxReading>) {
             grid_agreement(analysis, reading)
                 .map(|agreement| agreement.describe())
                 .unwrap_or_default(),
+            reading
+                .auto_gain_db
+                .map(|gain| format!("{gain:+.1}"))
+                .unwrap_or_default(),
         ),
         None => Default::default(),
     };
     println!(
-        "{bpm:>7} {key:>4} {downbeat:>8} {energy:>3}  {rekordbox_bpm:>7} {rekordbox_key:>4} \
-         {grid:>6}  {name}"
+        "{bpm:>7} {key:>4} {downbeat:>8} {energy:>3} {loudness:>6}  {rekordbox_bpm:>7} \
+         {rekordbox_key:>4} {grid:>6} {auto_gain:>6}  {name}"
     );
 }
 
@@ -274,10 +285,10 @@ impl GridAgreement {
         self.offset_ms.abs() > self.beat_ms / 4.0
     }
 
-    /// Whether the analysed grid's bars start where rekordbox's do: its beats on rekordbox's
-    /// and its downbeat on rekordbox's downbeat.
+    /// Whether the analysed grid's bars start where rekordbox's do: its downbeat on
+    /// rekordbox's downbeat, and its beats on rekordbox's beats.
     fn same_bars(self) -> bool {
-        self.same_downbeat && !self.on_the_off_beat()
+        self.same_downbeat && self.on_the_beat()
     }
 
     fn describe(self) -> String {
@@ -296,9 +307,13 @@ fn grid_agreement(analysis: &AudioAnalysis, reading: &RekordboxReading) -> Optio
     let rekordbox_seconds = f64::from(reading.first_downbeat_ms?) / 1000.0;
     let beats = ((rekordbox_seconds - grid.first_downbeat_seconds) / grid.beat_seconds()).round();
     let nearest_seconds = grid.first_downbeat_seconds + beats * grid.beat_seconds();
+    let offset_ms = (rekordbox_seconds - nearest_seconds) * 1000.0;
     Some(GridAgreement {
-        offset_ms: (rekordbox_seconds - nearest_seconds) * 1000.0,
-        same_downbeat: (beats as i64).rem_euclid(BEATS_PER_BAR) == 0,
+        offset_ms,
+        // A downbeat is the one the analysed grid actually sits on. A grid a whole beat off
+        // is far from its own downbeats, so its nearest beat is not one: the readout shows
+        // the offset without pretending the bars start together.
+        same_downbeat: offset_ms.abs() <= ON_THE_BEAT_MS && beats as i64 % BEATS_PER_BAR == 0,
         beat_ms: grid.beat_seconds() * 1000.0,
     })
 }
@@ -319,6 +334,7 @@ struct Comparison {
     grid_on_the_off_beat: usize,
     grid_same_bars: usize,
     grid_offsets_ms: Vec<f64>,
+    auto_gain_levels: Vec<f32>,
 }
 
 impl Comparison {
@@ -351,6 +367,9 @@ impl Comparison {
             self.grid_on_the_beat += usize::from(agreement.on_the_beat());
             self.grid_on_the_off_beat += usize::from(agreement.on_the_off_beat());
             self.grid_same_bars += usize::from(agreement.same_bars());
+        }
+        if let (Some(loudness), Some(gain)) = (analysis.loudness, reading.auto_gain_db) {
+            self.auto_gain_levels.push(loudness.0 + gain);
         }
     }
 
@@ -399,6 +418,20 @@ impl Comparison {
             "  Same downbeat as rekordbox: {}",
             share(self.grid_same_bars, self.grid_compared)
         );
+        self.auto_gain_levels.sort_by(f32::total_cmp);
+        let percentile = |fraction: f32| {
+            let last = self.auto_gain_levels.len().checked_sub(1)?;
+            let index = (last as f32 * fraction).round() as usize;
+            self.auto_gain_levels.get(index).copied()
+        };
+        match (percentile(0.1), percentile(0.5), percentile(0.9)) {
+            (Some(low), Some(median), Some(high)) => println!(
+                "  rekordbox's Auto Gain levels {} tracks to {median:.1} LUFS as Dubplate \
+                 measures it (80% between {low:.1} and {high:.1})",
+                self.auto_gain_levels.len()
+            ),
+            _ => println!("  rekordbox's Auto Gain: none to compare"),
+        }
     }
 }
 
@@ -524,17 +557,23 @@ mod tests {
             }),
             key: None,
             energy: None,
+            loudness: None,
         };
-        let reading = |first_downbeat_ms| RekordboxReading {
+        let reading = |first_downbeat_ms: u32| RekordboxReading {
             bpm: Some(120.0),
             key: None,
             first_downbeat_ms: Some(first_downbeat_ms),
+            auto_gain_db: None,
         };
         let same = grid_agreement(&analysis, &reading(2_510)).unwrap();
         assert!((same.offset_ms - 10.0).abs() < 1e-6);
         assert!(same.same_bars() && same.on_the_beat());
         let shifted = grid_agreement(&analysis, &reading(1_000)).unwrap();
         assert!(!shifted.same_downbeat && !shifted.same_bars());
+        let whole_beat_off = grid_agreement(&analysis, &reading(3_010)).unwrap();
+        assert!((whole_beat_off.offset_ms - 10.0).abs() < 1e-6);
+        assert!(!whole_beat_off.same_downbeat && !whole_beat_off.same_bars());
+        assert_eq!(whole_beat_off.describe(), "~+10ms");
         let off_beat = grid_agreement(&analysis, &reading(2_750)).unwrap();
         assert!(off_beat.on_the_off_beat() && !off_beat.same_bars());
         let other_tempo = RekordboxReading {

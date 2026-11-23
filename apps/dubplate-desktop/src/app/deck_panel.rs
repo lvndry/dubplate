@@ -1,6 +1,8 @@
 //! A deck: what is loaded, the whole-track waveform, the transport and tempo, and the hot cue
 //! pads.
 
+use std::time::Duration;
+
 use dubplate_engine::{DeckId, SyncMode, TempoState};
 use gpui::prelude::*;
 use gpui::{ClickEvent, Context, FontWeight, MouseButton, Pixels, SharedString, div, px, svg};
@@ -103,7 +105,15 @@ fn title_row(
         && entry
             .and_then(|entry| entry.track.file_path.as_deref())
             .is_some_and(|path| matches!(app.analyses.state(path), AnalysisState::Waiting));
-    let bpm = playing_bpm.map_or_else(|| "--.--".to_owned(), |bpm| format!("{bpm:.2}"));
+    let bend_speed = app
+        .deck(deck)
+        .nudged_at
+        .filter(|at| frame.state.playing && at.elapsed() < BEND_SHOWN)
+        .and_then(|_| app.engine.as_ref().ok())
+        .map(|engine| engine.controller.platter_state(deck).speed);
+    let shown_bpm =
+        playing_bpm.map(|bpm| bend_speed.map_or(bpm, |speed| bent_bpm(bpm, tempo, speed)));
+    let bpm = shown_bpm.map_or_else(|| "--.--".to_owned(), |bpm| format!("{bpm:.2}"));
     let pitch = pitch_label(tempo);
     let ending = frame
         .duration_seconds
@@ -217,10 +227,28 @@ fn title_row(
                         .font_family(crate::fonts::UI_FAMILY)
                         .text_size(px(26.0))
                         .font_weight(FontWeight::MEDIUM)
-                        .text_color(theme::active().text)
+                        .text_color(if bend_speed.is_some() {
+                            theme::deck_colour(deck)
+                        } else {
+                            theme::active().text
+                        })
                         .child(bpm)
                 }),
         )
+}
+
+/// How long the BPM shows the jog's bend after the last nudge: long enough for the bend to
+/// fade back to the set tempo, so the number settles instead of jumping.
+const BEND_SHOWN: Duration = Duration::from_millis(700);
+
+/// The BPM a deck plays at while the jog bends it: `bpm` at the set `tempo`, scaled to the
+/// record's actual `speed`.
+fn bent_bpm(bpm: f64, tempo: f64, speed: f64) -> f64 {
+    if tempo > 0.0 {
+        bpm * speed / tempo
+    } else {
+        bpm
+    }
 }
 
 /// The tempo as a CDJ shows it, to the hundredth of a percent with a true minus sign, so two
@@ -519,5 +547,12 @@ mod tests {
         assert_eq!(pitch_label(1.0125), "+1.25%");
         assert_eq!(pitch_label(0.9998), "\u{2212}0.02%");
         assert_eq!(pitch_label(0.99999), "+0.00%");
+    }
+
+    #[test]
+    fn a_bend_moves_the_bpm_with_the_records_speed() {
+        assert!((bent_bpm(124.0, 1.0, 1.02) - 126.48).abs() < 1e-9);
+        assert!((bent_bpm(126.48, 1.02, 1.0) - 124.0).abs() < 1e-9);
+        assert_eq!(bent_bpm(124.0, 0.0, 1.0), 124.0);
     }
 }

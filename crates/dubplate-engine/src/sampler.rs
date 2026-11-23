@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use crate::curves::{Ramp, channel_fader_gain};
+use crate::looping::{BoundFrame, LoopRegion, advance_and_bound};
 use crate::mixer::RetireQueue;
 use crate::processor::StereoBlock;
 use crate::sync::{MasterBeat, sync_multiple};
@@ -268,7 +269,9 @@ impl Sampler {
                 continue;
             }
             let source_rate = f64::from(track.sample_rate());
-            let end = track.total_frames().map(|frames| frames as f64);
+            let Some(end) = track.total_frames().map(|frames| frames as f64) else {
+                continue;
+            };
             let tempo = match (slot.settings.sync, slot.settings.bpm, master_bpm) {
                 (true, Some(bpm), Some(master)) => master * sync_multiple(master, bpm, true) / bpm,
                 _ => 1.0,
@@ -289,17 +292,31 @@ impl Sampler {
                 if !slot.playing {
                     continue;
                 }
-                slot.voice.position += step;
-                if let Some(end) = end
-                    && slot.voice.position >= end
-                {
-                    match slot.settings.mode {
-                        SampleMode::Loop => slot.voice.position -= end,
-                        SampleMode::OneShot => {
-                            slot.playing = false;
-                            slot.voice.transport.jump_to(0.0);
-                        }
+                let previous = slot.voice.position;
+                // A looping slot plays its sample as a whole-sample loop from its start.
+                let loop_region = (slot.settings.mode == SampleMode::Loop).then_some(LoopRegion {
+                    start: 0.0,
+                    end,
+                    active: true,
+                    length: None,
+                });
+                match advance_and_bound(
+                    &mut slot.voice,
+                    previous,
+                    step,
+                    loop_region.as_ref(),
+                    Some(end),
+                    slot.playing,
+                    retire,
+                ) {
+                    BoundFrame::Wrapped => {
+                        // One frame may run past more than one copy of the loop, at a high
+                        // source to output ratio like 384k down to 48k, so the wrap keeps
+                        // its distance into the loop.
+                        slot.voice.position = (slot.voice.position - end).rem_euclid(end);
                     }
+                    BoundFrame::ReachedEnd => slot.playing = false,
+                    BoundFrame::Within => {}
                 }
             }
         }

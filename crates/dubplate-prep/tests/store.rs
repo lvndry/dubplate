@@ -127,10 +127,7 @@ fn refuses_a_database_newer_than_this_build() {
     let result = SetStore::open(&database_path);
     assert!(matches!(
         result,
-        Err(StoreError::NewerSchema {
-            found: 99,
-            known: 5
-        })
+        Err(StoreError::NewerSchema { found: 99, known }) if known == SetStore::SCHEMA_VERSION
     ));
 }
 

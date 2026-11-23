@@ -15,7 +15,44 @@ use crate::theme;
 use crate::widgets::InteractiveControl;
 
 const ROW_HEIGHT: Pixels = px(22.0);
-const KNOB_SIZE: Pixels = px(18.0);
+
+/// How much room the strip takes: a narrow window tightens it so the whole row, Instrumental
+/// and Acapella included, stays on the deck.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Fit {
+    Full,
+    Compact,
+}
+
+impl Fit {
+    fn gap(self) -> Pixels {
+        match self {
+            Fit::Full => px(6.0),
+            Fit::Compact => px(3.0),
+        }
+    }
+
+    fn knob_size(self) -> Pixels {
+        match self {
+            Fit::Full => px(18.0),
+            Fit::Compact => px(16.0),
+        }
+    }
+
+    fn status_width(self) -> Pixels {
+        match self {
+            Fit::Full => px(84.0),
+            Fit::Compact => px(58.0),
+        }
+    }
+
+    fn toggle_padding(self) -> Pixels {
+        match self {
+            Fit::Full => px(6.0),
+            Fit::Compact => px(4.0),
+        }
+    }
+}
 
 /// The strip of `deck`. Without stems it says where they stand and offers to separate the
 /// track; the toggles wait, dashed, until the stems play.
@@ -28,34 +65,40 @@ pub(super) fn render(
     let playing_stems = app.deck_has_stems(deck);
     let settings = app.deck_stems(deck);
     let status = app.deck_stems_status(deck).clone();
+    let fit = if app.narrow_window() {
+        Fit::Compact
+    } else {
+        Fit::Full
+    };
     div()
         .id(("stems-strip", deck.index()))
         .flex()
         .items_center()
-        .gap(px(6.0))
+        .gap(fit.gap())
         .h(ROW_HEIGHT)
         .font_family(MONO_FAMILY)
         .text_size(theme::TINY_TEXT_SIZE)
-        .child(status_label(app, deck, &status, playing_stems, cx))
+        .child(status_label(app, deck, &status, playing_stems, fit, cx))
         .children(Stem::ALL.map(|stem| {
             div()
                 .flex()
                 .items_center()
-                .gap(px(2.0))
+                .gap(fit.gap() / 3.0)
                 .child(toggle(
                     deck,
-                    ("stem", stem.index()),
+                    ("stem", stem.index(), deck.index()),
                     stem.label(),
                     settings.is_heard(stem),
                     playing_stems,
                     colour,
                     StemAction::Toggle(stem),
+                    fit,
                     cx,
                 ))
                 .child(knob::render(
                     app,
                     Control::StemLevel(deck, stem),
-                    KNOB_SIZE,
+                    fit.knob_size(),
                     colour,
                     cx,
                 ))
@@ -63,22 +106,24 @@ pub(super) fn render(
         .child(div().flex_1())
         .child(toggle(
             deck,
-            ("stems-instrumental", 0),
+            ("stems-instrumental", 4, deck.index()),
             "Inst",
             settings.is_without(Stem::Vocals),
             playing_stems,
             colour,
             StemAction::Instrumental,
+            fit,
             cx,
         ))
         .child(toggle(
             deck,
-            ("stems-acapella", 0),
+            ("stems-acapella", 5, deck.index()),
             "Acap",
             settings.is_solo(Stem::Vocals),
             playing_stems,
             colour,
             StemAction::Acapella,
+            fit,
             cx,
         ))
 }
@@ -89,6 +134,7 @@ fn status_label(
     deck: DeckId,
     status: &StemsStatus,
     playing_stems: bool,
+    fit: Fit,
     cx: &mut Context<'_, DubplateApp>,
 ) -> impl IntoElement + use<> {
     let path = app
@@ -113,7 +159,7 @@ fn status_label(
     };
     div()
         .id(("stems-status", deck.index()))
-        .w(px(84.0))
+        .w(fit.status_width())
         .flex_none()
         .truncate()
         .text_color(theme::active().muted)
@@ -132,17 +178,18 @@ fn status_label(
 #[allow(clippy::too_many_arguments)]
 fn toggle(
     deck: DeckId,
-    id: (&'static str, usize),
+    id: (&'static str, usize, usize),
     label: &'static str,
     on: bool,
     enabled: bool,
     colour: Rgba,
     action: StemAction,
+    fit: Fit,
     cx: &mut Context<'_, DubplateApp>,
 ) -> impl IntoElement + use<> {
     let command = Command::Stems(deck, action);
     div()
-        .id((id.0, deck.index() * 8 + id.1))
+        .id(format!("{0}-{1}-{2}", id.0, id.1, id.2))
         .when(enabled, |button| {
             button.accessible_toggle(
                 format!("Deck {} {label}", crate::deck::deck_letter(deck)),
@@ -152,7 +199,7 @@ fn toggle(
         .flex()
         .items_center()
         .h(ROW_HEIGHT)
-        .px(px(6.0))
+        .px(fit.toggle_padding())
         .rounded(px(5.0))
         .border_1()
         .map(|button| {

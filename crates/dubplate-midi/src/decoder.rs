@@ -20,6 +20,7 @@ pub struct Decoder {
     mapping: Arc<Mapping>,
     most_significant: Box<[U7]>,
     running_status: Option<u8>,
+    in_sysex: bool,
 }
 
 impl Decoder {
@@ -31,6 +32,7 @@ impl Decoder {
             mapping,
             most_significant,
             running_status: None,
+            in_sysex: false,
         }
     }
 
@@ -42,13 +44,26 @@ impl Decoder {
         // stands in for it. As MIDI 1.0 specifies, system exclusive and system common messages
         // cancel running status, and real-time messages leave it alone.
         let message = match bytes {
-            [status, ..] if (0x80..0xF0).contains(status) => {
-                self.running_status = Some(*status);
-                ChannelMessage::parse(bytes)?
-            }
-            [status, ..] if (0xF0..0xF8).contains(status) => {
+            // A system exclusive starts with F0 and ends with F7; both cancel running status.
+            // In between, every byte that is not a real-time message belongs to the sysex,
+            // even when it reaches the decoder in a chunk on its own: none of it may be
+            // mistaken for a channel message.
+            [first, ..] if *first == 0xF0 => {
+                self.in_sysex = true;
                 self.running_status = None;
                 return None;
+            }
+            [first, ..] if *first == 0xF7 => {
+                self.in_sysex = false;
+                return None;
+            }
+            [first, ..] if self.in_sysex && *first < 0xF8 => return None,
+            [status, ..] if (0x80..0xF8).contains(status) => {
+                let message = ChannelMessage::parse(bytes)?;
+                // Only a message that parsed stands as the running status: a malformed one
+                // leaves the last good one in place.
+                self.running_status = Some(*status);
+                message
             }
             [first, second] if *first < 0x80 => {
                 let status = self.running_status?;
@@ -164,6 +179,49 @@ mod tests {
         assert_eq!(decoder.decode(&[0x0C, 0x00]), cue(ButtonState::Released));
         assert_eq!(decoder.decode(&[0xF0, 0x00, 0x40, 0x05, 0xF7]), None);
         assert_eq!(decoder.decode(&[0x0C, 0x7F]), None);
+    }
+
+    #[test]
+    fn a_system_exclusive_split_across_chunks_keeps_its_continuation_out() {
+        let mut decoder =
+            decoder(r#"continuous = [{ control = "crossfader", message = "B6 1F" }]"#);
+        let fader = |value| {
+            Some(ControlEvent {
+                action: Action::Continuous {
+                    control: Continuous::Crossfader,
+                    position: Position::new(U14::from(u7(value))),
+                },
+                layer: Layer::Normal,
+            })
+        };
+        assert_eq!(decoder.decode(&[0xB6, 0x1F, 0x34]), fader(0x34));
+        // A sysex split across chunks: the continuation bytes must not parse as channel
+        // messages, whether they look like data or like a status, and its F7 ends it.
+        assert_eq!(decoder.decode(&[0xF0, 0x00, 0x40]), None);
+        assert_eq!(decoder.decode(&[0x1F, 0x00]), None);
+        assert_eq!(decoder.decode(&[0x90, 0x0C]), None);
+        assert_eq!(decoder.decode(&[0xF7]), None);
+        // After the sysex, channel messages decode again.
+        assert_eq!(decoder.decode(&[0xB6, 0x1F, 0x50]), fader(0x50));
+    }
+
+    #[test]
+    fn a_malformed_channel_message_leaves_the_running_status_alone() {
+        let mut decoder =
+            decoder(r#"continuous = [{ control = "crossfader", message = "B6 1F" }]"#);
+        let fader = |value| {
+            Some(ControlEvent {
+                action: Action::Continuous {
+                    control: Continuous::Crossfader,
+                    position: Position::new(U14::from(u7(value))),
+                },
+                layer: Layer::Normal,
+            })
+        };
+        assert_eq!(decoder.decode(&[0xB6, 0x1F, 0x34]), fader(0x34));
+        // 90 00 80 is not a channel message: it must not become the running status.
+        assert_eq!(decoder.decode(&[0x90, 0x00, 0x80]), None);
+        assert_eq!(decoder.decode(&[0x1F, 0x40]), fader(0x40));
     }
 
     #[test]
