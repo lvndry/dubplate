@@ -149,8 +149,8 @@ impl SetStore {
     }
 
     /// Points what is kept for files that moved at their new places, each keyed by its old
-    /// place: the cues and playlist places of a file rekordbox does not hold move with it, and
-    /// every track's last known file follows.
+    /// place: the cues, playlist places and track metadata of a file rekordbox does not hold
+    /// move with it, and every track's last known file follows.
     pub fn follow_moved_files(
         &mut self,
         moves: &HashMap<PathBuf, PathBuf>,
@@ -162,6 +162,7 @@ impl SetStore {
         for (from, to) in moves {
             move_file_cues(&transaction, from, to)?;
             super::playlists::move_file_tracks(&transaction, from, to)?;
+            super::track_tags::move_file_rows(&transaction, from, to)?;
         }
         transaction.commit()?;
         Ok(())
@@ -221,7 +222,10 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("dubplate.db");
         let connection = Connection::open(&path).unwrap();
-        for migration in &MIGRATIONS[..3] {
+        // Cues arrived in the schema version four before this one, so the file starts where
+        // it did just before that migration.
+        let before_cues = usize::try_from(SCHEMA_VERSION - 4).unwrap();
+        for migration in &MIGRATIONS[..before_cues] {
             connection.execute_batch(migration).unwrap();
         }
         connection
@@ -242,12 +246,13 @@ mod tests {
         let set = store.load_set(SetId(1)).unwrap();
         assert_eq!(set.main_entries().count(), 1);
         assert!(store.track_cues().unwrap().is_empty());
+        let prefix = format!("v{}-", SCHEMA_VERSION - 4);
         let backups = std::fs::read_dir(directory.path().join("backups")).unwrap();
         assert!(
             backups
                 .filter_map(Result::ok)
-                .any(|backup| backup.file_name().to_string_lossy().starts_with("v3-")),
-            "the version 3 file is backed up before the upgrade"
+                .any(|backup| backup.file_name().to_string_lossy().starts_with(&prefix)),
+            "the file from before the cues migration is backed up before the upgrade"
         );
 
         let identity = TrackIdentity::Rekordbox("7".to_owned());
