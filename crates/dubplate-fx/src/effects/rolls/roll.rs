@@ -26,6 +26,7 @@ pub(crate) struct RollKernel {
     recording: [Vec<f32>; 2],
     recorded: usize,
     elapsed: usize,
+    position: usize,
     style: RollStyle,
     beat: BeatLength,
     loop_samples: usize,
@@ -43,6 +44,7 @@ impl RollKernel {
             recording: [vec![0.0; capacity], vec![0.0; capacity]],
             recorded: 0,
             elapsed: 0,
+            position: 0,
             style,
             beat: BeatLength::HALF,
             loop_samples: 2,
@@ -65,6 +67,7 @@ impl RollKernel {
     fn restart(&mut self) {
         self.recorded = 0;
         self.elapsed = 0;
+        self.position = 0;
     }
 
     /// Steps the dip that hides a new loop length: the output fades out, the loop takes its
@@ -77,6 +80,7 @@ impl RollKernel {
             if self.dip <= 0.0 {
                 self.dip = 0.0;
                 self.loop_samples = self.wanted_loop_samples;
+                self.position = self.elapsed % self.loop_samples;
                 self.swapping = false;
                 if self.restarting {
                     self.restart();
@@ -106,7 +110,7 @@ impl Kernel for RollKernel {
         let capacity = self.recording[0].len();
         self.wanted_loop_samples =
             (timing.beats_to_samples(self.beat.beats()).round() as usize).clamp(2, capacity);
-        if !self.swapping {
+        if self.elapsed == 0 && !self.swapping {
             self.loop_samples = self.wanted_loop_samples;
         }
         self.edge_samples = (EDGE_SECONDS * timing.sample_rate).max(1.0);
@@ -115,6 +119,11 @@ impl Kernel for RollKernel {
     #[inline]
     fn tick(&mut self, input: Frame, _beat_position: f64) -> Frame {
         let dip = self.step_dip();
+        // Keep the current cycle intact when the tempo moves. Apply the new length at a
+        // seam, once the recording covers the whole repeat (including for reverse playback).
+        if !self.swapping && self.position == 0 && self.recorded >= self.wanted_loop_samples {
+            self.loop_samples = self.wanted_loop_samples;
+        }
         let capacity = self.recording[0].len();
         if self.recorded < capacity {
             for (channel, sample) in self.recording.iter_mut().zip(input) {
@@ -123,7 +132,8 @@ impl Kernel for RollKernel {
             self.recorded += 1;
         }
         let first_pass = self.elapsed < self.loop_samples;
-        let position = self.elapsed % self.loop_samples;
+        let position = self.position;
+        self.position = (position + 1) % self.loop_samples;
         self.elapsed += 1;
         if first_pass {
             let to_end = (self.loop_samples - 1 - position) as f32;

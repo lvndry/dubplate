@@ -539,6 +539,35 @@ fn mobius_sounds_over_silence_and_enigma_jet_moves_the_sound() {
 }
 
 #[test]
+fn beat_fx_rolls_adopt_a_tempo_change_at_the_next_repeat() {
+    let switch = 60_120;
+    let next_repeat = 3 * BEAT_FRAMES;
+    let new_length = (f64::from(SAMPLE_RATE) * 30.0 / 133.0).round() as usize;
+    for kind in [EffectKind::Roll, EffectKind::SlipRoll, EffectKind::RevRoll] {
+        let mut roll = effect(kind, 1.0);
+        let frames = 4 * BEAT_FRAMES;
+        let mut changed = Stereo::mono(sine(443.0, 0.4, frames));
+        let mut reference = changed.clone();
+        let mut deck = Deck::new(TEMPO_BPM);
+        deck.play_range(roll.as_mut(), &mut changed, 0, switch);
+        deck.tempo_bpm = 133.0;
+        deck.play_range(roll.as_mut(), &mut changed, switch, frames);
+        play(effect(kind, 1.0).as_mut(), &mut reference);
+
+        assert_eq!(
+            &changed.left[switch..next_repeat],
+            &reference.left[switch..next_repeat],
+            "{kind} jumped in the middle of a repeat"
+        );
+        assert_eq!(
+            &changed.left[next_repeat + 500..next_repeat + 1_500],
+            &changed.left[next_repeat + new_length + 500..next_repeat + new_length + 1_500],
+            "{kind} failed to retime the next repeat"
+        );
+    }
+}
+
+#[test]
 fn vinyl_brake_slows_the_music_as_far_as_the_knob_turns() {
     let frequency = 440.0;
     let mut brake = effect(EffectKind::VinylBrake, 0.5);
