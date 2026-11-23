@@ -16,13 +16,18 @@ fn running_pair() -> (Controller, Renderer) {
         (DeckId::A, sine_track(220.0, 0.3, 0.0, 10.0, SAMPLE_RATE)),
         (DeckId::B, sine_track(330.0, 0.0, 0.3, 10.0, SAMPLE_RATE)),
     ] {
-        controller.load_track(deck, track).unwrap();
+        controller.load_track(deck, track).expect("load test tone");
         controller
-            .set_beat_grid(deck, Some(BeatGrid::new(120.0, 0.0).unwrap()))
-            .unwrap();
-        controller.play(deck).unwrap();
+            .set_beat_grid(
+                deck,
+                Some(BeatGrid::new(120.0, 0.0).expect("valid beat grid")),
+            )
+            .expect("set deck grid");
+        controller.play(deck).expect("start test deck");
     }
-    controller.set_crossfader_enabled(false).unwrap();
+    controller
+        .set_crossfader_enabled(false)
+        .expect("bypass crossfader");
     (controller, renderer)
 }
 
