@@ -108,6 +108,12 @@ A notice follows the export track by track and says what it did. In the library,
 
 A stick Dubplate exported to before is added to, and a playlist of the same name is replaced. A stick that already holds a library rekordbox wrote is refused, so nothing on it changes: use another stick, or a folder. Dubplate never replaces or deletes a file it did not write, and never writes inside rekordbox's folders. The CDJ-2000NXS2, CDJ-3000 and XDJs read this library; the newest players that read only rekordbox 7's OneLibrary (CDJ-3000X, XDJ-AZ, OPUS-QUAD) do not yet.
 
+### Import from USB after playing
+
+Open Library settings, choose **Import from USB…**, and select the root of the stick. Select a CDJ history to add it to History under the stick’s name. Importing it again updates the same history. The player records track order but omits the date, deck and play times.
+
+Review the differences between the stick’s cues and the cues currently in your library. Select individual changes, click a track to select all its changes, or choose **Select all cue changes**. **Import selected** saves your choices in Dubplate. The review lists tracks with missing analysis or no unique match. The stick stays read-only.
+
 ## 4. Mix
 
 P plays the track selected in the library in the headphones, from its first memory or hot cue, without loading it: the headphone MIX and LEVEL knobs set how loud, the header shows "Preview" with its title (click to stop), and P again stops it. It never reaches the master or a deck, and stops by itself after 30 seconds.

@@ -65,6 +65,7 @@ pub fn menus(app_name: &'static str, state: MenuState) -> Vec<Menu> {
             MenuItem::action(format!("Quit {app_name}"), crate::Quit),
         ]),
         Menu::new("File").items([
+            perform("Import from USB…", Command::ImportFromUsb),
             perform("Add Music Folders\u{2026}", Command::AddMusicFolders),
             perform("Import rekordbox Collection", Command::ImportRekordbox)
                 .disabled(state.rekordbox_imported),

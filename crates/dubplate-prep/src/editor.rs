@@ -10,9 +10,9 @@ use std::time::Duration;
 use dubplate_rekordbox::TrackCues;
 
 use crate::{
-    CueSource, EqIntent, GridEdit, Play, PlayId, PlaylistEdit, PlaylistEdited, PlaylistTree,
-    RecordedPlay, Seam, SeamStatus, Set, SetEntry, SetId, SetList, SetStore, StoreError,
-    TagCategory, TrackGrid, TrackIdentity, TrackMetadata, TrackTagEdit, TrackTagEdited,
+    CueSource, EqIntent, GridEdit, ImportedHistory, Play, PlayId, PlaylistEdit, PlaylistEdited,
+    PlaylistTree, RecordedPlay, Seam, SeamStatus, Set, SetEntry, SetId, SetList, SetStore,
+    StoreError, TagCategory, TrackGrid, TrackIdentity, TrackMetadata, TrackTagEdit, TrackTagEdited,
 };
 
 /// The name of the set made on first launch.
@@ -378,6 +378,20 @@ impl SetEditor {
     /// Sets how long a recorded play has played in all.
     pub fn set_play_length(&mut self, id: PlayId, played: Duration) -> Result<(), StoreError> {
         self.store.set_play_length(id, played)
+    }
+
+    /// Saves the selected CDJ histories and track cues as one change.
+    pub fn import_usb_selection(
+        &mut self,
+        histories: &[ImportedHistory],
+        tracks: &[(TrackIdentity, Option<PathBuf>, TrackCues)],
+    ) -> Result<Vec<(i64, ImportedHistory)>, StoreError> {
+        self.store.import_usb_selection(histories, tracks)
+    }
+
+    /// Every imported CDJ history.
+    pub fn usb_histories(&self) -> Result<Vec<(i64, ImportedHistory)>, StoreError> {
+        self.store.usb_histories()
     }
 
     /// Every recorded play, newest first.

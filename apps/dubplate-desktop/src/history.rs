@@ -189,6 +189,8 @@ pub enum HistoryPage {
     ThisSession,
     /// The plays of earlier sessions on a day.
     Day(Date),
+    /// A history read back from a player.
+    Usb(i64),
 }
 
 /// One play as the history table shows it.
@@ -238,6 +240,7 @@ pub struct PlayHistory {
     session_started: SystemTime,
     session: Vec<Play>,
     earlier: Vec<Play>,
+    pub imported: Vec<(i64, dubplate_prep::ImportedHistory)>,
 }
 
 impl PlayHistory {
@@ -247,6 +250,7 @@ impl PlayHistory {
             session_started,
             session: Vec::new(),
             earlier: Vec::new(),
+            imported: Vec::new(),
         }
     }
 
@@ -282,6 +286,7 @@ impl PlayHistory {
     /// A page's plays, oldest first.
     pub fn plays(&self, page: HistoryPage, time_zone: &TimeZone) -> Vec<&Play> {
         match page {
+            HistoryPage::Usb(_) => Vec::new(),
             HistoryPage::ThisSession => self.session().collect(),
             HistoryPage::Day(day) => self
                 .earlier
@@ -319,6 +324,23 @@ impl PlayHistory {
                     rows: vec![row],
                 }),
             }
+        }
+        for (id, history) in &self.imported {
+            pages.push(HistoryPageView {
+                page: HistoryPage::Usb(*id),
+                label: history.label.clone().into(),
+                rows: history
+                    .tracks
+                    .iter()
+                    .map(|(artist, title)| HistoryRow {
+                        time: "—".into(),
+                        deck: None,
+                        deck_letter: "CDJ".into(),
+                        title: title.clone().into(),
+                        artist: artist.clone().into(),
+                    })
+                    .collect(),
+            });
         }
         HistoryShelf { pages }
     }

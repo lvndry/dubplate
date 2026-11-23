@@ -130,6 +130,12 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
                 ))
                 .child(section_title("rekordbox"))
                 .child(rekordbox_row(app, cx))
+                .child(
+                    button("import-usb", "Import from USB…", Emphasis::Secondary)
+                        .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                            this.perform(Command::ImportFromUsb, window, cx);
+                        })),
+                )
                 .child(section_title("Decks"))
                 .child(key_lock_row(app, cx))
                 .child(setting_switch(

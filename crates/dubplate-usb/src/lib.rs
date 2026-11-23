@@ -27,10 +27,12 @@ mod library_builder;
 mod request;
 mod stick;
 
+pub use contents::{contents_path, unnumbered_path};
 /// Whether any folder in a path is one of rekordbox's, `Pioneer` or `rekordbox`, in any case:
 /// the same check every file Dubplate writes for itself goes through.
 pub use dubplate_library::is_inside_rekordbox as is_inside_rekordbox_folder;
 pub use error::UsbExportError;
 pub use export::{UsbExportProgress, UsbExportReport, UsbExportStep, export_to_usb, local_today};
+pub use files::same_contents;
 pub use from_set::{analysis_cues, playlists_from_set};
 pub use request::{RekordboxAnalysis, TrackTags, UsbPlaylist, UsbTrack};

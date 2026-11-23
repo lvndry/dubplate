@@ -49,10 +49,10 @@ pub use loudness::{Lufs, integrated_loudness};
 pub use ready::{ReadyProblem, ReadyReport, Severity, TrackReadiness, ready_report};
 pub use session::{SetCompletion, SetJob, SetSession, SetSessionError};
 pub use store::{
-    CueSource, EqIntent, Play, PlayDeck, PlayId, Playlist, PlaylistEdit, PlaylistEdited,
-    PlaylistId, PlaylistKind, PlaylistTrack, PlaylistTree, RecordedPlay, Seam, SeamStatus, Set,
-    SetEntry, SetId, SetList, SetStore, StoreError, Tag, TagCategory, TagCategoryId, TagId,
-    TrackColour, TrackMetadata, TrackTagEdit, TrackTagEdited,
+    CueSource, EqIntent, ImportedHistory, Play, PlayDeck, PlayId, Playlist, PlaylistEdit,
+    PlaylistEdited, PlaylistId, PlaylistKind, PlaylistTrack, PlaylistTree, RecordedPlay, Seam,
+    SeamStatus, Set, SetEntry, SetId, SetList, SetStore, StoreError, Tag, TagCategory,
+    TagCategoryId, TagId, TrackColour, TrackMetadata, TrackTagEdit, TrackTagEdited,
 };
 pub use suggestion::{KeyFit, Suggestion, suggest_next};
 pub use track::PrepTrack;

@@ -12,7 +12,7 @@ const NAME_LIMIT: usize = 120;
 const REPLACEMENT: char = '_';
 
 /// The path players see for a file named `file_name` by `artist` on `album`.
-pub(crate) fn contents_path(artist: Option<&str>, album: Option<&str>, file_name: &str) -> String {
+pub fn contents_path(artist: Option<&str>, album: Option<&str>, file_name: &str) -> String {
     let folder = |name: Option<&str>, unknown: &str| {
         name.map(str::trim)
             .filter(|name| !name.is_empty())
@@ -111,5 +111,36 @@ mod tests {
             numbered("/Contents/A/B/Track", 3),
             "/Contents/A/B/Track (3)"
         );
+    }
+}
+
+/// The original choice for a device path numbered by the exporter after a collision.
+pub fn unnumbered_path(path: &str) -> Option<String> {
+    let (folder, name) = path.rsplit_once('/')?;
+    let (stem, extension) = name
+        .rsplit_once('.')
+        .map_or((name, None), |(stem, ext)| (stem, Some(ext)));
+    let (stem, number) = stem.strip_suffix(')')?.rsplit_once(" (")?;
+    let number = number.parse::<u32>().ok().filter(|number| *number >= 2)?;
+    let candidate = match extension {
+        Some(ext) => format!("{folder}/{stem}.{ext}"),
+        None => format!("{folder}/{stem}"),
+    };
+    (numbered(&candidate, number) == path).then_some(candidate)
+}
+
+#[cfg(test)]
+mod import_tests {
+    use super::*;
+
+    #[test]
+    fn recovers_exporters_collision_paths() {
+        for path in [
+            "/Contents/A/B/song.mp3",
+            "/Contents/A/B/song",
+            "/Contents/A/B/song (2).flac",
+        ] {
+            assert_eq!(unnumbered_path(&numbered(path, 22)).as_deref(), Some(path));
+        }
     }
 }

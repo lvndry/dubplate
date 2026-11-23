@@ -690,10 +690,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("dubplate.db");
         let connection = Connection::open(&path).unwrap();
-        // Playlists arrived two versions before this one, so the file starts where it did
-        // just before that migration.
-        let before_playlists = usize::try_from(SCHEMA_VERSION - 2).unwrap();
-        for migration in &MIGRATIONS[..before_playlists] {
+        for migration in &MIGRATIONS[..5] {
             connection.execute_batch(migration).unwrap();
         }
         connection
@@ -713,12 +710,11 @@ mod tests {
         assert_eq!(version, i64::from(SCHEMA_VERSION));
         assert_eq!(store.load_set(SetId(1)).unwrap().main_entries().count(), 1);
         assert!(store.playlists().unwrap().is_empty());
-        let prefix = format!("v{}-", SCHEMA_VERSION - 2);
         let backups = std::fs::read_dir(directory.path().join("backups")).unwrap();
         assert!(
             backups
                 .filter_map(Result::ok)
-                .any(|backup| backup.file_name().to_string_lossy().starts_with(&prefix)),
+                .any(|backup| backup.file_name().to_string_lossy().starts_with("v5-")),
             "the file from before the playlists migration is backed up before the upgrade"
         );
 

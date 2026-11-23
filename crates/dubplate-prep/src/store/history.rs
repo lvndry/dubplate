@@ -4,9 +4,12 @@
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use dubplate_rekordbox::TrackCues;
 use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ToSql, ToSqlOutput, ValueRef};
+use rusqlite::{Connection, Transaction};
 
-use super::{SetId, SetStore, StoreError};
+use super::{SetId, SetStore, StoreError, cues::write_track_cues};
+use crate::TrackIdentity;
 use crate::sql::execute_cached;
 
 /// Dubplate's identifier for a recorded play.
@@ -87,7 +90,43 @@ pub struct RecordedPlay {
     pub play: Play,
 }
 
+/// A CDJ history. The player stores the order and track ids, without play times.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ImportedHistory {
+    /// The exporting library id.
+    pub library: u32,
+    /// The history id within that library.
+    pub history: u32,
+    /// The stick and history names shown in Dubplate.
+    pub label: String,
+    /// Artist and title in play order.
+    pub tracks: Vec<(String, String)>,
+}
+
 impl SetStore {
+    /// Saves the selected CDJ histories and track cues as one change.
+    pub(crate) fn import_usb_selection(
+        &mut self,
+        histories: &[ImportedHistory],
+        tracks: &[(TrackIdentity, Option<PathBuf>, TrackCues)],
+    ) -> Result<Vec<(i64, ImportedHistory)>, StoreError> {
+        let transaction = self.transaction()?;
+        for history in histories {
+            write_usb_history(&transaction, history)?;
+        }
+        for (identity, path, cues) in tracks {
+            write_track_cues(&transaction, identity, path.as_deref(), cues)?;
+        }
+        let histories = read_usb_histories(&transaction)?;
+        transaction.commit()?;
+        Ok(histories)
+    }
+
+    /// Imported histories, newest first.
+    pub fn usb_histories(&self) -> Result<Vec<(i64, ImportedHistory)>, StoreError> {
+        read_usb_histories(&self.connection)
+    }
+
     /// Records a play and returns its identifier, for its length to be updated as the track
     /// plays on.
     pub fn record_play(&mut self, play: &Play) -> Result<PlayId, StoreError> {
@@ -157,6 +196,41 @@ impl SetStore {
     }
 }
 
+/// Imports or refreshes a history, keeping its database id on repeat imports.
+fn write_usb_history(
+    transaction: &Transaction<'_>,
+    history: &ImportedHistory,
+) -> Result<(), StoreError> {
+    let tracks = serde_json::to_string(&history.tracks)?;
+    execute_cached(
+        transaction,
+        "INSERT INTO usb_history (library, history, label, tracks) VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT(library, history) DO UPDATE SET label = excluded.label, tracks = excluded.tracks",
+        (history.library, history.history, &history.label, tracks),
+    )?;
+    Ok(())
+}
+
+fn read_usb_histories(connection: &Connection) -> Result<Vec<(i64, ImportedHistory)>, StoreError> {
+    let mut statement = connection.prepare_cached(
+        "SELECT id, library, history, label, tracks FROM usb_history ORDER BY id DESC",
+    )?;
+    let mut rows = statement.query([])?;
+    let mut result = Vec::new();
+    while let Some(row) = rows.next()? {
+        result.push((
+            row.get(0)?,
+            ImportedHistory {
+                library: row.get(1)?,
+                history: row.get(2)?,
+                label: row.get(3)?,
+                tracks: serde_json::from_str(&row.get::<_, String>(4)?)?,
+            },
+        ));
+    }
+    Ok(result)
+}
+
 /// `time` as Unix milliseconds, 0 before 1970.
 fn unix_millis(time: SystemTime) -> i64 {
     i64::try_from(dubplate_library::unix_millis(time)).unwrap_or(i64::MAX)
@@ -169,7 +243,156 @@ fn from_unix_millis(millis: i64) -> SystemTime {
 
 #[cfg(test)]
 mod tests {
+    use dubplate_rekordbox::{HotCuePad, MemoryCue};
+
     use super::*;
+    use crate::store::MIGRATIONS;
+
+    #[test]
+    fn version_seven_upgrades_and_retains_existing_history() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("dubplate.db");
+        let connection = Connection::open(&path).unwrap();
+        for migration in &MIGRATIONS[..7] {
+            connection.execute_batch(migration).unwrap();
+        }
+        connection
+            .execute_batch(
+                "INSERT INTO sets (id, name, target_minutes, created_at, updated_at)
+                 VALUES (1, 'Friday', 90, 0, 0);
+                 INSERT INTO play_history (id, set_id, track_path, title, started_at, deck)
+                 VALUES (1, 1, '/sets/local.flac', 'Local track', 1000, 'A');",
+            )
+            .unwrap();
+        drop(connection);
+
+        let store = SetStore::open(&path).unwrap();
+        assert_eq!(store.load_set(SetId(1)).unwrap().name, "Friday");
+        assert!(store.usb_histories().unwrap().is_empty());
+        let plays = store.play_history().unwrap();
+        assert_eq!(plays.len(), 1);
+        assert_eq!(plays[0].play.title, "Local track");
+        assert_eq!(plays[0].play.set, Some(SetId(1)));
+        assert!(
+            directory
+                .path()
+                .join("backups")
+                .read_dir()
+                .unwrap()
+                .filter_map(Result::ok)
+                .any(|backup| backup.file_name().to_string_lossy().starts_with("v7-"))
+        );
+    }
+
+    #[test]
+    fn importing_a_history_again_updates_only_that_librarys_history() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("dubplate.db");
+        let mut store = SetStore::open(&path).unwrap();
+        let mut first = ImportedHistory {
+            library: u32::MAX,
+            history: 1,
+            label: "First".into(),
+            tracks: vec![("Band".into(), "Song".into())],
+        };
+        let first_id = store
+            .import_usb_selection(std::slice::from_ref(&first), &[])
+            .unwrap()[0]
+            .0;
+        let second = ImportedHistory {
+            library: 42,
+            ..first.clone()
+        };
+        let second_id = store
+            .import_usb_selection(std::slice::from_ref(&second), &[])
+            .unwrap()[0]
+            .0;
+        assert_ne!(first_id, second_id);
+        first.label = "Updated".into();
+        first.tracks = vec![
+            ("Band".into(), "Song".into()),
+            ("DJ".into(), "Next".into()),
+            ("Band".into(), "Song".into()),
+        ];
+        for _ in 0..2 {
+            store
+                .import_usb_selection(std::slice::from_ref(&first), &[])
+                .unwrap();
+        }
+        drop(store);
+        let reopened = SetStore::open(&path).unwrap();
+        assert_eq!(
+            reopened.usb_histories().unwrap(),
+            vec![(second_id, second), (first_id, first)]
+        );
+        assert!(reopened.play_history().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_failed_cue_write_rolls_back_the_entire_usb_selection() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("dubplate.db");
+        let mut store = SetStore::open(&path).unwrap();
+        let history = ImportedHistory {
+            library: 42,
+            history: 1,
+            label: "First".into(),
+            tracks: vec![("Band".into(), "Song".into())],
+        };
+        let existing = store
+            .import_usb_selection(std::slice::from_ref(&history), &[])
+            .unwrap();
+        store
+            .connection
+            .execute_batch(
+                "CREATE TRIGGER reject_second_track BEFORE INSERT ON track_cues
+                 WHEN NEW.track_path = '/sets/second.flac'
+                 BEGIN
+                     SELECT RAISE(ABORT, 'cue write failed');
+                 END;",
+            )
+            .unwrap();
+        let changed = ImportedHistory {
+            label: "Updated".into(),
+            ..history
+        };
+        let cues = TrackCues::new(
+            [const { None }; HotCuePad::ALL.len()],
+            vec![MemoryCue {
+                start_ms: 1000,
+                loop_end_ms: None,
+                color: None,
+                name: "Drop".into(),
+            }],
+        );
+        let first = PathBuf::from("/sets/first.flac");
+        let second = PathBuf::from("/sets/second.flac");
+        let changes = [
+            (
+                TrackIdentity::File(first.clone()),
+                Some(first),
+                cues.clone(),
+            ),
+            (TrackIdentity::File(second.clone()), Some(second), cues),
+        ];
+        assert!(
+            store
+                .import_usb_selection(std::slice::from_ref(&changed), &changes)
+                .is_err()
+        );
+        assert_eq!(store.usb_histories().unwrap(), existing);
+        assert!(store.track_cues().unwrap().is_empty());
+
+        store
+            .connection
+            .execute_batch("DROP TRIGGER reject_second_track")
+            .unwrap();
+        let histories = store
+            .import_usb_selection(std::slice::from_ref(&changed), &changes)
+            .unwrap();
+        assert_eq!(histories, vec![(existing[0].0, changed)]);
+        assert_eq!(store.track_cues().unwrap().len(), 2);
+    }
 
     #[test]
     fn deck_letters_are_a_to_d_whatever_the_case() {

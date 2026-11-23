@@ -238,6 +238,13 @@ pub fn stick_histories(root: &Path) -> Result<Vec<History>, StickImportError> {
 /// A track whose analysis files are there but unreadable is left out of the map and listed in
 /// `unreadable()` with the reason, and the other tracks still read.
 pub fn stick_track_cues(root: &Path) -> Result<StickTrackCuesMap, StickImportError> {
+    Ok(stick_catalog_and_cues(root)?.1)
+}
+
+/// Reads the catalog and the cue files it references from a single library snapshot.
+pub fn stick_catalog_and_cues(
+    root: &Path,
+) -> Result<(DeviceLibrary, StickTrackCuesMap), StickImportError> {
     let stick = MountedStick::open(root)?;
     let library = stick_library(&stick.root)?;
     let mut cues = StickTrackCuesMap::default();
@@ -249,7 +256,7 @@ pub fn stick_track_cues(root: &Path) -> Result<StickTrackCuesMap, StickImportErr
             Err(error) => cues.unreadable.push((track.id, error.to_string())),
         }
     }
-    Ok(cues)
+    Ok((library.library, cues))
 }
 
 fn read_stick_track_cues(

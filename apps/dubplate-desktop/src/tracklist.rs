@@ -36,6 +36,24 @@ impl TracklistFormat {
     }
 }
 
+/// A player history in its original order, without invented timestamps.
+pub fn usb_tracklist(history: &dubplate_prep::ImportedHistory, format: TracklistFormat) -> String {
+    let mut text = match format {
+        TracklistFormat::Text => format!("{}\n\n", history.label),
+        TracklistFormat::Csv => String::from("Artist,Title\r\n"),
+    };
+    for (artist, title) in &history.tracks {
+        match format {
+            TracklistFormat::Text if artist.is_empty() => text.push_str(&format!("{title}\n")),
+            TracklistFormat::Text => text.push_str(&format!("{artist} - {title}\n")),
+            TracklistFormat::Csv => {
+                text.push_str(&format!("{},{}\r\n", csv_field(artist), csv_field(title)))
+            }
+        }
+    }
+    text
+}
+
 /// The CSV columns.
 const CSV_HEADER: &str = "Start,Offset,Deck,Artist,Title,Seconds played,File";
 

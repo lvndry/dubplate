@@ -1036,7 +1036,7 @@ impl Browser {
                         let chosen = self.history_page == Some(page);
                         let (name, depth): (SharedString, usize) = match page {
                             HistoryPage::ThisSession => ("History".into(), 0),
-                            HistoryPage::Day(_) => (view.label.clone(), 1),
+                            HistoryPage::Day(_) | HistoryPage::Usb(_) => (view.label.clone(), 1),
                         };
                         sidebar_row(
                             ("history-page", position),
@@ -1065,7 +1065,10 @@ impl Browser {
         let rows = view.map_or(&[][..], |view| view.rows.as_slice());
         let title: SharedString = match (page, view) {
             (HistoryPage::ThisSession, _) => "History, this session".into(),
-            (HistoryPage::Day(_), Some(view)) => format!("History, {}", view.label).into(),
+            (HistoryPage::Usb(_), None) => "CDJ history".into(),
+            (HistoryPage::Day(_) | HistoryPage::Usb(_), Some(view)) => {
+                format!("History, {}", view.label).into()
+            }
             (HistoryPage::Day(day), None) => format!("History, {day}").into(),
         };
         let count = rows.len();

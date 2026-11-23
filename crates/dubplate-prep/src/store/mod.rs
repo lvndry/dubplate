@@ -23,7 +23,7 @@ mod playlists;
 mod track_tags;
 mod types;
 
-pub use history::{Play, PlayDeck, PlayId, RecordedPlay};
+pub use history::{ImportedHistory, Play, PlayDeck, PlayId, RecordedPlay};
 pub use playlists::{
     Playlist, PlaylistEdit, PlaylistEdited, PlaylistId, PlaylistKind, PlaylistTrack, PlaylistTree,
 };
@@ -34,7 +34,7 @@ pub use track_tags::{
 pub use types::{CueSource, EqIntent, Seam, SeamStatus, Set, SetEntry, SetId, SetList};
 
 /// The highest schema version `MIGRATIONS` can bring a database to.
-const SCHEMA_VERSION: u32 = 7;
+const SCHEMA_VERSION: u32 = 8;
 
 /// One migration per schema version, index = target version - 1.
 const MIGRATIONS: &[&str] = &[
@@ -238,6 +238,13 @@ INSERT INTO tag_category (position, name) VALUES (2, 'Situation');
 INSERT INTO tag_category (position, name) VALUES (3, 'Other');
 
 PRAGMA user_version = 7;
+"#,
+    r#"
+CREATE TABLE usb_history (
+    id INTEGER PRIMARY KEY, library INTEGER NOT NULL, history INTEGER NOT NULL,
+    label TEXT NOT NULL, tracks TEXT NOT NULL, UNIQUE(library, history)
+);
+PRAGMA user_version = 8;
 "#,
 ];
 

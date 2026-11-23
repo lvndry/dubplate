@@ -67,7 +67,7 @@ fn finish(result: std::io::Result<()>, partial: &Path, path: &Path) -> Result<()
 }
 
 /// Whether the files at `first` and `second` hold the same bytes.
-pub(crate) fn same_contents(first: &Path, second: &Path) -> Result<bool, UsbExportError> {
+pub fn same_contents(first: &Path, second: &Path) -> Result<bool, UsbExportError> {
     let length = |path: &Path| {
         std::fs::metadata(path)
             .map(|metadata| metadata.len())

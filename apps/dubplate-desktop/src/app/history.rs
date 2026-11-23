@@ -177,13 +177,14 @@ impl DubplateApp {
         let Some(session) = &self.set_editor else {
             return;
         };
-        let job = match session.submit(|editor| editor.play_history()) {
-            Ok(job) => job,
-            Err(error) => {
-                self.report_history_failure(error, cx);
-                return;
-            }
-        };
+        let job =
+            match session.submit(|editor| Ok((editor.play_history()?, editor.usb_histories()?))) {
+                Ok(job) => job,
+                Err(error) => {
+                    self.report_history_failure(error, cx);
+                    return;
+                }
+            };
         cx.spawn(async move |this, cx| {
             let answer = cx
                 .background_executor()
@@ -194,7 +195,8 @@ impl DubplateApp {
                     .map_err(|error| error.to_string())
                     .and_then(|completion| completion.outcome.map_err(|error| error.to_string()))
                 {
-                    Ok(plays) => {
+                    Ok((plays, imported)) => {
+                        this.play_history.imported = imported;
                         this.play_history
                             .restore_earlier(plays.into_iter().map(|recorded| recorded.play));
                         this.history_changed(cx);
@@ -212,7 +214,7 @@ impl DubplateApp {
     }
 
     /// Shows the history as it now stands in the browser.
-    fn history_changed(&mut self, cx: &mut Context<'_, Self>) {
+    pub(super) fn history_changed(&mut self, cx: &mut Context<'_, Self>) {
         let shelf = Arc::new(self.play_history.shelf(&self.time_zone));
         let played: HashSet<PathBuf> = self
             .play_history
@@ -240,20 +242,36 @@ impl DubplateApp {
             }
         }
         let plays = self.play_history.plays(page, &self.time_zone);
-        let Some(first) = plays.first() else {
-            self.show_notice(
-                NoticePlace::Window,
-                "No track has played long enough to be in this history yet.",
-                cx,
+        let (file_name, contents) = if let HistoryPage::Usb(id) = page {
+            let Some((_, history)) = self
+                .play_history
+                .imported
+                .iter()
+                .find(|(key, _)| *key == id)
+            else {
+                return;
+            };
+            (
+                format!("CDJ history.{}", format.extension()),
+                crate::tracklist::usb_tracklist(history, format),
+            )
+        } else {
+            let Some(first) = plays.first() else {
+                self.show_notice(
+                    NoticePlace::Window,
+                    "No track has played long enough to be in this history yet.",
+                    cx,
+                );
+                return;
+            };
+            let file_name = format!(
+                "Dubplate history {}.{}",
+                local_time(first.started_at, &self.time_zone).strftime("%Y-%m-%d %H-%M"),
+                format.extension()
             );
-            return;
+            let contents = tracklist(format, &plays, &self.time_zone);
+            (file_name, contents)
         };
-        let file_name = format!(
-            "Dubplate history {}.{}",
-            local_time(first.started_at, &self.time_zone).strftime("%Y-%m-%d %H-%M"),
-            format.extension()
-        );
-        let contents = tracklist(format, &plays, &self.time_zone);
         let folder = default_export_folder()
             .filter(|folder| std::fs::create_dir_all(folder).is_ok())
             .or_else(dirs::home_dir)

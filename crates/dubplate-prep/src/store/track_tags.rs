@@ -791,7 +791,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("dubplate.db");
         let connection = Connection::open(&path).unwrap();
-        for migration in &MIGRATIONS[..usize::try_from(SCHEMA_VERSION - 1).unwrap()] {
+        for migration in &MIGRATIONS[..6] {
             connection.execute_batch(migration).unwrap();
         }
         connection
@@ -818,12 +818,11 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["Genre", "Components", "Situation", "Other"]
         );
-        let prefix = format!("v{}-", SCHEMA_VERSION - 1);
         let backups = std::fs::read_dir(directory.path().join("backups")).unwrap();
         assert!(
             backups
                 .filter_map(Result::ok)
-                .any(|backup| backup.file_name().to_string_lossy().starts_with(&prefix)),
+                .any(|backup| backup.file_name().to_string_lossy().starts_with("v6-")),
             "the previous version's file is backed up before the upgrade"
         );
     }
