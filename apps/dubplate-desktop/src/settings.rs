@@ -127,8 +127,8 @@ impl Default for AutoCueSetting {
 
 /// The mixer's curves and switches as the DJ left them, by name: `blend`, `constant` or
 /// `scratch` for the crossfader curve, `slow`, `standard` or `fast` for the channel faders,
-/// and `A`, `THRU` or `B` for each deck's crossfader assign, deck A first. A name this
-/// version does not know takes the default.
+/// and `A`, `THRU` or `B` for each deck's crossfader assign, deck A first. Fader start is on
+/// by default, as on the FLX4. A name this version does not know takes the default.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct MixerSetting {
@@ -140,6 +140,9 @@ pub struct MixerSetting {
     pub channel_fader_curve: String,
     /// Each deck's side of the crossfader.
     pub crossfader_assign: [String; DECK_COUNT],
+    /// Whether a channel fader or the crossfader starts its deck as it opens and cues it as
+    /// it closes, rekordbox's Fader Start.
+    pub fader_start: bool,
 }
 
 impl Default for MixerSetting {
@@ -157,6 +160,7 @@ impl MixerSetting {
             crossfader_curve: crossfader.curve.to_string(),
             channel_fader_curve: channel_fader_curve.to_string(),
             crossfader_assign: crossfader.assign.map(|assign| assign.to_string()),
+            fader_start: true,
         }
     }
 
@@ -597,6 +601,7 @@ mod tests {
             crossfader_curve: "wobbly".to_owned(),
             channel_fader_curve: String::new(),
             crossfader_assign: ["left".to_owned(), "right".to_owned()],
+            fader_start: false,
         };
         assert_eq!(unknown.crossfader_curve(), CrossfaderCurve::Blend);
         assert_eq!(unknown.channel_fader_curve(), ChannelFaderCurve::Standard);
