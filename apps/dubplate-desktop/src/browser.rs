@@ -359,35 +359,35 @@ impl Browser {
         cx.notify();
     }
 
-    /// Left and Right in the folder tree, when the cursor is on a folder that has subfolders:
-    /// Right opens it, or steps into it when open; Left closes it, or steps out to the folder
-    /// holding it. Returns whether the key was used.
+    /// Left and Right while the sidebar has the cursor, as in Finder: Right opens a closed
+    /// folder, or steps into an open one; Left closes an open folder, or steps out to the
+    /// folder holding it. The keys never reach the crossfader then, so browsing folders in the
+    /// middle of a set cannot move the mix. Returns whether the key was taken.
     pub fn tree_key(&mut self, direction: Direction, cx: &mut Context<'_, Self>) -> bool {
-        if self.pane != BrowserPane::Crates || self.history_page.is_some() {
-            return false;
-        }
         let LibraryStatus::Ready(collection) = self.library.clone() else {
-            return false;
+            return TreeKey::resolve(self.pane == BrowserPane::Crates, None, direction).is_some();
         };
         let entry = collection.crate_at(self.crate_index);
-        let Some(path) = entry.path.clone() else {
+        let state =
+            (self.history_page.is_none() && entry.kind == CrateKind::MusicFolder).then(|| {
+                TreeNode {
+                    has_subfolders: entry.has_subfolders,
+                    expanded: entry
+                        .path
+                        .as_ref()
+                        .is_some_and(|path| self.expanded_folders.contains(path)),
+                    depth: entry.depth,
+                }
+            });
+        let Some(action) = TreeKey::resolve(self.pane == BrowserPane::Crates, state, direction)
+        else {
             return false;
         };
-        let expanded = self.expanded_folders.contains(&path);
-        match direction {
-            Direction::Up if entry.has_subfolders => {
-                if expanded {
-                    self.move_crate_cursor(1, cx);
-                } else {
-                    self.toggle_folder(self.crate_index, true, cx);
-                }
-                true
-            }
-            Direction::Down if entry.has_subfolders && expanded => {
-                self.toggle_folder(self.crate_index, false, cx);
-                true
-            }
-            Direction::Down if entry.depth > 0 => {
+        match action {
+            TreeKey::Expand => self.toggle_folder(self.crate_index, true, cx),
+            TreeKey::Collapse => self.toggle_folder(self.crate_index, false, cx),
+            TreeKey::FirstChild => self.move_crate_cursor(1, cx),
+            TreeKey::Parent => {
                 let parent = collection
                     .indexed_crates()
                     .take(self.crate_index.position())
@@ -399,10 +399,10 @@ impl Browser {
                 if let Some(parent) = parent {
                     self.choose_crate(parent, cx);
                 }
-                parent.is_some()
             }
-            _ => false,
+            TreeKey::Nothing => {}
         }
+        true
     }
 
     /// Gives the filters what Dubplate has stored for the library's tracks.
@@ -1987,6 +1987,50 @@ fn history_cell(column: HistoryColumn) -> gpui::Div {
 }
 
 /// An entry of the sidebar: a crate, or a page of the history.
+/// Where the cursor stands in the folder tree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TreeNode {
+    has_subfolders: bool,
+    expanded: bool,
+    depth: usize,
+}
+
+/// What Left or Right does in the sidebar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TreeKey {
+    Expand,
+    Collapse,
+    FirstChild,
+    Parent,
+    Nothing,
+}
+
+impl TreeKey {
+    /// What the key does, or `None` when the sidebar does not have the cursor and the key
+    /// belongs to the crossfader. While it has, the key is always taken, even when it does
+    /// nothing. `Up` stands for Right and `Down` for Left, as the crossfader keys do.
+    fn resolve(
+        sidebar_has_cursor: bool,
+        node: Option<TreeNode>,
+        direction: Direction,
+    ) -> Option<Self> {
+        if !sidebar_has_cursor {
+            return None;
+        }
+        let Some(node) = node else {
+            return Some(Self::Nothing);
+        };
+        Some(match direction {
+            Direction::Up if node.has_subfolders && node.expanded => Self::FirstChild,
+            Direction::Up if node.has_subfolders => Self::Expand,
+            Direction::Up => Self::Nothing,
+            Direction::Down if node.has_subfolders && node.expanded => Self::Collapse,
+            Direction::Down if node.depth > 0 => Self::Parent,
+            Direction::Down => Self::Nothing,
+        })
+    }
+}
+
 /// What a sidebar row can carry besides its name and count.
 #[derive(Default)]
 struct RowExtras {
@@ -2475,7 +2519,52 @@ fn message_panel(title: SharedString, detail: Option<SharedString>) -> impl Into
 
 #[cfg(test)]
 mod tests {
-    use super::offset;
+    use super::*;
+
+    #[test]
+    fn left_and_right_in_the_sidebar_never_fall_through_to_the_crossfader() {
+        for has_subfolders in [false, true] {
+            for expanded in [false, true] {
+                for depth in [0, 1, 3] {
+                    for direction in [Direction::Up, Direction::Down] {
+                        let node = TreeNode {
+                            has_subfolders,
+                            expanded: has_subfolders && expanded,
+                            depth,
+                        };
+                        assert!(
+                            TreeKey::resolve(true, Some(node), direction).is_some(),
+                            "{node:?} {direction:?}"
+                        );
+                    }
+                }
+                for direction in [Direction::Up, Direction::Down] {
+                    assert!(TreeKey::resolve(true, None, direction).is_some());
+                }
+            }
+        }
+        assert_eq!(TreeKey::resolve(false, None, Direction::Up), None);
+    }
+
+    #[test]
+    fn the_tree_keys_follow_finder() {
+        let node = |has_subfolders, expanded, depth| {
+            Some(TreeNode {
+                has_subfolders,
+                expanded,
+                depth,
+            })
+        };
+        let right = |node| TreeKey::resolve(true, node, Direction::Up);
+        let left = |node| TreeKey::resolve(true, node, Direction::Down);
+        assert_eq!(left(node(true, true, 1)), Some(TreeKey::Collapse));
+        assert_eq!(left(node(true, false, 1)), Some(TreeKey::Parent));
+        assert_eq!(left(node(false, false, 2)), Some(TreeKey::Parent));
+        assert_eq!(left(node(false, false, 0)), Some(TreeKey::Nothing));
+        assert_eq!(right(node(true, false, 0)), Some(TreeKey::Expand));
+        assert_eq!(right(node(true, true, 0)), Some(TreeKey::FirstChild));
+        assert_eq!(right(node(false, false, 2)), Some(TreeKey::Nothing));
+    }
 
     #[test]
     fn the_cursor_stops_at_the_first_and_last_rows() {
