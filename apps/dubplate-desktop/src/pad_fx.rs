@@ -164,6 +164,7 @@ impl PadSound {
                     | EffectKind::ReverbUp
                     | EffectKind::HpfEcho
                     | EffectKind::LpfEcho
+                    | EffectKind::Noise
                     | EffectKind::CrushEcho
                     | EffectKind::SpiralDown
                     | EffectKind::ReverbDown
@@ -406,6 +407,9 @@ impl PadFxPreset {
         let beats = PadFxSlot::beats;
         let percent = PadFxSlot::percent;
         let effect = PadFxSlot::effect;
+        // Noise is generated into a delay. A short tap needs both a short first tap time
+        // and a ringing release to let the generated burst reach the output.
+        let noise = beats(Kind::Noise, Beat::EIGHTH).at_depth(FULL_DEPTH);
         match self {
             Self::Classic => [
                 roll(Beat::QUARTER),
@@ -434,7 +438,7 @@ impl PadFxPreset {
                 percent(Kind::ReverbDown, 80),
                 effect(Kind::Pitch, semitones(12)).at_depth(1.0),
                 effect(Kind::Pitch, semitones(-12)).at_depth(1.0),
-                beats(Kind::Noise, Beat::FOUR),
+                noise,
                 beats(Kind::CrushEcho, Beat::HALF),
                 percent(Kind::Robot, 0),
                 effect(Kind::EnigmaJet, signed(Beat::FOUR, false)),
@@ -465,7 +469,7 @@ impl PadFxPreset {
                 beats(Kind::MtDelay, Beat::ONE),
                 percent(Kind::ReverbUp, 70),
                 beats(Kind::UpEcho, Beat::HALF),
-                beats(Kind::Noise, Beat::EIGHT),
+                noise,
                 beats(Kind::Filter, Beat::EIGHT),
                 beats(Kind::Helix, Beat::HALF),
                 beats(Kind::SpiralUp, Beat::HALF),
@@ -502,7 +506,7 @@ impl PadFxPreset {
                 beats(Kind::Flanger, Beat::SIXTEEN),
                 percent(Kind::Robot, 0),
                 beats(Kind::CrushEcho, Beat::HALF),
-                beats(Kind::Noise, Beat::FOUR),
+                noise,
                 effect(Kind::EnigmaJet, signed(Beat::EIGHT, false)),
                 effect(Kind::MobiusTriangle, signed(Beat::EIGHT, false)).at_depth(0.4),
                 beats(Kind::Stretch, Beat::TWO),
@@ -721,6 +725,45 @@ mod tests {
                 distinct.len() >= 20,
                 "{preset:?} has only {} sounds",
                 distinct.len()
+            );
+        }
+    }
+
+    #[test]
+    fn each_factory_noise_pad_sounds_on_a_short_tap() {
+        use dubplate_engine::{BeatGrid, DeckId, Track, offline_engine};
+
+        let rate = 24_000;
+        for preset in PadFxPreset::ALL {
+            let slot = preset
+                .slots()
+                .into_iter()
+                .find(|slot| slot.sound == PadSound::Effect(EffectKind::Noise))
+                .expect("factory Noise pad");
+            let PadFx::Effect(pad) = slot.play() else {
+                panic!("expected a beat effect")
+            };
+            let (mut controller, mut renderer) = offline_engine(rate);
+            let track = Track::from_interleaved_stereo(&vec![0.0; rate as usize * 2], rate)
+                .expect("silent track");
+            controller.load_track(DeckId::A, track).expect("load");
+            controller
+                .set_beat_grid(
+                    DeckId::A,
+                    Some(BeatGrid::new(120.0, 0.0).expect("valid grid")),
+                )
+                .expect("set grid");
+            controller.play(DeckId::A).expect("play");
+            controller.hold_pad_effect(DeckId::A, pad).expect("press");
+            // This 40 ms tap ends before a 1/8-beat delay at 120 BPM.
+            let mut pressed = vec![0.0; 960 * 2];
+            renderer.render(&mut pressed, 2);
+            controller.release_pad_effect(DeckId::A).expect("release");
+            let mut released = vec![0.0; 2_880 * 2];
+            renderer.render(&mut released, 2);
+            assert!(
+                released.iter().any(|x| x.abs() > 0.01),
+                "{preset:?} lost the burst"
             );
         }
     }
