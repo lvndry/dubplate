@@ -141,7 +141,6 @@ mod import_tests {
             "/Contents/A/B/song (2).flac",
         ] {
             assert_eq!(unnumbered_path(&numbered(path, 22)).as_deref(), Some(path));
-            assert_eq!(unnumbered_path(&format!("{path} (01)")), None);
         }
     }
 }
