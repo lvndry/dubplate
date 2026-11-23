@@ -434,12 +434,20 @@ impl Deck {
         self.frame_at_beat(target_beat + (playing_beat - target_beat).rem_euclid(1.0))
     }
 
-    /// A hot cue: jumps to `seconds` in rhythm while playing; on a stopped deck, jumps there
+    /// A hot cue: jumps to `seconds` in rhythm while playing, staying inside a loop that is on when
+    /// the cue is inside it; on a stopped deck, jumps there
     /// and starts playing, as on a CDJ.
     pub(crate) fn hot_cue(&mut self, seconds: f64, retire: &mut RetireQueue) {
         let frame = seconds * self.source_rate();
         if self.playing {
-            let target = self.in_phase(frame);
+            let mut target = self.in_phase(frame);
+            if let Some(region) = self
+                .looping
+                .active_loop()
+                .filter(|region| region.contains(frame))
+            {
+                target = region.fold(target);
+            }
             self.jump_to_frame(target, retire);
         } else {
             self.jump_to_frame(frame, retire);
@@ -557,7 +565,7 @@ impl Deck {
         );
     }
 
-    /// Halves the loop from its start, down to a sixteenth of a beat.
+    /// Halves the loop from its start, down to a thirty-second of a beat.
     pub(crate) fn halve_loop(&mut self, retire: &mut RetireQueue) {
         self.resize_loop(BeatLength::halved, 0.5, retire);
     }
@@ -608,16 +616,14 @@ impl Deck {
             }
             return;
         }
-        {
-            let start = region.start;
-            self.start_slipping_loop();
-            let target = if self.playing {
-                self.in_phase(start)
-            } else {
-                start
-            };
-            self.jump_to_frame(target, retire);
-        }
+        let region = *region;
+        self.start_slipping_loop();
+        let target = if self.playing {
+            region.fold(self.in_phase(region.start))
+        } else {
+            region.start
+        };
+        self.jump_to_frame(target, retire);
     }
 
     /// With SLIP on, a loop starts a slip: leaving it lands where the track would have been.
@@ -639,6 +645,18 @@ impl Deck {
         }
     }
 
+    /// Brings a playhead that ran past the end of the loop that is on back inside it in rhythm.
+    fn fold_past_loop_end(&mut self, retire: &mut RetireQueue) {
+        let position = self.voice.position;
+        if let Some(region) = self
+            .looping
+            .active_loop()
+            .filter(|region| position >= region.end)
+        {
+            self.jump_to_frame(region.fold(position), retire);
+        }
+    }
+
     /// A loop roll of `length` while a pad is held: the deck loops on the beat while the track
     /// keeps playing underneath, and `None` lets go, landing in rhythm where the track would
     /// have been. Pressing another length while rolling changes the roll's length.
@@ -655,6 +673,7 @@ impl Deck {
                 if let Some(previous) = self.roll.take() {
                     self.looping.region = previous;
                     self.land(retire);
+                    self.fold_past_loop_end(retire);
                 }
             }
         }
@@ -840,6 +859,12 @@ impl Deck {
         }
     }
 
+    fn going_round_loop(&self) -> bool {
+        self.looping
+            .active_loop()
+            .is_some_and(|region| region.contains(self.voice.position))
+    }
+
     /// Follows the tempo master for the next block: its tempo, and with beat sync its beats.
     pub(crate) fn follow(
         &mut self,
@@ -883,6 +908,7 @@ impl Deck {
                 beats_per_second,
                 self.sync.locked,
             ) {
+                PhaseAction::Jump(_) if self.going_round_loop() => {}
                 PhaseAction::Jump(beats) => {
                     let mut target = grid.seconds_at(beat + beats);
                     if target < 0.0 {

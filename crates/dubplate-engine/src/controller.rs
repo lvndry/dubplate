@@ -1050,7 +1050,7 @@ impl Controller {
         self.send(Command::BeatLoop { deck, length })
     }
 
-    /// Halves the loop from its start, down to a sixteenth of a beat. A playhead past the new
+    /// Halves the loop from its start, down to a thirty-second of a beat. A playhead past the new
     /// end goes back inside it in rhythm.
     pub fn halve_loop(&mut self, deck: DeckId) -> Result<(), EngineError> {
         self.send(Command::HalveLoop(deck))

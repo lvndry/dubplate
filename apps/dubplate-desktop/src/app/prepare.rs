@@ -5,7 +5,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use dubplate_engine::DeckId;
 use dubplate_prep::{
@@ -762,6 +762,10 @@ impl DubplateApp {
         self.prepare_generation += 1;
         let generation = self.prepare_generation;
         let rows = self.set_rows();
+        let was_ready = set_ready(&self.prepare_view.rows);
+        if !self.prepare_view.rows.is_empty() && !was_ready && set_ready(&rows) {
+            self.set_ready_at = Some(Instant::now());
+        }
         let mut view = PrepareViewModel {
             seams: Self::seams(&rows),
             warnings: Self::warnings(&rows),
@@ -1036,6 +1040,11 @@ fn file_title(path: &Path) -> String {
     path.file_stem()
         .map(|stem| stem.to_string_lossy().into_owned())
         .unwrap_or_default()
+}
+
+/// Whether the set has tracks and every one of them is ready to play.
+pub(super) fn set_ready(rows: &[SetRow]) -> bool {
+    !rows.is_empty() && rows.iter().all(|row| row.ready.is_ready())
 }
 
 #[cfg(test)]

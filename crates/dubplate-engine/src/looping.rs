@@ -19,6 +19,10 @@ impl LoopRegion {
         self.end - self.start
     }
 
+    pub(crate) fn contains(&self, frame: f64) -> bool {
+        frame >= self.start && frame < self.end
+    }
+
     /// Where the playhead belongs when one frame took it from `previous` to `position` across
     /// an end of the loop: as far into the loop from the other end. Only a playhead that was
     /// inside the loop goes round, so one entering it from outside plays straight in.

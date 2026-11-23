@@ -25,6 +25,8 @@ pub(super) struct RecordingStatus {
     pub elapsed: Duration,
     /// How much audio was skipped because the disk fell behind.
     pub skipped: Duration,
+    /// About how big the file has grown, in bytes.
+    pub size_bytes: u64,
 }
 
 impl DubplateApp {
@@ -43,6 +45,7 @@ impl DubplateApp {
         Some(RecordingStatus {
             elapsed: recording.elapsed(),
             skipped: self.frames_as_time(recording.dropped_frames()),
+            size_bytes: recording.size_bytes(),
         })
     }
 
