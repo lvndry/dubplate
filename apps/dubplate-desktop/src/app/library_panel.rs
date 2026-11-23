@@ -93,6 +93,25 @@ pub(super) fn render(app: &DubplateApp, cx: &mut Context<'_, DubplateApp>) -> im
                 )
                 .child(section_title("Theme"))
                 .child(theme_picker(cx))
+                .child(section_title("My Tags"))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(12.0))
+                        .child(
+                            button("edit-my-tags", "Edit My Tags\u{2026}", Emphasis::Secondary)
+                                .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                                    this.perform(Command::OpenTagManager, window, cx);
+                                })),
+                        )
+                        .child(
+                            div()
+                                .text_size(theme::SMALL_TEXT_SIZE)
+                                .text_color(theme::active().muted)
+                                .child("Make, rename, reorder and delete your categories and tags."),
+                        ),
+                )
                 .child(section_title("Music folders"))
                 .children(folder_rows)
                 .when(app.sources.folders().is_empty(), |card| {

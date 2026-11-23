@@ -432,6 +432,8 @@ pub enum Command {
     ImportRekordbox,
     /// Look for the files of the tracks that moved, in the music folders.
     RelinkMissingFiles,
+    /// Open the My Tag manager, to make, rename, reorder and delete categories and tags.
+    OpenTagManager,
     /// Open the folder picker to add music folders to the library.
     AddMusicFolders,
     /// Close the help or leave the search field.
