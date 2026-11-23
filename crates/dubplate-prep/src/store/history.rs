@@ -7,6 +7,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ToSql, ToSqlOutput, ValueRef};
 
 use super::{SetId, SetStore, StoreError};
+use crate::sql::execute_cached;
 
 /// Dubplate's identifier for a recorded play.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -91,7 +92,8 @@ impl SetStore {
     /// plays on.
     pub fn record_play(&mut self, play: &Play) -> Result<PlayId, StoreError> {
         let transaction = self.transaction()?;
-        transaction.execute(
+        execute_cached(
+            &transaction,
             "INSERT INTO play_history
                 (set_id, track_path, rekordbox_id, title, artist, started_at, seconds_played, deck)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
@@ -114,7 +116,8 @@ impl SetStore {
     /// Sets how long a recorded play has played in all.
     pub fn set_play_length(&mut self, id: PlayId, played: Duration) -> Result<(), StoreError> {
         let transaction = self.transaction()?;
-        let updated = transaction.execute(
+        let updated = execute_cached(
+            &transaction,
             "UPDATE play_history SET seconds_played = ?2 WHERE id = ?1",
             (id.0, played.as_secs_f64()),
         )?;
@@ -156,9 +159,7 @@ impl SetStore {
 
 /// `time` as Unix milliseconds, 0 before 1970.
 fn unix_millis(time: SystemTime) -> i64 {
-    time.duration_since(UNIX_EPOCH)
-        .map(|since| i64::try_from(since.as_millis()).unwrap_or(i64::MAX))
-        .unwrap_or(0)
+    i64::try_from(dubplate_library::unix_millis(time)).unwrap_or(i64::MAX)
 }
 
 /// Unix milliseconds as a time, 1970 for a negative count.

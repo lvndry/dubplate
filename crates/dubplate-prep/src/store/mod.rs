@@ -14,6 +14,7 @@ use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior};
 use thiserror::Error;
 
 use crate::grid::{GridCorrection, TrackGrid};
+use crate::sql::{execute_cached, now_unix_millis, query_row_cached};
 
 mod cues;
 mod history;
@@ -198,22 +199,9 @@ const MOVE_SENTINEL_POSITION: i64 = 1 << 62;
 /// How many pre-migration backups to keep in the `backups` folder.
 const MAX_BACKUPS: usize = 7;
 
-/// A path component that marks a folder as belonging to rekordbox.
-const REKORDBOX_FOLDER_NAMES: &[&str] = &["Pioneer", "rekordbox"];
-
-/// Whether any component of `path` is a rekordbox folder, as every
-/// Dubplate-owned file is refused inside one.
-pub(crate) fn is_inside_rekordbox(path: &Path) -> bool {
-    path.components().any(|component| {
-        matches!(
-            component,
-            std::path::Component::Normal(name)
-                if REKORDBOX_FOLDER_NAMES
-                    .iter()
-                    .any(|known| name.eq_ignore_ascii_case(known))
-        )
-    })
-}
+/// The one check that keeps every file Dubplate writes out of rekordbox's folders, here for
+/// the set store, the analysis cache and the XML export.
+pub(crate) use dubplate_library::is_inside_rekordbox;
 
 /// Errors opening or using Dubplate's own set database.
 #[derive(Debug, Error)]
@@ -274,6 +262,10 @@ pub struct SetStore {
     database_path: PathBuf,
 }
 
+/// Room for every statement the store runs, so none is compiled again because another pushed
+/// it out of the cache.
+const STATEMENT_CACHE_CAPACITY: usize = 64;
+
 /// The folder next to the database that keeps pre-migration backups.
 const BACKUPS_FOLDER_NAME: &str = "backups";
 
@@ -300,6 +292,7 @@ impl SetStore {
         let mut connection = Connection::open(path)?;
         connection.pragma_update(None, "journal_mode", "wal")?;
         connection.pragma_update(None, "foreign_keys", true)?;
+        connection.set_prepared_statement_cache_capacity(STATEMENT_CACHE_CAPACITY);
 
         let user_version: i64 =
             connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
@@ -359,7 +352,8 @@ impl SetStore {
     pub fn create_set(&mut self, name: &str, target_minutes: u32) -> Result<SetId, StoreError> {
         let transaction = self.transaction()?;
         let timestamp = now_unix_millis();
-        transaction.execute(
+        execute_cached(
+            &transaction,
             "INSERT INTO sets (name, target_minutes, created_at, updated_at) VALUES (?1, ?2, ?3, ?3)",
             (name, target_minutes as i64, timestamp),
         )?;
@@ -380,7 +374,11 @@ impl SetStore {
     /// snapshots. Its plays stay in the history, no longer tied to a set.
     pub fn delete_set(&mut self, set: SetId) -> Result<(), StoreError> {
         let transaction = self.transaction()?;
-        let deleted = transaction.execute("DELETE FROM sets WHERE id = ?1", (set.as_i64(),))?;
+        let deleted = execute_cached(
+            &transaction,
+            "DELETE FROM sets WHERE id = ?1",
+            (set.as_i64(),),
+        )?;
         if deleted == 0 {
             return Err(StoreError::SetNotFound(set));
         }
@@ -390,7 +388,7 @@ impl SetStore {
 
     /// Lists the sets: their id, name and track count.
     pub fn list_sets(&self) -> Result<Vec<(SetId, String, usize)>, StoreError> {
-        let mut statement = self.connection.prepare(
+        let mut statement = self.connection.prepare_cached(
             "SELECT sets.id, sets.name,
                 (SELECT COUNT(*) FROM set_entry WHERE set_entry.set_id = sets.id)
              FROM sets
@@ -409,25 +407,24 @@ impl SetStore {
 
     /// Loads a whole set: its metadata, ordered entries and every stored seam.
     pub fn load_set(&self, set: SetId) -> Result<Set, StoreError> {
-        let (name, target_minutes, created_at, updated_at) = self
-            .connection
-            .query_row(
-                "SELECT name, target_minutes, created_at, updated_at FROM sets WHERE id = ?1",
-                (set.as_i64(),),
-                |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, i64>(1)?,
-                        row.get::<_, i64>(2)?,
-                        row.get::<_, i64>(3)?,
-                    ))
-                },
-            )
-            .optional()?
-            .ok_or(StoreError::SetNotFound(set))?;
+        let (name, target_minutes, created_at, updated_at) = query_row_cached(
+            &self.connection,
+            "SELECT name, target_minutes, created_at, updated_at FROM sets WHERE id = ?1",
+            (set.as_i64(),),
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
+            },
+        )
+        .optional()?
+        .ok_or(StoreError::SetNotFound(set))?;
         let target_minutes = u32::try_from(target_minutes).unwrap_or(0);
 
-        let mut entries_statement = self.connection.prepare(
+        let mut entries_statement = self.connection.prepare_cached(
             "SELECT entry.track_path, entry.rekordbox_id, entry.mix_in_ms, entry.mix_out_ms,
                 entry.cue_source, COALESCE(grid.confirmed, 0), entry.energy_override,
                 entry.vocal_in_ms, entry.vocal_out_ms, entry.note, entry.is_backup,
@@ -440,7 +437,7 @@ impl SetStore {
         let entries = entries_statement
             .query_map((set.as_i64(),), entry_from_row)?
             .collect::<Result<Vec<_>, _>>()?;
-        let mut seams_statement = self.connection.prepare(
+        let mut seams_statement = self.connection.prepare_cached(
             "SELECT from_track_path, to_track_path, overlap_bars, eq_intent, status, note
              FROM seam WHERE set_id = ?1
              ORDER BY from_track_path, to_track_path",
@@ -467,18 +464,24 @@ impl SetStore {
     pub fn replace_set(&mut self, set: &Set) -> Result<Set, StoreError> {
         let mut transaction = self.transaction()?;
         let updated_at = now_unix_millis();
-        let changed = transaction.execute(
+        let changed = execute_cached(
+            &transaction,
             "UPDATE sets SET name = ?2, target_minutes = ?3, updated_at = ?4 WHERE id = ?1",
             (set.id.as_i64(), &set.name, set.target_minutes, updated_at),
         )?;
         if changed == 0 {
             return Err(StoreError::SetNotFound(set.id));
         }
-        transaction.execute(
+        execute_cached(
+            &transaction,
             "DELETE FROM set_entry WHERE set_id = ?1",
             (set.id.as_i64(),),
         )?;
-        transaction.execute("DELETE FROM seam WHERE set_id = ?1", (set.id.as_i64(),))?;
+        execute_cached(
+            &transaction,
+            "DELETE FROM seam WHERE set_id = ?1",
+            (set.id.as_i64(),),
+        )?;
         for list in [SetList::Main, SetList::Backups] {
             for (position, entry) in set
                 .entries
@@ -493,7 +496,8 @@ impl SetStore {
         for seam in &set.seams {
             set_seam_row(&mut transaction, set.id, seam)?;
         }
-        let created_at = transaction.query_row(
+        let created_at = query_row_cached(
+            &transaction,
             "SELECT created_at FROM sets WHERE id = ?1",
             (set.id.as_i64(),),
             |row| row.get(0),
@@ -543,18 +547,30 @@ impl SetStore {
         }
         touch_set(&mut transaction, set)?;
 
-        transaction.execute(
+        execute_cached(
+            &transaction,
             "UPDATE set_entry SET position = ?4 WHERE set_id = ?1 AND is_backup = ?3 AND position = ?2",
-            (set.as_i64(), from as i64, list.is_backup(), MOVE_SENTINEL_POSITION),
+            (
+                set.as_i64(),
+                from as i64,
+                list.is_backup(),
+                MOVE_SENTINEL_POSITION,
+            ),
         )?;
         if from < to {
             shift_entry_positions(&mut transaction, set, list, from + 1, to + 1, -1)?;
         } else {
             shift_entry_positions(&mut transaction, set, list, to, from, 1)?;
         }
-        transaction.execute(
+        execute_cached(
+            &transaction,
             "UPDATE set_entry SET position = ?4 WHERE set_id = ?1 AND is_backup = ?3 AND position = ?2",
-            (set.as_i64(), MOVE_SENTINEL_POSITION, list.is_backup(), to as i64),
+            (
+                set.as_i64(),
+                MOVE_SENTINEL_POSITION,
+                list.is_backup(),
+                to as i64,
+            ),
         )?;
         transaction.commit()?;
         Ok(())
@@ -573,7 +589,8 @@ impl SetStore {
             return Err(StoreError::PositionNotFound(position));
         }
         touch_set(&mut transaction, set)?;
-        transaction.execute(
+        execute_cached(
+            &transaction,
             "DELETE FROM set_entry WHERE set_id = ?1 AND is_backup = ?2 AND position = ?3",
             (set.as_i64(), list.is_backup(), position as i64),
         )?;
@@ -595,7 +612,8 @@ impl SetStore {
             return Err(StoreError::PositionNotFound(position));
         }
         touch_set(&mut transaction, set)?;
-        transaction.execute(
+        execute_cached(
+            &transaction,
             "UPDATE set_entry
              SET track_path = ?3, rekordbox_id = ?4, mix_in_ms = ?5, mix_out_ms = ?6, cue_source = ?7,
                  grid_confirmed = ?8, energy_override = ?9, vocal_in_ms = ?10,
@@ -629,9 +647,9 @@ impl SetStore {
     /// Every track's grid fix, by its file: the one place a track's grid correction and its
     /// confirmation are kept, whatever set or deck changed them.
     pub fn track_grids(&self) -> Result<HashMap<PathBuf, TrackGrid>, StoreError> {
-        let mut statement = self
-            .connection
-            .prepare("SELECT track_path, offset_ms, downbeat_shift, confirmed FROM track_grid")?;
+        let mut statement = self.connection.prepare_cached(
+            "SELECT track_path, offset_ms, downbeat_shift, confirmed FROM track_grid",
+        )?;
         let grids = statement
             .query_map([], |row| {
                 let confirmed: i64 = row.get(3)?;
@@ -674,7 +692,8 @@ impl SetStore {
         let json = serde_json::to_string(&loaded)?;
         let mut transaction = self.transaction()?;
         touch_set(&mut transaction, set)?;
-        transaction.execute(
+        execute_cached(
+            &transaction,
             "INSERT INTO set_revision (set_id, saved_at, reason, json) VALUES (?1, ?2, ?3, ?4)",
             (set.as_i64(), now_unix_millis(), reason, json),
         )?;
@@ -688,14 +707,6 @@ impl SetStore {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?)
     }
-}
-
-/// The current time as Unix milliseconds.
-fn now_unix_millis() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_millis().min(i64::MAX as u128) as i64)
-        .unwrap_or(0)
 }
 
 /// Keeps only the newest `max_backups` files in the backups folder, deleting
@@ -718,7 +729,8 @@ fn trim_backups(backups_folder: &Path, max_backups: usize) -> Result<(), StoreEr
 
 /// Refreshes a set's `updated_at`, failing if the set is gone.
 fn touch_set(transaction: &mut Transaction<'_>, set: SetId) -> Result<(), StoreError> {
-    let deleted = transaction.execute(
+    let deleted = execute_cached(
+        transaction,
         "UPDATE sets SET updated_at = ?2 WHERE id = ?1",
         (set.as_i64(), now_unix_millis()),
     )?;
@@ -734,7 +746,8 @@ fn update_set_name(
     set: SetId,
     name: &str,
 ) -> Result<(), StoreError> {
-    let updated = transaction.execute(
+    let updated = execute_cached(
+        transaction,
         "UPDATE sets SET name = ?2, updated_at = ?3 WHERE id = ?1",
         (set.as_i64(), name, now_unix_millis()),
     )?;
@@ -751,7 +764,8 @@ fn entry_at(
     list: SetList,
     position: usize,
 ) -> Result<usize, StoreError> {
-    let count: i64 = transaction.query_row(
+    let count: i64 = query_row_cached(
+        transaction,
         "SELECT COUNT(*) FROM set_entry
          WHERE set_id = ?1 AND is_backup = ?2 AND position = ?3",
         (set.as_i64(), list.is_backup(), position as i64),
@@ -778,12 +792,14 @@ fn shift_entry_positions(
     // SQLite checks a unique index row by row during an UPDATE, so shifting in place collides
     // with the neighbour not yet moved. The rows go to negative positions first, where no
     // entry sits, then back.
-    transaction.execute(
+    execute_cached(
+        transaction,
         "UPDATE set_entry SET position = -(position + ?5) - 1
          WHERE set_id = ?1 AND is_backup = ?2 AND position >= ?3 AND position < ?4",
         (set.as_i64(), list.is_backup(), start as i64, end, delta),
     )?;
-    transaction.execute(
+    execute_cached(
+        transaction,
         "UPDATE set_entry SET position = -position - 1
          WHERE set_id = ?1 AND is_backup = ?2 AND position < 0",
         (set.as_i64(), list.is_backup()),
@@ -797,7 +813,8 @@ fn upsert_track_grid(
     path: &Path,
     grid: TrackGrid,
 ) -> Result<(), StoreError> {
-    transaction.execute(
+    execute_cached(
+        transaction,
         "INSERT INTO track_grid (track_path, offset_ms, downbeat_shift, confirmed)
          VALUES (?1, ?2, ?3, ?4)
          ON CONFLICT (track_path) DO UPDATE SET
@@ -823,7 +840,8 @@ fn insert_entry_row(
     position: usize,
     entry: &SetEntry,
 ) -> Result<(), StoreError> {
-    transaction.execute(
+    execute_cached(
+        transaction,
         "INSERT INTO set_entry
             (set_id, position, track_path, rekordbox_id, mix_in_ms, mix_out_ms, cue_source,
              grid_confirmed, energy_override, vocal_in_ms, vocal_out_ms, note, is_backup,
@@ -858,7 +876,8 @@ fn set_seam_row(
     set: SetId,
     seam: &Seam,
 ) -> Result<(), StoreError> {
-    transaction.execute(
+    execute_cached(
+            transaction,
         "INSERT INTO seam (set_id, from_track_path, to_track_path, overlap_bars, eq_intent, status, note)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
          ON CONFLICT (set_id, from_track_path, to_track_path) DO UPDATE SET

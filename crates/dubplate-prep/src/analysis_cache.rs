@@ -14,13 +14,18 @@ use thiserror::Error;
 
 use crate::analysis::{AnalysedGrid, AudioAnalysis, analysis_version};
 use crate::energy::TrackEnergy;
+use crate::loudness::Lufs;
+use dubplate_library::unix_millis;
+
+use crate::sql::{execute_cached, now_unix_millis, query_row_cached};
 use crate::store::is_inside_rekordbox;
 
 /// The highest schema version the cache can bring a database to.
-const SCHEMA_VERSION: u32 = 1;
+const SCHEMA_VERSION: u32 = 2;
 
 /// One migration per schema version, index = target version - 1.
-const MIGRATIONS: &[&str] = &[r#"
+const MIGRATIONS: &[&str] = &[
+    r#"
 CREATE TABLE analysis (
     track_path TEXT PRIMARY KEY,
     file_size INTEGER NOT NULL,
@@ -38,11 +43,22 @@ CREATE TABLE analysis (
 );
 
 PRAGMA user_version = 1;
-"#];
+"#,
+    r#"
+ALTER TABLE analysis ADD COLUMN loudness_lufs REAL;
+
+PRAGMA user_version = 2;
+"#,
+];
 
 /// The columns a cached analysis is read back from, in the order [`analysis_columns_of_row`] reads them.
-const ANALYSIS_COLUMNS: &str = "duration_seconds, bpm, grid_bpm, grid_first_downbeat_seconds, \
-                                camelot_key, energy_rating, energy_score, energy_curve_json";
+/// The cached analysis of a file, when it was made from the file as it is now by the analysis
+/// version in use.
+const SELECT_FRESH_ANALYSIS: &str = "SELECT duration_seconds, bpm, grid_bpm, \
+    grid_first_downbeat_seconds, camelot_key, energy_rating, energy_score, energy_curve_json,
+    loudness_lufs
+    FROM analysis
+    WHERE track_path = ?1 AND file_size = ?2 AND modified_ms = ?3 AND analysis_version = ?4";
 
 /// Errors opening or using Dubplate's analysis cache.
 #[derive(Debug, Error)]
@@ -130,18 +146,13 @@ impl AnalysisCache {
         let Some((file_size, modified_ms)) = file_fingerprint(path)? else {
             return Ok(None);
         };
-        let row = self
-            .connection
-            .query_row(
-                &format!(
-                    "SELECT {ANALYSIS_COLUMNS} FROM analysis
-                     WHERE track_path = ?1 AND file_size = ?2 AND modified_ms = ?3
-                       AND analysis_version = ?4"
-                ),
-                params![path.to_string_lossy(), file_size, modified_ms, self.version],
-                analysis_columns_of_row,
-            )
-            .optional()?;
+        let row = query_row_cached(
+            &self.connection,
+            SELECT_FRESH_ANALYSIS,
+            params![path.to_string_lossy(), file_size, modified_ms, self.version],
+            analysis_columns_of_row,
+        )
+        .optional()?;
         row.map(analysis_of_columns).transpose()
     }
 
@@ -155,11 +166,12 @@ impl AnalysisCache {
         let curve_json = energy
             .map(|energy| serde_json::to_string(&energy.curve))
             .transpose()?;
-        self.connection.execute(
+        execute_cached(
+            &self.connection,
             "INSERT INTO analysis (track_path, file_size, modified_ms, analysis_version,
                  duration_seconds, bpm, grid_bpm, grid_first_downbeat_seconds, camelot_key,
-                 energy_rating, energy_score, energy_curve_json, analysed_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+                 energy_rating, energy_score, energy_curve_json, loudness_lufs, analysed_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
              ON CONFLICT (track_path) DO UPDATE SET
                  file_size = excluded.file_size,
                  modified_ms = excluded.modified_ms,
@@ -172,6 +184,7 @@ impl AnalysisCache {
                  energy_rating = excluded.energy_rating,
                  energy_score = excluded.energy_score,
                  energy_curve_json = excluded.energy_curve_json,
+                 loudness_lufs = excluded.loudness_lufs,
                  analysed_at = excluded.analysed_at",
             params![
                 path.to_string_lossy(),
@@ -186,6 +199,7 @@ impl AnalysisCache {
                 energy.map(|energy| energy.rating),
                 energy.map(|energy| f64::from(energy.score)),
                 curve_json,
+                analysis.loudness.map(|loudness| f64::from(loudness.0)),
                 now_unix_millis(),
             ],
         )?;
@@ -194,7 +208,8 @@ impl AnalysisCache {
 
     /// Forgets the file at `path`, so it is analysed again next time it is asked.
     pub fn forget(&mut self, path: &Path) -> Result<(), AnalysisCacheError> {
-        self.connection.execute(
+        execute_cached(
+            &self.connection,
             "DELETE FROM analysis WHERE track_path = ?1",
             params![path.to_string_lossy()],
         )?;
@@ -212,6 +227,7 @@ struct AnalysisColumns {
     energy_rating: Option<u8>,
     energy_score: Option<f64>,
     energy_curve_json: Option<String>,
+    loudness_lufs: Option<f64>,
 }
 
 fn analysis_columns_of_row(row: &Row<'_>) -> rusqlite::Result<AnalysisColumns> {
@@ -224,6 +240,7 @@ fn analysis_columns_of_row(row: &Row<'_>) -> rusqlite::Result<AnalysisColumns> {
         energy_rating: row.get(5)?,
         energy_score: row.get(6)?,
         energy_curve_json: row.get(7)?,
+        loudness_lufs: row.get(8)?,
     })
 }
 
@@ -253,15 +270,8 @@ fn analysis_of_columns(columns: AnalysisColumns) -> Result<AudioAnalysis, Analys
         beat_grid,
         key: columns.camelot_key.as_deref().and_then(Key::parse_file_key),
         energy,
+        loudness: columns.loudness_lufs.map(|lufs| Lufs(lufs as f32)),
     })
-}
-
-/// The current time as Unix milliseconds.
-fn now_unix_millis() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_millis().min(i64::MAX as u128) as i64)
-        .unwrap_or(0)
 }
 
 /// The file's current size and modification time in milliseconds, or None when it has no
@@ -271,10 +281,6 @@ fn file_fingerprint(path: &Path) -> Result<Option<(i64, i64)>, AnalysisCacheErro
         return Ok(None);
     };
     let size = i64::try_from(metadata.len()).unwrap_or(i64::MAX);
-    let modified = metadata
-        .modified()?
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_millis().min(i64::MAX as u128) as i64)
-        .unwrap_or(0);
+    let modified = i64::try_from(unix_millis(metadata.modified()?)).unwrap_or(i64::MAX);
     Ok(Some((size, modified)))
 }

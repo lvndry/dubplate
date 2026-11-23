@@ -244,7 +244,7 @@ impl SetStore {
     pub fn playlists(&self) -> Result<PlaylistTree, StoreError> {
         let rows: Vec<PlaylistRow> = self
             .connection
-            .prepare(
+            .prepare_cached(
                 "SELECT id, parent_id, name, kind FROM playlist ORDER BY parent_id, position, id",
             )?
             .query_map([], |row| {
@@ -268,7 +268,7 @@ impl SetStore {
             })
             .collect::<Result<_, _>>()?;
         let mut tracks: HashMap<PlaylistId, Vec<PlaylistTrack>> = HashMap::new();
-        let mut statement = self.connection.prepare(
+        let mut statement = self.connection.prepare_cached(
             "SELECT playlist_id, identity_kind, identity, track_path FROM playlist_track
              ORDER BY playlist_id, position",
         )?;
@@ -493,7 +493,7 @@ fn playlist_tracks(
     transaction: &Transaction<'_>,
     playlist: PlaylistId,
 ) -> Result<Vec<PlaylistTrack>, StoreError> {
-    let mut statement = transaction.prepare(
+    let mut statement = transaction.prepare_cached(
         "SELECT identity_kind, identity, track_path FROM playlist_track
          WHERE playlist_id = ?1 ORDER BY position",
     )?;
@@ -564,7 +564,7 @@ fn sibling_ids(
     parent: Option<PlaylistId>,
 ) -> Result<Vec<PlaylistId>, StoreError> {
     let mut statement = transaction
-        .prepare("SELECT id FROM playlist WHERE parent_id IS ?1 ORDER BY position, id")?;
+        .prepare_cached("SELECT id FROM playlist WHERE parent_id IS ?1 ORDER BY position, id")?;
     let ids = statement
         .query_map((parent.map(|folder| folder.0),), |row| {
             Ok(PlaylistId(row.get(0)?))
@@ -578,7 +578,8 @@ fn write_sibling_order(
     transaction: &Transaction<'_>,
     siblings: &[PlaylistId],
 ) -> Result<(), StoreError> {
-    let mut update = transaction.prepare("UPDATE playlist SET position = ?2 WHERE id = ?1")?;
+    let mut update =
+        transaction.prepare_cached("UPDATE playlist SET position = ?2 WHERE id = ?1")?;
     for (position, sibling) in siblings.iter().enumerate() {
         update.execute((sibling.0, position as i64))?;
     }
@@ -652,7 +653,7 @@ pub(super) fn move_file_tracks(
     let (kind, from_key) = moved.storage_key();
     let to_key = to.to_string_lossy();
     let playlists: Vec<i64> = transaction
-        .prepare(
+        .prepare_cached(
             "SELECT DISTINCT playlist_id FROM playlist_track
              WHERE identity_kind = ?1 AND identity = ?2",
         )?
