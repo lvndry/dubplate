@@ -1166,6 +1166,7 @@ impl DubplateApp {
                 }
             }
             Command::Pad(press) => self.press_pad(press, cx),
+            Command::EmptySamplerSlot(slot) => self.empty_sampler_slot(slot, cx),
             Command::LoadBuiltInSample(slot, sound) => self.load_built_in_sample(slot, sound, cx),
             Command::ControllerPadMode(deck, mode) => {
                 self.controller_pad_modes[deck.index()] = mode;

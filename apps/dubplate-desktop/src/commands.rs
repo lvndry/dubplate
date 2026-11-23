@@ -260,6 +260,8 @@ pub enum Command {
     JumpToStart(DeckId),
     /// A performance pad, doing what its pad mode says.
     Pad(PadPress),
+    /// Empty an absolute sampler slot.
+    EmptySamplerSlot(usize),
     /// Load a built-in sound into an absolute sampler slot.
     LoadBuiltInSample(usize, BuiltInSample),
     /// Put a deck's pads in a pad mode.
