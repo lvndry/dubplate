@@ -10,8 +10,9 @@ use std::time::Duration;
 use dubplate_rekordbox::TrackCues;
 
 use crate::{
-    CueSource, EqIntent, GridEdit, Play, PlayId, RecordedPlay, Seam, SeamStatus, Set, SetEntry,
-    SetId, SetList, SetStore, StoreError, TrackGrid, TrackIdentity,
+    CueSource, EqIntent, GridEdit, Play, PlayId, PlaylistEdit, PlaylistEdited, PlaylistTree,
+    RecordedPlay, Seam, SeamStatus, Set, SetEntry, SetId, SetList, SetStore, StoreError, TrackGrid,
+    TrackIdentity,
 };
 
 /// The name of the set made on first launch.
@@ -251,12 +252,12 @@ impl SetEditor {
         self.follow_files(&HashMap::from([(from.to_path_buf(), to.to_path_buf())]))
     }
 
-    /// Points the set's entries and seams, and the cues kept for each file, at the new places of
-    /// files that moved, each keyed by its old place. Where a file lives is not an edit to undo, so this is no step of its own,
-    /// and the sets kept for undo follow the files too: undoing an edit never sends a track
-    /// back to a place its file left.
+    /// Points the set's entries and seams, and the cues and playlist places kept for each file,
+    /// at the new places of files that moved, each keyed by its old place. Where a file lives
+    /// is not an edit to undo, so this is no step of its own, and the sets kept for undo follow
+    /// the files too: undoing an edit never sends a track back to a place its file left.
     pub fn follow_files(&mut self, moves: &HashMap<PathBuf, PathBuf>) -> Result<(), StoreError> {
-        self.store.follow_cue_files(moves)?;
+        self.store.follow_moved_files(moves)?;
         let moved = |path: &PathBuf| moves.get(path).cloned();
         let mut followed = self.set.clone();
         for entry in &mut followed.entries {
@@ -298,6 +299,21 @@ impl SetEditor {
         cues: &TrackCues,
     ) -> Result<(), StoreError> {
         self.store.save_track_cues(identity, track_path, cues)
+    }
+
+    /// The DJ's playlists and folders.
+    pub fn playlists(&self) -> Result<PlaylistTree, StoreError> {
+        self.store.playlists()
+    }
+
+    /// Carries out a change to the DJ's playlists, returning what it did and the playlists
+    /// after it. Playlists are no edit of the set, so this is no step to undo.
+    pub fn edit_playlists(
+        &mut self,
+        edit: PlaylistEdit,
+    ) -> Result<(PlaylistEdited, PlaylistTree), StoreError> {
+        let edited = self.store.edit_playlists(edit)?;
+        Ok((edited, self.store.playlists()?))
     }
 
     /// Keeps a track as a backup, or stops keeping it.
