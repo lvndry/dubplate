@@ -411,6 +411,8 @@ pub enum Command {
     ExportSet,
     /// Export the set to a USB stick or folder for CDJs and XDJs.
     ExportSetToUsb,
+    /// Review histories and cue differences from a player.
+    ImportFromUsb,
     /// Show or hide the list of shortcuts.
     ToggleHelp,
     /// Switch one of the Auto Cue settings on or off.

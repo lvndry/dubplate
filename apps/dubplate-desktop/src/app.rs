@@ -51,6 +51,7 @@ mod track_check;
 mod track_preview;
 mod track_tags;
 mod usb_export;
+mod usb_review;
 mod waveforms;
 
 use std::cell::{Cell, RefCell};
@@ -301,6 +302,7 @@ pub struct DubplateApp {
     hit_areas: Rc<HitAreas>,
     browser: Entity<Browser>,
     overviews: [Entity<DeckOverview>; DECK_COUNT],
+    usb_review: Option<usb_review::Review>,
     help_open: bool,
     notices: Notices,
     focus_handle: FocusHandle,
@@ -604,6 +606,7 @@ impl DubplateApp {
                 cx.new(|_| DeckOverview::default()),
                 cx.new(|_| DeckOverview::default()),
             ],
+            usb_review: None,
             help_open: false,
             notices: Notices::default(),
             focus_handle,
@@ -1287,6 +1290,7 @@ impl DubplateApp {
             }
             Command::LoadSet => self.load_set(cx),
             Command::ExportSet => self.export_set(cx),
+            Command::ImportFromUsb => self.choose_usb(cx),
             Command::ExportSetToUsb => self.export_set_to_usb(cx),
             Command::Browse(steps) => self
                 .browser
@@ -1354,7 +1358,9 @@ impl DubplateApp {
             }
             Command::PadFx(edit) => self.edit_pad_fx(edit, cx),
             Command::Dismiss => {
-                if self.effect_menu.is_some() {
+                if self.usb_review.take().is_some() {
+                    cx.notify();
+                } else if self.effect_menu.is_some() {
                     self.close_effect_menu(cx);
                 } else if self.pad_fx_editor.is_some() {
                     self.pad_fx_editor = None;
@@ -2373,7 +2379,8 @@ fn error_chain(error: &dyn std::error::Error) -> String {
 impl Render for DubplateApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let render_started = Instant::now();
-        let modal_open = self.help_open
+        let modal_open = self.usb_review.is_some()
+            || self.help_open
             || self.library_open
             || self.relink_review.is_some()
             || self.pad_fx_editor.is_some();
@@ -2471,6 +2478,9 @@ impl Render for DubplateApp {
             )
             .when(self.library_open, |root| {
                 root.child(library_panel::render(self, cx))
+            })
+            .when_some(self.usb_review.as_ref(), |root, review| {
+                root.child(usb_review::render(self, review, cx))
             });
         if let Some(stats) = &self.frame_stats {
             stats.borrow_mut().record_render(render_started.elapsed());

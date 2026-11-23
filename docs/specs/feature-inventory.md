@@ -327,6 +327,7 @@ Ranked by what stops the owner from playing a club night with Dubplate alone, th
 
 | Feature | What it does | Where in rekordbox | Tier | Dubplate | Priority |
 | --- | --- | --- | --- | --- | --- |
+| Import from USB | Review player history and individual cue changes. Imported history keeps the stick name and play order. | Library settings | Free | Implemented | P0 |
 | Devices pane | Shows USB sticks and SD cards with their library, settings and eject. | Media Browser > Devices | Free | Missing | P0 |
 | Export tracks and playlists to USB | Drag to the stick; tracks, analysis, cues and grids copied. | Devices | Free | Partial: sets, playlists and music folders export from the Set panel, the library and `dubplate usb export`; no Devices pane or drag | P0 |
 | Device Library (export.pdb) | The library CDJ-3000, NXS2 and older players read. | USB | Free | Done (written and read; not yet tried on a player) | P0 |

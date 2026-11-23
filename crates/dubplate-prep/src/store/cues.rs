@@ -92,58 +92,7 @@ impl SetStore {
         cues: &TrackCues,
     ) -> Result<(), StoreError> {
         let transaction = self.transaction()?;
-        let (kind, key) = identity.storage_key();
-        execute_cached(
-            &transaction,
-            "INSERT INTO track_cues (identity_kind, identity, track_path, updated_at)
-             VALUES (?1, ?2, ?3, ?4)
-             ON CONFLICT (identity_kind, identity) DO UPDATE SET
-                 track_path = excluded.track_path,
-                 updated_at = excluded.updated_at",
-            (
-                kind,
-                &key,
-                track_path.map(Path::to_string_lossy),
-                now_unix_millis(),
-            ),
-        )?;
-        execute_cached(
-            &transaction,
-            "DELETE FROM track_cue WHERE identity_kind = ?1 AND identity = ?2",
-            (kind, &key),
-        )?;
-        {
-            let mut insert = transaction.prepare_cached(
-                "INSERT INTO track_cue
-                    (identity_kind, identity, pad, start_ms, loop_end_ms, color_table_index,
-                     memory_color, name)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            )?;
-            for (pad, cue) in cues.hot_cues() {
-                insert.execute((
-                    kind,
-                    &key,
-                    pad.index() as i64,
-                    cue.start_ms,
-                    cue.loop_end_ms,
-                    cue.color.map(PaletteColor::index),
-                    None::<u8>,
-                    &cue.name,
-                ))?;
-            }
-            for cue in cues.memory_cues() {
-                insert.execute((
-                    kind,
-                    &key,
-                    None::<i64>,
-                    cue.start_ms,
-                    cue.loop_end_ms,
-                    None::<u8>,
-                    cue.color.map(MemoryCueColor::rekordbox_value),
-                    &cue.name,
-                ))?;
-            }
-        }
+        write_track_cues(&transaction, identity, track_path, cues)?;
         transaction.commit()?;
         Ok(())
     }
@@ -167,6 +116,66 @@ impl SetStore {
         transaction.commit()?;
         Ok(())
     }
+}
+
+/// Writes a track's complete cue list within the caller's transaction.
+pub(super) fn write_track_cues(
+    transaction: &Transaction<'_>,
+    identity: &TrackIdentity,
+    track_path: Option<&Path>,
+    cues: &TrackCues,
+) -> Result<(), StoreError> {
+    let (kind, key) = identity.storage_key();
+    execute_cached(
+        transaction,
+        "INSERT INTO track_cues (identity_kind, identity, track_path, updated_at)
+         VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT (identity_kind, identity) DO UPDATE SET
+             track_path = excluded.track_path,
+             updated_at = excluded.updated_at",
+        (
+            kind,
+            &key,
+            track_path.map(Path::to_string_lossy),
+            now_unix_millis(),
+        ),
+    )?;
+    execute_cached(
+        transaction,
+        "DELETE FROM track_cue WHERE identity_kind = ?1 AND identity = ?2",
+        (kind, &key),
+    )?;
+    let mut insert = transaction.prepare_cached(
+        "INSERT INTO track_cue
+            (identity_kind, identity, pad, start_ms, loop_end_ms, color_table_index,
+             memory_color, name)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+    )?;
+    for (pad, cue) in cues.hot_cues() {
+        insert.execute((
+            kind,
+            &key,
+            pad.index() as i64,
+            cue.start_ms,
+            cue.loop_end_ms,
+            cue.color.map(PaletteColor::index),
+            None::<u8>,
+            &cue.name,
+        ))?;
+    }
+    for cue in cues.memory_cues() {
+        insert.execute((
+            kind,
+            &key,
+            None::<i64>,
+            cue.start_ms,
+            cue.loop_end_ms,
+            None::<u8>,
+            cue.color.map(MemoryCueColor::rekordbox_value),
+            &cue.name,
+        ))?;
+    }
+    Ok(())
 }
 
 /// Moves the cues kept for the file `from` to the file `to`, in place of any kept for `to`.
@@ -222,10 +231,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("dubplate.db");
         let connection = Connection::open(&path).unwrap();
-        // Cues arrived in the schema version four before this one, so the file starts where
-        // it did just before that migration.
-        let before_cues = usize::try_from(SCHEMA_VERSION - 4).unwrap();
-        for migration in &MIGRATIONS[..before_cues] {
+        for migration in &MIGRATIONS[..3] {
             connection.execute_batch(migration).unwrap();
         }
         connection
@@ -246,12 +252,11 @@ mod tests {
         let set = store.load_set(SetId(1)).unwrap();
         assert_eq!(set.main_entries().count(), 1);
         assert!(store.track_cues().unwrap().is_empty());
-        let prefix = format!("v{}-", SCHEMA_VERSION - 4);
         let backups = std::fs::read_dir(directory.path().join("backups")).unwrap();
         assert!(
             backups
                 .filter_map(Result::ok)
-                .any(|backup| backup.file_name().to_string_lossy().starts_with(&prefix)),
+                .any(|backup| backup.file_name().to_string_lossy().starts_with("v3-")),
             "the file from before the cues migration is backed up before the upgrade"
         );
 
