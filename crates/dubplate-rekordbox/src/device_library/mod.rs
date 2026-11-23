@@ -11,6 +11,10 @@
 //! the next page, and the tables rekordbox fills on a fresh stick (colours, columns, the
 //! unnamed tables 17 and 18, and the history sync table) carry rekordbox's own rows.
 //!
+//! Players write back to the stick: each time it is put in a player they start a history
+//! (`HISTORY 001`, `HISTORY 002`, ...) and add every track played to it.
+//! [`DeviceLibrary::histories`] reads those back.
+//!
 //! [`DeviceLibrary`] is the library as Dubplate models it. [`DeviceLibrary::to_export_pdb`]
 //! writes it and [`DeviceLibrary::parse_export_pdb`] reads one back, from Dubplate or from
 //! rekordbox. [`export_ext_pdb`] writes the companion `exportExt.pdb` with rekordbox's default
@@ -32,11 +36,12 @@ pub use database::{DatabaseFile, PageIndex, PageSummary, PageType, TableSummary}
 pub use error::DeviceLibraryError;
 pub use export_ext::{MyTag, export_ext_pdb, parse_export_ext_tags};
 pub use ids::{
-    AlbumId, ArtistId, ArtworkId, GenreId, KeyId, LabelId, LibraryId, PlaylistId, TrackId,
+    AlbumId, ArtistId, ArtworkId, GenreId, HistoryId, KeyId, LabelId, LibraryId, PlaylistId,
+    TrackId,
 };
 pub use library::{
-    Album, Artwork, DeviceColor, DeviceLibrary, DeviceTrack, FileType, Named, PlaylistEntry,
-    PlaylistNode, PreservedRows,
+    Album, Artwork, DeviceColor, DeviceHistory, DeviceLibrary, DeviceTrack, FileType, HistoryEntry,
+    Named, PlaylistEntry, PlaylistNode, PreservedRows,
 };
 pub use string::DeviceString;
 

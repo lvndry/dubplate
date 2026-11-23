@@ -37,6 +37,21 @@ pub fn analysis_path(device_path: &str) -> AnalysisPath {
 }
 
 impl AnalysisPath {
+    /// The path a track row stores for it, when it matches the layout the format writes: a
+    /// `/PIONEER/USBANLZ/P{folder}/{hash}/ANLZ{number}.{extension}` whose folder agrees with
+    /// its hash. `None` when it does not.
+    pub fn from_stored(stored: &str) -> Option<Self> {
+        let parts: Vec<&str> = stored.split('/').collect();
+        let [.., "USBANLZ", folder, hash, file_name] = parts[..] else {
+            return None;
+        };
+        let folder_number = u16::from_str_radix(folder.strip_prefix('P')?, 16).ok()?;
+        let hash = u32::from_str_radix(hash, 16).ok()?;
+        let stem = std::path::Path::new(file_name).file_stem()?.to_str()?;
+        let number = u16::from_str_radix(stem.strip_prefix("ANLZ")?, 16).ok()?;
+        let path = Self { hash, number };
+        (path.folder_number() == u32::from(folder_number)).then_some(path)
+    }
     /// The files numbered `number` in the same folder, which rekordbox uses when two tracks'
     /// paths hash to one folder: the second gets `ANLZ0001`.
     #[must_use]

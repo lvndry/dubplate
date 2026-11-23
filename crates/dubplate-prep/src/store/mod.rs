@@ -1,5 +1,6 @@
 //! Dubplate's own database: sets, their ordered entries, seam plans, snapshots,
-//! play history, the cues the DJ made for each track, and the DJ's playlists.
+//! play history, the cues the DJ made for each track, the DJ's playlists, and the metadata
+//! the DJ edited on a track: its rating, colour label, comment and My Tags.
 //!
 //! The file lives where Dubplate owns it, never inside rekordbox's folders, so
 //! every write Dubplate makes stays out of rekordbox's files. A guard refuses
@@ -19,16 +20,21 @@ use crate::sql::{execute_cached, now_unix_millis, query_row_cached};
 mod cues;
 mod history;
 mod playlists;
+mod track_tags;
 mod types;
 
 pub use history::{Play, PlayDeck, PlayId, RecordedPlay};
 pub use playlists::{
     Playlist, PlaylistEdit, PlaylistEdited, PlaylistId, PlaylistKind, PlaylistTrack, PlaylistTree,
 };
+pub use track_tags::{
+    Tag, TagCategory, TagCategoryId, TagId, TrackColour, TrackMetadata, TrackTagEdit,
+    TrackTagEdited,
+};
 pub use types::{CueSource, EqIntent, Seam, SeamStatus, Set, SetEntry, SetId, SetList};
 
 /// The highest schema version `MIGRATIONS` can bring a database to.
-const SCHEMA_VERSION: u32 = 6;
+const SCHEMA_VERSION: u32 = 7;
 
 /// One migration per schema version, index = target version - 1.
 const MIGRATIONS: &[&str] = &[
@@ -191,6 +197,48 @@ CREATE INDEX playlist_track_identity ON playlist_track (identity_kind, identity)
 
 PRAGMA user_version = 6;
 "#,
+    r#"
+CREATE TABLE track_metadata (
+    identity_kind TEXT NOT NULL,
+    identity TEXT NOT NULL,
+    track_path TEXT,
+    rating INTEGER NOT NULL DEFAULT 0 CHECK (rating BETWEEN 0 AND 5),
+    colour TEXT CHECK (colour IS NULL OR colour IN ('Pink', 'Red', 'Orange', 'Yellow', 'Green', 'Aqua', 'Blue', 'Purple')),
+    comment TEXT NOT NULL DEFAULT '',
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (identity_kind, identity)
+);
+
+CREATE TABLE tag_category (
+    id INTEGER PRIMARY KEY,
+    position INTEGER NOT NULL,
+    name TEXT NOT NULL
+);
+CREATE INDEX tag_category_position ON tag_category (position);
+
+CREATE TABLE tag (
+    id INTEGER PRIMARY KEY,
+    category_id INTEGER NOT NULL REFERENCES tag_category(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL,
+    name TEXT NOT NULL
+);
+CREATE INDEX tag_position ON tag (category_id, position);
+
+CREATE TABLE track_tag (
+    identity_kind TEXT NOT NULL,
+    identity TEXT NOT NULL,
+    tag_id INTEGER NOT NULL REFERENCES tag(id) ON DELETE CASCADE,
+    PRIMARY KEY (identity_kind, identity, tag_id)
+);
+CREATE INDEX track_tag_tag ON track_tag (tag_id);
+
+INSERT INTO tag_category (position, name) VALUES (0, 'Genre');
+INSERT INTO tag_category (position, name) VALUES (1, 'Components');
+INSERT INTO tag_category (position, name) VALUES (2, 'Situation');
+INSERT INTO tag_category (position, name) VALUES (3, 'Other');
+
+PRAGMA user_version = 7;
+"#,
 ];
 
 /// A position no real entry can hold while one is in the middle of moving.
@@ -242,6 +290,15 @@ pub enum StoreError {
     /// A folder cannot go inside itself or a folder it holds.
     #[error("folder {0} cannot go inside itself")]
     PlaylistInsideItself(PlaylistId),
+    /// A track's rating must be from 0 to 5 stars.
+    #[error("a rating is from 0 to 5 stars, got {0}")]
+    RatingOutOfRange(u8),
+    /// A My Tag category the operation referred to is not in the database.
+    #[error("tag category {0} does not exist")]
+    TagCategoryNotFound(TagCategoryId),
+    /// A My Tag the operation referred to is not in the database.
+    #[error("tag {0} does not exist")]
+    TagNotFound(TagId),
     /// A SQLite operation failed.
     #[error("set store error: {0}")]
     Database(#[from] rusqlite::Error),
