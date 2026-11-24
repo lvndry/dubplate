@@ -154,9 +154,10 @@ impl DubplateApp {
         if let Some(editing) = self.pad_fx_editor
             && press.press != Press::Up
         {
-            let mode = crate::pads::pad_mode_for_press(self.pad_modes[deck.index()], press.mode);
-            let layer = PadFxLayer::of(mode, press.shift).unwrap_or(editing.layer);
-            self.edit_pad_fx(crate::commands::PadFxEdit::Select(layer, press.pad), cx);
+            self.edit_pad_fx(
+                editing.selection_from_pad(self.pad_modes[deck.index()], press),
+                cx,
+            );
             return;
         }
         let index = deck.index();

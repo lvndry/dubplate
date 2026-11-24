@@ -20,13 +20,21 @@ pub struct PlayheadClock {
 
 impl PlayheadClock {
     /// The position to draw at `now` for a deck in `state`.
-    pub fn position(&mut self, state: &DeckState, slipping: bool, now: Instant) -> f64 {
+    pub fn position(
+        &mut self,
+        state: &DeckState,
+        follow_engine: bool,
+        active_loop: Option<(f64, f64)>,
+        now: Instant,
+    ) -> f64 {
         let engine = state.position_seconds;
-        // A short roll can wrap every frame. Follow the audible playhead through the
-        // roll and its landing, then resume smoothing from the new position.
+        // A short loop can wrap by less than the seek threshold. Follow the audible
+        // playhead through the loop and resume smoothing from the position on exit.
+        let short_loop = active_loop.is_some_and(|(start, end)| end - start <= JUMP_SECONDS);
+        let smooth = !follow_engine && !short_loop;
         let previous = self.last_frame;
-        self.last_frame = (!slipping).then_some(now);
-        let Some(last_frame) = previous.filter(|_| state.playing && !slipping) else {
+        self.last_frame = smooth.then_some(now);
+        let Some(last_frame) = previous.filter(|_| state.playing && smooth) else {
             self.shown_seconds = engine;
             return engine;
         };
@@ -62,8 +70,8 @@ mod tests {
     fn a_stopped_deck_shows_the_engine_position() {
         let mut clock = PlayheadClock::default();
         let now = Instant::now();
-        assert_eq!(clock.position(&state(12.5, false), false, now), 12.5);
-        assert_eq!(clock.position(&state(3.0, false), false, now), 3.0);
+        assert_eq!(clock.position(&state(12.5, false), false, None, now), 12.5);
+        assert_eq!(clock.position(&state(3.0, false), false, None, now), 3.0);
     }
 
     #[test]
@@ -72,12 +80,12 @@ mod tests {
         let start = Instant::now();
         let frame = Duration::from_micros(16_667);
         let buffer_seconds = 0.0107;
-        let mut previous = clock.position(&state(10.0, true), false, start);
+        let mut previous = clock.position(&state(10.0, true), false, None, start);
         for frame_number in 1..120 {
             let now = start + frame * frame_number;
             let true_seconds = 10.0 + (frame * frame_number).as_secs_f64();
             let engine = 10.0 + (true_seconds - 10.0 - (true_seconds - 10.0) % buffer_seconds);
-            let shown = clock.position(&state(engine, true), false, now);
+            let shown = clock.position(&state(engine, true), false, None, now);
             let step = shown - previous;
             assert!(
                 step > 0.010 && step < 0.024,
@@ -93,17 +101,35 @@ mod tests {
         let mut clock = PlayheadClock::default();
         let start = Instant::now();
         let frame = Duration::from_millis(16);
-        clock.position(&state(10.0, true), false, start);
+        clock.position(&state(10.0, true), false, None, start);
         // The roll wraps inside a 1/16-beat slice, below the normal seek threshold.
         for (tick, position) in [(1, 9.985), (2, 9.970), (3, 9.986)] {
             assert_eq!(
-                clock.position(&state(position, true), true, start + frame * tick),
+                clock.position(&state(position, true), true, None, start + frame * tick),
                 position
             );
         }
         assert_eq!(
-            clock.position(&state(10.064, true), false, start + frame * 4),
+            clock.position(&state(10.064, true), false, None, start + frame * 4),
             10.064
+        );
+    }
+
+    #[test]
+    fn a_short_active_loop_draws_the_audible_position_through_wrap_and_exit() {
+        let mut clock = PlayheadClock::default();
+        let start = Instant::now();
+        let frame = Duration::from_millis(16);
+        let bounds = Some((10.0, 10.03));
+        for (tick, position) in [(0, 10.020), (1, 10.006), (2, 10.022)] {
+            assert_eq!(
+                clock.position(&state(position, true), false, bounds, start + frame * tick),
+                position
+            );
+        }
+        assert_eq!(
+            clock.position(&state(10.038, true), false, None, start + frame * 3),
+            10.038
         );
     }
 
@@ -111,8 +137,13 @@ mod tests {
     fn a_seek_jumps_straight_to_the_new_position() {
         let mut clock = PlayheadClock::default();
         let start = Instant::now();
-        clock.position(&state(10.0, true), false, start);
-        let shown = clock.position(&state(60.0, true), false, start + Duration::from_millis(16));
+        clock.position(&state(10.0, true), false, None, start);
+        let shown = clock.position(
+            &state(60.0, true),
+            false,
+            None,
+            start + Duration::from_millis(16),
+        );
         assert_eq!(shown, 60.0);
     }
 }
