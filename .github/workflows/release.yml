@@ -149,7 +149,7 @@ jobs:
           fi
           notes="Dubplate $version for Mac with Apple Silicon. Download Dubplate.dmg and drag Dubplate.app into Applications. The CLI is available as a separate archive."
           if [ "$ADHOC" = true ]; then
-            notes="$notes This build is ad hoc signed. macOS may require you to allow the app in System Settings under Privacy & Security before opening it."
+            notes="$notes This build is not yet notarized by Apple: the first time you open it, right-click Dubplate.app and choose Open, then click Open again."
           else
             notes="$notes The desktop app and the command line tool are signed with Developer ID and notarized by Apple."
           fi
