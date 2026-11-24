@@ -356,7 +356,8 @@ pub struct LoopState {
     pub end_seconds: Option<f64>,
     /// The playhead goes round the loop. An exited loop stays for RELOOP.
     pub active: bool,
-    /// The length of a beat loop. `None` for a loop set with loop in and loop out.
+    /// The selected beat-loop length. The endpoints give the playable span when the track
+    /// ends before that length. `None` for a loop set with loop in and loop out.
     pub length: Option<BeatLength>,
     /// A loop in point waiting for its loop out, in seconds.
     pub pending_start_seconds: Option<f64>,

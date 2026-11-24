@@ -456,15 +456,15 @@ impl Deck {
     ) {
         let rate = self.source_rate();
         let region = LoopRegion {
-            start: self.clamp_position(start_seconds * rate),
-            end: self.clamp_position(end_seconds * rate),
+            start: start_seconds * rate,
+            end: end_seconds * rate,
             active: true,
             length: None,
         };
-        if region.length_frames() <= 0.0 {
+        let Some(region) = region.clamped(self.position_limit()) else {
             self.hot_cue(start_seconds, retire);
             return;
-        }
+        };
         self.start_slipping_loop();
         self.looping.pending_start = None;
         self.looping.region = Some(region);
@@ -480,15 +480,27 @@ impl Deck {
     /// Jumps by `beats` beats, forwards or backwards, keeping the place in the beat. A loop
     /// that is on moves with the playhead.
     pub(crate) fn beat_jump(&mut self, beats: f64, retire: &mut RetireQueue) {
-        let target = self.frame_at_beat(self.beat_at_frame(self.voice.position) + beats);
+        let mut target = self.frame_at_beat(self.beat_at_frame(self.voice.position) + beats);
         if let Some(region) = self.looping.active_loop() {
-            let start = self.frame_at_beat(self.beat_at_frame(region.start) + beats);
-            let end = self.frame_at_beat(self.beat_at_frame(region.end) + beats);
-            self.looping.region = Some(LoopRegion {
+            let start_beat = self.beat_at_frame(region.start) + beats;
+            let start = self.frame_at_beat(start_beat);
+            let end = self.frame_at_beat(match region.length {
+                Some(length) => start_beat + length.beats(),
+                None => self.beat_at_frame(region.end) + beats,
+            });
+            let moved = LoopRegion {
                 start,
                 end,
                 ..region
-            });
+            };
+            self.looping.region = moved.clamped(self.position_limit());
+            if let Some(clipped) = self.looping.region {
+                if clipped != moved && region.contains(self.voice.position) {
+                    target = clipped.fold(target);
+                }
+            } else {
+                self.end_slipping_loop();
+            }
         }
         self.jump_to_frame(target, retire);
     }
@@ -502,10 +514,8 @@ impl Deck {
     /// the loop on from the loop in point. Without a loop in point it moves the end of the
     /// current loop.
     pub(crate) fn loop_out(&mut self, retire: &mut RetireQueue) {
-        if self.looping.pending_start.is_some() {
-            self.start_slipping_loop();
-        }
-        let start = match (self.looping.pending_start.take(), self.looping.region) {
+        let pending_start = self.looping.pending_start.take();
+        let start = match (pending_start, self.looping.region) {
             (Some(start), _) => start,
             (None, Some(region)) => region.start,
             (None, None) => return,
@@ -514,35 +524,41 @@ impl Deck {
         if end <= start {
             end = self.frame_at_beat(self.beat_at_frame(start) + 1.0);
         }
-        self.set_loop(
-            LoopRegion {
-                start,
-                end,
-                active: true,
-                length: None,
-            },
-            retire,
-        );
+        let region = LoopRegion {
+            start,
+            end,
+            active: true,
+            length: None,
+        };
+        if let Some(region) = region.clamped(self.position_limit()) {
+            if pending_start.is_some() {
+                self.start_slipping_loop();
+            }
+            self.set_loop(region, retire);
+        }
     }
 
     /// A beat loop of `length` from the beat nearest to what the DJ hears with quantize, which
     /// may be just ahead of the playhead, or from exactly there without. With a loop on, changes its length from its start instead.
     pub(crate) fn beat_loop(&mut self, length: BeatLength, retire: &mut RetireQueue) {
-        self.start_slipping_loop();
         let start = match self.looping.active_loop() {
             Some(region) => region.start,
             None => self.snap_to_grain(self.heard_position(), length.beats().min(1.0)),
         };
-        self.set_loop(self.beat_loop_region(start, length), retire);
+        if let Some(region) = self.beat_loop_region(start, length) {
+            self.start_slipping_loop();
+            self.set_loop(region, retire);
+        }
     }
 
-    fn beat_loop_region(&self, start: f64, length: BeatLength) -> LoopRegion {
+    fn beat_loop_region(&self, start: f64, length: BeatLength) -> Option<LoopRegion> {
         LoopRegion {
             start,
             end: self.frame_at_beat(self.beat_at_frame(start) + length.beats()),
             active: true,
             length: Some(length),
         }
+        .clamped(self.position_limit())
     }
 
     /// Loops made before the grid arrived used 120 BPM. Keep their in points and use the new
@@ -558,6 +574,7 @@ impl Deck {
         let updated = previous.map(retime);
         self.roll = self.roll.map(|saved| saved.map(retime));
         self.looping.region = updated;
+        self.clamp_loops_to_track(self.position_limit(), retire);
         if previous.is_some_and(|region| region.active && region.contains(self.voice.position)) {
             self.fold_past_loop_end(retire);
         }
@@ -591,14 +608,14 @@ impl Deck {
             None => (None, (self.beat_at_frame(region.end) - start_beat) * factor),
         };
         let end = self.frame_at_beat(start_beat + beats);
-        self.set_loop(
-            LoopRegion {
-                end,
-                length,
-                ..region
-            },
-            retire,
-        );
+        let resized = LoopRegion {
+            end,
+            length,
+            ..region
+        };
+        if let Some(resized) = resized.clamped(self.position_limit()) {
+            self.set_loop(resized, retire);
+        }
     }
 
     /// RELOOP/EXIT: leaves the loop that is on, or turns the last loop back on and jumps to
@@ -632,6 +649,13 @@ impl Deck {
         }
     }
 
+    /// Drops the loop's slip hold when another operation chooses the new playhead position.
+    fn end_slipping_loop(&mut self) {
+        if std::mem::take(&mut self.slipping_loop) {
+            self.slip.end();
+        }
+    }
+
     /// Lands on the slip shadow when the last slipping action ends.
     fn land(&mut self, retire: &mut RetireQueue) {
         if let Some(shadow) = self.slip.end() {
@@ -661,12 +685,10 @@ impl Deck {
     pub(crate) fn beat_roll(&mut self, length: Option<BeatLength>, retire: &mut RetireQueue) {
         match length {
             Some(length) => {
-                if self.roll.is_none() {
-                    self.roll = Some(self.looping.region.take());
-                    self.slip.begin(self.voice.position);
-                }
-                if let Some(region) = self.looping.active_loop() {
-                    self.set_loop(self.beat_loop_region(region.start, length), retire);
+                if let Some(region) = self.looping.active_loop().filter(|_| self.roll.is_some()) {
+                    if let Some(resized) = self.beat_loop_region(region.start, length) {
+                        self.set_loop(resized, retire);
+                    }
                 } else {
                     self.start_roll(length, retire);
                 }
@@ -693,7 +715,9 @@ impl Deck {
             heard_beat
         };
         let start = self.clamp_position(self.frame_at_beat(end_beat - beats));
-        let region = self.beat_loop_region(start, length);
+        let Some(region) = self.beat_loop_region(start, length) else {
+            return;
+        };
         let start_beat = self.beat_at_frame(start);
         let target = if self.voice.position < region.end {
             start
@@ -701,7 +725,12 @@ impl Deck {
             let beat = self.beat_at_frame(self.voice.position);
             self.frame_at_beat(start_beat + (beat - start_beat).rem_euclid(beats))
         };
+        if self.roll.is_none() {
+            self.roll = Some(self.looping.region.take());
+            self.slip.begin(self.voice.position);
+        }
         self.looping.region = Some(region);
+        let target = region.fold(target);
         if self.voice.position != target {
             self.jump_to_frame(target, retire);
         }
@@ -816,9 +845,27 @@ impl Deck {
     /// Puts a loop on the deck and brings a playhead past its end back inside it.
     fn set_loop(&mut self, region: LoopRegion, retire: &mut RetireQueue) {
         self.looping.region = Some(region);
-        let position = self.voice.position;
-        if region.active && position >= region.start && position >= region.end {
-            self.jump_to_frame(region.fold(position), retire);
+        self.fold_past_loop_end(retire);
+    }
+
+    /// The real end may arrive after a loop was set on a track that was still decoding.
+    fn clamp_loops_to_track(&mut self, end: f64, retire: &mut RetireQueue) {
+        if let Some(Some(saved)) = self.roll
+            && saved.end > end
+        {
+            let clipped = saved.clamped(end);
+            self.roll = Some(clipped);
+            if clipped.is_none() {
+                self.end_slipping_loop();
+            }
+        }
+        if let Some(previous) = self.looping.region.filter(|region| region.end > end) {
+            self.looping.region = previous.clamped(end);
+            if self.looping.region.is_none() && self.roll.is_none() {
+                self.end_slipping_loop();
+            } else if previous.active && previous.contains(self.voice.position) {
+                self.fold_past_loop_end(retire);
+            }
         }
     }
 
@@ -1135,9 +1182,12 @@ impl Deck {
     }
 
     fn clamp_position(&self, position: f64) -> f64 {
+        position.clamp(0.0, self.position_limit())
+    }
+
+    fn position_limit(&self) -> f64 {
         let longest = MAX_TRACK_SECONDS as f64 * self.source_rate();
-        let end = self.voice.end_frame().unwrap_or(longest);
-        position.clamp(0.0, end)
+        self.voice.end_frame().unwrap_or(longest)
     }
 
     fn at_end(&self) -> bool {
@@ -1156,6 +1206,10 @@ impl Deck {
         retire: &mut RetireQueue,
     ) -> DeckRender {
         let mut result = DeckRender::default();
+        let end_frame = self.voice.end_frame();
+        if let Some(end) = end_frame {
+            self.clamp_loops_to_track(end, retire);
+        }
         if let Some(frames) = self.platter.take_search() {
             self.jump_to_frame(self.voice.position + frames, retire);
         }
@@ -1183,7 +1237,6 @@ impl Deck {
         }
         let unit_step = self.source_rate() / self.output_rate;
         let audible_step = unit_step * AUDIBLE_SPEED;
-        let end_frame = self.voice.end_frame();
         let mut active_loop = self.bounded_region();
         let source_rate = self.source_rate();
         self.slip
@@ -1318,6 +1371,35 @@ impl Deck {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_loop_folds_back_into_the_track_when_decoding_finishes() {
+        const RATE: u32 = 8_000;
+        let mut writer = crate::track::TrackWriter::new(RATE, 2);
+        for _ in 0..10 * RATE {
+            assert!(writer.push_frame(0.2, 0.2));
+        }
+        writer.publish();
+
+        let (mut controller, mut renderer) = crate::offline_engine(RATE);
+        controller.load_track(DeckId::A, writer.track()).unwrap();
+        controller.seek(DeckId::A, 9.5).unwrap();
+        controller.play(DeckId::A).unwrap();
+        controller.beat_loop(DeckId::A, BeatLength::FOUR).unwrap();
+        let mut before = vec![0.0; 5 * RATE as usize / 4];
+        renderer.render(&mut before, 2);
+        assert_eq!(controller.deck_state(DeckId::A).position_seconds, 10.125);
+
+        writer.finish();
+        let mut after = vec![0.0; RATE as usize / 2];
+        renderer.render(&mut after, 2);
+        let state = controller.loop_state(DeckId::A);
+        assert!(state.active);
+        assert_eq!(state.end_seconds, Some(10.0));
+        let deck = controller.deck_state(DeckId::A);
+        assert!(deck.playing);
+        assert_eq!(deck.position_seconds, 9.875);
+    }
 
     #[test]
     fn the_louder_deck_level_counts_the_fader_curve_and_the_crossfader_gain() {

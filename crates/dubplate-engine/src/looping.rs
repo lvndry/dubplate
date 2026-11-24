@@ -15,6 +15,13 @@ pub(crate) struct LoopRegion {
 }
 
 impl LoopRegion {
+    /// Keeps the playable part of a loop whose endpoints run outside the track.
+    pub(crate) fn clamped(mut self, track_end: f64) -> Option<Self> {
+        self.start = self.start.clamp(0.0, track_end);
+        self.end = self.end.clamp(0.0, track_end);
+        (self.end > self.start).then_some(self)
+    }
+
     pub(crate) fn length_frames(&self) -> f64 {
         self.end - self.start
     }
