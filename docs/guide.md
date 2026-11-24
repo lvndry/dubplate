@@ -36,6 +36,8 @@ Settings also picks the theme, which changes at once and is remembered: Graphite
 
 Settings > Audio also has the buffer size: 256 frames (about 5 ms) by default, smaller to answer the controller sooner, larger to give a busy Mac more time. If the audio drops out three times within a minute, Dubplate says so once, with that hint; the count since launch is under the buffer size.
 
+Stop both decks, any playing samples and any recording before changing the sound card or buffer size. The sampler keeps its loaded slots, settings and CUE button when the output changes.
+
 ## 3. Prepare the set
 
 Cmd+1 opens Prepare: the library on the left, your set on the right.

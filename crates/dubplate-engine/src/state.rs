@@ -16,6 +16,7 @@ const NO_LATENCY: u64 = u64::MAX;
 /// side ever waits for the other.
 pub(crate) struct SharedState {
     pub(crate) applied_command: AtomicU64,
+    pub(crate) output_stopped: AtomicBool,
     pub(crate) decks: [DeckShared; DECK_COUNT],
     pub(crate) master_peak: AtomicU32,
     pub(crate) headphone_peak: AtomicU32,
@@ -140,6 +141,7 @@ impl SharedState {
     pub(crate) fn new(sample_rate: u32) -> Self {
         Self {
             applied_command: AtomicU64::new(0),
+            output_stopped: AtomicBool::new(false),
             decks: std::array::from_fn(|_| {
                 let deck = DeckShared::default();
                 deck.tempo.store(1.0);

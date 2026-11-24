@@ -38,6 +38,26 @@ fn one_shot() -> Track {
 }
 
 #[test]
+fn sampler_playback_includes_triggers_before_the_next_callback() {
+    let (mut controller, mut renderer) = engine();
+    let slot = SAMPLER_SLOTS - 1;
+    controller
+        .load_sample(slot, one_shot(), SampleSettings::default())
+        .unwrap();
+    assert!(!controller.sampler_is_playing(), "loading alone is silent");
+    controller.trigger_sample(slot).unwrap();
+    controller.set_sampler_cue(true).unwrap();
+    assert!(controller.sampler_is_playing(), "the trigger is queued");
+    render(&mut renderer, 0.1);
+    assert!(controller.sampler_is_playing(), "the sample is playing");
+    render(&mut renderer, 0.5);
+    assert!(!controller.sampler_is_playing(), "the sample ended");
+    controller.trigger_sample(slot).unwrap();
+    drop(renderer);
+    assert!(!controller.sampler_is_playing(), "the renderer stopped");
+}
+
+#[test]
 fn a_one_shot_plays_once_and_restarts_when_pressed_again() {
     let (mut controller, mut renderer) = engine();
     controller

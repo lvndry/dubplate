@@ -72,6 +72,7 @@ pub fn offline_engine(sample_rate: u32) -> (Controller, Renderer) {
         key_shifts: [0.0; DECK_COUNT],
         pad_effects: [None; DECK_COUNT],
         samples: std::array::from_fn(|_| None),
+        last_sample_trigger: 0,
         sampler_volume: DEFAULT_SAMPLER_VOLUME,
         sampler_cue: false,
         smart_cfx: [None; DECK_COUNT],
@@ -114,6 +115,7 @@ pub struct Controller {
     key_shifts: [f32; DECK_COUNT],
     pad_effects: [Option<PadEffect>; DECK_COUNT],
     samples: [Option<(Track, SampleSettings)>; SAMPLER_SLOTS],
+    last_sample_trigger: u64,
     sampler_volume: f32,
     sampler_cue: bool,
     smart_cfx: [Option<SmartCfx>; DECK_COUNT],
@@ -1008,7 +1010,11 @@ impl Controller {
     /// the tempo master; a slot already playing starts again.
     pub fn trigger_sample(&mut self, slot: usize) -> Result<(), EngineError> {
         check_sampler_slot(slot)?;
-        self.send(Command::TriggerSample(slot))
+        self.send(Command::TriggerSample(slot))?;
+        if self.samples[slot].is_some() {
+            self.last_sample_trigger = self.command_sequence;
+        }
+        Ok(())
     }
 
     /// A sampler pad came up: a gate slot stops.
@@ -1036,6 +1042,29 @@ impl Controller {
     pub fn set_sampler_cue(&mut self, enabled: bool) -> Result<(), EngineError> {
         self.send(Command::SetSamplerCue(enabled))?;
         self.sampler_cue = enabled;
+        Ok(())
+    }
+
+    /// Whether a sample is playing or a pad trigger still awaits the next render.
+    pub fn sampler_is_playing(&self) -> bool {
+        if self.commands.is_abandoned() || self.shared.output_stopped.load(Ordering::Acquire) {
+            return false;
+        }
+        let applied = self.shared.applied_command.load(Ordering::Acquire);
+        let trigger_pending = self.command_sequence.wrapping_sub(applied)
+            > self.command_sequence.wrapping_sub(self.last_sample_trigger);
+        trigger_pending || self.shared.sampler_playing.load(Ordering::Relaxed) != 0
+    }
+
+    /// Copies the loaded samples, their settings and the CUE button to a fresh engine.
+    /// The output applies its own mixer settings, including sampler volume.
+    pub fn restore_sampler_from(&mut self, source: &Self) -> Result<(), EngineError> {
+        self.set_sampler_cue(source.sampler_cue)?;
+        for (slot, sample) in source.samples.iter().enumerate() {
+            if let Some((track, settings)) = sample {
+                self.load_sample(slot, track.clone(), *settings)?;
+            }
+        }
         Ok(())
     }
 
