@@ -8,6 +8,8 @@ use dubplate_engine::{BeatGrid, BeatLength, Controller, DeckId, Renderer, Track,
 
 const BLOCK: usize = 256;
 const BEAT_SECONDS: f64 = 0.5;
+const SHORT_LOOP_START: f64 = 1.0;
+const SHORT_LOOP_END: f64 = SHORT_LOOP_START + 0.5 / 32.0;
 
 /// A track of short 2 kHz bursts on every beat at 120 BPM, starting at 0.
 fn burst_track(seconds: f64) -> Track {
@@ -174,6 +176,108 @@ fn a_loop_and_a_hot_cue_keep_the_stretched_beats_in_place() {
         (beats - 1.0).abs() < 0.01,
         "beats {beats} apart after the jump"
     );
+}
+
+/// The loop is the only audible part of the track, so reading past it produces silence.
+fn loop_tone_track(start: f64, end: f64) -> Track {
+    let rate = f64::from(SAMPLE_RATE);
+    let samples: Vec<f32> = (0..SAMPLE_RATE * 4)
+        .flat_map(|frame| {
+            let seconds = f64::from(frame) / rate;
+            let value = if (start..end).contains(&seconds) {
+                (std::f64::consts::TAU * 1_024.0 * seconds).sin() as f32 * 0.5
+            } else {
+                0.0
+            };
+            [value, value]
+        })
+        .collect();
+    Track::from_interleaved_stereo(&samples, SAMPLE_RATE).expect("valid loop tone track")
+}
+
+#[test]
+fn manual_loop_out_redirects_stretched_audio_that_read_past_it() {
+    let tempo = 1.0248;
+    let (mut controller, mut renderer) = deck(loop_tone_track(1.0, 2.0), tempo, true);
+    controller.seek(DeckId::A, 1.0).unwrap();
+    controller.loop_in(DeckId::A).unwrap();
+    controller.play(DeckId::A).unwrap();
+    // Quantize places OUT at 2 s while the playhead is still inside and read-ahead is past it.
+    render(&mut renderer, 0.95 / tempo);
+    controller.loop_out(DeckId::A).unwrap();
+    let output = render(&mut renderer, 1.5);
+    let state = controller.loop_state(DeckId::A);
+    assert_eq!(state.end_seconds, Some(2.0));
+    let position = controller.deck_state(DeckId::A).position_seconds;
+    assert!(
+        (1.0..2.0).contains(&position),
+        "loop playhead is at {position}"
+    );
+    assert_loop_tone_audible(&output);
+}
+
+fn assert_short_loop_audible(controller: &Controller, renderer: &mut Renderer) {
+    let output = render(renderer, 0.5);
+    let position = controller.deck_state(DeckId::A).position_seconds;
+    assert!(
+        (SHORT_LOOP_START..SHORT_LOOP_END).contains(&position),
+        "loop playhead is at {position}"
+    );
+    assert_loop_tone_audible(&output);
+}
+
+fn assert_loop_tone_audible(output: &[f32]) {
+    let settled = &output[output.len() / 2..];
+    let power = settled.iter().map(|sample| sample * sample).sum::<f32>() / settled.len() as f32;
+    assert!(power > 0.01, "the repeated loop tone has power {power}");
+}
+
+#[test]
+fn setting_a_short_loop_redirects_stretched_audio_that_read_past_it() {
+    let track = loop_tone_track(SHORT_LOOP_START, SHORT_LOOP_END);
+    let (mut controller, mut renderer) = deck(track, 1.25, true);
+    controller.play(DeckId::A).unwrap();
+    render(&mut renderer, 0.8);
+    controller
+        .beat_loop(DeckId::A, BeatLength::THIRTY_SECOND)
+        .unwrap();
+    assert_short_loop_audible(&controller, &mut renderer);
+
+    controller.reloop_or_exit(DeckId::A).unwrap();
+    let output = render(&mut renderer, 0.5);
+    let peak = output[output.len() / 2..]
+        .iter()
+        .map(|sample| sample.abs())
+        .fold(0.0, f32::max);
+    assert!(
+        peak < 0.001,
+        "loop tone persisted after exit at peak {peak}"
+    );
+}
+
+#[test]
+fn shrinking_a_loop_redirects_stretched_audio_to_its_new_end() {
+    let track = loop_tone_track(SHORT_LOOP_START, SHORT_LOOP_END);
+    let (mut controller, mut renderer) = deck(track, 1.25, true);
+    controller.seek(DeckId::A, SHORT_LOOP_START).unwrap();
+    controller.beat_loop(DeckId::A, BeatLength::FOUR).unwrap();
+    controller.play(DeckId::A).unwrap();
+    // Enter the second pass with the playhead before the new end and the feeder beyond it.
+    render(&mut renderer, 1.604);
+    controller
+        .beat_loop(DeckId::A, BeatLength::THIRTY_SECOND)
+        .unwrap();
+    assert_short_loop_audible(&controller, &mut renderer);
+}
+
+#[test]
+fn a_short_hot_loop_primes_the_stretcher_with_its_repeating_audio() {
+    let track = loop_tone_track(SHORT_LOOP_START, SHORT_LOOP_END);
+    let (mut controller, mut renderer) = deck(track, 1.25, true);
+    controller
+        .hot_loop(DeckId::A, SHORT_LOOP_START, SHORT_LOOP_END)
+        .unwrap();
+    assert_short_loop_audible(&controller, &mut renderer);
 }
 
 #[test]
