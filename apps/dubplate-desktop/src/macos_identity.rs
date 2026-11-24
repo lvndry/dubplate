@@ -1,7 +1,7 @@
 //! How the app presents itself on macOS when its binary is started on its own, outside
 //! Dubplate.app: the name "Dubplate" in the menu bar and the One groove icon in the Dock. The
 //! bundle that `cargo run` and `scripts/bundle-macos.sh` make also names the Dock item. Also
-//! keeps macOS from slowing the app down while another app is in front.
+//! keeps macOS awake and responsive while the app is running.
 
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
@@ -38,13 +38,14 @@ pub fn set_app_name(name: &str) {
 }
 
 /// Tells macOS that Dubplate answers the DJ in real time, so App Nap never slows its timers
-/// and its controller handling while another app is in front. The Mac may still sleep when
-/// idle. Lasts until the app quits.
+/// and its controller handling while another app is in front. Keeps the system and display
+/// awake while idle until the app quits.
 pub fn stay_responsive() {
     let activity = NSProcessInfo::processInfo().beginActivityWithOptions_reason(
-        NSActivityOptions::UserInitiatedAllowingIdleSystemSleep
+        NSActivityOptions::UserInitiated
+            | NSActivityOptions::IdleDisplaySleepDisabled
             | NSActivityOptions::LatencyCritical,
-        &NSString::from_str("Playing music from DJ controllers"),
+        &NSString::from_str("Keeping DJ decks and controllers ready"),
     );
     // The activity ends when its token is released; the app keeps it until it quits.
     std::mem::forget(activity);

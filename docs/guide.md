@@ -215,3 +215,5 @@ If you moved music after importing it into rekordbox, a line above the tracks sa
 - two equally good candidates are never guessed between.
 
 The new places live in Dubplate's settings only; rekordbox is not touched. Your sets follow the relinked files.
+
+On macOS, Dubplate keeps the computer and display awake while the app is open. Normal idle sleep resumes when you quit.
