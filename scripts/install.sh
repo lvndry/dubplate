@@ -241,6 +241,17 @@ if [ "$want_cli" = yes ]; then
   mv "$cli_stage/dubplate" "$cli_destination"
   cli_installed=yes
 fi
+# A web download carries com.apple.quarantine, which makes Gatekeeper reject an app
+# Apple has not notarized. Clear it so the first launch opens without the
+# "Apple could not verify" prompt. The DMG drag-and-drop path still right-clicks once.
+if [ "$want_app" = yes ]; then
+  xattr -dr com.apple.quarantine "$app_destination" > /dev/null 2>&1 \
+    || printf 'Could not clear the quarantine flag on %s. If macOS asks before opening, right-click it and choose Open.\n' "$app_destination" >&2
+fi
+if [ "$want_cli" = yes ] && [ -f "$cli_destination" ]; then
+  xattr -d com.apple.quarantine "$cli_destination" > /dev/null 2>&1 || true
+fi
+
 mv -f "$manifest_stage" "$manifest"
 committed=yes
 

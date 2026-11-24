@@ -103,7 +103,9 @@ DUBPLATE_NOTARY_PROFILE="Your notarytool profile" \
 
 You can also supply `DUBPLATE_NOTARY_KEY_PATH`, `DUBPLATE_NOTARY_KEY_ID`, and `DUBPLATE_NOTARY_ISSUER_ID` to use an App Store Connect team key directly. Pass `--binaries PATH` to package existing release binaries from that directory.
 
-For a local build without notarization, pass `--sign-only` to keep the Developer ID signatures or `--adhoc` to use ad hoc signatures. The Release workflow's `adhoc` input explicitly selects ad hoc signing for a new GitHub release. Note the lack of notarization in the release notes for any such build.
+For a local build without notarization, pass `--sign-only` to keep the Developer ID signatures or `--adhoc` to use ad hoc signatures. The Release workflow's `adhoc` input explicitly selects ad hoc signing for a new GitHub release.
+
+An unnotarized build is Developer ID signed but carries no Apple receipt, so on a Mac that has never seen it, Gatekeeper reports it unverified until the user right-clicks the app and chooses **Open** once (the shell installer clears the quarantine flag instead). Until a notary key is configured, `package-macos.sh` signs with Developer ID and skips notarization; `spctl` then reports `Unnotarized Developer ID`, which is expected.
 
 ## Layout
 

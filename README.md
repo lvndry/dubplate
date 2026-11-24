@@ -24,7 +24,7 @@ Dubplate is free, open-source DJ software for live two-deck mixing with a DDJ-FL
 
 **Desktop app.** Download the disk image, open it, and drag Dubplate into Applications. [Download Dubplate for Mac](https://github.com/lvndry/dubplate/releases/latest/download/Dubplate.dmg)
 
-Version 0.1.0 carries an Apple Developer ID signature and has not been notarized by Apple. Gatekeeper may block it from opening. Check the release notes for the signing status of the version you download. [Release notes](https://github.com/lvndry/dubplate/releases/latest)
+Until Dubplate is notarized, Gatekeeper asks for a one-time confirmation when you open it from the disk image or Homebrew: right-click Dubplate in Applications, choose **Open**, then **Open** again. The shell installer below skips that step for you. Check the release notes for the signing status of the version you download. [Release notes](https://github.com/lvndry/dubplate/releases/latest)
 
 **Homebrew.** Install the desktop app from the Dubplate tap. On older Homebrew versions that lack the `trust` command, skip that line.
 
@@ -36,7 +36,7 @@ brew install --cask dubplate
 
 For the command-line tool, run `brew install --formula dubplate` after adding the tap. [Dubplate Homebrew tap](https://github.com/lvndry/homebrew-dubplate)
 
-**Shell installer.** This installs both the desktop app and the CLI and verifies the downloads against the release’s SHA-256 checksums.
+**Shell installer.** This installs both the desktop app and the CLI, verifies the downloads against the release's SHA-256 checksums, and clears macOS's quarantine flag, so the first open does not prompt.
 
 ```sh
 curl -fsSL https://github.com/lvndry/dubplate/releases/latest/download/install.sh | sh
