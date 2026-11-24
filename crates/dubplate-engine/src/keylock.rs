@@ -89,6 +89,7 @@ pub(crate) struct KeyLock {
     output_latency: f64,
     engaged: bool,
     needs_priming: bool,
+    loop_bounds: Option<(f64, f64)>,
     lead: f64,
     owed_frames: f64,
     mix: Ramp,
@@ -130,6 +131,7 @@ impl KeyLock {
             output_latency: output_latency as f64,
             engaged: false,
             needs_priming: true,
+            loop_bounds: None,
             lead: 0.0,
             owed_frames: 0.0,
             mix: Ramp::new(0.0, mix_frames),
@@ -194,7 +196,7 @@ impl KeyLock {
     /// the block has stretched frames to mix in.
     pub(crate) fn prepare(
         &mut self,
-        block: KeyLockBlock<'_>,
+        mut block: KeyLockBlock<'_>,
         retire: &mut RetireQueue,
         starved: &mut bool,
     ) -> bool {
@@ -206,6 +208,16 @@ impl KeyLock {
         let stretching_stems = block.stems && self.stems.is_some();
         if stretching_stems != self.stretching_stems {
             self.stretching_stems = stretching_stems;
+            self.needs_priming = true;
+        }
+        // A playhead already beyond the loop plays forward without wrapping into it.
+        block.active_loop = block
+            .active_loop
+            .filter(|region| region.start < region.end && block.playhead < region.end);
+        let loop_bounds = block.active_loop.map(|region| (region.start, region.end));
+        if self.loop_bounds != loop_bounds {
+            // The stretcher may already hold audio past the new boundary.
+            self.loop_bounds = loop_bounds;
             self.needs_priming = true;
         }
         let stretched_sound_ready = self.hold_frames == 0 && !self.needs_priming;
@@ -276,13 +288,18 @@ impl KeyLock {
         let (feeder, stretcher) = self.feeder_and_stretcher();
         feeder.position =
             block.playhead + lead - stretcher.priming_frames() as f64 * block.unit_step;
+        if let Some(region) = block.active_loop
+            && feeder.position >= region.end
+        {
+            feeder.position = region.fold(feeder.position);
+        }
         feeder.transport.jump_to(1.0);
         read_ahead(
             feeder,
             &mut stretcher.priming,
             stretching_stems,
             block.unit_step,
-            None,
+            block.active_loop,
             retire,
             starved,
         );
