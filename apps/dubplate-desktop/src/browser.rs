@@ -1035,6 +1035,24 @@ impl Browser {
         self.view.apply(self.screen, &mut rows, |track, column| {
             self.cell_text(collection.track(track), track, column)
         });
+        if let Some(sort) = self.sort().filter(|sort| sort.column == Column::Match) {
+            rows.sort_by(|left, right| {
+                let left = self.track_match(collection.track(*left));
+                let right = self.track_match(collection.track(*right));
+                match (left, right) {
+                    (Some(left), Some(right)) => {
+                        let order = left.compare(right);
+                        match sort.direction {
+                            SortDirection::Ascending => order,
+                            SortDirection::Descending => order.reverse(),
+                        }
+                    }
+                    (Some(_), None) => std::cmp::Ordering::Less,
+                    (None, Some(_)) => std::cmp::Ordering::Greater,
+                    (None, None) => std::cmp::Ordering::Equal,
+                }
+            });
+        }
         self.rows = rows;
         self.selection.retain(&self.rows);
         cx.notify();
