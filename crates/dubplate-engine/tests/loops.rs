@@ -67,6 +67,69 @@ fn a_beat_loop_starts_on_the_nearest_beat_and_goes_round_without_a_click() {
 }
 
 #[test]
+fn a_beat_loop_extending_past_the_track_end_keeps_playing() {
+    let (mut controller, mut renderer) = offline_engine(SAMPLE_RATE);
+    controller
+        .load_track(DeckId::A, constant_track(0.2, 0.2, 10.0, SAMPLE_RATE))
+        .unwrap();
+    controller
+        .set_beat_grid(DeckId::A, Some(BeatGrid::new(120.0, 0.0).unwrap()))
+        .unwrap();
+    controller.set_crossfader(0.0).unwrap();
+    controller.seek(DeckId::A, 9.5).unwrap();
+    controller.play(DeckId::A).unwrap();
+    controller.beat_loop(DeckId::A, BeatLength::FOUR).unwrap();
+
+    let output = seconds(&mut renderer, 1.25);
+    assert!(controller.deck_state(DeckId::A).playing);
+    let after_two_wraps = (1.1 * f64::from(SAMPLE_RATE)) as usize;
+    assert!(output[after_two_wraps..].iter().all(|&sample| sample > 0.1));
+    let state = controller.loop_state(DeckId::A);
+    assert!(state.active);
+    assert_eq!(state.length, Some(BeatLength::FOUR));
+    assert_close(state.start_seconds.unwrap(), 9.5, 1e-9);
+    assert_close(state.end_seconds.unwrap(), 10.0, 1e-9);
+    assert_close(position(&controller), 9.75, 1e-9);
+}
+
+#[test]
+fn quantizing_a_loop_start_to_the_track_end_keeps_playback_and_slip_unchanged() {
+    let (mut controller, mut renderer) = offline_engine(SAMPLE_RATE);
+    controller
+        .load_track(DeckId::A, constant_track(0.2, 0.2, 10.0, SAMPLE_RATE))
+        .unwrap();
+    controller
+        .set_beat_grid(DeckId::A, Some(BeatGrid::new(120.0, 0.0).unwrap()))
+        .unwrap();
+    controller.set_slip(DeckId::A, true).unwrap();
+    controller.seek(DeckId::A, 9.9).unwrap();
+    controller.play(DeckId::A).unwrap();
+    controller.beat_loop(DeckId::A, BeatLength::FOUR).unwrap();
+
+    seconds(&mut renderer, 0.05);
+    assert!(controller.deck_state(DeckId::A).playing);
+    assert!(!controller.loop_state(DeckId::A).active);
+    assert!(controller.slip_state(DeckId::A).shadow_seconds.is_none());
+    assert_close(position(&controller), 9.95, 1e-9);
+}
+
+#[test]
+fn a_hot_loop_ending_after_the_track_wraps_at_the_track_end() {
+    let (mut controller, mut renderer) = offline_engine(SAMPLE_RATE);
+    controller
+        .load_track(DeckId::A, constant_track(0.2, 0.2, 10.0, SAMPLE_RATE))
+        .unwrap();
+    controller.hot_loop(DeckId::A, 9.5, 11.5).unwrap();
+
+    seconds(&mut renderer, 0.625);
+    assert!(controller.deck_state(DeckId::A).playing);
+    let state = controller.loop_state(DeckId::A);
+    assert!(state.active);
+    assert_close(state.end_seconds.unwrap(), 10.0, 1e-9);
+    assert_close(position(&controller), 9.625, 1e-9);
+}
+
+#[test]
 fn halving_and_doubling_change_the_loop_from_its_start() {
     let (mut controller, mut renderer) = deck_on_grid();
     controller.seek(DeckId::A, 5.1).unwrap();
