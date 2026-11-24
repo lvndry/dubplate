@@ -3,12 +3,13 @@
 //! does, with the built-in presets. Changes apply at once and are remembered.
 
 use dubplate_engine::{DeckId, PadRelease};
+use dubplate_midi::PadMode;
 use gpui::base::FocusTrapElement;
 use gpui::prelude::*;
 use gpui::{ClickEvent, Context, FontWeight, MouseButton, SharedString, div, px};
 
 use super::DubplateApp;
-use crate::commands::{Command, PadFxEdit};
+use crate::commands::{Command, PadFxEdit, PadPress};
 use crate::fonts::MONO_FAMILY;
 use crate::pad_fx::{PadFxLayer, PadFxPreset, PadFxSlot, PadTrigger};
 use crate::pads::PAD_COUNT;
@@ -23,6 +24,15 @@ pub(super) struct PadFxEditing {
     /// The pad, 0 for pad 1.
     pub pad: usize,
     pub swapping: bool,
+}
+
+impl PadFxEditing {
+    /// A controller pad selects its physical FX layer, even when it normally plays the slicer.
+    pub(super) fn selection_from_pad(self, deck_mode: PadMode, press: PadPress) -> PadFxEdit {
+        let mode = press.mode.unwrap_or(deck_mode);
+        let layer = PadFxLayer::of(mode, press.shift).unwrap_or(self.layer);
+        PadFxEdit::Select(layer, press.pad)
+    }
 }
 
 impl DubplateApp {
@@ -486,4 +496,40 @@ fn toggle(
             })
             .child(value),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::Press;
+
+    #[test]
+    fn a_physical_pad_selects_its_fx_layer_even_in_slicer_mode() {
+        let editor = PadFxEditing {
+            layer: PadFxLayer::Fx1,
+            pad: 0,
+            swapping: false,
+        };
+        let press = PadPress {
+            deck: DeckId::A,
+            pad: 3,
+            mode: Some(PadMode::PadFx2),
+            press: Press::Down,
+            shift: true,
+        };
+        assert_eq!(
+            editor.selection_from_pad(PadMode::Slicer, press),
+            PadFxEdit::Select(PadFxLayer::Fx2Shift, 3)
+        );
+        assert_eq!(
+            editor.selection_from_pad(
+                PadMode::SlicerLoop,
+                PadPress {
+                    shift: false,
+                    ..press
+                }
+            ),
+            PadFxEdit::Select(PadFxLayer::Fx2, 3)
+        );
+    }
 }

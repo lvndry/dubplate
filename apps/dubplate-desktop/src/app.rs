@@ -2359,11 +2359,14 @@ impl DubplateApp {
             self.reset_slicer_without_grid(deck);
             let state = self.deck_state(deck);
             let slip_shadow = self.slip_shadow(deck);
+            let slicing = self.slicer_state(deck).is_some_and(|state| state.enabled);
+            let active_loop = self.active_loop(deck);
             DeckFrame {
                 state,
                 playhead_seconds: self.decks[deck.index()].clock.position(
                     &state,
-                    slip_shadow.is_some(),
+                    slip_shadow.is_some() || slicing,
+                    active_loop,
                     now,
                 ),
                 slip_shadow,
