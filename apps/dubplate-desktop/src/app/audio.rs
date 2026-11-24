@@ -1,6 +1,6 @@
 //! The sound card: starting the engine on the one the DJ chose, listing the others, and moving
-//! to another while the decks are stopped, keeping the tracks, their places, the mixer and the
-//! effects as they were.
+//! to another while the decks and sampler are stopped, keeping the tracks, their places,
+//! the sampler assignments, the mixer and the effects as they were.
 
 use dubplate_engine::{
     AudioOutput, Controller, DeckId, EffectUnitId, EngineError, MasterTempo, OutputConfig,
@@ -76,7 +76,7 @@ fn apply_mixer(controller: &mut Controller, mixer: &MixerPositions) -> Result<()
 }
 
 /// Puts on `target` what `source` has beyond the mixer: the tracks at their places with their
-/// cue points and grids, the headphone buttons, the effect units, the tempo ranges and sync.
+/// cue points and grids, the sampler, headphone buttons, effect units, tempo ranges and sync.
 fn carry_over(source: &Controller, target: &mut Controller) -> Result<(), EngineError> {
     for deck in DeckId::ALL {
         let snapshot = source.last_published_deck(deck);
@@ -91,6 +91,7 @@ fn carry_over(source: &Controller, target: &mut Controller) -> Result<(), Engine
         target.set_headphone_cue(deck, headphones.is_cued(deck))?;
     }
     target.set_master_cue(headphones.master_cue)?;
+    target.restore_sampler_from(source)?;
     for unit in EffectUnitId::ALL {
         let state = source.effect_unit(unit);
         target.set_effect_kind(unit, state.kind)?;
@@ -174,7 +175,7 @@ impl DubplateApp {
             .map(|engine| engine.output.device_name())
     }
 
-    /// Moves the engine to another sound card and remembers it. The decks must be stopped: a
+    /// Moves the engine to another sound card and remembers it. Playback must be stopped: a
     /// change of sound card always drops a moment of audio.
     pub(super) fn choose_output(&mut self, name: String, cx: &mut Context<'_, Self>) {
         if self.current_output() == Some(name.as_str()) {
@@ -191,7 +192,7 @@ impl DubplateApp {
         BufferSize::from_setting(self.settings.buffer_frames)
     }
 
-    /// Starts the sound card again with a buffer of `buffer` and remembers it. The decks must
+    /// Starts the sound card again with a buffer of `buffer` and remembers it. Playback must
     /// be stopped, as for a change of sound card.
     pub(super) fn choose_buffer_size(&mut self, buffer: BufferSize, cx: &mut Context<'_, Self>) {
         if buffer == self.buffer_size() {
@@ -212,8 +213,8 @@ impl DubplateApp {
             .map_or(0, |engine| engine.controller.stats().overruns())
     }
 
-    /// Replaces the engine with one on `device` with `buffer`, carrying the decks, mixer and
-    /// effects over. Refused while recording or playing, since the change drops a moment of
+    /// Replaces the engine with one on `device` with `buffer`, carrying the decks, sampler,
+    /// mixer and effects over. Refused while recording or playing, since the change drops a moment of
     /// audio; `change` names what the DJ is changing for the notice. Returns whether it
     /// happened.
     fn restart_engine(
@@ -242,6 +243,27 @@ impl DubplateApp {
             );
             return false;
         }
+        if self
+            .engine
+            .as_ref()
+            .is_ok_and(|engine| engine.controller.sampler_is_playing())
+        {
+            self.show_notice(
+                NoticePlace::Window,
+                format!("Stop the sampler to change {change}."),
+                cx,
+            );
+            return false;
+        }
+        let needs_sampler_restore = self.engine.is_err();
+        if needs_sampler_restore && self.sample_loads_pending() {
+            self.show_notice(
+                NoticePlace::Window,
+                format!("Wait for samples to finish loading to change {change}."),
+                cx,
+            );
+            return false;
+        }
         let name = device.unwrap_or("the default output").to_owned();
         let mut engine = match engine_on(&self.mixer, device, buffer, &self.devices) {
             Ok(engine) => engine,
@@ -264,7 +286,10 @@ impl DubplateApp {
             );
         }
         self.engine = Ok(engine);
-        self.restore_sampler(cx);
+        self.held_sample_slots = Default::default();
+        if needs_sampler_restore {
+            self.restore_sampler(cx);
+        }
         cx.notify();
         true
     }
@@ -274,7 +299,8 @@ impl DubplateApp {
 mod tests {
     use dubplate_engine::{
         BeatLength, ChannelFaderCurve, CrossfaderAssign, CrossfaderCurve, EffectKind, EffectTarget,
-        ParameterValue, Renderer, SyncMode, TempoRange, Track, offline_engine,
+        ParameterValue, Renderer, SAMPLER_SLOTS, SampleMode, SampleSettings, SyncMode, TempoRange,
+        Track, offline_engine,
     };
 
     use super::*;
@@ -296,6 +322,18 @@ mod tests {
         source.seek(DeckId::B, 4.5).unwrap();
         source.set_headphone_cue(DeckId::B, true).unwrap();
         source.set_master_cue(true).unwrap();
+        let sample_slot = SAMPLER_SLOTS - 1;
+        let sample = Track::from_interleaved_stereo(&samples, SAMPLE_RATE).unwrap();
+        let sample_settings = SampleSettings {
+            mode: SampleMode::Loop,
+            gate: true,
+            bpm: Some(120.0),
+            ..SampleSettings::default()
+        };
+        source
+            .load_sample(sample_slot, sample, sample_settings)
+            .unwrap();
+        source.set_sampler_cue(true).unwrap();
         source.set_tempo_range(DeckId::B, TempoRange::Wide).unwrap();
         source.set_sync(DeckId::A, SyncMode::Beat).unwrap();
         source.set_key_lock(DeckId::B, true).unwrap();
@@ -334,6 +372,14 @@ mod tests {
         let headphones = target.headphones();
         assert!(headphones.is_cued(DeckId::B) && headphones.master_cue);
         assert!(!headphones.is_cued(DeckId::A));
+        let sampler = target.sampler_state();
+        assert!(sampler.cue);
+        let sample = sampler.slots[sample_slot].unwrap();
+        assert_eq!(sample.settings, sample_settings);
+        assert!(!sample.playing);
+        target.trigger_sample(sample_slot).unwrap();
+        render(&mut target_renderer);
+        assert!(target.sampler_state().slots[sample_slot].unwrap().playing);
         assert_eq!(target.tempo_state(DeckId::B).tempo_range, TempoRange::Wide);
         assert_eq!(target.tempo_state(DeckId::A).sync, SyncMode::Beat);
         assert!(target.key_lock(DeckId::B) && !target.key_lock(DeckId::A));

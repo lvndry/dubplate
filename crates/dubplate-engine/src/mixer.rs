@@ -994,9 +994,6 @@ impl Renderer {
                 .store(deck.vinyl_mode(), Ordering::Relaxed);
             shared.publication.fetch_add(1, Ordering::Release);
         }
-        self.shared
-            .applied_command
-            .store(self.applied_command, Ordering::Release);
         for (sounding, shared) in self
             .effects
             .sounding()
@@ -1017,6 +1014,9 @@ impl Renderer {
         self.shared
             .preview_position_seconds
             .store(self.preview.position_seconds());
+        self.shared
+            .applied_command
+            .store(self.applied_command, Ordering::Release);
     }
 }
 

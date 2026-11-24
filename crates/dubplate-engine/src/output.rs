@@ -299,7 +299,15 @@ where
         .build_output_stream::<T, _, _>(
             *config,
             callback,
-            move |_error| {
+            move |error| {
+                if matches!(
+                    error.kind(),
+                    cpal::ErrorKind::DeviceNotAvailable
+                        | cpal::ErrorKind::HostUnavailable
+                        | cpal::ErrorKind::StreamInvalidated
+                ) {
+                    shared.output_stopped.store(true, Ordering::Release);
+                }
                 shared.stats.device_errors.fetch_add(1, Ordering::Relaxed);
             },
             None,

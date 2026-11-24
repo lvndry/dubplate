@@ -27,6 +27,29 @@ pub(super) enum SampleOption {
     Sync,
 }
 
+/// The current decode for a slot. A replacement or eject invalidates the older decode.
+#[derive(Clone, Copy, Default)]
+pub(super) struct SampleLoad {
+    version: u64,
+    pending: bool,
+}
+
+impl SampleLoad {
+    fn start(&mut self) -> u64 {
+        self.version = self.version.wrapping_add(1);
+        self.pending = true;
+        self.version
+    }
+
+    fn finish(&mut self, version: u64) -> bool {
+        if self.version != version || !self.pending {
+            return false;
+        }
+        self.pending = false;
+        true
+    }
+}
+
 /// The slot a deck's sampler pad plays.
 pub(super) fn sampler_slot(bank: usize, deck: DeckId, pad: usize) -> usize {
     bank.min(SAMPLER_BANKS - 1) * BANK_SLOTS + deck.index() * PAD_COUNT + pad
@@ -213,11 +236,18 @@ impl DubplateApp {
         cx.notify();
     }
 
-    /// Puts every saved sample back in its slot, after a launch or a new sound card.
+    /// Puts every saved sample back in its slot when starting without an engine to copy.
     pub(super) fn restore_sampler(&mut self, cx: &mut Context<'_, Self>) {
+        if self.engine.is_err() {
+            return;
+        }
         for setting in self.settings.sampler.slots.clone() {
             self.load_into_slot(setting, cx);
         }
+    }
+
+    pub(super) fn sample_loads_pending(&self) -> bool {
+        self.sample_loads.iter().any(|load| load.pending)
     }
 
     fn load_selected_into_slot(&mut self, slot: usize, cx: &mut Context<'_, Self>) {
@@ -247,7 +277,7 @@ impl DubplateApp {
     }
 
     pub(super) fn empty_sampler_slot(&mut self, slot: usize, cx: &mut Context<'_, Self>) {
-        let Some(version) = self.sample_load_versions.get_mut(slot) else {
+        let Some(load) = self.sample_loads.get_mut(slot) else {
             return;
         };
         if let Ok(engine) = &mut self.engine
@@ -257,7 +287,7 @@ impl DubplateApp {
             return;
         }
         // Ignore any decode started before the pad was emptied.
-        *version += 1;
+        load.pending = false;
         for held in self.held_sample_slots.iter_mut().flatten() {
             if *held == Some(slot) {
                 *held = None;
@@ -283,11 +313,10 @@ impl DubplateApp {
 
     /// Prepares the sample off the interface thread and puts it in its slot.
     fn load_into_slot(&mut self, setting: SampleSlotSetting, cx: &mut Context<'_, Self>) {
-        let Some(version) = self.sample_load_versions.get_mut(setting.slot) else {
+        let Some(load) = self.sample_loads.get_mut(setting.slot) else {
             return;
         };
-        *version += 1;
-        let version = *version;
+        let version = load.start();
         let source = setting.source.clone();
         cx.spawn(async move |this, cx| {
             let track = cx
@@ -303,7 +332,7 @@ impl DubplateApp {
                 })
                 .await;
             this.update(cx, |this, cx| {
-                if this.sample_load_versions[setting.slot] != version {
+                if !this.sample_loads[setting.slot].finish(version) {
                     return;
                 }
                 match track {
@@ -371,6 +400,28 @@ mod tests {
     use super::*;
     use crate::built_in_samples::RecordedSample;
     use dubplate_engine::SynthSound;
+
+    #[test]
+    fn only_the_current_decode_can_finish_for_a_slot() {
+        let mut load = SampleLoad::default();
+        let first = load.start();
+        let replacement = load.start();
+        assert!(!load.finish(first));
+        assert!(load.pending);
+
+        // A completed decode clears pending even if it failed.
+        assert!(load.finish(replacement));
+        assert!(!load.pending);
+        assert!(!load.finish(replacement));
+
+        let ejected = load.start();
+        load.pending = false;
+        assert!(!load.finish(ejected));
+        let next = load.start();
+        assert!(!load.finish(ejected));
+        assert!(load.pending);
+        assert!(load.finish(next));
+    }
 
     #[test]
     fn the_left_deck_plays_slots_1_to_8_and_the_right_9_to_16() {
