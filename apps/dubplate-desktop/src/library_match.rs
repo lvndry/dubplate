@@ -3,6 +3,7 @@
 //! the order the Next suggestions use, so the library reads as a ranked list of what to play
 //! next.
 
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -74,6 +75,33 @@ pub struct TrackMatch {
 }
 
 impl TrackMatch {
+    /// Suggestions first, then the remaining tracks by key compatibility, tempo and energy.
+    pub fn compare(&self, other: &Self) -> Ordering {
+        let rank = |found: &Self| found.rank.unwrap_or(usize::MAX);
+        let key = |found: &Self| match found.key {
+            Some(KeyMatch::Named(relation)) => match relation {
+                Relation::Same => 0,
+                Relation::Adjacent => 1,
+                Relation::Relative => 2,
+                Relation::Diagonal => 3,
+                Relation::EnergyBoost => 4,
+                Relation::SemitoneBoost => 5,
+                Relation::MoodChange => 6,
+            },
+            Some(KeyMatch::Clash) => 7,
+            None => 8,
+        };
+        let magnitude = |value: Option<f32>| value.map_or(f32::INFINITY, f32::abs);
+        rank(self)
+            .cmp(&rank(other))
+            .then_with(|| key(self).cmp(&key(other)))
+            .then_with(|| {
+                magnitude(self.tempo_change_percent)
+                    .total_cmp(&magnitude(other.tempo_change_percent))
+            })
+            .then_with(|| magnitude(self.energy_change).total_cmp(&magnitude(other.energy_change)))
+    }
+
     /// Whether the tempo change is a big jump for the pitch fader.
     pub fn is_far_in_tempo(&self) -> bool {
         self.tempo_change_percent
@@ -218,6 +246,18 @@ mod tests {
         assert_eq!(at("clash").key, Some(KeyMatch::Clash));
         assert_eq!(at("clash").key.unwrap().tone(), KeyTone::Clash);
         assert_eq!(at("step").key.unwrap().tone(), KeyTone::Smooth);
+        let mut all = ["clash", "boost", "step", "same"];
+        all.sort_by(|left, right| at(left).compare(&at(right)));
+        assert_eq!(all, ["same", "step", "boost", "clash"]);
+        let mut unranked = [at("clash"), at("boost"), at("step"), at("same")];
+        for found in &mut unranked {
+            found.rank = None;
+        }
+        unranked.sort_by(TrackMatch::compare);
+        assert_eq!(unranked[0].key, at("same").key);
+        assert_eq!(unranked[1].key, at("step").key);
+        assert_eq!(unranked[2].key, at("boost").key);
+        assert_eq!(unranked[3].key, Some(KeyMatch::Clash));
         let boost = at("boost");
         assert_eq!(boost.key.unwrap().tone(), KeyTone::Lift);
         assert!(boost.is_far_in_tempo());
