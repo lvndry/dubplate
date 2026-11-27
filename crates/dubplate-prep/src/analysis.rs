@@ -20,7 +20,7 @@ use crate::loudness::{Lufs, integrated_loudness};
 
 /// Raised whenever a change to how Dubplate puts Euphoria's detectors together can change what
 /// an analysis reports, so analyses cached before it are made again.
-const PIPELINE_VERSION: u32 = 3;
+const PIPELINE_VERSION: u32 = 4;
 
 /// The version of everything that decides an analysis: Euphoria's detectors, its energy model
 /// and the way Dubplate combines them. A cached analysis made under another version is stale.
